@@ -44,5 +44,5 @@ Single-command deploy (DeployPart1):
 
 Notes:
 
-- Requires env vars: `DEPLOY_SALT`, `WETH_ADDRESS`, `RPC_URL`, `ETHERSCAN_API_KEY`, `DEPLOYER_ADDRESS`.
+- Example: for BSC mainnet (56) in .env set `WETH_ADDRESS_56=0x...`; for Sepolia (11155111) set `WETH_ADDRESS_11155111=0x...`.
 - Uses CREATE2 salts derived from `DEPLOY_SALT` for deterministic addresses.

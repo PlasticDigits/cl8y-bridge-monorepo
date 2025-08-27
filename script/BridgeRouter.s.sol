@@ -14,6 +14,7 @@ import {GuardBridge} from "../src/GuardBridge.sol";
 import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
 import {BlacklistBasic} from "../src/BlacklistBasic.sol";
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 contract BridgeRouterScript is Script {
     // Custom errors for lints and clarity
@@ -148,8 +149,12 @@ contract BridgeRouterScript is Script {
 
     function _resolveWETHOrRevert() internal {
         if (wethAddress == address(0)) {
-            string memory envWeth = vm.envString("WETH_ADDRESS");
-            wethAddress = vm.parseAddress(envWeth);
+            string memory key = string.concat("WETH_ADDRESS_", Strings.toString(block.chainid));
+            try vm.envString(key) returns (string memory provided) {
+                wethAddress = vm.parseAddress(provided);
+            } catch {
+                revert MissingWethAddress();
+            }
         }
         if (wethAddress == address(0)) {
             revert MissingWethAddress();

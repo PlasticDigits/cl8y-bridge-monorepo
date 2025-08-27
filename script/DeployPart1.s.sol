@@ -16,6 +16,7 @@ import {BlacklistBasic} from "../src/BlacklistBasic.sol";
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {Create3Deployer} from "../src/Create3Deployer.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 contract DeployPart1 is Script {
     // CREATE2 factory constant is inherited from forge-std Base (Script)
@@ -72,7 +73,7 @@ contract DeployPart1 is Script {
         try vm.envString("DEPLOY_SALT") returns (string memory provided) {
             deploySaltLabel = provided;
         } catch {
-            deploySaltLabel = "D1";
+            deploySaltLabel = "Deploy v1.1";
         }
         baseSalt = keccak256(bytes(deploySaltLabel));
         console.log("Using CREATE2 base salt (keccak256(DEPLOY_SALT)):");
@@ -166,10 +167,16 @@ contract DeployPart1 is Script {
 
     function _resolveWETHOrRevert() internal {
         if (wethAddress == address(0)) {
-            string memory envWeth = vm.envString("WETH_ADDRESS");
-            wethAddress = vm.parseAddress(envWeth);
+            string memory key = string.concat("WETH_ADDRESS_", Strings.toString(block.chainid));
+            string memory envWeth;
+            try vm.envString(key) returns (string memory provided) {
+                envWeth = provided;
+                wethAddress = vm.parseAddress(envWeth);
+            } catch {
+                revert(string.concat("Missing ", key, " env"));
+            }
         }
-        require(wethAddress != address(0), "Missing WETH_ADDRESS env");
+        require(wethAddress != address(0), "WETH address must be non-zero");
     }
 
     function _deployRouter(bytes32 baseSalt) internal {
