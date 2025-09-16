@@ -96,7 +96,7 @@ function approveWithdraw(
    - `amount`: from event; `nonce`: from event.
    - `fee` and `feeRecipient`: set by policy; `feeRecipient` must be non-zero if `fee > 0`.
 3. Call `approveWithdraw(srcChainKey, token, to, amount, nonce, fee, feeRecipient, deductFromAmount)` on destination chain.
-4. If deposit is reorged out later, call `cancelWithdrawApproval(...)`. If reappears and should be honored, call `reenableWithdrawApproval(...)` (resets the delay timer).
+4. If deposit is reorged out later, call `cancelWithdrawApproval(withdrawHash)`. If reappears and should be honored, call `reenableWithdrawApproval(withdrawHash)` (resets the delay timer).
 
 ### Withdraw on Destination Chain (User)
 
@@ -238,8 +238,8 @@ async function onDeposit(event) {
 
 - Bad Approvals:
 
-  - `cancelWithdrawApproval(...)` to disable.
-  - `reenableWithdrawApproval(...)` to re-activate (resets `approvedAt`).
+  - `cancelWithdrawApproval(withdrawHash)` to disable. This can be called during the withdrawDelay window; no delay check applies to cancellation.
+  - `reenableWithdrawApproval(withdrawHash)` to re-activate (resets `approvedAt`).
 
 - Common Errors:
 

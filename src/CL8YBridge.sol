@@ -474,24 +474,10 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     /// @notice Cancel a previously approved withdrawal
-    function cancelWithdrawApproval(
-        bytes32 srcChainKey,
-        address token,
-        address to,
-        bytes32 destAccount,
-        uint256 amount,
-        uint256 nonce
-    ) public restricted whenNotPaused {
-        Withdraw memory withdrawRequest = Withdraw({
-            srcChainKey: srcChainKey,
-            token: token,
-            destAccount: destAccount,
-            to: to,
-            amount: amount,
-            nonce: nonce
-        });
-        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+    /// @param withdrawHash The canonical withdraw hash to cancel
+    function cancelWithdrawApproval(bytes32 withdrawHash) public restricted whenNotPaused {
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
+        require(approval.isApproved, WithdrawNotApproved());
         require(!approval.cancelled, ApprovalCancelled());
         require(!approval.executed, ApprovalExecuted());
 
@@ -500,24 +486,10 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     // @notice reenable a cancelled approval
-    function reenableWithdrawApproval(
-        bytes32 srcChainKey,
-        address token,
-        address to,
-        bytes32 destAccount,
-        uint256 amount,
-        uint256 nonce
-    ) public restricted whenNotPaused {
-        Withdraw memory withdrawRequest = Withdraw({
-            srcChainKey: srcChainKey,
-            token: token,
-            destAccount: destAccount,
-            to: to,
-            amount: amount,
-            nonce: nonce
-        });
-        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+    /// @param withdrawHash The canonical withdraw hash to reenable
+    function reenableWithdrawApproval(bytes32 withdrawHash) public restricted whenNotPaused {
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
+        require(approval.isApproved, WithdrawNotApproved());
         require(approval.cancelled, NotCancelled());
         require(!approval.executed, ApprovalExecuted());
 
