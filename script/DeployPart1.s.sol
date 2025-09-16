@@ -73,7 +73,7 @@ contract DeployPart1 is Script {
         try vm.envString("DEPLOY_SALT") returns (string memory provided) {
             deploySaltLabel = provided;
         } catch {
-            deploySaltLabel = "Deploy v1.1";
+            deploySaltLabel = "Deploy v1.2";
         }
         baseSalt = keccak256(bytes(deploySaltLabel));
         console.log("Using CREATE2 base salt (keccak256(DEPLOY_SALT)):");

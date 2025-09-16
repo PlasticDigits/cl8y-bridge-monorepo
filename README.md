@@ -3,23 +3,23 @@
 **A community operated bridge, open to all and secured by CL8Y, for EVM, CosmWasm, Sol, and more.**
 This repo contains the EVM smart contracts for the CL8Y Bridge, licensed under AGPL.
 
-## Deployments
+## Deployments Stable (v1.2)
 
-### BSC Testnet, opBNB Testnet, BSC Mainnet
+### BSC Testnet, opBNB Testnet
 
-Create3Deployer: 0x21ff2F046C58e423570f42f160BeC14967D69798
-AccessManagerEnumerable: 0xA1012cf7d54650A01608161E7C70400dE7A3B476
-ChainRegistry: 0x0B43A43A64284f49A9FDa3282C1a5f2eb74620D8
-TokenRegistry: 0x23F054503f163Fc5196E1D7E29B3cCDe73282101
-MintBurn: 0x6721D7d9f4b2d75b205B0E19450D30b7284A4E15
-LockUnlock: 0x6132fcb458b8570B69052463f2F9d09B340A6bA0
-Cl8YBridge: 0x9981937e53758C46464fF89B35dF9A46175A7212
-DatastoreSetAddress: 0x246956595e15Cc5bcf0113F5a6Ce77868F03A303
-GuardBridge: 0xD51218d8047018CAd98E30e63f69BCab2E41c26E
-BlacklistBasic: 0x5fb049936C0376bB917D4eF1164f192f93631223
-TokenRateLimit: 0x4e333747237E42E28d0499989b21A2bc0f8a0066
-BridgeRouter: 0x52cDA4D1D1cC1B1499E25f75933D8A83a9c111c0
-FactoryTokenCl8yBridged: 0x05e08a938b3812DC8B7B4b16f898512ac99752CD
+Create3Deployer: 0xf5F0da758637c19ADa0B0a521aDdF73A88061C7F
+AccessManagerEnumerable: 0x4573242bf542ED708e6D55385be4f4CFacEBef4D
+ChainRegistry: 0x5171f51454e0B818b9D8EbfEde36E3dDcBe0C94A
+TokenRegistry: 0x3ab9df4B6585D2289FBC905a93790C23E52De30A
+MintBurn: 0x48F18D1e6dc86DF642aC1547f4F404F8f121520c
+LockUnlock: 0x470CC6eA7EfAd150Ee0e29C45aBd66FE7e3A02db
+Cl8YBridge: 0x5cd4f9caBdbc0Cbe29E926d7068048479db3fE81
+DatastoreSetAddress: 0xA28CeCAE2a829B4f9BEAC4d9E20697247C151E5F
+GuardBridge: 0xcEe50bE74D2BB6AD8Df9D2734dC022cAF664416C
+BlacklistBasic: 0xE0269a536bEa2729067f30DD618B009d9E4bC713
+TokenRateLimit: 0x9CCFd491b1216a4b1C00c84266b2cac4c9558c48
+BridgeRouter: 0x52Cb5DFCf0E0d086deeFe22430207C86d9701737
+FactoryTokenCl8yBridged: 0xFf5a409d82aC4925A0DE9F2f1fbA0fa75918C7C0
 
 ## Deployments Old (v0.0.1)
 
@@ -40,7 +40,7 @@ For lcov, add `--report lcov`
 Key variables are set in the script, and should be updated correctly for the network.
 
 Single-command deploy (DeployPart1):
-`forge script script/DeployPart1.s.sol:DeployPart1 --broadcast --verify -vvv --rpc-url $RPC_URL --etherscan-api-key $ETHERSCAN_API_KEY -i 1 --sender $DEPLOYER_ADDRESS`
+`forge script script/DeployPart1.s.sol:DeployPart1 --broadcast --verify -vvv --rpc-url $RPC_URL --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY -i 1 --sender $DEPLOYER_ADDRESS`
 
 Notes:
 
