@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {Cl8YBridge} from "../src/CL8YBridge.sol";
 import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
@@ -11,8 +11,8 @@ import {LockUnlock} from "../src/LockUnlock.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+// removed unused IAccessManager import
+// removed unused IAccessManager and IERC20 imports
 
 // Mock contracts
 import {MockTokenRegistry} from "./mocks/MockTokenRegistry.sol";
@@ -52,16 +52,16 @@ contract CL8YBridgeTest is Test {
     bytes32 public constant DEST_ACCOUNT = bytes32(uint256(uint160(address(0x123))));
     bytes32 public constant DEST_TOKEN_ADDRESS = bytes32(uint256(uint160(address(0x456))));
 
-    string constant TOKEN_NAME = "Test Token";
-    string constant TOKEN_SYMBOL = "TEST";
-    string constant LOGO_LINK = "https://example.com/logo.png";
+    string public constant TOKEN_NAME = "Test Token";
+    string public constant TOKEN_SYMBOL = "TEST";
+    string public constant LOGO_LINK = "https://example.com/logo.png";
 
     uint256 public constant DEPOSIT_AMOUNT = 1000e18;
     uint256 public constant WITHDRAW_AMOUNT = 500e18;
     uint256 public constant NONCE = 12345;
 
-    uint64 constant BRIDGE_OPERATOR_ROLE = 1;
-    uint64 constant TOKEN_CREATOR_ROLE = 2;
+    uint64 public constant BRIDGE_OPERATOR_ROLE = 1;
+    uint64 public constant TOKEN_CREATOR_ROLE = 2;
 
     // Events to test
     event DepositRequest(
@@ -1258,7 +1258,7 @@ contract CL8YBridgeTest is Test {
     }
 
     // Test hash generation functions
-    function testHashGeneration() public {
+    function testHashGeneration() public view {
         Cl8YBridge.Withdraw memory withdrawRequest = Cl8YBridge.Withdraw({
             srcChainKey: SRC_CHAIN_KEY,
             token: address(token),
