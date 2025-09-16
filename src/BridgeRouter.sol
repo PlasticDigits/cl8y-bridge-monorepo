@@ -136,7 +136,7 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         }
 
         // Forward entire msg.value to bridge. Bridge will forward to feeRecipient.
-        bridge.withdraw{value: msg.value}(srcChainKey, token, to, destAccount, amount, nonce);
+        bridge.withdraw{value: msg.value}(withdrawHash);
     }
 
     /// @notice Withdraw native by minting/unlocking wrapped token to the router, then unwrapping and sending ETH
@@ -150,9 +150,6 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         guard.checkWithdraw(address(wrappedNative), amount, msg.sender);
         // Withdraw wrapped to router (approval should be on wrapped token and to = router with deductFromAmount = true)
         bytes32 destAccount = bytes32(uint256(uint160(address(to))));
-        bridge.withdraw(srcChainKey, address(wrappedNative), address(this), destAccount, amount, nonce);
-
-        // Determine fee terms from approval (hash uses to = router)
         Cl8YBridge.Withdraw memory req = Cl8YBridge.Withdraw({
             srcChainKey: srcChainKey,
             token: address(wrappedNative),
@@ -162,6 +159,9 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
             nonce: nonce
         });
         bytes32 withdrawHash = bridge.getWithdrawHash(req);
+        bridge.withdraw(withdrawHash);
+
+        // Determine fee terms from approval (hash uses to = router)
         Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
 
         require(approval.deductFromAmount, ApprovalNotNativePath());

@@ -35,6 +35,7 @@ contract RefundRejector {
         uint256 nonce
     ) external payable {
         router.withdraw{value: msg.value}(srcChainKey, token, to, amount, nonce);
+        // Note: router.withdraw interface unchanged in this test; router computes hash internally now
     }
 
     receive() external payable {

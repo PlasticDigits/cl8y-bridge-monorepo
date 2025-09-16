@@ -89,6 +89,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     error FeeTransferFailed();
     error NonceAlreadyApproved(bytes32 srcChainKey, uint256 nonce);
     error NotCancelled();
+    error WithdrawDataMissing();
 
     /// @notice Emitted when a deposit request is created
     /// @param destChainKey The destination chain key
@@ -251,55 +252,37 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @notice Processes a withdrawal request from another chain
+    /// @notice Executes an approved withdrawal by its hash
     /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
     /// @dev Prevents duplicate withdrawals using hash-based tracking
-    /// @param srcChainKey The source chain key where the deposit originated
-    /// @param token The token address on this chain
-    /// @param to The recipient address
-    /// @param amount The amount of tokens to withdraw
-    /// @param nonce The unique nonce for this withdrawal
+    /// @param withdrawHash The canonical transferId of the withdrawal (must have prior approval)
     // solhint-disable-next-line code-complexity
-    function withdraw(
-        bytes32 srcChainKey,
-        address token,
-        address to,
-        bytes32 destAccount,
-        uint256 amount,
-        uint256 nonce
-    ) public payable restricted whenNotPaused nonReentrant {
-        tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, srcChainKey);
-
-        Withdraw memory withdrawRequest = Withdraw({
-            srcChainKey: srcChainKey,
-            token: token,
-            destAccount: destAccount,
-            to: to,
-            amount: amount,
-            nonce: nonce
-        });
-
-        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
-
+    function withdraw(bytes32 withdrawHash) public payable restricted whenNotPaused nonReentrant {
         // Enforce approval lifecycle and delay and validate fee semantics
         WithdrawApproval memory approval = _withdrawApprovals[withdrawHash];
         _assertWithdrawalApprovalExecutable(approval);
         _validateFeePayment(approval);
 
+        // Load stored withdraw data persisted at approval time
+        Withdraw memory w = _withdraws[withdrawHash];
+        if (w.token == address(0)) revert WithdrawDataMissing();
+
+        // Validate token configuration against stored srcChainKey
+        tokenRegistry.revertIfTokenDestChainKeyNotRegistered(w.token, w.srcChainKey);
+
         // Mark executed before any external effects to prevent replay
         _withdrawApprovals[withdrawHash].executed = true;
 
         _withdrawHashes.add(withdrawHash);
-        _withdraws[withdrawHash] = withdrawRequest;
 
         // Rate limit checks and accounting are enforced by guard modules via the router
 
-        _executeTokenBridge(token, to, amount);
+        _executeTokenBridge(w.token, w.to, w.amount);
 
         // Perform native value transfer to feeRecipient at the very end if applicable
         _transferFeeIfNeeded(approval);
 
-        emit WithdrawRequest(srcChainKey, token, to, amount, nonce);
+        emit WithdrawRequest(w.srcChainKey, w.token, w.to, w.amount, w.nonce);
         emit WithdrawExecutedWithFee(withdrawHash, approval.fee, approval.feeRecipient, approval.deductFromAmount);
     }
 
@@ -481,6 +464,9 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
             cancelled: false,
             executed: false
         });
+
+        // Persist withdraw request data for hash-only execution path
+        _withdraws[withdrawHash] = withdrawRequest;
 
         _withdrawNonceUsed[srcChainKey][nonce] = true;
 
