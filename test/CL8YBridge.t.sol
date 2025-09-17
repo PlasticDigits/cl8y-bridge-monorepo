@@ -1415,6 +1415,56 @@ contract CL8YBridgeTest is Test {
         assertEq(wTrimmed.length, wAll.length - 1);
     }
 
+    function testWithdrawHashRecordedAtApproval() public {
+        // Baseline withdraw hashes length
+        bytes32[] memory before = bridge.getWithdrawHashes(0, 1_000_000);
+        uint256 beforeLen = before.length;
+
+        // Approve a withdrawal (fee = 0)
+        uint256 localNonce = NONCE + 123;
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            localNonce,
+            0,
+            address(0),
+            false
+        );
+
+        // Compute expected hash for the approved withdrawal
+        Cl8YBridge.Withdraw memory wr = Cl8YBridge.Withdraw({
+            srcChainKey: SRC_CHAIN_KEY,
+            token: address(token),
+            destAccount: bytes32(uint256(uint160(recipient))),
+            to: recipient,
+            amount: WITHDRAW_AMOUNT,
+            nonce: localNonce
+        });
+        bytes32 h = bridge.getWithdrawHash(wr);
+
+        // Hash should be recorded immediately upon approval
+        bytes32[] memory afterApprove = bridge.getWithdrawHashes(0, 1_000_000);
+        assertEq(afterApprove.length, beforeLen + 1);
+        bool found;
+        for (uint256 i; i < afterApprove.length; i++) {
+            if (afterApprove[i] == h) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found);
+
+        // Executing the withdrawal should not add any new hash entries
+        vm.prank(bridgeOperator);
+        bridge.withdraw(h);
+        bytes32[] memory afterWithdraw = bridge.getWithdrawHashes(0, 1_000_000);
+        assertEq(afterWithdraw.length, beforeLen + 1);
+    }
+
     // Test access control for deposit function (should be public)
     function testDepositAccessControl() public {
         // Deposit should be restricted: unauthorized user cannot call

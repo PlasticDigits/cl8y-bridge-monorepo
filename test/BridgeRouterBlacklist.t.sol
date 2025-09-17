@@ -139,9 +139,18 @@ contract BridgeRouterBlacklistTest is Test {
         blacklist.setIsBlacklistedToTrue(arr);
         // Precompute args so expectRevert applies to the router call itself
         bytes32 evmKey = chainRegistry.getChainKeyEVM(1);
+        Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
+            srcChainKey: evmKey,
+            token: address(weth),
+            destAccount: bytes32(uint256(uint160(user))),
+            to: user,
+            amount: 1,
+            nonce: 1
+        });
+        bytes32 h = bridge.getWithdrawHash(w);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
-        router.withdraw(evmKey, address(weth), user, 1, 1);
+        router.withdraw(h);
     }
 
     function test_DepositNative_RevertsWhenSenderBlacklisted() public {

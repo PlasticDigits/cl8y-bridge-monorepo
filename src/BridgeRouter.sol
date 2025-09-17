@@ -102,30 +102,19 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         emit DepositNative(msg.sender, msg.value, destChainKey, destAccount);
     }
 
-    /// @notice Withdraw ERC20 tokens by proxying to the bridge
-    function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
-        external
-        payable
-        whenNotPaused
-        nonReentrant
-    {
+    /// @notice Withdraw ERC20 tokens by proxying to the bridge using a pre-approved withdraw hash
+    function withdraw(bytes32 withdrawHash) external payable whenNotPaused nonReentrant {
         guard.checkAccount(msg.sender);
-        guard.checkAccount(to);
-        guard.checkWithdraw(token, amount, msg.sender);
-        // Build withdraw hash to fetch approval and fee terms
-        bytes32 destAccount = bytes32(uint256(uint160(address(to))));
-        Cl8YBridge.Withdraw memory req = Cl8YBridge.Withdraw({
-            srcChainKey: srcChainKey,
-            token: token,
-            destAccount: destAccount,
-            to: to,
-            amount: amount,
-            nonce: nonce
-        });
-        bytes32 withdrawHash = bridge.getWithdrawHash(req);
-        Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
 
-        // For ERC20 path, fee should be paid via msg.value and not deducted from amount
+        // Load stored withdraw details for guard checks
+        Cl8YBridge.Withdraw memory w = bridge.getWithdrawFromHash(withdrawHash);
+
+        // Guard validations
+        guard.checkAccount(w.to);
+        guard.checkWithdraw(w.token, w.amount, msg.sender);
+
+        // Fee semantics must be msg.value based for ERC20 path
+        Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
         require(!approval.deductFromAmount, ApprovalRequiresNativePath());
 
         uint256 fee = approval.fee;
@@ -140,45 +129,43 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     /// @notice Withdraw native by minting/unlocking wrapped token to the router, then unwrapping and sending ETH
-    function withdrawNative(bytes32 srcChainKey, uint256 amount, uint256 nonce, address payable to)
-        external
-        whenNotPaused
-        nonReentrant
-    {
+    /// @dev Uses a pre-approved withdraw hash. The stored withdraw must target the router as the recipient.
+    function withdrawNative(bytes32 withdrawHash) external whenNotPaused nonReentrant {
         guard.checkAccount(msg.sender);
-        guard.checkAccount(to);
-        guard.checkWithdraw(address(wrappedNative), amount, msg.sender);
-        // Withdraw wrapped to router (approval should be on wrapped token and to = router with deductFromAmount = true)
-        bytes32 destAccount = bytes32(uint256(uint160(address(to))));
-        Cl8YBridge.Withdraw memory req = Cl8YBridge.Withdraw({
-            srcChainKey: srcChainKey,
-            token: address(wrappedNative),
-            destAccount: destAccount,
-            to: address(this),
-            amount: amount,
-            nonce: nonce
-        });
-        bytes32 withdrawHash = bridge.getWithdrawHash(req);
-        bridge.withdraw(withdrawHash);
 
-        // Determine fee terms from approval (hash uses to = router)
+        // Load stored withdraw details
+        Cl8YBridge.Withdraw memory w = bridge.getWithdrawFromHash(withdrawHash);
+
+        // Native path: token must be wrapped native and destination for mint/unlock must be the router
+        require(w.token == address(wrappedNative), ApprovalNotNativePath());
+        require(w.to == address(this), ApprovalNotNativePath());
+
+        // Decode beneficiary from destAccount (low 20 bytes)
+        address payable beneficiary = payable(address(uint160(uint256(w.destAccount))));
+
+        // Guard validations
+        guard.checkAccount(beneficiary);
+        guard.checkWithdraw(address(wrappedNative), w.amount, msg.sender);
+
+        // Determine fee terms and assert native-path semantics
         Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
-
         require(approval.deductFromAmount, ApprovalNotNativePath());
         uint256 fee = approval.fee;
-        require(fee <= amount, FeeExceedsAmount());
+        require(fee <= w.amount, FeeExceedsAmount());
 
-        // Unwrap and split to feeRecipient and user
-        wrappedNative.withdraw(amount);
+        // Execute withdrawal to router, then unwrap and distribute
+        bridge.withdraw(withdrawHash);
+
+        wrappedNative.withdraw(w.amount);
         if (fee > 0) {
             (bool okFee,) = payable(approval.feeRecipient).call{value: fee}("");
             require(okFee, NativeTransferFailed());
         }
-        uint256 payout = amount - fee;
-        (bool okPayout,) = to.call{value: payout}("");
+        uint256 payout = w.amount - fee;
+        (bool okPayout,) = beneficiary.call{value: payout}("");
         require(okPayout, NativeTransferFailed());
 
-        emit WithdrawNative(to, payout);
+        emit WithdrawNative(beneficiary, payout);
     }
 
     receive() external payable {}

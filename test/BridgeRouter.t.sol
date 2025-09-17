@@ -26,16 +26,8 @@ contract NonPayableRecipient {
 }
 
 contract RefundRejector {
-    function callWithdraw(
-        BridgeRouter router,
-        bytes32 srcChainKey,
-        address token,
-        address to,
-        uint256 amount,
-        uint256 nonce
-    ) external payable {
-        router.withdraw{value: msg.value}(srcChainKey, token, to, amount, nonce);
-        // Note: router.withdraw interface unchanged in this test; router computes hash internally now
+    function callWithdraw(BridgeRouter router, bytes32 withdrawHash) external payable {
+        router.withdraw{value: msg.value}(withdrawHash);
     }
 
     receive() external payable {
@@ -290,8 +282,9 @@ contract BridgeRouterTest is Test {
         bridge.approveWithdraw(
             ethChainKey, address(tokenMintBurn), user, bytes32(uint256(uint160(user))), 50e18, 123, 0, address(0), false
         );
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 50e18, 123);
         vm.prank(user);
-        router.withdraw(ethChainKey, address(tokenMintBurn), user, 50e18, 123);
+        router.withdraw(h);
     }
 
     function testRouterWithdrawNative() public {
@@ -314,8 +307,9 @@ contract BridgeRouterTest is Test {
             address(0),
             true
         );
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.05 ether, 321);
         vm.prank(user);
-        router.withdrawNative(ethChainKey, 0.05 ether, 321, payable(user));
+        router.withdrawNative(h);
         assertEq(user.balance, balBefore + 0.05 ether);
     }
 
@@ -355,9 +349,10 @@ contract BridgeRouterTest is Test {
             address(0),
             true
         );
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(address(npc)), 0.1 ether, 999);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.NativeTransferFailed.selector);
-        router.withdrawNative(ethChainKey, 0.1 ether, 999, payable(address(npc)));
+        router.withdrawNative(h);
     }
 
     function testRouterWithdrawERC20_FeeUnderpayReverts() public {
@@ -384,9 +379,10 @@ contract BridgeRouterTest is Test {
 
         // Underpay should revert
         vm.deal(user, 1 ether);
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 1000);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.InsufficientNativeValue.selector);
-        router.withdraw{value: 0.009 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 1000);
+        router.withdraw{value: 0.009 ether}(h);
     }
 
     function testRouterWithdrawERC20_ExactFeeNoRefund() public {
@@ -410,8 +406,9 @@ contract BridgeRouterTest is Test {
         uint256 userBalBefore = user.balance;
         uint256 feeBalBefore = feeRecipient.balance;
 
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 2e18, 2001);
         vm.prank(user);
-        router.withdraw{value: 0.02 ether}(ethChainKey, address(tokenMintBurn), user, 2e18, 2001);
+        router.withdraw{value: 0.02 ether}(h);
 
         assertEq(user.balance, userBalBefore - 0.02 ether);
         assertEq(feeRecipient.balance, feeBalBefore + 0.02 ether);
@@ -436,8 +433,9 @@ contract BridgeRouterTest is Test {
         // Overpay forwards entire msg.value to feeRecipient
         vm.deal(user, 1 ether);
         uint256 beforeFee = feeRecipient.balance;
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 2002);
         vm.prank(user);
-        router.withdraw{value: 0.02 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2002);
+        router.withdraw{value: 0.02 ether}(h);
         assertEq(feeRecipient.balance, beforeFee + 0.02 ether);
     }
 
@@ -449,9 +447,10 @@ contract BridgeRouterTest is Test {
         );
 
         vm.deal(user, 1 ether);
+        bytes32 h2003 = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 2003);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.InsufficientNativeValue.selector);
-        router.withdraw{value: 1}(ethChainKey, address(tokenMintBurn), user, 1e18, 2003);
+        router.withdraw{value: 1}(h2003);
     }
 
     function testRouterWithdrawERC20_FeePresentButZeroMsgValueReverts() public {
@@ -470,9 +469,10 @@ contract BridgeRouterTest is Test {
         );
 
         // Call without sending msg.value (should revert due to insufficient native value)
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 2010);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.InsufficientNativeValue.selector);
-        router.withdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 2010);
+        router.withdraw(h);
     }
 
     function testRouterWithdrawNative_RevertWhenApprovalNotNativePath() public {
@@ -495,9 +495,10 @@ contract BridgeRouterTest is Test {
             false
         );
 
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.05 ether, 5001);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.ApprovalNotNativePath.selector);
-        router.withdrawNative(ethChainKey, 0.05 ether, 5001, payable(user));
+        router.withdrawNative(h);
     }
 
     function testRouterWithdrawNative_FeeExceedsAmountReverts() public {
@@ -520,9 +521,10 @@ contract BridgeRouterTest is Test {
             true
         );
 
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.05 ether, 5002);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.FeeExceedsAmount.selector);
-        router.withdrawNative(ethChainKey, 0.05 ether, 5002, payable(user));
+        router.withdrawNative(h);
     }
 
     function testRouterWithdrawNative_FeeRecipientTransferFails() public {
@@ -546,9 +548,10 @@ contract BridgeRouterTest is Test {
             true
         );
 
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.05 ether, 5003);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.NativeTransferFailed.selector);
-        router.withdrawNative(ethChainKey, 0.05 ether, 5003, payable(user));
+        router.withdrawNative(h);
     }
 
     function testRouterWithdrawERC20_OverpayGoesToFeeRecipient() public {
@@ -569,8 +572,9 @@ contract BridgeRouterTest is Test {
 
         vm.deal(user, 1 ether);
         uint256 beforeFee = feeRecipient.balance;
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 6000);
         vm.prank(user);
-        router.withdraw{value: 0.010000000000000001 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 6000);
+        router.withdraw{value: 0.010000000000000001 ether}(h);
         assertEq(feeRecipient.balance, beforeFee + 0.010000000000000001 ether);
     }
 
@@ -592,8 +596,9 @@ contract BridgeRouterTest is Test {
 
         vm.deal(user, 1 ether);
         uint256 feeBalBefore = feeRecipient.balance;
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 2000);
         vm.prank(user);
-        router.withdraw{value: 0.010000000000000001 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2000);
+        router.withdraw{value: 0.010000000000000001 ether}(h);
         assertEq(feeRecipient.balance, feeBalBefore + 0.010000000000000001 ether);
     }
 
@@ -603,9 +608,10 @@ contract BridgeRouterTest is Test {
         bridge.approveWithdraw(
             ethChainKey, address(tokenMintBurn), user, bytes32(uint256(uint160(user))), 1e18, 3000, 0, address(0), true
         );
+        bytes32 h = _hashERC20(ethChainKey, address(tokenMintBurn), user, 1e18, 3000);
         vm.prank(user);
         vm.expectRevert(BridgeRouter.ApprovalRequiresNativePath.selector);
-        router.withdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 3000);
+        router.withdraw(h);
     }
 
     function testRouterWithdrawNative_FeeSplitToRecipient() public {
@@ -631,8 +637,9 @@ contract BridgeRouterTest is Test {
 
         uint256 toBalBefore = user.balance;
         uint256 feeBalBefore = feeRecipient.balance;
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.1 ether, 4000);
         vm.prank(user);
-        router.withdrawNative(ethChainKey, 0.1 ether, 4000, payable(user));
+        router.withdrawNative(h);
         assertEq(user.balance, toBalBefore + 0.07 ether);
         assertEq(feeRecipient.balance, feeBalBefore + 0.03 ether);
     }
@@ -658,9 +665,98 @@ contract BridgeRouterTest is Test {
         );
 
         uint256 before = user.balance;
+        bytes32 h = _hashNative(ethChainKey, address(weth), payable(user), 0.08 ether, 4010);
         vm.prank(user);
-        router.withdrawNative(ethChainKey, 0.08 ether, 4010, payable(user));
+        router.withdrawNative(h);
         // Entire amount should be paid to user when fee == 0
         assertEq(user.balance, before + 0.08 ether);
+    }
+
+    function testRouterWithdrawNative_RevertWhenTokenNotWrappedNative() public {
+        // Approve native-path semantics but with a non-wrapped token; should fail token check
+        uint256 amount = 0.05 ether;
+        uint256 nonce = 7777;
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey,
+            address(tokenMintBurn),
+            address(router),
+            bytes32(uint256(uint160(user))),
+            amount,
+            nonce,
+            0,
+            address(0),
+            true
+        );
+
+        Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
+            srcChainKey: ethChainKey,
+            token: address(tokenMintBurn),
+            destAccount: bytes32(uint256(uint160(address(user)))),
+            to: address(router),
+            amount: amount,
+            nonce: nonce
+        });
+        bytes32 h = bridge.getWithdrawHash(w);
+
+        vm.prank(user);
+        vm.expectRevert(BridgeRouter.ApprovalNotNativePath.selector);
+        router.withdrawNative(h);
+    }
+
+    function testRouterWithdrawNative_RevertWhenToIsNotRouter() public {
+        // Approve native-path with wrapped token but wrong recipient; should fail recipient check
+        uint256 amount = 0.05 ether;
+        uint256 nonce = 8888;
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(weth), user, bytes32(uint256(uint160(user))), amount, nonce, 0, address(0), true
+        );
+
+        Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
+            srcChainKey: ethChainKey,
+            token: address(weth),
+            destAccount: bytes32(uint256(uint160(address(user)))),
+            to: user,
+            amount: amount,
+            nonce: nonce
+        });
+        bytes32 h = bridge.getWithdrawHash(w);
+
+        vm.prank(user);
+        vm.expectRevert(BridgeRouter.ApprovalNotNativePath.selector);
+        router.withdrawNative(h);
+    }
+
+    function _hashERC20(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
+        Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: bytes32(uint256(uint160(to))),
+            to: to,
+            amount: amount,
+            nonce: nonce
+        });
+        return bridge.getWithdrawHash(w);
+    }
+
+    function _hashNative(bytes32 srcChainKey, address token, address payable beneficiary, uint256 amount, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
+        Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: bytes32(uint256(uint160(address(beneficiary)))),
+            to: address(router),
+            amount: amount,
+            nonce: nonce
+        });
+        return bridge.getWithdrawHash(w);
     }
 }

@@ -273,8 +273,6 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         // Mark executed before any external effects to prevent replay
         _withdrawApprovals[withdrawHash].executed = true;
 
-        _withdrawHashes.add(withdrawHash);
-
         // Rate limit checks and accounting are enforced by guard modules via the router
 
         _executeTokenBridge(w.token, w.to, w.amount);
@@ -467,6 +465,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
 
         // Persist withdraw request data for hash-only execution path
         _withdraws[withdrawHash] = withdrawRequest;
+        _withdrawHashes.add(withdrawHash);
 
         _withdrawNonceUsed[srcChainKey][nonce] = true;
 
