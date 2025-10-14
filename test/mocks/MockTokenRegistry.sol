@@ -7,6 +7,7 @@ contract MockTokenRegistry {
     mapping(address token => mapping(bytes32 destChainKey => bool)) public isTokenDestChainKeyRegistered;
     mapping(address token => mapping(bytes32 destChainKey => bytes32)) public tokenDestChainTokenAddress;
     mapping(address token => TokenRegistry.BridgeTypeLocal) public tokenBridgeType;
+    mapping(address token => mapping(bytes32 destChainKey => uint256)) public tokenDestChainTokenDecimals;
 
     bool public shouldRevertOnNotRegistered = false;
 
@@ -20,6 +21,10 @@ contract MockTokenRegistry {
 
     function setTokenBridgeType(address token, TokenRegistry.BridgeTypeLocal bridgeType) external {
         tokenBridgeType[token] = bridgeType;
+    }
+
+    function setTokenDestChainTokenDecimals(address token, bytes32 destChainKey, uint256 decimals) external {
+        tokenDestChainTokenDecimals[token][destChainKey] = decimals;
     }
 
     // Removed accumulator and cap logic; rate limiting is handled by guard modules
@@ -40,6 +45,10 @@ contract MockTokenRegistry {
 
     function getTokenBridgeType(address token) external view returns (TokenRegistry.BridgeTypeLocal) {
         return tokenBridgeType[token];
+    }
+
+    function getTokenDestChainTokenDecimals(address token, bytes32 destChainKey) external view returns (uint256) {
+        return tokenDestChainTokenDecimals[token][destChainKey];
     }
 
     // No-op: account updates removed

@@ -9,6 +9,7 @@ import {MintBurn} from "./MintBurn.sol";
 import {LockUnlock} from "./LockUnlock.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /// @title CL8Y Bridge
 /// @notice Cross-chain bridge contract for transferring tokens between different blockchains
@@ -206,6 +207,36 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         return keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
     }
 
+    /// @notice Normalizes an amount to the destination chain's token decimals
+    /// @dev If decimals are the same, returns the original amount unchanged
+    /// @dev If destination has more decimals, scales up (adds zeros)
+    /// @dev If destination has fewer decimals, scales down (removes precision)
+    /// @param token The token address on the source chain
+    /// @param destChainKey The destination chain key
+    /// @param amount The amount in source chain decimals
+    /// @return normalizedAmount The amount normalized to destination chain decimals
+    function normalizeAmountToDestinationDecimals(address token, bytes32 destChainKey, uint256 amount)
+        public
+        view
+        returns (uint256 normalizedAmount)
+    {
+        uint256 srcDecimals = uint256(IERC20Metadata(token).decimals());
+        uint256 destDecimals = tokenRegistry.getTokenDestChainTokenDecimals(token, destChainKey);
+
+        // If decimals are the same, no normalization needed
+        if (srcDecimals == destDecimals) {
+            return amount;
+        }
+
+        // If destination has more decimals, scale up
+        if (destDecimals > srcDecimals) {
+            return amount * (10 ** (destDecimals - srcDecimals));
+        }
+
+        // If destination has fewer decimals, scale down
+        return amount / (10 ** (srcDecimals - destDecimals));
+    }
+
     /// @notice Deposits tokens to be bridged to another chain
     /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
     /// @dev Validates the destination chain and updates transfer accumulator.
@@ -214,7 +245,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     /// @param destChainKey The destination chain key
     /// @param destAccount The destination account address (chain-specific format encoded as bytes32)
     /// @param token The token address to deposit
-    /// @param amount The amount of tokens to deposit
+    /// @param amount The amount of tokens to deposit (in source chain decimals)
     function deposit(address payer, bytes32 destChainKey, bytes32 destAccount, address token, uint256 amount)
         public
         whenNotPaused
@@ -223,12 +254,15 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, destChainKey);
 
+        // Normalize the amount to destination chain decimals for the hash
+        uint256 normalizedAmount = normalizeAmountToDestinationDecimals(token, destChainKey, amount);
+
         Deposit memory depositRequest = Deposit({
             destChainKey: destChainKey,
             destTokenAddress: tokenRegistry.getTokenDestChainTokenAddress(token, destChainKey),
             destAccount: destAccount,
             from: payer,
-            amount: amount,
+            amount: normalizedAmount,
             nonce: depositNonce
         });
 
@@ -239,12 +273,15 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         _depositHashes.add(depositHash);
         _deposits[depositHash] = depositRequest;
 
-        emit DepositRequest(destChainKey, depositRequest.destTokenAddress, destAccount, token, amount, depositNonce);
+        emit DepositRequest(
+            destChainKey, depositRequest.destTokenAddress, destAccount, token, normalizedAmount, depositNonce
+        );
         depositNonce++;
 
         // Rate limit checks and accounting are enforced by guard modules via the router
 
         // mintBurn and lockUnlock both prevent reentrancy attacks
+        // Use the original amount (in source chain decimals) for burning/locking
         if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.MintBurn) {
             mintBurn.burn(payer, token, amount);
         } else if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.LockUnlock) {
@@ -420,6 +457,15 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     /// @notice Approve a withdrawal with fee terms
+    /// @param srcChainKey The source chain key where the deposit originated
+    /// @param token The token address on this (destination) chain
+    /// @param to The recipient address for the withdrawal
+    /// @param destAccount The destination account that matches the deposit
+    /// @param amount The amount to withdraw (in destination chain decimals, i.e., this chain's decimals)
+    /// @param nonce The nonce from the deposit on the source chain
+    /// @param fee The fee to charge for this withdrawal
+    /// @param feeRecipient The address to receive the fee
+    /// @param deductFromAmount Whether to deduct the fee from the withdrawal amount
     function approveWithdraw(
         bytes32 srcChainKey,
         address token,
@@ -432,12 +478,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         bool deductFromAmount
     ) public restricted whenNotPaused {
         Withdraw memory withdrawRequest = Withdraw({
-            srcChainKey: srcChainKey,
-            token: token,
-            destAccount: destAccount,
-            to: to,
-            amount: amount,
-            nonce: nonce
+            srcChainKey: srcChainKey, token: token, destAccount: destAccount, to: to, amount: amount, nonce: nonce
         });
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         // Enforce per-srcChainKey nonce uniqueness across all approvals
@@ -497,3 +538,4 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         emit WithdrawApprovalReenabled(withdrawHash);
     }
 }
+

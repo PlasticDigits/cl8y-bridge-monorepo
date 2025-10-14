@@ -163,6 +163,7 @@ contract CL8YBridgeTest is Test {
         mockTokenRegistry.setTokenDestChainKeyRegistered(address(token), DEST_CHAIN_KEY, true);
         mockTokenRegistry.setTokenDestChainKeyRegistered(address(token), SRC_CHAIN_KEY, true);
         mockTokenRegistry.setTokenDestChainTokenAddress(address(token), DEST_CHAIN_KEY, DEST_TOKEN_ADDRESS);
+        mockTokenRegistry.setTokenDestChainTokenDecimals(address(token), DEST_CHAIN_KEY, 18);
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.MintBurn);
         // No registry rate limit; handled by guard modules in router in production
 
@@ -200,6 +201,7 @@ contract CL8YBridgeTest is Test {
     function testDepositLockUnlock() public {
         // Configure token for LockUnlock bridge type
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
+        mockTokenRegistry.setTokenDestChainTokenDecimals(address(token), DEST_CHAIN_KEY, 18);
 
         // Approve downstream module only
         vm.startPrank(user);
@@ -279,6 +281,7 @@ contract CL8YBridgeTest is Test {
     function testWithdrawLockUnlock() public {
         // Configure token for LockUnlock bridge type
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
+        mockTokenRegistry.setTokenDestChainTokenDecimals(address(token), DEST_CHAIN_KEY, 18);
 
         // Approve then withdraw (fee = 0)
         vm.prank(bridgeOperator);
@@ -538,6 +541,7 @@ contract CL8YBridgeTest is Test {
     function testWithdraw_DeductFromAmount_SucceedsWithZeroMsgValue() public {
         // Configure lock/unlock path for variety
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
+        mockTokenRegistry.setTokenDestChainTokenDecimals(address(token), DEST_CHAIN_KEY, 18);
         // Approve with deductFromAmount = true
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
@@ -1542,6 +1546,7 @@ contract CL8YBridgeTest is Test {
     function testLockUnlockErrors() public {
         // Configure for lock/unlock
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
+        mockTokenRegistry.setTokenDestChainTokenDecimals(address(token), DEST_CHAIN_KEY, 18);
 
         // Test lock failure
         mockLockUnlock.setShouldRevertOnLock(true);
