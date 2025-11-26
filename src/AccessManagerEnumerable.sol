@@ -20,6 +20,9 @@ contract AccessManagerEnumerable is AccessManager {
     /// @dev Members granted for a given roleId
     mapping(uint64 roleId => EnumerableSet.AddressSet) private _roleMembers;
 
+    /// @dev Set of all roleIds that have at least one member
+    EnumerableSet.UintSet private _roles;
+
     // Note: account -> roles tracking removed to reduce bytecode size
 
     /// @dev Set of all managed targets observed via any target-configuring action
@@ -31,6 +34,7 @@ contract AccessManagerEnumerable is AccessManager {
     constructor(address initialAdmin) AccessManager(initialAdmin) {
         // Mirror the initial admin grant done in the base constructor
         _roleMembers[ADMIN_ROLE].add(initialAdmin);
+        _roles.add(ADMIN_ROLE);
     }
 
     // ============================================= OVERRIDES (MUTATIONS) ============================================
@@ -39,6 +43,10 @@ contract AccessManagerEnumerable is AccessManager {
         bool newMember = _grantRole(roleId, account, getRoleGrantDelay(roleId), executionDelay);
         if (newMember) {
             _roleMembers[roleId].add(account);
+            // Add roleId to _roles set if this is the first member
+            if (_roleMembers[roleId].length() == 1) {
+                _roles.add(roleId);
+            }
         }
     }
 
@@ -47,6 +55,10 @@ contract AccessManagerEnumerable is AccessManager {
         bool wasMember = _revokeRole(roleId, account);
         if (wasMember) {
             _roleMembers[roleId].remove(account);
+            // Remove roleId from _roles set if no members remain
+            if (_roleMembers[roleId].length() == 0) {
+                _roles.remove(roleId);
+            }
         }
     }
 
@@ -58,6 +70,10 @@ contract AccessManagerEnumerable is AccessManager {
         super.renounceRole(roleId, callerConfirmation);
         if (hadRole) {
             _roleMembers[roleId].remove(callerConfirmation);
+            // Remove roleId from _roles set if no members remain
+            if (_roleMembers[roleId].length() == 0) {
+                _roles.remove(roleId);
+            }
         }
     }
 
@@ -93,6 +109,7 @@ contract AccessManagerEnumerable is AccessManager {
     }
 
     /// @inheritdoc AccessManager
+    /// @notice Since there might still be selectors granted to the target, even if the target is transferred to a new authority, the target is still tracked.
     function updateAuthority(address target, address newAuthority) public virtual override onlyAuthorized {
         _managedTargets.add(target);
         super.updateAuthority(target, newAuthority);
@@ -204,6 +221,43 @@ contract AccessManagerEnumerable is AccessManager {
 
     // Account-oriented getters removed to reduce bytecode size
 
+    // ================================================= ROLE ENUMERATION ==============================================
+    /// @notice Does not always track ADMIN_ROLE (0) or PUBLIC_ROLE (uint64(-1))
+    function getRoleCount() public view returns (uint256 count) {
+        return _roles.length();
+    }
+
+    function getRoles() public view returns (uint64[] memory roleIds) {
+        uint256 len = _roles.length();
+        roleIds = new uint64[](len);
+        for (uint256 i = 0; i < len; i++) {
+            roleIds[i] = uint64(_roles.at(i));
+        }
+    }
+
+    function getRoleAt(uint256 index) public view returns (uint64 roleId) {
+        return uint64(_roles.at(index));
+    }
+
+    function getRolesFrom(uint256 index, uint256 count) public view returns (uint64[] memory roleIds) {
+        uint256 totalLength = _roles.length();
+        if (index >= totalLength) {
+            return new uint64[](0);
+        }
+        if (index + count > totalLength) {
+            count = totalLength - index;
+        }
+        roleIds = new uint64[](count);
+        for (uint256 i = 0; i < count; i++) {
+            roleIds[i] = uint64(_roles.at(index + i));
+        }
+    }
+
+    /// @notice Does not always track ADMIN_ROLE (0)
+    function isRoleTracked(uint64 roleId) public view returns (bool) {
+        return _roles.contains(roleId);
+    }
+
     // ==================================================== INTERNALS =================================================
     function _isAccountActiveInRole(uint64 roleId, address account) internal view returns (bool) {
         (bool inRole,) = hasRole(roleId, account);
@@ -242,6 +296,7 @@ contract AccessManagerEnumerable is AccessManager {
     }
 
     // ============================== TARGET -> ROLE -> SELECTORS (granted) ===========================================
+    // @notice Does not always track default admin role selectors (roleid 0)
     function getTargetRoleSelectorCount(address target, uint64 roleId) public view returns (uint256 count) {
         return _targetRoleSelectors[target][roleId].length();
     }
