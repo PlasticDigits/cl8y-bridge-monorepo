@@ -1,0 +1,72 @@
+{
+  "description": "Example instantiate messages for CL8Y Bridge contracts",
+  "note": "Replace placeholder addresses with actual deployed addresses",
+  
+  "bridge": {
+    "admin": "terra1...admin_address",
+    "relayers": [
+      "terra1...relayer1",
+      "terra1...relayer2",
+      "terra1...relayer3"
+    ],
+    "min_signatures": 2,
+    "min_bridge_amount": "1000000",
+    "max_bridge_amount": "1000000000000",
+    "fee_bps": 30,
+    "fee_collector": "terra1...fee_collector"
+  },
+
+  "supported_chains": [
+    {
+      "chain_id": 1,
+      "name": "Ethereum",
+      "bridge_address": "0x..."
+    },
+    {
+      "chain_id": 56,
+      "name": "BNB Smart Chain",
+      "bridge_address": "0x..."
+    },
+    {
+      "chain_id": 137,
+      "name": "Polygon",
+      "bridge_address": "0x..."
+    },
+    {
+      "chain_id": 43114,
+      "name": "Avalanche",
+      "bridge_address": "0x..."
+    }
+  ],
+
+  "supported_tokens": [
+    {
+      "token": "uusd",
+      "is_native": true,
+      "evm_token_address": "0x...",
+      "terra_decimals": 6,
+      "evm_decimals": 18,
+      "note": "USTC - TerraClassic USD"
+    },
+    {
+      "token": "uluna",
+      "is_native": true,
+      "evm_token_address": "0x...",
+      "terra_decimals": 6,
+      "evm_decimals": 18,
+      "note": "LUNC - Luna Classic"
+    }
+  ],
+
+  "testnet": {
+    "note": "Testnet-specific configuration",
+    "rpc": "https://terra-classic-testnet-rpc.publicnode.com",
+    "chain_id": "rebel-2"
+  },
+  
+  "mainnet": {
+    "note": "Mainnet-specific configuration",
+    "rpc": "https://terra-classic-rpc.publicnode.com",
+    "chain_id": "columbus-5"
+  }
+}

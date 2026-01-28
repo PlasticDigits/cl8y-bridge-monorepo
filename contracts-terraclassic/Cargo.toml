@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "contracts/bridge",
+    "packages/common",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["CL8Y Bridge Team"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/CL8Y-Bridge-EVM-smartcontracts"
+
+[workspace.dependencies]
+cosmwasm-std = { version = "1.5.11", features = ["staking"] }
+cosmwasm-schema = "1.5.9"
+cw-storage-plus = "1.2.0"
+cw2 = "1.1.2"
+cw20 = "1.1.2"
+cw20-base = "1.1.2"
+cw-multi-test = "1.0.0"
+thiserror = "1.0.4"
+schemars = "0.8.15"
+serde = { version = "1.0.188", default-features = false, features = ["derive"] }
+base64ct = "=1.7.3"
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
