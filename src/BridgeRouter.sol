@@ -5,7 +5,6 @@ pragma solidity ^0.8.30;
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-// import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {Cl8YBridge} from "./CL8YBridge.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";

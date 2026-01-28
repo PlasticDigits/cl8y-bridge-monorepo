@@ -3,7 +3,13 @@
 **A community operated bridge, open to all and secured by CL8Y, for EVM, CosmWasm, Sol, and more.**
 This repo contains the EVM smart contracts for the CL8Y Bridge, licensed under AGPL.
 
-## Deployments Stable (v1.2)
+## Deployments Stable (v1.4)
+
+### BSC
+Create3Deployer: 
+AccessManagerEnumerable: 0x745120275A70693cc1D55cD5C81e99b0D2C1dF57
+
+## Deployments (v1.2)
 
 ### BSC Testnet, opBNB Testnet
 

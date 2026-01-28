@@ -117,18 +117,34 @@ contract AccessManagerEnumerable is AccessManager {
 
     // ===================================================== GETTERS ==================================================
     // ----- Role -> Accounts (granted) -----
+
+    /// @notice Returns the number of accounts that have been granted a specific role
+    /// @param roleId The role identifier to query
+    /// @return count The number of accounts with this role (including pending activations)
     function getRoleMemberCount(uint64 roleId) public view returns (uint256 count) {
         return _roleMembers[roleId].length();
     }
 
+    /// @notice Returns all accounts that have been granted a specific role
+    /// @param roleId The role identifier to query
+    /// @return items Array of addresses with this role (including pending activations)
     function getRoleMembers(uint64 roleId) public view returns (address[] memory items) {
         return _roleMembers[roleId].values();
     }
 
+    /// @notice Returns the account at a specific index for a role
+    /// @param roleId The role identifier to query
+    /// @param index The index in the role's member set
+    /// @return item The address at the specified index
     function getRoleMemberAt(uint64 roleId, uint256 index) public view returns (address item) {
         return _roleMembers[roleId].at(index);
     }
 
+    /// @notice Returns a paginated slice of role members
+    /// @param roleId The role identifier to query
+    /// @param index The starting index for pagination
+    /// @param count The maximum number of items to return
+    /// @return items Array of addresses in the requested range
     function getRoleMembersFrom(uint64 roleId, uint256 index, uint256 count)
         public
         view
@@ -148,6 +164,10 @@ contract AccessManagerEnumerable is AccessManager {
     }
 
     // ----- Role -> Accounts (active now) -----
+
+    /// @notice Returns the count of accounts currently active in a role (past grant delay)
+    /// @param roleId The role identifier to query
+    /// @return count The number of currently active members
     function getActiveRoleMemberCount(uint64 roleId) public view returns (uint256 count) {
         EnumerableSet.AddressSet storage setRef = _roleMembers[roleId];
         uint256 len = setRef.length();
@@ -160,6 +180,9 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Returns all accounts currently active in a role (past grant delay)
+    /// @param roleId The role identifier to query
+    /// @return items Array of currently active member addresses
     function getActiveRoleMembers(uint64 roleId) public view returns (address[] memory items) {
         EnumerableSet.AddressSet storage setRef = _roleMembers[roleId];
         uint256 len = setRef.length();
@@ -181,6 +204,11 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Returns a paginated slice of currently active role members
+    /// @param roleId The role identifier to query
+    /// @param index The starting index for pagination (among active members only)
+    /// @param count The maximum number of items to return
+    /// @return items Array of active member addresses in the requested range
     function getActiveRoleMembersFrom(uint64 roleId, uint256 index, uint256 count)
         public
         view
@@ -210,10 +238,18 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Checks if an account has been granted a role (may still be pending activation)
+    /// @param roleId The role identifier to check
+    /// @param account The account address to check
+    /// @return True if the account has been granted this role
     function isRoleMember(uint64 roleId, address account) public view returns (bool) {
         return _roleMembers[roleId].contains(account);
     }
 
+    /// @notice Checks if an account is currently active in a role (past grant delay)
+    /// @param roleId The role identifier to check
+    /// @param account The account address to check
+    /// @return True if the account is currently active in this role
     function isRoleMemberActive(uint64 roleId, address account) public view returns (bool) {
         (bool inRole,) = hasRole(roleId, account);
         return inRole;
@@ -222,11 +258,17 @@ contract AccessManagerEnumerable is AccessManager {
     // Account-oriented getters removed to reduce bytecode size
 
     // ================================================= ROLE ENUMERATION ==============================================
-    /// @notice Does not always track ADMIN_ROLE (0) or PUBLIC_ROLE (uint64(-1))
+
+    /// @notice Returns the number of distinct roles that have at least one member
+    /// @dev Does not always track ADMIN_ROLE (0) or PUBLIC_ROLE (type(uint64).max)
+    /// @return count The number of tracked roles
     function getRoleCount() public view returns (uint256 count) {
         return _roles.length();
     }
 
+    /// @notice Returns all role IDs that have at least one member
+    /// @dev Does not always track ADMIN_ROLE (0) or PUBLIC_ROLE (type(uint64).max)
+    /// @return roleIds Array of role identifiers
     function getRoles() public view returns (uint64[] memory roleIds) {
         uint256 len = _roles.length();
         roleIds = new uint64[](len);
@@ -235,10 +277,17 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Returns the role ID at a specific index
+    /// @param index The index in the roles set
+    /// @return roleId The role identifier at the specified index
     function getRoleAt(uint256 index) public view returns (uint64 roleId) {
         return uint64(_roles.at(index));
     }
 
+    /// @notice Returns a paginated slice of role IDs
+    /// @param index The starting index for pagination
+    /// @param count The maximum number of items to return
+    /// @return roleIds Array of role identifiers in the requested range
     function getRolesFrom(uint256 index, uint256 count) public view returns (uint64[] memory roleIds) {
         uint256 totalLength = _roles.length();
         if (index >= totalLength) {
@@ -253,30 +302,47 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
-    /// @notice Does not always track ADMIN_ROLE (0)
+    /// @notice Checks if a role is currently tracked (has at least one member)
+    /// @dev Does not always track ADMIN_ROLE (0)
+    /// @param roleId The role identifier to check
+    /// @return True if the role is tracked
     function isRoleTracked(uint64 roleId) public view returns (bool) {
         return _roles.contains(roleId);
     }
 
     // ==================================================== INTERNALS =================================================
+
+    /// @dev Checks if an account is currently active in a role via hasRole
     function _isAccountActiveInRole(uint64 roleId, address account) internal view returns (bool) {
         (bool inRole,) = hasRole(roleId, account);
         return inRole;
     }
 
     // ================================================= TARGET ENUMERATION ==========================================
+
+    /// @notice Returns the number of managed targets observed by this access manager
+    /// @return count The number of tracked targets
     function getManagedTargetCount() public view returns (uint256 count) {
         return _managedTargets.length();
     }
 
+    /// @notice Returns all managed target addresses
+    /// @return items Array of target contract addresses
     function getManagedTargets() public view returns (address[] memory items) {
         return _managedTargets.values();
     }
 
+    /// @notice Returns the managed target at a specific index
+    /// @param index The index in the targets set
+    /// @return item The target address at the specified index
     function getManagedTargetAt(uint256 index) public view returns (address item) {
         return _managedTargets.at(index);
     }
 
+    /// @notice Returns a paginated slice of managed targets
+    /// @param index The starting index for pagination
+    /// @param count The maximum number of items to return
+    /// @return items Array of target addresses in the requested range
     function getManagedTargetsFrom(uint256 index, uint256 count) public view returns (address[] memory items) {
         uint256 totalLength = _managedTargets.length();
         if (index >= totalLength) {
@@ -291,16 +357,28 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Checks if an address is a managed target
+    /// @param target The address to check
+    /// @return True if the address is a managed target
     function isManagedTarget(address target) public view returns (bool) {
         return _managedTargets.contains(target);
     }
 
     // ============================== TARGET -> ROLE -> SELECTORS (granted) ===========================================
-    // @notice Does not always track default admin role selectors (roleid 0)
+
+    /// @notice Returns the number of selectors assigned to a role for a target
+    /// @dev Does not always track default admin role selectors (roleId 0)
+    /// @param target The target contract address
+    /// @param roleId The role identifier
+    /// @return count The number of selectors assigned to this role for this target
     function getTargetRoleSelectorCount(address target, uint64 roleId) public view returns (uint256 count) {
         return _targetRoleSelectors[target][roleId].length();
     }
 
+    /// @notice Returns all selectors assigned to a role for a target
+    /// @param target The target contract address
+    /// @param roleId The role identifier
+    /// @return selectors Array of function selectors
     function getTargetRoleSelectors(address target, uint64 roleId) public view returns (bytes4[] memory selectors) {
         bytes32[] memory raw = _targetRoleSelectors[target][roleId].values();
         selectors = new bytes4[](raw.length);
@@ -309,10 +387,21 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Returns the selector at a specific index for a target-role pair
+    /// @param target The target contract address
+    /// @param roleId The role identifier
+    /// @param index The index in the selectors set
+    /// @return The function selector at the specified index
     function getTargetRoleSelectorAt(address target, uint64 roleId, uint256 index) public view returns (bytes4) {
         return bytes4(_targetRoleSelectors[target][roleId].at(index));
     }
 
+    /// @notice Returns a paginated slice of selectors for a target-role pair
+    /// @param target The target contract address
+    /// @param roleId The role identifier
+    /// @param index The starting index for pagination
+    /// @param count The maximum number of items to return
+    /// @return selectors Array of function selectors in the requested range
     function getTargetRoleSelectorsFrom(address target, uint64 roleId, uint256 index, uint256 count)
         public
         view
@@ -331,6 +420,11 @@ contract AccessManagerEnumerable is AccessManager {
         }
     }
 
+    /// @notice Checks if a selector is assigned to a role for a target
+    /// @param target The target contract address
+    /// @param roleId The role identifier
+    /// @param selector The function selector to check
+    /// @return True if the selector is assigned to this role for this target
     function isTargetRoleSelector(address target, uint64 roleId, bytes4 selector) public view returns (bool) {
         return _targetRoleSelectors[target][roleId].contains(bytes32(selector));
     }
