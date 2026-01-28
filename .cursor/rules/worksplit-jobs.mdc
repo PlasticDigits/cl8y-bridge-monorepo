@@ -1,0 +1,42 @@
+---
+description: WorkSplit job creation protocol - read manager instructions and choose correct modes
+alwaysApply: true
+---
+
+# WorkSplit Job Creation Protocol
+
+Before creating ANY WorkSplit job, you MUST:
+
+1. **Read manager instructions**: `jobs/_manager_instruction.md`
+2. **Read README guidance**: The "Success Rate by Job Type" section
+
+## Mode Selection Decision Tree
+
+| Situation | Action |
+|-----------|--------|
+| Adding NEW code (structs, functions, files) | **REPLACE mode** |
+| Editing < 10 lines | **Do it MANUALLY** |
+| Editing 10-50 lines in ONE location | **EDIT mode** (with caution) |
+| Editing multiple files | **REPLACE mode** or separate jobs |
+| Total changes < 100 lines | Consider **manual editing** |
+
+## Batching Requirements
+
+- Create ALL related jobs FIRST, then run `worksplit run` (not individual `--job` runs)
+- Add `depends_on` in frontmatter when jobs have compile-time dependencies
+- Use sequential prefixes: `feature_001_`, `feature_002_` for correct ordering
+
+```yaml
+# Example: Job B depends on Job A's output
+---
+depends_on:
+  - feature_001_base
+output_file: feature.rs
+---
+```
+
+## On Failure
+
+1. Do NOT retry edit mode more than once
+2. Switch to REPLACE mode or do it manually
+3. Never abandon WorkSplit without explicit user approval
