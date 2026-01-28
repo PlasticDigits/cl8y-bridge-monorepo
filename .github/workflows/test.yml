@@ -2,19 +2,28 @@ name: CI
 
 on:
   push:
+    paths:
+      - 'packages/evm-contracts/**'
+      - '.github/workflows/test.yml'
   pull_request:
+    paths:
+      - 'packages/evm-contracts/**'
+      - '.github/workflows/test.yml'
   workflow_dispatch:
 
 env:
   FOUNDRY_PROFILE: ci
 
 jobs:
-  check:
+  evm-contracts:
     strategy:
       fail-fast: true
 
-    name: Foundry project
+    name: EVM Contracts
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/evm-contracts
     steps:
       - uses: actions/checkout@v4
         with:
