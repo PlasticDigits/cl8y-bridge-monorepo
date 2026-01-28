@@ -1,0 +1,113 @@
+.PHONY: start stop reset deploy relayer test-transfer logs help
+
+# Default target
+help:
+	@echo "CL8Y Bridge Development Commands"
+	@echo ""
+	@echo "Infrastructure:"
+	@echo "  make start          - Start all services (Anvil, LocalTerra, PostgreSQL)"
+	@echo "  make stop           - Stop all services"
+	@echo "  make reset          - Stop and remove all volumes"
+	@echo "  make logs           - View service logs"
+	@echo ""
+	@echo "Development:"
+	@echo "  make deploy         - Deploy contracts to local chains"
+	@echo "  make relayer        - Run the relayer service"
+	@echo "  make test-transfer  - Run a test crosschain transfer"
+	@echo ""
+	@echo "Building:"
+	@echo "  make build-evm      - Build EVM contracts"
+	@echo "  make build-terra    - Build Terra contracts"
+	@echo "  make build-relayer  - Build relayer"
+	@echo "  make build          - Build all packages"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test-evm       - Run EVM contract tests"
+	@echo "  make test-relayer   - Run relayer tests"
+	@echo "  make test           - Run all tests"
+
+# Infrastructure
+start:
+	docker-compose up -d
+	@echo "Waiting for services to be healthy..."
+	@sleep 5
+	docker-compose ps
+
+stop:
+	docker-compose down
+
+reset:
+	docker-compose down -v
+
+logs:
+	docker-compose logs -f
+
+logs-anvil:
+	docker-compose logs -f anvil
+
+logs-terra:
+	docker-compose logs -f localterra
+
+logs-postgres:
+	docker-compose logs -f postgres
+
+# Building
+build-evm:
+	cd packages/contracts-evm && forge build
+
+build-terra:
+	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown
+
+build-relayer:
+	cd packages/relayer && cargo build
+
+build: build-evm build-terra build-relayer
+
+# Testing
+test-evm:
+	cd packages/contracts-evm && forge test -vvv
+
+test-relayer:
+	cd packages/relayer && cargo test
+
+test: test-evm test-relayer
+
+# Deployment
+deploy: deploy-evm deploy-terra setup-bridge
+	@echo "Deployment complete!"
+
+deploy-evm:
+	@echo "Deploying EVM contracts to Anvil..."
+	cd packages/contracts-evm && forge script script/DeployLocal.s.sol:DeployLocal \
+		--broadcast \
+		--rpc-url http://localhost:8545
+
+deploy-terra:
+	@echo "Deploying Terra contracts to LocalTerra..."
+	cd packages/contracts-terraclassic && ./scripts/deploy.sh local
+
+setup-bridge:
+	@echo "Configuring bridge connections..."
+	./scripts/setup-bridge.sh
+
+# Relayer
+relayer:
+	cd packages/relayer && cargo run
+
+relayer-migrate:
+	cd packages/relayer && sqlx migrate run
+
+# Test transfer
+test-transfer:
+	./scripts/test-transfer.sh
+
+# WorkSplit
+worksplit-init:
+	cd packages/relayer && worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
+	cd packages/contracts-evm && worksplit init --lang solidity --model worksplit-coder-glm-4.7:32k
+	cd packages/contracts-terraclassic && worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
+
+worksplit-status:
+	@echo "=== Relayer ===" && cd packages/relayer && worksplit status || true
+	@echo "=== EVM Contracts ===" && cd packages/contracts-evm && worksplit status || true
+	@echo "=== Terra Contracts ===" && cd packages/contracts-terraclassic && worksplit status || true

@@ -964,12 +964,367 @@ This reinforces our sovereignty-first approach:
 
 ---
 
+## Appendix A: Protecting Sovereignty from Third-Party Infrastructure
+
+### A.1 The Problem: Personnel and Governance Risk
+
+When integrating with any third-party infrastructure (including Hyperlane deployments), CL8Y becomes exposed to risks beyond smart contract security:
+
+- **Personnel decisions**: Individuals controlling validators, ISMs, or contracts may make decisions that negatively impact CL8Y users
+- **Governance changes**: The controlling party may change policies, validator sets, or contract parameters
+- **Selective enforcement**: Operators may choose to censor, delay, or block specific applications
+- **Availability dependence**: If the third party discontinues service, CL8Y operations are affected
+
+**Principle**: CL8Y must maintain operational sovereignty regardless of third-party infrastructure choices.
+
+### A.2 Third-Party Hyperlane Control Points
+
+If someone else deploys Hyperlane infrastructure on Terra Classic, they control:
+
+| Component | What They Control | Impact on CL8Y |
+|-----------|-------------------|----------------|
+| **Mailbox** | Core message routing | Can pause all messaging |
+| **ISM (Default)** | Validator set, security rules | Can change who validates messages |
+| **Validators** | Message signing | Can refuse to sign CL8Y messages |
+| **Warp Routes** | Token bridging contracts | Can pause, block, or modify routes |
+| **Relayers** | Message delivery | Can delay or refuse delivery |
+
+### A.3 Safeguards When Using Third-Party Hyperlane
+
+If CL8Y chooses to integrate with a third-party Hyperlane deployment, implement these safeguards:
+
+#### A.3.1 Exposure Limits
+
+```solidity
+/// @title SafeguardedSwapRouter
+/// @notice Swap router with exposure limits for third-party Hyperlane integration
+contract SafeguardedSwapRouter is SwapRouter {
+    
+    // Maximum single swap amount
+    mapping(address token => uint256 maxAmount) public maxSwapAmount;
+    
+    // Daily cumulative limits
+    mapping(address token => uint256 dailyLimit) public dailySwapLimit;
+    mapping(address token => uint256 usedToday) public dailySwapUsed;
+    mapping(address token => uint256 lastResetDay) public lastResetDay;
+    
+    // Total exposure cap (how much can be locked in third-party contracts)
+    mapping(address token => uint256 maxExposure) public maxTotalExposure;
+    mapping(address token => uint256 currentExposure) public currentExposure;
+    
+    function executeSwapToHyperlane(
+        bytes32 terraUser,
+        address token,
+        uint256 amount
+    ) external payable override restricted {
+        // Check single transaction limit
+        require(amount <= maxSwapAmount[token], "Exceeds max swap amount");
+        
+        // Check and update daily limit
+        _resetDailyLimitIfNeeded(token);
+        require(
+            dailySwapUsed[token] + amount <= dailySwapLimit[token],
+            "Exceeds daily limit"
+        );
+        dailySwapUsed[token] += amount;
+        
+        // Check total exposure
+        require(
+            currentExposure[token] + amount <= maxTotalExposure[token],
+            "Exceeds total exposure limit"
+        );
+        currentExposure[token] += amount;
+        
+        // Execute swap
+        super.executeSwapToHyperlane(terraUser, token, amount);
+    }
+    
+    // When user swaps back (hypToken → CL8Y token), reduce exposure
+    function executeSwapToCl8y(
+        bytes32 terraUser,
+        address token,
+        uint256 amount
+    ) external override restricted {
+        if (currentExposure[token] >= amount) {
+            currentExposure[token] -= amount;
+        } else {
+            currentExposure[token] = 0;
+        }
+        
+        super.executeSwapToCl8y(terraUser, token, amount);
+    }
+    
+    function _resetDailyLimitIfNeeded(address token) internal {
+        uint256 today = block.timestamp / 1 days;
+        if (lastResetDay[token] < today) {
+            dailySwapUsed[token] = 0;
+            lastResetDay[token] = today;
+        }
+    }
+    
+    // Admin functions to set limits
+    function setMaxSwapAmount(address token, uint256 amount) external restricted {
+        maxSwapAmount[token] = amount;
+    }
+    
+    function setDailyLimit(address token, uint256 limit) external restricted {
+        dailySwapLimit[token] = limit;
+    }
+    
+    function setMaxExposure(address token, uint256 exposure) external restricted {
+        maxTotalExposure[token] = exposure;
+    }
+}
+```
+
+#### A.3.2 Monitoring and Alerts
+
+Implement off-chain monitoring for:
+
+| Event | Alert Condition | Response |
+|-------|-----------------|----------|
+| Failed swap delivery | Swap initiated but not completed within 1 hour | Investigate, pause if pattern |
+| Validator changes | Third-party ISM validator set modified | Review new validators |
+| Contract upgrades | Third-party contracts upgraded | Audit new code, pause if suspicious |
+| Selective blocking | CL8Y transactions failing while others succeed | Escalate, consider disabling integration |
+
+#### A.3.3 Emergency Procedures
+
+```solidity
+/// @notice Emergency disable of third-party integration
+function emergencyDisableHyperlane() external restricted {
+    // 1. Pause all swaps to Hyperlane
+    hyperlaneSwapsEnabled = false;
+    
+    // 2. If using Hyperlane validation, switch to operator module
+    if (address(validationModule) == address(hyperlaneModule)) {
+        validationModule = operatorModule;
+    }
+    
+    // 3. Emit event for transparency
+    emit HyperlaneIntegrationDisabled(block.timestamp, msg.sender);
+}
+```
+
+#### A.3.4 User Disclosure
+
+When users swap to third-party Hyperlane tokens, clearly disclose:
+
+```
+⚠️ THIRD-PARTY BRIDGE WARNING
+
+You are swapping USDT-cb (CL8Y Bridge) → hypUSDT (Hyperlane).
+
+hypUSDT is controlled by a third-party Hyperlane deployment.
+CL8Y does not control:
+• Hyperlane validators
+• Hyperlane smart contracts  
+• hypUSDT token contract
+
+By proceeding, you accept that:
+• CL8Y cannot guarantee hypUSDT availability
+• CL8Y cannot reverse Hyperlane transactions
+• Third-party governance may affect your tokens
+
+[ ] I understand and accept these risks
+
+[Cancel] [Proceed]
+```
+
+---
+
+### A.4 Deploying CL8Y-Owned Hyperlane Infrastructure
+
+For maximum sovereignty, CL8Y can deploy its own Hyperlane infrastructure.
+
+#### A.4.1 What CL8Y Would Deploy
+
+| Component | Description | Estimated Cost |
+|-----------|-------------|----------------|
+| **Mailbox (Terra Classic)** | Core Hyperlane contract on Terra | One-time deployment gas |
+| **Mailbox (Each EVM chain)** | Core Hyperlane contract on BSC, etc. | One-time deployment gas |
+| **ISM Contracts** | CL8Y-controlled security modules | One-time deployment gas |
+| **Validator Nodes** | Sign cross-chain messages | ~$50-150/month per node |
+| **Relayer Service** | Deliver messages between chains | ~$50-100/month + gas costs |
+| **Warp Route Contracts** | Token bridging (per token) | One-time deployment gas |
+
+**Estimated infrastructure cost**: $200-500/month for a minimal setup (3 validators, 1 relayer).
+
+#### A.4.2 Deployment Steps
+
+```
+Step 1: Deploy Hyperlane Core on Each Chain
+┌─────────────────────────────────────────────────────────────────┐
+│  • Deploy Mailbox contract on Terra Classic (CosmWasm)          │
+│  • Deploy Mailbox contract on BSC (Solidity)                   │
+│  • Deploy Mailbox contract on other target EVMs                │
+│  • Configure domain IDs for each chain                         │
+└─────────────────────────────────────────────────────────────────┘
+
+Step 2: Deploy ISM Infrastructure
+┌─────────────────────────────────────────────────────────────────┐
+│  • Deploy MultisigISM on each chain                            │
+│  • Configure validator set (CL8Y-controlled keys)              │
+│  • Set threshold (e.g., 2-of-3 or 3-of-5)                     │
+└─────────────────────────────────────────────────────────────────┘
+
+Step 3: Run Validator Nodes
+┌─────────────────────────────────────────────────────────────────┐
+│  • Run validator software on 3+ servers                        │
+│  • Each validator watches source chain for messages            │
+│  • Signs attestations for valid messages                       │
+│  • Distribute validators across providers for resilience       │
+└─────────────────────────────────────────────────────────────────┘
+
+Step 4: Run Relayer Service
+┌─────────────────────────────────────────────────────────────────┐
+│  • Run relayer that monitors for signed messages               │
+│  • Delivers messages to destination chain Mailbox              │
+│  • Pays gas on destination chain                               │
+└─────────────────────────────────────────────────────────────────┘
+
+Step 5: Deploy Warp Routes
+┌─────────────────────────────────────────────────────────────────┐
+│  • Deploy HypERC20Collateral on source chain (locks tokens)    │
+│  • Deploy HypERC20 on destination chain (mints synthetic)      │
+│  • Configure routes to use CL8Y's ISM                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### A.4.3 Interoperability Between Different Hyperlane Deployments
+
+**Critical Question**: If CL8Y deploys its own Hyperlane and someone else deploys a different one, do they interoperate?
+
+**Short Answer**: **No, they are separate networks.**
+
+**Detailed Explanation**:
+
+```
+Scenario: Two separate Hyperlane deployments on Terra Classic
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    Terra Classic                                │
+│                                                                 │
+│   ┌─────────────────────┐     ┌─────────────────────┐          │
+│   │  CL8Y's Mailbox     │     │  Other's Mailbox    │          │
+│   │  Domain ID: 1001    │     │  Domain ID: 2001    │          │
+│   └──────────┬──────────┘     └──────────┬──────────┘          │
+│              │                           │                      │
+│   ┌──────────▼──────────┐     ┌──────────▼──────────┐          │
+│   │  CL8Y's ISM         │     │  Other's ISM        │          │
+│   │  CL8Y Validators    │     │  Other Validators   │          │
+│   └─────────────────────┘     └─────────────────────┘          │
+│                                                                 │
+│   These are COMPLETELY SEPARATE messaging systems               │
+│   Messages sent via CL8Y's Mailbox cannot be delivered          │
+│   via Other's Mailbox, and vice versa.                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why They Don't Interoperate**:
+
+| Reason | Explanation |
+|--------|-------------|
+| **Different Mailboxes** | Messages are routed through specific Mailbox contracts. CL8Y's Mailbox doesn't know about Other's Mailbox. |
+| **Different Domain IDs** | Each deployment uses different chain identifiers. Validators and relayers only watch their own domains. |
+| **Different Validators** | CL8Y's validators only sign for CL8Y's ISM. They don't sign for Other's ISM. |
+| **Different Relayers** | Each deployment runs its own relayers that only deliver to their own Mailboxes. |
+
+**What This Means for Token Compatibility**:
+
+```
+If CL8Y deploys cl8y-hypUSDT and Other deploys other-hypUSDT:
+
+┌─────────────────────────────────────────────────────────────────┐
+│  BSC USDT                                                       │
+│      │                                                          │
+│      ├──────────────────────┬──────────────────────┐            │
+│      │                      │                      │            │
+│      ▼                      ▼                      ▼            │
+│  CL8Y Collateral      Other Collateral       (Separate pools)  │
+│      │                      │                                   │
+│      ▼                      ▼                                   │
+│  cl8y-hypUSDT          other-hypUSDT         (Different tokens) │
+│                                                                 │
+│  These are NOT interchangeable. They are backed by              │
+│  different collateral pools and use different bridges.          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The Fragmentation Problem**:
+
+If multiple parties deploy separate Hyperlane infrastructure:
+1. **Liquidity fragmentation**: Each deployment has its own token variants
+2. **User confusion**: Multiple "hypUSDT" tokens that aren't fungible
+3. **No network effects**: Can't leverage other deployments' chain support
+
+**When Interoperability IS Possible**:
+
+Two deployments CAN interoperate if they:
+1. **Share the same Mailbox** (one canonical Mailbox per chain)
+2. **Route through each other** (explicitly configured interchain routing)
+3. **Trust each other's ISMs** (cross-ISM verification)
+
+This requires **coordination and mutual trust** between deployment operators.
+
+#### A.4.4 Practical Recommendation
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  DECISION TREE: Hyperlane Infrastructure                        │
+│                                                                 │
+│  Q: Is there a reputable, canonical Hyperlane deployment?       │
+│     │                                                           │
+│     ├─ YES, and trustworthy → Use it with safeguards (A.3)     │
+│     │                                                           │
+│     ├─ YES, but not trustworthy → Don't integrate              │
+│     │                             Keep CL8Y independent         │
+│     │                                                           │
+│     └─ NO deployment exists → Consider deploying own (A.4)     │
+│                               OR wait for reputable one        │
+│                                                                 │
+│  Remember: CL8Y Bridge works perfectly without Hyperlane.       │
+│  Hyperlane integration is OPTIONAL for additional features.     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### A.4.5 Hybrid Approach: Shared Mailbox, Own ISM
+
+If a canonical Mailbox exists but you don't trust the default ISM:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Use shared Mailbox + CL8Y-controlled ISM                       │
+│                                                                 │
+│  • Deploy your own ISM contracts                               │
+│  • Run your own validators                                     │
+│  • Configure your Warp Routes to use YOUR ISM, not default     │
+│  • Benefit from shared infrastructure, maintain security        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+This is possible because Hyperlane allows applications to specify their own ISM per route. You'd be using the shared messaging layer but with your own security model.
+
+```solidity
+// When deploying your Warp Route, specify your own ISM
+HypERC20Collateral collateral = new HypERC20Collateral(
+    address(usdt),
+    address(sharedMailbox)  // Use shared Mailbox
+);
+
+// Set YOUR ISM, not the default
+collateral.setInterchainSecurityModule(address(cl8yISM));
+```
+
+---
+
 ## Document Control
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-28 | CL8Y Team | Initial draft |
 | 1.1 | 2026-01-28 | CL8Y Team | Updated Hyperlane docs links, added HWR details |
+| 1.2 | 2026-01-28 | CL8Y Team | Added Appendix A: Protecting Sovereignty from Third-Party Infrastructure |
 
 ---
 

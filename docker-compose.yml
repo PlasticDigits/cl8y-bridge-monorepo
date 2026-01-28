@@ -1,0 +1,52 @@
+version: "3.8"
+
+services:
+  # Local EVM chain using Foundry's Anvil
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    command: anvil --host 0.0.0.0 --block-time 1 --accounts 10 --balance 10000
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Local Terra Classic chain
+  localterra:
+    image: terramoney/localterra-classic:v1.0.0
+    ports:
+      - "26657:26657"  # RPC
+      - "1317:1317"    # LCD/REST
+      - "9090:9090"    # gRPC
+    volumes:
+      - localterra-data:/root/.terra
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:26657/status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # PostgreSQL for relayer state
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: relayer
+      POSTGRES_PASSWORD: relayer
+      POSTGRES_DB: relayer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./packages/relayer/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relayer -d relayer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  localterra-data:
+  postgres-data:

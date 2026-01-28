@@ -1,0 +1,25 @@
+# WorkSplit Configuration
+
+[project]
+language = "rust"
+
+[ollama]
+url = "http://localhost:11434"
+model = "worksplit-coder-glm-4.7:32k"
+timeout_seconds = 300
+
+[limits]
+max_output_lines = 900
+max_context_lines = 1000
+max_context_files = 6
+
+[behavior]
+stream_output = true
+create_output_dirs = true
+
+[build]
+build_command = "cargo check"
+test_command = "cargo test"
+lint_command = "cargo clippy -- -D warnings"
+verify_build = true
+verify_tests = true
