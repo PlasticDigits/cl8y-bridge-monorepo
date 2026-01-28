@@ -3,6 +3,8 @@ description: WorkSplit code generation best practices for this project
 alwaysApply: true
 ---
 
+ **"worksplit run" with NO flags is the correct batch execution command**. The `--job` flag is ONLY for debugging individual failures.
+
 # WorkSplit Best Practices
 
 ## When to Use WorkSplit
@@ -90,3 +92,5 @@ worksplit new-job fix_001 -t replace -o src/ -f foo.rs
 2. If job fails with thinking timeout: **Break it into smaller jobs**
 3. If edit job fails: **Switch to replace mode** (don't retry edit)
 4. If job fails repeatedly: Simplify the requirements or generate manually
+
+ **"worksplit run" with NO flags is the correct batch execution command**. The `--job` flag is ONLY for debugging individual failures.

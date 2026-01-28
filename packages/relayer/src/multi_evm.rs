@@ -54,7 +54,7 @@ impl MultiEvmConfig {
     /// Create a new multi-EVM config
     pub fn new(chains: Vec<EvmChainConfig>, private_key: String) -> Result<Self> {
         let mut chain_key_map = HashMap::new();
-        
+
         for (idx, chain) in chains.iter().enumerate() {
             let key = ChainKey::evm(chain.chain_id);
             chain_key_map.insert(key.0, idx);
@@ -135,7 +135,7 @@ impl MultiEvmConfig {
 /// Load multi-EVM config from environment variables
 pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
     let count_str = std::env::var("EVM_CHAINS_COUNT").ok();
-    
+
     let count: usize = match count_str {
         Some(s) => s.parse().unwrap_or(0),
         None => return Ok(None), // Multi-EVM not configured
@@ -149,28 +149,28 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
 
     for i in 1..=count {
         let prefix = format!("EVM_CHAIN_{}", i);
-        
+
         let name = std::env::var(format!("{}_NAME", prefix))
             .unwrap_or_else(|_| format!("chain_{}", i));
-        
+
         let chain_id: u64 = std::env::var(format!("{}_CHAIN_ID", prefix))
             .map_err(|_| eyre!("Missing {}_CHAIN_ID", prefix))?
             .parse()
             .map_err(|_| eyre!("Invalid {}_CHAIN_ID", prefix))?;
-        
+
         let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
             .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;
-        
+
         let bridge_address = std::env::var(format!("{}_BRIDGE_ADDRESS", prefix))
             .map_err(|_| eyre!("Missing {}_BRIDGE_ADDRESS", prefix))?;
-        
+
         let router_address = std::env::var(format!("{}_ROUTER_ADDRESS", prefix)).ok();
-        
+
         let finality_blocks: u64 = std::env::var(format!("{}_FINALITY_BLOCKS", prefix))
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(12);
-        
+
         let enabled: bool = std::env::var(format!("{}_ENABLED", prefix))
             .ok()
             .and_then(|s| s.parse().ok())

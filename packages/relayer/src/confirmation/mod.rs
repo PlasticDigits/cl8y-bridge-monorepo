@@ -3,8 +3,6 @@ use eyre::Result;
 pub mod evm;
 pub mod terra;
 
-pub use evm::EvmConfirmation;
-pub use terra::TerraConfirmation;
 
 /// Configuration for the confirmation tracker
 #[derive(Debug, Clone)]
@@ -43,8 +41,16 @@ impl ConfirmationTracker {
             evm_confirmations: relayer_config.evm.finality_blocks as u32,
             terra_confirmations: 6,
         };
-        let evm_checker = evm::EvmConfirmation::new(db.clone(), config.evm_confirmations)?;
-        let terra_checker = terra::TerraConfirmation::new(db.clone(), config.terra_confirmations)?;
+        let evm_checker = evm::EvmConfirmation::new(
+            db.clone(),
+            config.evm_confirmations,
+            relayer_config.evm.rpc_url.clone(),
+        )?;
+        let terra_checker = terra::TerraConfirmation::new(
+            db.clone(),
+            config.terra_confirmations,
+            relayer_config.terra.lcd_url.clone(),
+        )?;
 
         Ok(Self {
             config,
@@ -110,12 +116,20 @@ impl ConfirmationTracker {
             );
 
             match self.evm_checker.check_approval_confirmation(&approval).await {
-                Ok(confirmed) => {
-                    if confirmed {
-                        crate::db::update_approval_confirmed(&self.db, id).await?;
-                        tracing::info!(approval_id = id, tx_hash = %tx_hash, "Approval confirmed");
+                Ok(result) => {
+                    match result {
+                        evm::ConfirmationResult::Confirmed => {
+                            crate::db::update_approval_confirmed(&self.db, id).await?;
+                            tracing::info!(approval_id = id, tx_hash = %tx_hash, "Approval confirmed");
+                        }
+                        evm::ConfirmationResult::Failed => {
+                            crate::db::update_approval_failed(&self.db, id, "Transaction failed on-chain").await?;
+                            tracing::warn!(approval_id = id, tx_hash = %tx_hash, "Approval failed");
+                        }
+                        _ => {
+                            // Still pending or waiting for confirmations
+                        }
                     }
-                    // Don't mark as failed if not yet confirmed - just wait
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -146,12 +160,20 @@ impl ConfirmationTracker {
             );
 
             match self.terra_checker.check_release_confirmation(&release).await {
-                Ok(confirmed) => {
-                    if confirmed {
-                        crate::db::update_release_confirmed(&self.db, id).await?;
-                        tracing::info!(release_id = id, tx_hash = %tx_hash, "Release confirmed");
+                Ok(result) => {
+                    match result {
+                        terra::ConfirmationResult::Confirmed => {
+                            crate::db::update_release_confirmed(&self.db, id).await?;
+                            tracing::info!(release_id = id, tx_hash = %tx_hash, "Release confirmed");
+                        }
+                        terra::ConfirmationResult::Failed => {
+                            crate::db::update_release_failed(&self.db, id, "Transaction failed on-chain").await?;
+                            tracing::warn!(release_id = id, tx_hash = %tx_hash, "Release failed");
+                        }
+                        _ => {
+                            // Still pending or waiting for confirmations
+                        }
                     }
-                    // Don't mark as failed if not yet confirmed - just wait
                 }
                 Err(err) => {
                     tracing::warn!(

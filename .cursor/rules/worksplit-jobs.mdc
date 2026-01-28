@@ -3,6 +3,8 @@ description: WorkSplit job creation protocol - read manager instructions and cho
 alwaysApply: true
 ---
 
+ **"worksplit run" with NO flags is the correct batch execution command**. The `--job` flag is ONLY for debugging individual failures.
+
 # WorkSplit Job Creation Protocol
 
 Before creating ANY WorkSplit job, you MUST:
@@ -40,3 +42,5 @@ output_file: feature.rs
 1. Do NOT retry edit mode more than once
 2. Switch to REPLACE mode or do it manually
 3. Never abandon WorkSplit without explicit user approval
+
+ **"worksplit run" with NO flags is the correct batch execution command**. The `--job` flag is ONLY for debugging individual failures.

@@ -605,3 +605,97 @@ pub async fn count_submitted_releases(pool: &PgPool) -> Result<i64> {
 
     Ok(row.0)
 }
+
+// ============ Sprint 5: API Helper Functions ============
+
+/// Get all pending and submitted approvals with pagination
+pub async fn get_pending_and_submitted_approvals(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Approval>> {
+    let rows = sqlx::query_as::<_, Approval>(
+        r#"
+        SELECT * FROM approvals 
+        WHERE status IN ('pending', 'submitted')
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get pending/submitted approvals")?;
+
+    Ok(rows)
+}
+
+/// Get all pending and submitted releases with pagination
+pub async fn get_pending_and_submitted_releases(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Release>> {
+    let rows = sqlx::query_as::<_, Release>(
+        r#"
+        SELECT * FROM releases 
+        WHERE status IN ('pending', 'submitted')
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get pending/submitted releases")?;
+
+    Ok(rows)
+}
+
+/// Get approval by transaction hash
+pub async fn get_approval_by_tx_hash(pool: &PgPool, tx_hash: &str) -> Result<Option<Approval>> {
+    let row = sqlx::query_as::<_, Approval>(r#"SELECT * FROM approvals WHERE tx_hash = $1"#)
+        .bind(tx_hash)
+        .fetch_optional(pool)
+        .await
+        .wrap_err("Failed to get approval by tx_hash")?;
+
+    Ok(row)
+}
+
+/// Get release by transaction hash
+pub async fn get_release_by_tx_hash(pool: &PgPool, tx_hash: &str) -> Result<Option<Release>> {
+    let row = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE tx_hash = $1"#)
+        .bind(tx_hash)
+        .fetch_optional(pool)
+        .await
+        .wrap_err("Failed to get release by tx_hash")?;
+
+    Ok(row)
+}
+
+/// Count total pending and submitted approvals
+pub async fn count_pending_and_submitted_approvals(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM approvals WHERE status IN ('pending', 'submitted')"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count pending/submitted approvals")?;
+
+    Ok(row.0)
+}
+
+/// Count total pending and submitted releases
+pub async fn count_pending_and_submitted_releases(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM releases WHERE status IN ('pending', 'submitted')"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count pending/submitted releases")?;
+
+    Ok(row.0)
+}

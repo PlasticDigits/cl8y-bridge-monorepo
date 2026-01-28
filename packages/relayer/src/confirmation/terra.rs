@@ -1,70 +1,160 @@
 #![allow(dead_code)]
 
-use eyre::{eyre, Result, WrapErr};
+use eyre::{eyre, Result};
+use reqwest::Client;
+use serde::Deserialize;
 use sqlx::PgPool;
-use tracing::{debug, info};
+use tracing::warn;
 
 use crate::db::Release;
 
-/// Terra transaction confirmation checker
+/// Result of checking a transaction receipt
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfirmationResult {
+    /// Transaction is pending (not yet in a block)
+    Pending,
+    /// Transaction confirmed with enough blocks
+    Confirmed,
+    /// Waiting for more confirmations
+    WaitingConfirmations(u32),
+    /// Transaction failed on-chain (non-zero code)
+    Failed,
+    /// Transaction was reorged (no longer in chain)
+    Reorged,
+}
+
+/// Terra transaction response from LCD
+#[derive(Debug, Deserialize)]
+struct TxResponse {
+    tx_response: Option<TxResponseInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TxResponseInner {
+    txhash: String,
+    height: String,
+    code: i32,
+    codespace: Option<String>,
+    raw_log: Option<String>,
+}
+
+/// Terra block response from LCD
+#[derive(Debug, Deserialize)]
+struct BlockResponse {
+    block: BlockInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockInfo {
+    header: BlockHeader,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockHeader {
+    height: String,
+}
+
+/// Terra confirmation checker
 pub struct TerraConfirmation {
     db: PgPool,
     required_confirmations: u32,
+    lcd_url: String,
+    client: Client,
 }
 
 impl TerraConfirmation {
     /// Create a new Terra confirmation checker
-    pub fn new(db: PgPool, required_confirmations: u32) -> Result<Self> {
+    pub fn new(db: PgPool, required_confirmations: u32, lcd_url: String) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
+        
         Ok(Self {
             db,
             required_confirmations,
+            lcd_url,
+            client,
         })
     }
 
-    /// Check if a release transaction is confirmed
-    pub async fn check_release_confirmation(&self, release: &Release) -> Result<bool> {
+    /// Check release transaction confirmation
+    pub async fn check_release_confirmation(&self, release: &Release) -> Result<ConfirmationResult> {
         let tx_hash = release.tx_hash.as_ref()
             .ok_or_else(|| eyre!("Release has no tx_hash"))?;
-
-        debug!(
-            tx_hash = %tx_hash,
-            "Checking Terra release confirmation"
-        );
-
-        // Get the current block height from our tracking table
-        // We use a fixed chain ID for Terra Classic
-        let current_height = self.get_current_block_height("localterra").await?;
-
-        if let Some(current_height) = current_height {
-            // For now, consider confirmed after any successful submission
-            // In a production system, we'd query the LCD for the tx
-            // and compare block heights
-            info!(
-                tx_hash = %tx_hash,
-                current_height = current_height,
-                required_confirmations = self.required_confirmations,
-                "Release considered confirmed (simplified check)"
-            );
-            return Ok(true);
+        
+        // 1. Query transaction from LCD
+        let tx = self.get_transaction(tx_hash).await?;
+        
+        // 2. If not found, might still be pending or failed
+        if tx.is_none() {
+            return Ok(ConfirmationResult::Pending);
         }
-
-        Ok(false)
+        
+        let tx = tx.unwrap();
+        
+        // 3. Check if transaction failed (non-zero code)
+        if tx.code != 0 {
+            warn!(
+                tx_hash = %tx_hash,
+                code = tx.code,
+                codespace = ?tx.codespace,
+                "Terra transaction failed"
+            );
+            return Ok(ConfirmationResult::Failed);
+        }
+        
+        // 4. Get current block height
+        let current_height = self.get_current_block_height().await?;
+        
+        // 5. Calculate confirmations
+        let tx_height: u64 = tx.height.parse()?;
+        let confirmations = current_height.saturating_sub(tx_height);
+        
+        // 6. Check if enough confirmations
+        if confirmations >= self.required_confirmations as u64 {
+            return Ok(ConfirmationResult::Confirmed);
+        }
+        
+        Ok(ConfirmationResult::WaitingConfirmations(confirmations as u32))
     }
 
-    /// Get the current block height for Terra
-    async fn get_current_block_height(&self, chain_id: &str) -> Result<Option<i64>> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            r#"
-            SELECT last_processed_height 
-            FROM terra_blocks 
-            WHERE chain_id = $1
-            "#,
-        )
-        .bind(chain_id)
-        .fetch_optional(&self.db)
-        .await
-        .wrap_err("Failed to get current block height")?;
+    /// Get transaction from LCD
+    async fn get_transaction(&self, tx_hash: &str) -> Result<Option<TxResponseInner>> {
+        let url = format!("{}/cosmos/tx/v1beta1/txs/{}", self.lcd_url, tx_hash);
+        
+        let response = self.client
+            .get(&url)
+            .send()
+            .await;
+        
+        match response {
+            Ok(resp) => {
+                if resp.status() == 404 {
+                    return Ok(None);
+                }
+                let tx_response: TxResponse = resp.json().await?;
+                Ok(tx_response.tx_response)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to query Terra transaction");
+                Err(e.into())
+            }
+        }
+    }
 
-        Ok(row.map(|r| r.0))
+    /// Get current block height from LCD
+    async fn get_current_block_height(&self) -> Result<u64> {
+        let url = format!("{}/cosmos/base/tendermint/v1beta1/blocks/latest", self.lcd_url);
+        
+        let response = self.client
+            .get(&url)
+            .send()
+            .await?
+            .json::<BlockResponse>()
+            .await?;
+        
+        let height: u64 = response.block.header.height.parse()?;
+        
+        Ok(height)
     }
 }
