@@ -19,6 +19,15 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 - [Relayer](./relayer.md) - Bridge operator service that processes crosschain transfers
 - [Local Development](./local-development.md) - Setting up local testnets for development and testing
 - [Deployment Guide](./deployment.md) - Production deployment procedures
+- [Multi-Relayer Setup](./multi-relayer.md) - Running multiple relayer instances for high availability
+
+### Testing
+
+- [Testing Guide](./testing.md) - Comprehensive testing documentation including:
+  - Unit tests for relayer and contracts
+  - Integration tests with database
+  - End-to-end (E2E) cross-chain transfer tests
+  - CI/CD test configuration
 
 ### Development
 
@@ -28,10 +37,11 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 
 | Component | Source | Tests | Deployment |
 |-----------|--------|-------|------------|
-| EVM Contracts | [packages/contracts-evm/src/](../packages/contracts-evm/src/) | [tests/](../packages/contracts-evm/test/) | [BSC Mainnet](./deployment.md#bsc-mainnet) |
+| EVM Contracts | [packages/contracts-evm/src/](../packages/contracts-evm/src/) | [test/](../packages/contracts-evm/test/) (59 tests) | [BSC Mainnet](./deployment.md#bsc-mainnet) |
 | Terra Classic Contracts | [packages/contracts-terraclassic/](../packages/contracts-terraclassic/) | TBD | [Columbus-5](./deployment.md#terra-classic) |
-| Relayer | [packages/relayer/](../packages/relayer/) | TBD | [Docker](./deployment.md#relayer) |
+| Relayer | [packages/relayer/](../packages/relayer/) | [tests/](../packages/relayer/tests/) (8 tests) | [Docker](./deployment.md#relayer) |
 | Frontend | [packages/frontend/](../packages/frontend/) | TBD | TBD |
+| E2E Tests | [scripts/](../scripts/) | [e2e-test.sh](../scripts/e2e-test.sh) | N/A |
 
 ## Getting Started
 

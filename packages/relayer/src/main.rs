@@ -1,6 +1,7 @@
 mod config;
 mod contracts;
 mod db;
+mod metrics;
 mod types;
 mod watchers;
 mod writers;
@@ -59,6 +60,14 @@ async fn async_main() -> eyre::Result<()> {
     let mut writer_manager = WriterManager::new(&config, db.clone()).await?;
     
     tracing::info!("Managers initialized, starting processing");
+    
+    // Start metrics server
+    let metrics_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 9090));
+    tokio::spawn(async move {
+        if let Err(e) = metrics::start_metrics_server(metrics_addr).await {
+            tracing::error!(error = %e, "Metrics server error");
+        }
+    });
     
     // Run watchers and writers concurrently
     tokio::select! {

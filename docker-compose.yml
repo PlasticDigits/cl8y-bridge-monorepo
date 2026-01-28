@@ -29,14 +29,14 @@ services:
     image: terramoney/localterra-core:latest
     platform: linux/amd64
     command: >
-      sh -c "terrad init localterra --chain-id localterra &&
+      sh -c "terrad init localterra --chain-id localterra --overwrite 2>/dev/null || true &&
              terrad start --rpc.laddr tcp://0.0.0.0:26657"
     ports:
       - "26657:26657"  # RPC
       - "1317:1317"    # LCD/REST
       - "9090:9090"    # gRPC
     volumes:
-      - localterra-data:/app/.terra
+      - localterra-data:/root/.terra
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:26657/status"]
       interval: 10s

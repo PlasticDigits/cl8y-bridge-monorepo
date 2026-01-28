@@ -84,7 +84,10 @@ deploy-evm:
 
 deploy-terra:
 	@echo "Deploying Terra contracts to LocalTerra..."
-	cd packages/contracts-terraclassic && ./scripts/deploy.sh local
+	./scripts/deploy-terra-local.sh
+
+deploy-terra-local: deploy-terra
+	@echo "Terra local deployment complete"
 
 setup-bridge:
 	@echo "Configuring bridge connections..."
@@ -100,6 +103,18 @@ relayer-migrate:
 # Test transfer
 test-transfer:
 	./scripts/test-transfer.sh
+
+# E2E automated test
+e2e-test:
+	./scripts/e2e-test.sh
+
+# Integration tests
+test-integration:
+	cd packages/relayer && cargo test --test integration_test -- --nocapture
+
+# Integration tests (with infrastructure)
+test-integration-full:
+	cd packages/relayer && cargo test --test integration_test -- --ignored --nocapture
 
 # WorkSplit
 worksplit-init:
