@@ -6,8 +6,8 @@ A cross-chain bridge solution for connecting Terra Classic with EVM-compatible b
 
 | Package | Description |
 |---------|-------------|
-| [evm-contracts](./packages/evm-contracts) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) |
-| [terra-contracts](./packages/terra-contracts) | CosmWasm smart contracts for Terra Classic |
+| [contracts-evm](./packages/contracts-evm) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) |
+| [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic |
 | [frontend](./packages/frontend) | Web application for bridge interface |
 
 ## Getting Started
@@ -15,15 +15,15 @@ A cross-chain bridge solution for connecting Terra Classic with EVM-compatible b
 ### EVM Contracts
 
 ```bash
-cd packages/evm-contracts
+cd packages/contracts-evm
 forge build
 forge test
 ```
 
-### Terra Contracts
+### Terra Classic Contracts
 
 ```bash
-cd packages/terra-contracts
+cd packages/contracts-terraclassic
 # Setup instructions TBD
 ```
 
@@ -39,11 +39,11 @@ cd packages/frontend
 ```
 cl8y-bridge-monorepo/
 ├── packages/
-│   ├── evm-contracts/     # Foundry project for Solidity contracts
-│   ├── terra-contracts/   # CosmWasm contracts for Terra Classic
-│   └── frontend/          # Web application
+│   ├── contracts-evm/          # Foundry project for Solidity contracts
+│   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
+│   └── frontend/               # Web application
 ├── .github/
-│   └── workflows/         # CI/CD pipelines
+│   └── workflows/              # CI/CD pipelines
 └── README.md
 ```
 

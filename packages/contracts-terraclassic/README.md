@@ -1,4 +1,4 @@
-# Terra Classic Contracts
+# CL8Y Bridge - Terra Classic Contracts
 
 CosmWasm smart contracts for the CL8Y Bridge on Terra Classic.
 

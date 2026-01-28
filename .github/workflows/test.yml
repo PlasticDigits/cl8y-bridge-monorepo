@@ -3,11 +3,11 @@ name: CI
 on:
   push:
     paths:
-      - 'packages/evm-contracts/**'
+      - 'packages/contracts-evm/**'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
-      - 'packages/evm-contracts/**'
+      - 'packages/contracts-evm/**'
       - '.github/workflows/test.yml'
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ env:
   FOUNDRY_PROFILE: ci
 
 jobs:
-  evm-contracts:
+  contracts-evm:
     strategy:
       fail-fast: true
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/evm-contracts
+        working-directory: packages/contracts-evm
     steps:
       - uses: actions/checkout@v4
         with:
