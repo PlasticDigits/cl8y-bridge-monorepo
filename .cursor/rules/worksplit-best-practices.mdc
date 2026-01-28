@@ -1,0 +1,92 @@
+---
+description: WorkSplit code generation best practices for this project
+alwaysApply: true
+---
+
+# WorkSplit Best Practices
+
+## When to Use WorkSplit
+
+| Lines of Code | Approach |
+|---------------|----------|
+| < 50 lines | Direct edit (don't use WorkSplit) |
+| 50-200 lines | Consider either approach |
+| 200+ lines | Use WorkSplit |
+
+## Job Sizing - Critical
+
+**Target 100-300 lines per job.** Complex jobs that exceed this often fail due to:
+- LLM thinking loops/timeouts
+- Context window limitations
+- Build verification failures
+
+### Breaking Up Complex Jobs
+
+When a job fails with thinking timeouts or generates >400 lines:
+
+1. **Split by responsibility** - Separate structs, traits, and implementations
+2. **Split by function** - Group related functions into separate jobs
+3. **Create stub jobs first** - Generate type definitions and function signatures
+4. **Fill in implementations** - Add bodies in subsequent jobs
+
+### Example: Breaking Up a Complex Writer
+
+Instead of one large `writers/evm.rs` job:
+
+```
+# BAD - Single large job
+relayer_009_writers_evm.md  # 500+ lines, times out
+
+# GOOD - Split into focused jobs
+relayer_009a_writers_evm_types.md    # ~100 lines: structs, traits
+relayer_009b_writers_evm_helpers.md  # ~100 lines: utility functions
+relayer_009c_writers_evm_submit.md   # ~150 lines: transaction submission
+relayer_009d_writers_evm_process.md  # ~150 lines: processing logic
+```
+
+## Job Dependencies
+
+Use `depends_on` in frontmatter to ensure proper ordering:
+
+```yaml
+---
+output_dir: src/writers/
+output_file: evm.rs
+depends_on:
+  - relayer_009a_writers_evm_types
+---
+```
+
+## Verification Settings
+
+Always enable in `worksplit.toml`:
+```toml
+[build]
+verify_build = true
+verify_tests = true
+```
+
+## Edit Mode vs Replace Mode
+
+**Always prefer replace mode over edit mode.**
+
+Edit mode has ~50% success rate and often fails/times out. When an edit job fails:
+
+1. **Switch to replace mode immediately** - Don't retry edit mode
+2. Recreate the job with `-t replace` instead of `-t edit`
+3. Include the full file content in the requirements
+
+```bash
+# BAD - Edit mode (unreliable)
+worksplit new-job fix_001 -t edit --targets src/foo.rs
+
+# GOOD - Replace mode (reliable)
+worksplit new-job fix_001 -t replace -o src/ -f foo.rs
+```
+
+## Retry Strategy
+
+1. If job fails with build error: Check if file was generated, fix manually or retry
+2. If job fails with thinking timeout: **Break it into smaller jobs**
+3. If edit job fails: **Switch to replace mode** (don't retry edit)
+4. If job fails repeatedly: Simplify the requirements or generate manually

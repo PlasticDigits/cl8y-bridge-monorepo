@@ -1,10 +1,11 @@
-version: "3.8"
+# Docker Compose for CL8Y Bridge local development
 
 services:
   # Local EVM chain using Foundry's Anvil
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
-    command: anvil --host 0.0.0.0 --block-time 1 --accounts 10 --balance 10000
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--block-time", "1", "--accounts", "10", "--balance", "10000"]
     ports:
       - "8545:8545"
     healthcheck:
@@ -14,20 +15,34 @@ services:
       retries: 5
 
   # Local Terra Classic chain
+  # Option 1: Use pre-built image (older, may have compatibility issues)
+  # image: terramoney/localterra-core:latest
+  #
+  # Option 2: Build from classic-terra/core (recommended - most up to date)
+  # To use this, first clone: git clone https://github.com/classic-terra/core.git ../terra-classic-core
+  # Then uncomment the build section below
   localterra:
-    image: terramoney/localterra-classic:v1.0.0
+    # Build from classic-terra/core source (comment out 'image' line to use build)
+    # build:
+    #   context: ../terra-classic-core
+    #   dockerfile: Dockerfile
+    image: terramoney/localterra-core:latest
+    platform: linux/amd64
+    command: >
+      sh -c "terrad init localterra --chain-id localterra &&
+             terrad start --rpc.laddr tcp://0.0.0.0:26657"
     ports:
       - "26657:26657"  # RPC
       - "1317:1317"    # LCD/REST
       - "9090:9090"    # gRPC
     volumes:
-      - localterra-data:/root/.terra
+      - localterra-data:/app/.terra
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:26657/status"]
       interval: 10s
       timeout: 10s
       retries: 10
-      start_period: 30s
+      start_period: 60s
 
   # PostgreSQL for relayer state
   postgres:
@@ -37,10 +52,11 @@ services:
       POSTGRES_PASSWORD: relayer
       POSTGRES_DB: relayer
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"  # Use 5433 to avoid conflict with local PostgreSQL
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./packages/relayer/migrations:/docker-entrypoint-initdb.d:ro
+      # Note: Migrations are run by the relayer via sqlx, not via init scripts
+      # - ./packages/relayer/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U relayer -d relayer"]
       interval: 5s
