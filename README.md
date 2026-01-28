@@ -49,4 +49,4 @@ cl8y-bridge-monorepo/
 
 ## License
 
-See individual package directories for license information.
+AGPL-3.0-only [LICENSE](./LICENSE)

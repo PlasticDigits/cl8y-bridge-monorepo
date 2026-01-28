@@ -1,0 +1,18 @@
+[package]
+name = "common"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Common types and utilities for CL8Y Bridge contracts"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+cosmwasm-std.workspace = true
+cosmwasm-schema.workspace = true
+cw20.workspace = true
+schemars.workspace = true
+serde.workspace = true

@@ -1,0 +1,30 @@
+[package]
+name = "bridge"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CL8Y Bridge contract for TerraClassic - cross-chain token bridging"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+library = []
+cosmwasm_1_2 = ["cosmwasm-std/cosmwasm_1_2"]
+
+[dependencies]
+cosmwasm-std.workspace = true
+cosmwasm-schema.workspace = true
+cw-storage-plus.workspace = true
+cw2.workspace = true
+cw20.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+serde.workspace = true
+common = { path = "../packages/common" }
+
+[dev-dependencies]
+cw-multi-test.workspace = true
+cosmwasm-std.workspace = true

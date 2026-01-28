@@ -1,0 +1,23 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# CosmWasm specific
+artifacts/
+*.wasm
+
+# Coverage
+tarpaulin*
+tarpaulin-report.html
+cobertura.xml
+*.profraw
+
+# Rust analyzer
+.rustc_info.json
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
