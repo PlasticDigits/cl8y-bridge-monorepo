@@ -2,6 +2,18 @@
 
 This document explains the testing strategy, test types, and how to run end-to-end (E2E) tests for the CL8Y Bridge.
 
+## Current Test Status
+
+| Test Type | Count | Status |
+|-----------|-------|--------|
+| EVM Contract Tests | 59 | All passing |
+| Relayer Unit Tests | 19 | All passing |
+| Relayer Integration Tests | 5 | All passing (3 ignored, need LocalTerra) |
+| Frontend Tests | 0 | Not implemented |
+| E2E Tests | - | Requires manual setup |
+
+> **Note:** E2E test automation is a Sprint 5 priority. Currently requires manual environment setup.
+
 ## Test Types Overview
 
 | Test Type | Location | Purpose | Requires Infrastructure |
@@ -42,6 +54,24 @@ cargo test --test integration_test
 - `test_terra_address_encoding` - Tests Terra bech32 address handling
 - `test_amount_conversion` - Validates 6↔18 decimal conversion
 - `test_keccak256_computation` - Ensures hash functions work correctly
+
+### Relayer Type Tests
+
+Located in `packages/relayer/src/types.rs`, unit tests for core types:
+
+```bash
+cd packages/relayer
+cargo test types::tests
+```
+
+**Tests included:**
+- `test_chain_key_evm` - EVM chain key generation
+- `test_chain_key_cosmos` - Cosmos chain key generation
+- `test_evm_address_from_string` - Address parsing
+- `test_evm_address_zero` - Zero address handling
+- `test_withdraw_hash_creation` - Withdraw hash computation
+- `test_status_display` - Status enum formatting
+- `test_status_equality` - Status comparison
 
 ### EVM Contract Tests
 

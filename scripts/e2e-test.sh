@@ -15,12 +15,27 @@
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source Terra helper functions if available
+if [ -f "$SCRIPT_DIR/lib/terra-helpers.sh" ]; then
+    source "$SCRIPT_DIR/lib/terra-helpers.sh"
+    TERRA_HELPERS_LOADED=true
+else
+    TERRA_HELPERS_LOADED=false
+fi
+
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
-TERRA_NODE="${TERRA_RPC_URL:-http://localhost:26657}"
-TERRA_LCD="${TERRA_LCD_URL:-http://localhost:1317}"
+TERRA_RPC_URL="${TERRA_RPC_URL:-http://localhost:26657}"
+TERRA_LCD_URL="${TERRA_LCD_URL:-http://localhost:1317}"
 TERRA_CHAIN_ID="${TERRA_CHAIN_ID:-localterra}"
 DATABASE_URL="${DATABASE_URL:-postgres://relayer:relayer@localhost:5433/relayer}"
+
+# Legacy aliases for compatibility
+TERRA_NODE="$TERRA_RPC_URL"
+TERRA_LCD="$TERRA_LCD_URL"
 
 # Contract addresses
 EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-}"
@@ -29,7 +44,8 @@ TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-}"
 # Test accounts
 EVM_PRIVATE_KEY="${EVM_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 EVM_TEST_ADDRESS="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-TERRA_KEY="${TERRA_KEY_NAME:-test1}"
+TERRA_KEY_NAME="${TERRA_KEY_NAME:-test1}"
+TERRA_KEY="$TERRA_KEY_NAME"
 TERRA_TEST_ADDRESS="terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v"
 
 # Test parameters
@@ -106,16 +122,56 @@ check_prereqs() {
     log_pass "Prerequisites OK"
 }
 
-# Get balances
+# Get balances - use helpers if available, fallback to inline
 get_terra_balance() {
     local addr="$1"
-    curl -s "$TERRA_LCD/cosmos/bank/v1beta1/balances/$addr" 2>/dev/null | \
-        jq -r '.balances[] | select(.denom=="uluna") | .amount' 2>/dev/null || echo "0"
+    local denom="${2:-uluna}"
+    if [ "$TERRA_HELPERS_LOADED" = true ]; then
+        terra_balance "$addr" "$denom"
+    else
+        curl -s "$TERRA_LCD_URL/cosmos/bank/v1beta1/balances/$addr" 2>/dev/null | \
+            jq -r ".balances[] | select(.denom==\"$denom\") | .amount" 2>/dev/null || echo "0"
+    fi
 }
 
 get_evm_balance() {
     local addr="$1"
     cast balance "$addr" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0"
+}
+
+# Lock tokens on Terra - use helpers if available
+do_terra_lock() {
+    local amount="$1"
+    local dest_chain="$2"
+    local recipient="$3"
+    
+    if [ "$TERRA_HELPERS_LOADED" = true ]; then
+        terra_lock "$amount" "uluna" "$dest_chain" "$recipient"
+    else
+        LOCK_MSG="{\"lock\":{\"dest_chain_id\":$dest_chain,\"recipient\":\"$recipient\"}}"
+        terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
+            "$LOCK_MSG" \
+            --amount "${amount}uluna" \
+            --from "$TERRA_KEY_NAME" \
+            --chain-id "$TERRA_CHAIN_ID" \
+            --node "$TERRA_RPC_URL" \
+            --gas auto --gas-adjustment 1.4 \
+            --fees 5000uluna \
+            -y -o json 2>&1
+    fi
+}
+
+# Wait for Terra transaction - use helpers if available
+wait_terra_tx() {
+    local tx_hash="$1"
+    local timeout="${2:-60}"
+    
+    if [ "$TERRA_HELPERS_LOADED" = true ]; then
+        terra_wait_tx "$tx_hash" "$timeout"
+    else
+        sleep 6  # Simple wait fallback
+        terrad query tx "$tx_hash" --node "$TERRA_RPC_URL" -o json 2>/dev/null || echo "{}"
+    fi
 }
 
 # Wait for condition with timeout
@@ -167,33 +223,21 @@ test_terra_to_evm() {
     # Lock tokens on Terra
     log_info "Locking $TRANSFER_AMOUNT uluna on Terra..."
     
-    LOCK_MSG="{\"lock\":{\"dest_chain_id\":31337,\"recipient\":\"$EVM_TEST_ADDRESS\"}}"
-    
-    TX_RESULT=$(terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
-        "$LOCK_MSG" \
-        --amount "${TRANSFER_AMOUNT}uluna" \
-        --from "$TERRA_KEY" \
-        --chain-id "$TERRA_CHAIN_ID" \
-        --node "$TERRA_NODE" \
-        --gas auto --gas-adjustment 1.4 \
-        --fees 5000uluna \
-        -y -o json 2>&1)
+    TX_RESULT=$(do_terra_lock "$TRANSFER_AMOUNT" "31337" "$EVM_TEST_ADDRESS")
     
     TX_HASH=$(echo "$TX_RESULT" | jq -r '.txhash' 2>/dev/null || echo "")
     
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         log_error "Failed to submit lock transaction"
+        log_error "Response: $TX_RESULT"
         record_result "Terra -> EVM Lock" "fail"
         return 1
     fi
     
     log_info "Lock TX: $TX_HASH"
     
-    # Wait for confirmation
-    sleep 6
-    
-    # Verify lock transaction succeeded
-    TX_QUERY=$(terrad query tx "$TX_HASH" --node "$TERRA_NODE" -o json 2>/dev/null || echo "{}")
+    # Wait for confirmation using helper or fallback
+    TX_QUERY=$(wait_terra_tx "$TX_HASH" 60)
     TX_CODE=$(echo "$TX_QUERY" | jq -r '.code // 0' 2>/dev/null)
     
     if [ "$TX_CODE" != "0" ]; then

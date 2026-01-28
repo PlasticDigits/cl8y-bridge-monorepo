@@ -104,5 +104,71 @@
     "status": "pass",
     "created_at": "2026-01-28T09:17:11.768992420Z",
     "updated_at": "2026-01-28T09:18:48.962761739Z"
+  },
+  {
+    "id": "sprint4_001_confirmation_mod",
+    "status": "pending_work",
+    "created_at": "2026-01-28T10:24:41.638167468Z",
+    "updated_at": "2026-01-28T10:24:41.638968362Z"
+  },
+  {
+    "id": "sprint4_002_confirmation_evm",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638170574Z",
+    "updated_at": "2026-01-28T10:24:41.638170574Z"
+  },
+  {
+    "id": "sprint4_003_confirmation_terra",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638173429Z",
+    "updated_at": "2026-01-28T10:24:41.638173429Z"
+  },
+  {
+    "id": "sprint4_004_api_endpoints",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638176375Z",
+    "updated_at": "2026-01-28T10:24:41.638176375Z"
+  },
+  {
+    "id": "sprint4_005_types_tests",
+    "status": "pending_work",
+    "created_at": "2026-01-28T10:24:41.638179971Z",
+    "updated_at": "2026-01-28T10:28:50.652581222Z"
+  },
+  {
+    "id": "sprint4_006_multi_evm_config",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638182306Z",
+    "updated_at": "2026-01-28T10:24:41.638182306Z"
+  },
+  {
+    "id": "sprint4_007_terra_helpers",
+    "status": "pass",
+    "created_at": "2026-01-28T10:24:41.638185241Z",
+    "updated_at": "2026-01-28T10:31:17.846638537Z"
+  },
+  {
+    "id": "sprint4_008_frontend_config",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638187395Z",
+    "updated_at": "2026-01-28T10:24:41.638187395Z"
+  },
+  {
+    "id": "sprint4_009_frontend_app",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638189670Z",
+    "updated_at": "2026-01-28T10:24:41.638189670Z"
+  },
+  {
+    "id": "sprint4_010_frontend_components",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638191904Z",
+    "updated_at": "2026-01-28T10:24:41.638191904Z"
+  },
+  {
+    "id": "sprint4_011_frontend_lib",
+    "status": "created",
+    "created_at": "2026-01-28T10:24:41.638194268Z",
+    "updated_at": "2026-01-28T10:24:41.638194268Z"
   }
 ]

@@ -17,6 +17,7 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 ### Infrastructure
 
 - [Relayer](./relayer.md) - Bridge operator service that processes crosschain transfers
+- [Frontend](./frontend.md) - React web application for bridge interface
 - [Local Development](./local-development.md) - Setting up local testnets for development and testing
 - [Deployment Guide](./deployment.md) - Production deployment procedures
 - [Multi-Relayer Setup](./multi-relayer.md) - Running multiple relayer instances for high availability
@@ -32,6 +33,7 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 ### Development
 
 - [WorkSplit Guide](./worksplit-guide.md) - Using WorkSplit for AI-assisted code generation in this project
+- [Sprint History](./sprint-history.md) - Development history and roadmap
 
 ## Quick Links
 
@@ -39,9 +41,20 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 |-----------|--------|-------|------------|
 | EVM Contracts | [packages/contracts-evm/src/](../packages/contracts-evm/src/) | [test/](../packages/contracts-evm/test/) (59 tests) | [BSC Mainnet](./deployment.md#bsc-mainnet) |
 | Terra Classic Contracts | [packages/contracts-terraclassic/](../packages/contracts-terraclassic/) | TBD | [Columbus-5](./deployment.md#terra-classic) |
-| Relayer | [packages/relayer/](../packages/relayer/) | [tests/](../packages/relayer/tests/) (8 tests) | [Docker](./deployment.md#relayer) |
-| Frontend | [packages/frontend/](../packages/frontend/) | TBD | TBD |
+| Relayer | [packages/relayer/](../packages/relayer/) | [tests/](../packages/relayer/tests/) (24 tests) | [Docker](./deployment.md#relayer) |
+| Frontend | [packages/frontend/](../packages/frontend/) | TBD | [Vite](./frontend.md) |
 | E2E Tests | [scripts/](../scripts/) | [e2e-test.sh](../scripts/e2e-test.sh) | N/A |
+
+## Current Status
+
+**Active Sprint:** [Sprint 5](../SPRINT_5.md) - E2E Testing Infrastructure & Production Readiness
+
+| Metric | Value |
+|--------|-------|
+| EVM Contract Tests | 59 passing |
+| Relayer Tests | 24 (19 unit + 5 integration) |
+| Frontend | Builds, renders correctly |
+| E2E Tests | Requires manual setup (Sprint 5 priority) |
 
 ## Getting Started
 

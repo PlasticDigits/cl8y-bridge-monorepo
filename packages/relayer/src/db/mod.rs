@@ -411,3 +411,197 @@ pub async fn update_last_terra_block(
 
     Ok(())
 }
+
+// ============ Sprint 4: Confirmation Tracking ============
+
+/// Get submitted approvals for confirmation checking
+pub async fn get_submitted_approvals(pool: &PgPool) -> Result<Vec<Approval>> {
+    let rows = sqlx::query_as::<_, Approval>(
+        r#"SELECT * FROM approvals WHERE status = 'submitted'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get submitted approvals")?;
+
+    Ok(rows)
+}
+
+/// Get submitted releases for confirmation checking
+pub async fn get_submitted_releases(pool: &PgPool) -> Result<Vec<Release>> {
+    let rows = sqlx::query_as::<_, Release>(
+        r#"SELECT * FROM releases WHERE status = 'submitted'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get submitted releases")?;
+
+    Ok(rows)
+}
+
+/// Update approval to reorged status
+pub async fn update_approval_reorged(pool: &PgPool, id: i64) -> Result<()> {
+    sqlx::query(r#"UPDATE approvals SET status = 'reorged' WHERE id = $1"#)
+        .bind(id)
+        .execute(pool)
+        .await
+        .wrap_err_with(|| format!("Failed to update approval {} as reorged", id))?;
+
+    Ok(())
+}
+
+/// Update release to reorged status
+pub async fn update_release_reorged(pool: &PgPool, id: i64) -> Result<()> {
+    sqlx::query(r#"UPDATE releases SET status = 'reorged' WHERE id = $1"#)
+        .bind(id)
+        .execute(pool)
+        .await
+        .wrap_err_with(|| format!("Failed to update release {} as reorged", id))?;
+
+    Ok(())
+}
+
+// ============ Sprint 4: Retry System ============
+
+/// Get failed approvals that are ready for retry
+pub async fn get_failed_approvals_for_retry(
+    pool: &PgPool,
+    dest_chain_id: i64,
+    max_attempts: i32,
+) -> Result<Vec<Approval>> {
+    let rows = sqlx::query_as::<_, Approval>(
+        r#"
+        SELECT * FROM approvals 
+        WHERE status = 'failed' 
+          AND dest_chain_id = $1
+          AND attempts < $2
+          AND (retry_after IS NULL OR retry_after <= NOW())
+        ORDER BY created_at ASC
+        LIMIT 10
+        "#,
+    )
+    .bind(dest_chain_id)
+    .bind(max_attempts)
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get failed approvals for retry")?;
+
+    Ok(rows)
+}
+
+/// Get failed releases that are ready for retry
+pub async fn get_failed_releases_for_retry(pool: &PgPool, max_attempts: i32) -> Result<Vec<Release>> {
+    let rows = sqlx::query_as::<_, Release>(
+        r#"
+        SELECT * FROM releases 
+        WHERE status = 'failed' 
+          AND attempts < $1
+          AND (retry_after IS NULL OR retry_after <= NOW())
+        ORDER BY created_at ASC
+        LIMIT 10
+        "#,
+    )
+    .bind(max_attempts)
+    .fetch_all(pool)
+    .await
+    .wrap_err("Failed to get failed releases for retry")?;
+
+    Ok(rows)
+}
+
+/// Update approval to pending for retry with retry_after
+pub async fn update_approval_for_retry(
+    pool: &PgPool,
+    id: i64,
+    retry_after: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE approvals SET status = 'pending', retry_after = $1 WHERE id = $2"#,
+    )
+    .bind(retry_after)
+    .bind(id)
+    .execute(pool)
+    .await
+    .wrap_err_with(|| format!("Failed to update approval {} for retry", id))?;
+
+    Ok(())
+}
+
+/// Update release to pending for retry with retry_after
+pub async fn update_release_for_retry(
+    pool: &PgPool,
+    id: i64,
+    retry_after: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE releases SET status = 'pending', retry_after = $1 WHERE id = $2"#,
+    )
+    .bind(retry_after)
+    .bind(id)
+    .execute(pool)
+    .await
+    .wrap_err_with(|| format!("Failed to update release {} for retry", id))?;
+
+    Ok(())
+}
+
+// ============ Sprint 4: API/Status Queries ============
+
+/// Count pending deposits by chain
+pub async fn count_pending_deposits(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM evm_deposits WHERE status = 'pending'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count pending deposits")?;
+
+    Ok(row.0)
+}
+
+/// Count pending approvals
+pub async fn count_pending_approvals(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM approvals WHERE status = 'pending'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count pending approvals")?;
+
+    Ok(row.0)
+}
+
+/// Count submitted approvals
+pub async fn count_submitted_approvals(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM approvals WHERE status = 'submitted'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count submitted approvals")?;
+
+    Ok(row.0)
+}
+
+/// Count pending releases
+pub async fn count_pending_releases(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM releases WHERE status = 'pending'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count pending releases")?;
+
+    Ok(row.0)
+}
+
+/// Count submitted releases
+pub async fn count_submitted_releases(pool: &PgPool) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM releases WHERE status = 'submitted'"#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to count submitted releases")?;
+
+    Ok(row.0)
+}

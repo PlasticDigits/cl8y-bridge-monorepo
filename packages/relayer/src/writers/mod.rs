@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use eyre::Result;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -53,6 +54,20 @@ impl RetryConfig {
     /// Check if we should retry based on attempt count
     pub fn should_retry(&self, attempt: u32) -> bool {
         attempt < self.max_retries
+    }
+    
+    /// Calculate the next retry_after timestamp for a failed attempt
+    pub fn next_retry_after(&self, attempt: u32) -> DateTime<Utc> {
+        let backoff = self.backoff_for_attempt(attempt);
+        Utc::now() + chrono::Duration::from_std(backoff).unwrap_or(chrono::Duration::seconds(60))
+    }
+    
+    /// Check if a transaction is ready for retry based on retry_after
+    pub fn is_ready_for_retry(&self, retry_after: Option<DateTime<Utc>>) -> bool {
+        match retry_after {
+            Some(time) => Utc::now() >= time,
+            None => true, // No retry_after means ready immediately
+        }
     }
 }
 

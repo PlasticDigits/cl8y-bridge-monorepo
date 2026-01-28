@@ -316,6 +316,56 @@ pub struct Deposit {
 Make structs for the database.
 ```
 
+## Lessons Learned (Sprint 4)
+
+Based on actual Sprint 4 experience, here are critical insights:
+
+### Actual Success Rates
+
+| Mode | Expected | Actual |
+|------|----------|--------|
+| Replace mode | ~90% | ~80% |
+| Edit mode | ~60% | ~50% |
+
+### Common Failure Causes
+
+| Issue | Count | Solution |
+|-------|-------|----------|
+| Environment issues | 8 | Ensure `rustup default stable` is set |
+| Thinking timeout | 1 | Split job into smaller parts (<200 lines) |
+| Edit mode fails | 4 | Use replace mode instead |
+| Never run | 9 | Always batch run with `worksplit run` |
+
+### Critical Best Practices
+
+1. **Always use REPLACE mode** unless editing <10 lines
+2. **Split jobs to <200 lines** output to avoid timeouts
+3. **Run `worksplit run`** for batch execution, not individual `--job` runs
+4. **Check `worksplit status`** frequently
+5. **If a job fails twice**, do it manually and move on
+6. **Use `depends_on`** in frontmatter for job ordering:
+
+```yaml
+---
+output_dir: src/
+output_file: feature.rs
+depends_on:
+  - feature_001_types
+  - feature_002_helpers
+---
+```
+
+### Recommended Job Sizes
+
+| Lines | Action |
+|-------|--------|
+| < 50 | Do manually |
+| 50-150 | Single job |
+| 150-300 | Consider splitting |
+| > 300 | MUST split |
+
+---
+
 ## Troubleshooting
 
 ### Job Fails Verification

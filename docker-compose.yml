@@ -63,6 +63,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # Terrad CLI container for E2E testing
+  # Provides terrad command for automated Terra interactions
+  terrad-cli:
+    image: terramoney/localterra-core:latest
+    platform: linux/amd64
+    entrypoint: /bin/sh
+    command: -c "sleep infinity"
+    volumes:
+      - ./scripts:/scripts:ro
+      - terrad-keys:/root/.terra
+    depends_on:
+      localterra:
+        condition: service_healthy
+    profiles:
+      - e2e  # Only start with: docker compose --profile e2e up
+
 volumes:
   localterra-data:
   postgres-data:
+  terrad-keys:

@@ -1,12 +1,16 @@
+mod api;
 mod config;
+mod confirmation;
 mod contracts;
 mod db;
 mod metrics;
+mod multi_evm;
 mod types;
 mod watchers;
 mod writers;
 
 use config::Config;
+use confirmation::ConfirmationTracker;
 use watchers::WatcherManager;
 use writers::WriterManager;
 
@@ -46,6 +50,7 @@ async fn async_main() -> eyre::Result<()> {
     // Create shutdown channels
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let (shutdown_tx2, shutdown_rx2) = tokio::sync::mpsc::channel::<()>(1);
+    let (shutdown_tx3, shutdown_rx3) = tokio::sync::mpsc::channel::<()>(1);
     
     // Setup signal handlers
     let shutdown_tx_signal = shutdown_tx.clone();
@@ -53,23 +58,26 @@ async fn async_main() -> eyre::Result<()> {
         wait_for_shutdown_signal().await;
         let _ = shutdown_tx_signal.send(()).await;
         let _ = shutdown_tx2.send(()).await;
+        let _ = shutdown_tx3.send(()).await;
     });
     
     // Create managers
     let watcher_manager = WatcherManager::new(&config, db.clone()).await?;
     let mut writer_manager = WriterManager::new(&config, db.clone()).await?;
+    let mut confirmation_tracker = ConfirmationTracker::new(&config, db.clone()).await?;
     
     tracing::info!("Managers initialized, starting processing");
     
-    // Start metrics server
-    let metrics_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 9090));
+    // Start metrics/API server
+    let api_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 9090));
+    let api_db = db.clone();
     tokio::spawn(async move {
-        if let Err(e) = metrics::start_metrics_server(metrics_addr).await {
-            tracing::error!(error = %e, "Metrics server error");
+        if let Err(e) = api::start_api_server(api_addr, api_db).await {
+            tracing::error!(error = %e, "API server error");
         }
     });
     
-    // Run watchers and writers concurrently
+    // Run watchers, writers, and confirmation tracker concurrently
     tokio::select! {
         result = watcher_manager.run(shutdown_rx) => {
             if let Err(e) = result {
@@ -79,6 +87,11 @@ async fn async_main() -> eyre::Result<()> {
         result = writer_manager.run(shutdown_rx2) => {
             if let Err(e) = result {
                 tracing::error!(error = %e, "Writer manager error");
+            }
+        }
+        result = confirmation_tracker.run(shutdown_rx3) => {
+            if let Err(e) = result {
+                tracing::error!(error = %e, "Confirmation tracker error");
             }
         }
     }

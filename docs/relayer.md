@@ -53,8 +53,14 @@ flowchart TB
 | Terra Watcher | `src/watchers/terra.rs` | Poll Terra transactions |
 | EVM Writer | `src/writers/evm.rs` | Submit `approveWithdraw` transactions |
 | Terra Writer | `src/writers/terra.rs` | Submit `Release` transactions |
+| **Confirmation** | `src/confirmation/mod.rs` | Track transaction confirmations |
+| EVM Confirmation | `src/confirmation/evm.rs` | Verify EVM transaction receipts |
+| Terra Confirmation | `src/confirmation/terra.rs` | Verify Terra transaction status |
+| **API** | `src/api.rs` | HTTP endpoints for monitoring |
+| Multi-EVM | `src/multi_evm.rs` | Multi-chain EVM support |
 | Database | `src/db/mod.rs` | PostgreSQL operations |
 | Models | `src/db/models.rs` | Database models |
+| Metrics | `src/metrics.rs` | Prometheus metrics |
 
 ### Technology Stack
 
@@ -229,12 +235,72 @@ docker-compose up relayer
 
 ### Monitoring
 
-The relayer exposes metrics for monitoring:
+The relayer exposes metrics and API endpoints for monitoring.
 
-- Deposits observed per chain
-- Approvals/releases submitted
-- Transaction success/failure rates
-- Processing latency
+#### HTTP API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check, returns `{"status":"healthy"}` |
+| `/metrics` | GET | Prometheus metrics in text format |
+| `/status` | GET | Relayer status with queue counts |
+| `/pending` | GET | List of pending transactions |
+
+**Example responses:**
+
+```bash
+# Health check
+curl http://localhost:9090/health
+# {"status":"healthy"}
+
+# Status
+curl http://localhost:9090/status
+# {
+#   "uptime_seconds": 3600,
+#   "pending_deposits": 5,
+#   "pending_approvals": 3,
+#   "pending_releases": 2,
+#   "evm_block": 1000,
+#   "terra_height": 5000
+# }
+```
+
+#### Prometheus Metrics
+
+- `bridge_deposits_total{chain}` - Deposits observed per chain
+- `bridge_approvals_total{status}` - Approvals by status
+- `bridge_releases_total{status}` - Releases by status
+- `bridge_processing_latency_seconds` - Processing latency histogram
+- `bridge_circuit_breaker_status{chain}` - Circuit breaker gauge
+
+### Confirmation Tracker
+
+The confirmation tracker monitors submitted transactions and updates their status:
+
+1. **Pending → Submitted**: Writer submits transaction
+2. **Submitted → Confirmed**: Confirmation tracker verifies receipt
+3. **Submitted → Failed**: Transaction reverted or not found
+
+Configuration:
+
+```bash
+# Environment variables
+CONFIRMATION_POLL_INTERVAL_MS=1000
+EVM_CONFIRMATIONS=1
+TERRA_CONFIRMATIONS=6
+```
+
+### Automatic Retry
+
+Failed transactions are automatically retried based on:
+
+1. **retry_after** timestamp (exponential backoff)
+2. Maximum retry attempts (default: 5)
+3. Circuit breaker status
+
+Database columns added for retry support:
+- `approvals.retry_after TIMESTAMPTZ`
+- `releases.retry_after TIMESTAMPTZ`
 
 ## Error Handling
 
