@@ -1,0 +1,57 @@
+# CL8Y Bridge Documentation
+
+Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra Classic with EVM-compatible blockchains (BSC, Ethereum, Polygon, etc.).
+
+## Table of Contents
+
+### Architecture & Design
+
+- [System Architecture](./architecture.md) - High-level overview of all components and how they interact
+- [Crosschain Transfer Flows](./crosschain-flows.md) - Detailed flow diagrams for EVM ↔ Terra Classic transfers
+
+### Smart Contracts
+
+- [EVM Contracts](./contracts-evm.md) - Solidity contracts for EVM chains (CL8YBridge, BridgeRouter, TokenRegistry)
+- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm contracts for Terra Classic
+
+### Infrastructure
+
+- [Relayer](./relayer.md) - Bridge operator service that processes crosschain transfers
+- [Local Development](./local-development.md) - Setting up local testnets for development and testing
+- [Deployment Guide](./deployment.md) - Production deployment procedures
+
+### Development
+
+- [WorkSplit Guide](./worksplit-guide.md) - Using WorkSplit for AI-assisted code generation in this project
+
+## Quick Links
+
+| Component | Source | Tests | Deployment |
+|-----------|--------|-------|------------|
+| EVM Contracts | [packages/contracts-evm/src/](../packages/contracts-evm/src/) | [tests/](../packages/contracts-evm/test/) | [BSC Mainnet](./deployment.md#bsc-mainnet) |
+| Terra Classic Contracts | [packages/contracts-terraclassic/](../packages/contracts-terraclassic/) | TBD | [Columbus-5](./deployment.md#terra-classic) |
+| Relayer | [packages/relayer/](../packages/relayer/) | TBD | [Docker](./deployment.md#relayer) |
+| Frontend | [packages/frontend/](../packages/frontend/) | TBD | TBD |
+
+## Getting Started
+
+### For Users
+
+See the [Frontend README](../packages/frontend/README.md) for using the bridge interface.
+
+### For Developers
+
+1. Start with [System Architecture](./architecture.md) to understand the overall design
+2. Set up [Local Development](./local-development.md) environment
+3. Review [Crosschain Transfer Flows](./crosschain-flows.md) to understand the bridge mechanics
+
+### For Operators
+
+1. Review [Relayer](./relayer.md) documentation
+2. Follow [Deployment Guide](./deployment.md) for production setup
+3. Understand [Crosschain Transfer Flows](./crosschain-flows.md) for monitoring
+
+## Related Resources
+
+- [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec for relayer implementation
+- [Terra Classic Deployment Scripts](../packages/contracts-terraclassic/scripts/README.md) - Contract deployment procedures
