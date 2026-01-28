@@ -900,33 +900,67 @@ Hyperlane is a permissionless interchain messaging protocol that enables cross-c
 
 **Key Components**:
 - **Mailbox**: Sends and receives cross-chain messages
-- **ISM (Interchain Security Module)**: Validates message authenticity
+- **ISM (Interchain Security Module)**: Validates message authenticity with customizable security
 - **Validators**: Sign attestations of cross-chain messages
 - **Relayers**: Deliver messages to destination chains
-- **Warp Routes**: Token bridging built on top of messaging
+- **Warp Routes (HWR)**: Token bridging built on top of messaging
 
-### 9.2 Hyperlane vs CL8Y Bridge
+### 9.2 Hyperlane Warp Routes (HWR)
+
+According to [Hyperlane documentation](https://docs.hyperlane.xyz/docs/applications/warp-routes/overview), Hyperlane Warp Routes are modular cross-chain asset bridges that support:
+
+- ERC20 & ERC721 tokens (for EVM-compatible chains)
+- SVM-based assets (for Solana-compatible chains)
+- Native tokens (such as ETH or other gas tokens)
+
+**HWR Types relevant to CL8Y integration**:
+
+| HWR Type | Description |
+|----------|-------------|
+| Collateral-Backed ERC20 | Locks ERC20 tokens as collateral on source chain |
+| Synthetic ERC20 | Mints new ERC20 tokens on destination to represent originals |
+| Native Token HWRs | Direct transfers of native gas tokens without wrapping |
+
+**Key architecture note**: Each HWR requires contracts deployed on every chain it connects. The deployer can specify custom ISMs for each route, meaning security configurations can vary.
+
+### 9.3 Hyperlane vs CL8Y Bridge
 
 | Aspect | CL8Y Bridge | Hyperlane |
 |--------|-------------|-----------|
-| Validation | Centralized operator | Decentralized validators |
-| Permissioning | Admin-controlled | Permissionless |
-| Chain support | Admin decides | Anyone can deploy |
-| Token standard | xxx-cb | hypxxx |
+| Validation | Centralized operator | Decentralized validators via ISM |
+| Permissioning | Admin-controlled | Permissionless deployment |
+| Chain support | Admin decides | Anyone can deploy (if Hyperlane core exists) |
+| Token standard | xxx-cb | hypxxx (synthetic) |
+| Security model | Single operator or multisig | Configurable ISM per route |
 | Operational control | Full | None |
-| Delisting risk | None (you control) | High (they control) |
+| Delisting risk | None (you control) | Medium-High (depends on validator support) |
 
-### 9.3 Current Hyperlane Status
+### 9.4 Current Hyperlane Status
 
-> **As of document creation, Hyperlane does NOT support Terra Classic.**
+> **As of document creation (2026-01-28), Hyperlane does NOT support Terra Classic.**
 
-Hyperlane support requirements:
-- [ ] Hyperlane Mailbox deployed on Terra Classic
+Hyperlane support requirements for Terra Classic:
+- [ ] Hyperlane Mailbox deployed on Terra Classic (CosmWasm)
 - [ ] Hyperlane validators running Terra Classic nodes
 - [ ] Hyperlane ISM configured for Terra Classic
 - [ ] Hyperlane relayers supporting Terra Classic
 
-**Check current status**: https://docs.hyperlane.xyz/docs/reference/chains
+**Check current chain support**:
+- Registry: https://github.com/hyperlane-xyz/hyperlane-registry
+- Documentation: https://docs.hyperlane.xyz/docs/applications/warp-routes/overview
+
+**Note**: The [Hyperlane Registry](https://github.com/hyperlane-xyz/hyperlane-registry) contains configs, artifacts, and schemas for all supported chains. Check the `chains/` directory for current deployments.
+
+### 9.5 Important Considerations
+
+From the Hyperlane documentation:
+
+> "The deployer of a HWR can specify the ISMs that are used to verify interchain transfer messages. This means that each HWR may have a unique security configuration. Users transferring interchain tokens should understand the trust assumptions of a Route before using it."
+
+This reinforces our sovereignty-first approach:
+1. If CL8Y ever integrates Hyperlane validation, we control which ISM to use
+2. We can configure security to match our risk tolerance
+3. We can revert to our own validation if Hyperlane's ISM becomes unavailable
 
 ---
 
@@ -935,6 +969,15 @@ Hyperlane support requirements:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-28 | CL8Y Team | Initial draft |
+| 1.1 | 2026-01-28 | CL8Y Team | Updated Hyperlane docs links, added HWR details |
+
+---
+
+## References
+
+- [Hyperlane Warp Routes Overview](https://docs.hyperlane.xyz/docs/applications/warp-routes/overview)
+- [Hyperlane Registry (GitHub)](https://github.com/hyperlane-xyz/hyperlane-registry)
+- [Hyperlane ISM Documentation](https://docs.hyperlane.xyz/docs/protocol/ISM/modular-security)
 
 ---
 
