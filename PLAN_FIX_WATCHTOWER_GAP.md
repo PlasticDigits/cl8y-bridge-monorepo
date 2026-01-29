@@ -17,8 +17,93 @@ This creates a security layer where canceling is **cheap** (just flag the approv
 - No delay window
 - No cancel functionality
 - No watchtower protection
+- No canonical hash-based verification
 
 This asymmetry means Terra Classic lacks the same security guarantees as EVM.
+
+---
+
+## Canonical TransferId Hashing Mechanism (EVM)
+
+The EVM contract uses a **canonical hashing mechanism** that enables cross-chain verification and prevents duplicates.
+
+### How It Works
+
+A **TransferId** (hash) is computed identically on both source and destination chains:
+
+```solidity
+bytes32 transferId = keccak256(abi.encode(
+    srcChainKey,        // Source chain identifier
+    destChainKey,       // Destination chain identifier  
+    destTokenAddress,   // Token address on destination (bytes32)
+    destAccount,        // Recipient account (bytes32)
+    amount,             // Normalized amount
+    nonce               // Unique nonce from source chain
+));
+```
+
+### Key Properties
+
+| Property | Mechanism |
+|----------|-----------|
+| **Uniqueness** | Nonce is included → same transfer cannot be approved twice |
+| **Verifiability** | Hash computed from original deposit data → can verify against source chain |
+| **Cross-chain consistency** | Same formula on both chains → deposit hash = withdraw hash |
+| **Duplicate prevention** | `_withdrawNonceUsed[srcChainKey][nonce]` prevents double-approval per source chain |
+
+### Flow
+
+```
+Source Chain (Deposit)                    Destination Chain (Withdraw)
+─────────────────────                     ────────────────────────────
+1. User deposits tokens                   
+2. Contract computes depositHash          
+3. Stores in _depositHashes set           
+4. Emits DepositRequest event             
+                                          5. Relayer observes event
+                                          6. Relayer calls approveWithdraw with same params
+                                          7. Contract computes withdrawHash (same formula)
+                                          8. Hash matches deposit → approval valid
+                                          9. Stores approval keyed by withdrawHash
+                                          10. After delay, user calls withdraw(withdrawHash)
+```
+
+### Verification During Delay Window
+
+Cancelers can verify approvals by:
+1. Taking the `withdrawHash` from the `WithdrawApproved` event
+2. Querying the source chain's `_depositHashes` set or `getDepositFromHash()`
+3. If no matching deposit exists → cancel the approval (fraudulent)
+4. If deposit exists but parameters don't match → cancel (manipulation)
+
+### EVM Implementation Reference
+
+```solidity
+// Source: CL8YBridge.sol
+
+/// @dev Computes canonical transferId used across deposit and withdraw
+function _computeTransferId(
+    bytes32 srcChainKey,
+    bytes32 destChainKey,
+    bytes32 destTokenAddress,
+    bytes32 destAccount,
+    uint256 amount,
+    uint256 nonce
+) internal pure returns (bytes32) {
+    return keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
+}
+
+/// @dev Tracks nonce usage per source chain key to prevent duplicate approvals
+mapping(bytes32 srcChainKey => mapping(uint256 nonce => bool used)) private _withdrawNonceUsed;
+```
+
+### Terra Classic Gap
+
+The current Terra Classic contract:
+- Uses nonce only for replay prevention (`USED_NONCES`)
+- Does NOT compute a canonical hash from deposit data
+- Does NOT store deposit hashes for verification
+- Cannot be verified against source chain state
 
 ---
 
@@ -28,22 +113,31 @@ This asymmetry means Terra Classic lacks the same security guarantees as EVM.
 
 | Feature | Implementation |
 |---------|----------------|
-| `approveWithdraw` | Relayers approve withdrawals with fee terms |
+| **Canonical TransferId Hash** | `keccak256(srcChainKey, destChainKey, destToken, destAccount, amount, nonce)` |
+| **Deposit Hash Storage** | `_depositHashes` set + `_deposits` mapping for verification |
+| **Withdraw Hash Storage** | `_withdrawHashes` set + `_withdraws` mapping |
+| **Nonce Tracking** | `_withdrawNonceUsed[srcChainKey][nonce]` prevents duplicates per source chain |
+| `approveWithdraw` | Relayers approve withdrawals with fee terms, keyed by withdrawHash |
 | `withdrawDelay` | 5-minute default delay between approval and execution |
-| `withdraw` | Executes only after delay elapses |
+| `withdraw` | Executes only after delay elapses, looks up by withdrawHash |
 | `cancelWithdrawApproval` | Cancelers can cancel suspicious approvals during delay |
 | `reenableWithdrawApproval` | Admin can re-enable cancelled approvals |
 | `WithdrawApproval` struct | Tracks: `isApproved`, `cancelled`, `executed`, `approvedAt` |
+| **Cross-chain Verification** | Cancelers can verify withdrawHash exists on source chain |
 
 ### Terra Classic Contract (`contract.rs`)
 
 | Feature | Implementation |
 |---------|----------------|
 | `Release` | Single-step immediate release with signature verification |
+| Canonical TransferId Hash | **MISSING** - no hash computed from deposit data |
+| Deposit Hash Storage | **MISSING** - cannot verify against source chain |
+| Nonce Tracking | `USED_NONCES` - only prevents replay, not keyed by source chain |
 | Delay mechanism | **MISSING** |
 | Cancel functionality | **MISSING** |
 | Approval tracking | **MISSING** |
 | Canceler role | **MISSING** |
+| Cross-chain verification | **MISSING** |
 
 ---
 
@@ -100,14 +194,52 @@ This asymmetry means Terra Classic lacks the same security guarantees as EVM.
 
 ### Week 3-4: Terra Classic Upgrade Design
 
-**Objective:** Design the approve-delay-cancel pattern for Terra Classic (CosmWasm)
+**Objective:** Design the approve-delay-cancel pattern with canonical hashing for Terra Classic (CosmWasm)
 
 **Tasks:**
+
+#### Canonical TransferId Hash Design
+- [ ] Design hash computation function matching EVM:
+  ```rust
+  /// Computes canonical transferId matching EVM's _computeTransferId
+  fn compute_transfer_id(
+      src_chain_key: &[u8; 32],
+      dest_chain_key: &[u8; 32],
+      dest_token_address: &[u8; 32],
+      dest_account: &[u8; 32],
+      amount: Uint128,
+      nonce: u64,
+  ) -> [u8; 32] {
+      // keccak256(abi.encode(...)) equivalent
+      let mut data = Vec::new();
+      data.extend_from_slice(src_chain_key);
+      data.extend_from_slice(dest_chain_key);
+      data.extend_from_slice(dest_token_address);
+      data.extend_from_slice(dest_account);
+      data.extend_from_slice(&amount.to_be_bytes());
+      data.extend_from_slice(&nonce.to_be_bytes());
+      keccak256(&data)
+  }
+  ```
+- [ ] Design chain key computation:
+  ```rust
+  /// EVM chain key: keccak256("EVM", chainId)
+  fn evm_chain_key(chain_id: u64) -> [u8; 32];
+  
+  /// Cosmos chain key: keccak256("COSMOS", chain_id, address_prefix)
+  fn cosmos_chain_key(chain_id: &str, prefix: &str) -> [u8; 32];
+  ```
 
 #### State Structures
 - [ ] Design `WithdrawApproval` struct:
   ```rust
   pub struct WithdrawApproval {
+      pub src_chain_key: [u8; 32],
+      pub token: String,
+      pub recipient: Addr,
+      pub dest_account: [u8; 32],
+      pub amount: Uint128,
+      pub nonce: u64,
       pub fee: Uint128,
       pub fee_recipient: Addr,
       pub approved_at: Timestamp,
@@ -117,25 +249,52 @@ This asymmetry means Terra Classic lacks the same security guarantees as EVM.
       pub executed: bool,
   }
   ```
-- [ ] Design `PENDING_APPROVALS: Map<String, WithdrawApproval>`
+- [ ] Design `WITHDRAW_APPROVALS: Map<[u8; 32], WithdrawApproval>` (keyed by transferId hash)
+- [ ] Design `WITHDRAW_NONCE_USED: Map<([u8; 32], u64), bool>` (srcChainKey + nonce → used)
+- [ ] Design `DEPOSIT_HASHES: Map<[u8; 32], bool>` (for outgoing deposits)
 - [ ] Design `CANCELERS: Map<&Addr, bool>`
 
 #### New Messages
-- [ ] `ApproveWithdraw` - replaces `Release` as first step
-- [ ] `ExecuteWithdraw` - user/relayer calls after delay
+- [ ] `ApproveWithdraw` - replaces `Release` as first step, computes and stores hash
+  ```rust
+  ApproveWithdraw {
+      src_chain_key: Binary,      // 32 bytes
+      token: String,
+      recipient: String,
+      dest_account: Binary,       // 32 bytes  
+      amount: Uint128,
+      nonce: u64,
+      fee: Uint128,
+      fee_recipient: String,
+      deduct_from_amount: bool,
+  }
+  ```
+- [ ] `ExecuteWithdraw` - user/relayer calls after delay with just the hash
+  ```rust
+  ExecuteWithdraw {
+      withdraw_hash: Binary,  // 32-byte transferId
+  }
+  ```
 - [ ] `CancelWithdrawApproval` - cancelers call
 - [ ] `ReenableWithdrawApproval` - admin calls
 - [ ] `AddCanceler` / `RemoveCanceler` - admin manages cancelers
 - [ ] `SetWithdrawDelay` - admin configures delay
 
+#### Query Messages
+- [ ] `WithdrawApproval { withdraw_hash }` - get approval by hash
+- [ ] `WithdrawHash { ... }` - compute hash without storing (for verification)
+- [ ] `DepositHash { nonce }` - get hash for outgoing deposit
+- [ ] `Cancelers {}` - list all cancelers
+
 #### Configuration Updates
-- [ ] Add `withdraw_delay: u64` to Config
+- [ ] Add `withdraw_delay: u64` to Config (seconds)
 - [ ] Add canceler role management
 
 #### Technical Specification
 - [ ] Create `docs/terraclassic-upgrade-spec.md`
 - [ ] Include state migrations
 - [ ] Include backward compatibility considerations
+- [ ] Document hash computation parity with EVM
 
 **Deliverables:**
 - `docs/terraclassic-upgrade-spec.md`
@@ -145,54 +304,90 @@ This asymmetry means Terra Classic lacks the same security guarantees as EVM.
 
 ### Week 5-6: Terra Classic Implementation
 
-**Objective:** Implement the approve-delay-cancel pattern in Terra Classic contract
+**Objective:** Implement the approve-delay-cancel pattern with canonical hashing in Terra Classic contract
 
 **Tasks:**
 
+#### Add `hash.rs` (new file)
+- [ ] Add keccak256 dependency (use `sha3` crate or cosmwasm's crypto)
+- [ ] Implement `compute_transfer_id()` matching EVM formula
+- [ ] Implement `evm_chain_key(chain_id: u64)` 
+- [ ] Implement `cosmos_chain_key(chain_id: &str, prefix: &str)`
+- [ ] Implement `this_chain_key()` for Terra Classic
+- [ ] Add unit tests verifying hash parity with EVM contract
+
 #### Update `state.rs`
-- [ ] Add `WithdrawApproval` struct
-- [ ] Add `PENDING_APPROVALS: Map<String, WithdrawApproval>`
+- [ ] Add `WithdrawApproval` struct (with all fields for verification)
+- [ ] Add `WITHDRAW_APPROVALS: Map<[u8; 32], WithdrawApproval>` (keyed by transferId)
+- [ ] Add `WITHDRAW_NONCE_USED: Map<(Vec<u8>, u64), bool>` (srcChainKey + nonce)
+- [ ] Add `DEPOSIT_HASHES: Map<[u8; 32], DepositInfo>` (for outgoing deposits)
 - [ ] Add `CANCELERS: Map<&Addr, bool>`
 - [ ] Add `CANCELER_COUNT: Item<u32>`
-- [ ] Add `withdraw_delay` to `Config`
+- [ ] Add `withdraw_delay: u64` to `Config`
 
 #### Update `msg.rs`
-- [ ] Add `ApproveWithdraw` execute message
-- [ ] Add `ExecuteWithdraw` execute message
-- [ ] Add `CancelWithdrawApproval` execute message
-- [ ] Add `ReenableWithdrawApproval` execute message
+- [ ] Add `ApproveWithdraw` execute message (with all params for hash computation)
+- [ ] Add `ExecuteWithdraw { withdraw_hash: Binary }` execute message
+- [ ] Add `CancelWithdrawApproval { withdraw_hash: Binary }` execute message
+- [ ] Add `ReenableWithdrawApproval { withdraw_hash: Binary }` execute message
 - [ ] Add `AddCanceler` / `RemoveCanceler` execute messages
 - [ ] Add `SetWithdrawDelay` execute message
-- [ ] Add `PendingApproval` query message
+- [ ] Add `WithdrawApproval { withdraw_hash }` query message
+- [ ] Add `ComputeWithdrawHash { ... }` query message (compute without storing)
+- [ ] Add `DepositHash { nonce }` query message
 - [ ] Add `Cancelers` query message
 
 #### Update `contract.rs`
-- [ ] Implement `execute_approve_withdraw`
-- [ ] Implement `execute_withdraw` (modified from `execute_release`)
-- [ ] Implement `execute_cancel_withdraw_approval`
-- [ ] Implement `execute_reenable_withdraw_approval`
+- [ ] Implement `execute_approve_withdraw`:
+  - Compute transferId hash from params
+  - Check `WITHDRAW_NONCE_USED[srcChainKey][nonce]` is false
+  - Store approval keyed by hash
+  - Mark nonce as used
+  - Emit `WithdrawApproved` event with hash
+- [ ] Implement `execute_withdraw`:
+  - Load approval by hash
+  - Verify delay has elapsed: `block.time >= approved_at + withdraw_delay`
+  - Mark as executed
+  - Transfer tokens
+- [ ] Implement `execute_cancel_withdraw_approval`:
+  - Verify caller is canceler
+  - Load approval by hash
+  - Set `cancelled = true`
+- [ ] Implement `execute_reenable_withdraw_approval`:
+  - Verify caller is admin
+  - Load approval by hash
+  - Set `cancelled = false`, reset `approved_at` to now
 - [ ] Implement `execute_add_canceler` / `execute_remove_canceler`
 - [ ] Implement `execute_set_withdraw_delay`
-- [ ] Add delay validation helper
+- [ ] Update `execute_lock` to compute and store deposit hash
 
 #### Update `error.rs`
 - [ ] Add `WithdrawNotApproved` error
 - [ ] Add `ApprovalCancelled` error
 - [ ] Add `ApprovalExecuted` error
-- [ ] Add `WithdrawDelayNotElapsed` error
+- [ ] Add `WithdrawDelayNotElapsed { remaining_seconds: u64 }` error
+- [ ] Add `NonceAlreadyApproved { src_chain_key: Binary, nonce: u64 }` error
 - [ ] Add `NotCanceller` error
 - [ ] Add `ApprovalNotCancelled` error
+- [ ] Add `WithdrawDataMissing` error
+
+#### Update `Cargo.toml`
+- [ ] Add `sha3` crate for keccak256 (or use cosmwasm-crypto if available)
 
 #### Migration
 - [ ] Create migration handler for existing state
+- [ ] Add default `withdraw_delay` value
+- [ ] Initialize empty canceler set
 - [ ] Ensure backward compatibility during transition
 - [ ] Handle in-flight transactions
 
 **Deliverables:**
+- New `contracts-terraclassic/bridge/src/hash.rs`
 - Updated `contracts-terraclassic/bridge/src/state.rs`
 - Updated `contracts-terraclassic/bridge/src/msg.rs`
 - Updated `contracts-terraclassic/bridge/src/contract.rs`
 - Updated `contracts-terraclassic/bridge/src/error.rs`
+- Updated `contracts-terraclassic/bridge/Cargo.toml`
 - Migration script
 
 ---
@@ -203,37 +398,60 @@ This asymmetry means Terra Classic lacks the same security guarantees as EVM.
 
 **Tasks:**
 
+#### Hash Parity Tests (Critical)
+- [ ] Create test vectors from EVM contract:
+  - Deploy EVM contract to test network
+  - Call `getDepositHash()` / `getWithdrawHash()` with known params
+  - Record expected hashes
+- [ ] Verify Terra Classic produces identical hashes:
+  - Same inputs → same 32-byte output
+  - Test with various chain IDs, amounts, nonces
+  - Test edge cases (max values, zero values)
+- [ ] Cross-chain verification test:
+  - Create deposit on EVM → get depositHash
+  - Create approval on Terra with same params → verify withdrawHash matches
+
 #### Unit Tests
 - [ ] Test approve flow (happy path)
 - [ ] Test delay enforcement (cannot execute before delay)
 - [ ] Test cancel flow (canceler can cancel)
 - [ ] Test reenable flow (admin can reenable)
-- [ ] Test nonce handling (no double approve)
+- [ ] Test nonce handling per source chain:
+  - Same nonce from different source chains → allowed
+  - Same nonce from same source chain → rejected
 - [ ] Test unauthorized access (non-canceler cannot cancel)
 - [ ] Test edge cases:
-  - Double approve same nonce
+  - Double approve same nonce from same source chain
   - Cancel after execute
   - Reenable after execute
   - Execute cancelled approval
+  - Approve with mismatched hash components
 
 #### Integration Tests
 - [ ] Test relayer integration with new flow
-- [ ] Test canceler monitoring simulation
+- [ ] Test canceler monitoring simulation:
+  - Canceler queries source chain for deposit hash
+  - Canceler verifies approval matches
+  - Canceler cancels invalid approval
 - [ ] End-to-end test: EVM → Terra with new flow
 - [ ] End-to-end test: Terra → EVM (unchanged)
 
 #### Relayer Updates
 - [ ] Update Terra writer to use approve-then-execute pattern
+- [ ] Update hash computation to match contract
 - [ ] Add configuration for new flow
-- [ ] (Optional) Add canceler functionality to relayer
+- [ ] (Optional) Add canceler monitoring module to relayer
 
 #### Documentation Updates
 - [ ] Update `docs/contracts-terraclassic.md` with new messages
 - [ ] Update `docs/crosschain-flows.md` with new diagrams
 - [ ] Update `docs/relayer.md` with new flow
+- [ ] Document hash computation for third-party integrators
 
 **Deliverables:**
-- Test suite for new functionality
+- Hash parity test suite (critical for security)
+- Unit test suite for new functionality
+- Integration test suite
 - Updated relayer (packages/relayer)
 - Updated documentation
 
@@ -296,17 +514,41 @@ Without the watchtower pattern on Terra Classic:
 1. A compromised relayer could immediately drain funds
 2. There's no time window to detect and respond to attacks
 3. The only defense is signature threshold (multi-sig)
+4. Cannot verify approvals against source chain state
 
-With the watchtower pattern:
+With the watchtower pattern + canonical hashing:
 1. Cancelers provide an additional security layer
 2. Attacks can be detected and stopped during the delay window
 3. Economic incentives align: canceling is cheap, so monitoring is viable
+4. **Verification is trivial**: Query source chain for depositHash, compare with withdrawHash
+5. **Duplicates impossible**: Hash includes nonce, nonce tracked per source chain
+
+### Canonical Hash Security Properties
+
+| Attack | Prevention |
+|--------|------------|
+| **Double-spend** | Nonce included in hash + `WITHDRAW_NONCE_USED` tracking |
+| **Amount manipulation** | Amount included in hash, must match source |
+| **Recipient manipulation** | `destAccount` included in hash, must match source |
+| **Fake source chain** | `srcChainKey` included in hash, verifiable |
+| **Cross-chain replay** | Hash includes both `srcChainKey` and `destChainKey` |
+
+### Verification Flow for Cancelers
+
+```
+1. Observe WithdrawApproved event on Terra with withdrawHash
+2. Query EVM source chain: bridge.getDepositFromHash(withdrawHash)
+3. If deposit exists and matches → approval is valid
+4. If deposit missing or mismatched → call cancelWithdrawApproval(withdrawHash)
+5. All within the 5-minute delay window
+```
 
 ### Risk During Transition
 
 - **In-flight transactions**: Handle gracefully during migration
 - **Relayer coordination**: Ensure all relayers upgrade simultaneously
 - **Canceler availability**: Must have cancelers ready before enabling
+- **Hash parity**: MUST verify Terra hashes match EVM hashes before deployment
 
 ---
 
@@ -328,13 +570,60 @@ With the watchtower pattern:
    - Could be a separate effort
    - Would further align security models
 
+5. **How to handle keccak256 in CosmWasm?**
+   - Option A: Use `sha3` crate (pure Rust, larger binary)
+   - Option B: Use cosmwasm-crypto if available
+   - Option C: Custom implementation (not recommended)
+
+6. **Should deposit hashes be stored on Terra for outgoing transfers?**
+   - Enables EVM cancelers to verify Terra → EVM transfers
+   - Adds storage cost but improves parity
+
+7. **How to encode addresses in hash computation?**
+   - EVM addresses are 20 bytes, padded to 32 bytes
+   - Terra addresses are bech32 strings
+   - Need consistent encoding: `bytes32(keccak256(terra_address))`?
+
 ---
 
 ## References
 
+### Code
 - EVM Contract: `packages/contracts-evm/src/CL8YBridge.sol`
+  - `_computeTransferId()` - lines 199-208
+  - `getWithdrawHash()` - lines 363-374
+  - `getDepositHash()` - lines 380-390
+  - `approveWithdraw()` - lines 469-513
+  - `cancelWithdrawApproval()` - lines 518-526
 - Terra Contract: `packages/contracts-terraclassic/bridge/src/contract.rs`
+  - `execute_release()` - lines 437-568 (current immediate release)
+
+### Documentation
 - Current EVM Docs: `docs/contracts-evm.md`
 - Current Terra Docs: `docs/contracts-terraclassic.md`
 - Architecture: `docs/architecture.md`
 - Crosschain Flows: `docs/crosschain-flows.md`
+
+### Key EVM Structs
+```solidity
+// Withdraw request structure (line 23-36)
+struct Withdraw {
+    bytes32 srcChainKey;
+    address token;
+    bytes32 destAccount;
+    address to;
+    uint256 amount;
+    uint256 nonce;
+}
+
+// Approval tracking (line 122-130)
+struct WithdrawApproval {
+    uint256 fee;
+    address feeRecipient;
+    uint64 approvedAt;
+    bool isApproved;
+    bool deductFromAmount;
+    bool cancelled;
+    bool executed;
+}
+```
