@@ -12,6 +12,66 @@ The CL8Y Bridge uses a **watchtower security model** on EVM where:
 
 This creates a security layer where canceling is **cheap** (just flag the approval) while approving requires the relayer to stake their reputation. Misbehaving relayers can be caught and stopped before funds are released.
 
+---
+
+## Key Design Decision: Centralized Operator + Decentralized Cancelers
+
+CL8Y Bridge intentionally uses a **single centralized operator** for approvals, rather than a traditional multisig. This may seem counterintuitive, but it's secured by a **decentralized network of cancelers**:
+
+### Why a Single Operator?
+
+| Benefit | Explanation |
+|---------|-------------|
+| **Speed** | No waiting for multiple signatures—transactions process immediately |
+| **Cost** | One approval transaction instead of N signatures |
+| **Simplicity** | Clear accountability; operator reputation is at stake |
+| **UX** | Users don't wait for quorum or deal with stuck transactions |
+
+### Why This Is Secure: The Canceler Network
+
+Security comes from the **asymmetry between approving and canceling**:
+
+- **Approving is expensive**: The operator must submit a valid on-chain transaction
+- **Canceling is cheap**: Any canceler can flag a suspicious approval with minimal gas
+- **One honest canceler wins**: Only one canceler needs to catch fraud to protect users
+- **Delay window**: All approvals wait 5 minutes before execution—plenty of time to cancel
+
+### Infrastructure: opBNB + Raspberry Pi
+
+The canceler network is designed for **maximum accessibility**:
+
+| Component | Choice | Why |
+|-----------|--------|-----|
+| **Chain** | opBNB (BNB Chain L2) | Gas costs are fractions of a cent |
+| **Hardware** | Raspberry Pi compatible | ~$50 device, runs 24/7 on minimal power |
+| **Bandwidth** | Low | Only needs to monitor events and query source chain |
+| **Storage** | Minimal | No blockchain sync required, just RPC access |
+
+This means anyone can run a canceler node—not just well-funded validators. A community member with a Raspberry Pi at home provides the same security guarantee as a professional node operator.
+
+### Security Model Comparison
+
+```
+Traditional Multisig:
+  ┌─────┐ ┌─────┐ ┌─────┐
+  │Sig 1│ │Sig 2│ │Sig 3│ ──► 3-of-5 consensus ──► Execute
+  └─────┘ └─────┘ └─────┘
+  
+  Problem: Slow, expensive, requires coordination
+
+CL8Y Watchtower Model:
+  ┌──────────┐
+  │ Operator │──► Approve ──► Delay ──► Execute
+  └──────────┘                  ↑
+                                │
+  ┌──────────┐ ┌──────────┐    │
+  │Canceler 1│ │Canceler 2│ ───┴──► Cancel if fraud detected
+  └──────────┘ └──────────┘
+  (Raspberry Pi, opBNB)
+  
+  Advantage: Fast approval, cheap monitoring, same security
+```
+
 **The Problem:** Terra Classic's contract uses **immediate release** - when a relayer calls `Release` with valid signatures, tokens are transferred instantly. There is:
 - No approval step
 - No delay window
@@ -522,6 +582,31 @@ With the watchtower pattern + canonical hashing:
 3. Economic incentives align: canceling is cheap, so monitoring is viable
 4. **Verification is trivial**: Query source chain for depositHash, compare with withdrawHash
 5. **Duplicates impossible**: Hash includes nonce, nonce tracked per source chain
+
+### Canceler Network Infrastructure
+
+The canceler network is intentionally designed for low-cost, decentralized participation:
+
+| Requirement | Specification |
+|-------------|---------------|
+| **Chain** | opBNB (BNB Chain L2) |
+| **Gas Costs** | ~$0.001 per cancel transaction |
+| **Hardware** | Raspberry Pi 4 (4GB RAM) or equivalent |
+| **Power** | ~5W continuous |
+| **Bandwidth** | <1 Mbps (event monitoring only) |
+| **Storage** | <1GB (no full node sync) |
+
+**Why opBNB?**
+- Gas costs are 100-1000x cheaper than mainnet
+- Fast finality (sub-second blocks)
+- Secured by BNB Chain validators
+- Easy RPC access without running a full node
+
+**Why Raspberry Pi compatibility matters:**
+- Removes financial barriers to participation
+- Enables geographic distribution (home nodes worldwide)
+- Aligns incentives: community members protect their own assets
+- No cloud infrastructure costs or dependencies
 
 ### Canonical Hash Security Properties
 
