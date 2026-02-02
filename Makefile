@@ -81,7 +81,7 @@ test-operator:
 
 test: test-evm test-terra test-operator
 
-# Deployment
+# Deployment - Local
 deploy: deploy-evm deploy-terra setup-bridge
 	@echo "Deployment complete!"
 
@@ -101,6 +101,26 @@ deploy-terra-local: deploy-terra
 setup-bridge:
 	@echo "Configuring bridge connections..."
 	./scripts/setup-bridge.sh
+
+# Deployment - Testnet
+deploy-evm-bsc-testnet:
+	./scripts/deploy-evm-testnet.sh bsc
+
+deploy-evm-opbnb-testnet:
+	./scripts/deploy-evm-testnet.sh opbnb
+
+deploy-terra-testnet:
+	./scripts/deploy-terra-testnet.sh
+
+# Deployment - Mainnet (DANGER!)
+deploy-evm-bsc-mainnet:
+	./scripts/deploy-evm-mainnet.sh bsc
+
+deploy-evm-opbnb-mainnet:
+	./scripts/deploy-evm-mainnet.sh opbnb
+
+deploy-terra-mainnet:
+	./scripts/deploy-terra-mainnet.sh
 
 # Operator
 operator:
@@ -124,6 +144,15 @@ test-integration:
 # Integration tests (with infrastructure)
 test-integration-full:
 	cd packages/operator && cargo test --test integration_test -- --ignored --nocapture
+
+# Monitoring
+start-monitoring:
+	docker compose --profile monitoring up -d prometheus grafana
+	@echo "Prometheus: http://localhost:9091"
+	@echo "Grafana: http://localhost:3000 (admin/admin)"
+
+stop-monitoring:
+	docker compose --profile monitoring down
 
 # WorkSplit
 worksplit-init:

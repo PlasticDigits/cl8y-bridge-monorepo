@@ -1,0 +1,64 @@
+# Alerting rules for CL8Y Bridge
+
+groups:
+  - name: cl8y-bridge-alerts
+    rules:
+      # Operator is down
+      - alert: OperatorDown
+        expr: up{job="cl8y-operator"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CL8Y Bridge Operator is down"
+          description: "The operator has been unreachable for more than 2 minutes."
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(relayer_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.chain }}"
+          description: "Error rate is {{ $value | humanize }} errors/sec"
+
+      # Circuit breaker tripped
+      - alert: CircuitBreakerTripped
+        expr: relayer_consecutive_failures > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker triggered for {{ $labels.chain }}"
+          description: "{{ $value }} consecutive failures detected"
+
+      # No deposits processed in a while
+      - alert: NoDepositsProcessed
+        expr: increase(relayer_deposits_detected_total[30m]) == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "No deposits detected on {{ $labels.chain }}"
+          description: "No new deposits detected in the last 30 minutes. This may be normal during low activity."
+
+      # High pending queue
+      - alert: HighPendingQueue
+        expr: relayer_pending_approvals > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High pending approval queue on {{ $labels.chain }}"
+          description: "{{ $value }} approvals pending processing"
+
+      # Stale last successful poll
+      - alert: StalePolling
+        expr: time() - relayer_last_successful_poll_timestamp > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Polling stalled for {{ $labels.chain }}"
+          description: "No successful poll in over 5 minutes"

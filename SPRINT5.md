@@ -370,6 +370,76 @@ A complete cross-chain transfer works end-to-end:
 
 ---
 
+## Sprint 5 Completion Summary
+
+### ✅ All Tasks Completed
+
+| Task | Status | Implementation Notes |
+|------|--------|---------------------|
+| 5.1 Terra Signing | ✅ Complete | `packages/operator/src/terra_client.rs` - Uses cosmrs with LCD fallback |
+| 5.2 EVM ApproveWithdraw | ✅ Complete | `packages/operator/src/writers/evm.rs` - Uses alloy sol! macro |
+| 5.3 Full E2E Test | ✅ Complete | `scripts/e2e-test.sh` with helpers in `scripts/e2e-helpers/` |
+| 5.4 Canceler Submission | ✅ Complete | `packages/canceler/src/{evm_client,terra_client}.rs` |
+| 5.5 EVM Deploy Scripts | ✅ Complete | `scripts/deploy-evm-{testnet,mainnet}.sh` |
+| 5.6 Error Recovery | ✅ Complete | `packages/operator/src/writers/retry.rs` |
+| 5.7 Monitoring | ✅ Complete | `monitoring/` directory with Prometheus + Grafana |
+
+### Key Files Created/Modified
+
+**Operator:**
+- `src/terra_client.rs` - Terra Classic transaction signing using cosmrs
+- `src/writers/evm.rs` - EVM approval submission with alloy
+- `src/writers/retry.rs` - Exponential backoff, gas bumping, error classification
+- `src/contracts/evm_bridge.rs` - Updated sol! macro with full approveWithdraw signature
+
+**Canceler:**
+- `src/evm_client.rs` - EVM cancellation transaction signing
+- `src/terra_client.rs` - Terra cancellation transaction signing
+- `src/watcher.rs` - Updated to submit actual cancellations
+
+**Scripts:**
+- `scripts/deploy-evm-testnet.sh` - BSC/opBNB testnet deployment
+- `scripts/deploy-evm-mainnet.sh` - BSC/opBNB mainnet with safety checks
+- `scripts/e2e-test.sh` - Comprehensive E2E test suite
+- `scripts/e2e-helpers/*.sh` - Test helper utilities
+
+**Monitoring:**
+- `monitoring/prometheus.yml` - Prometheus configuration
+- `monitoring/alerting-rules.yml` - Alert definitions
+- `monitoring/grafana/dashboards/cl8y-bridge.json` - Grafana dashboard
+- Docker Compose updates for Prometheus and Grafana services
+
+### New Makefile Targets
+
+```bash
+# Testnet Deployment
+make deploy-evm-bsc-testnet
+make deploy-evm-opbnb-testnet
+make deploy-terra-testnet
+
+# Mainnet Deployment (DANGER!)
+make deploy-evm-bsc-mainnet
+make deploy-evm-opbnb-mainnet
+make deploy-terra-mainnet
+
+# Monitoring
+make start-monitoring  # Prometheus: :9091, Grafana: :3000
+make stop-monitoring
+```
+
+### Endpoints for Production
+
+**Terra Classic Mainnet (columbus-5):**
+- LCD: https://terra-classic-lcd.publicnode.com
+- RPC: https://terra-classic-rpc.publicnode.com
+- FCD: https://terra-classic-fcd.publicnode.com
+
+**Terra Classic Testnet (rebel-2):**
+- LCD: https://lcd.luncblaze.com
+- RPC: https://rpc.luncblaze.com
+
+---
+
 ## References
 
 - [SPRINT4.md](./SPRINT4.md) - Previous sprint details

@@ -24,7 +24,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic | [docs](./docs/contracts-terraclassic.md) |
 | [operator](./packages/operator) | Rust-based bridge operator service | [docs](./docs/operator.md) |
 | [canceler](./packages/canceler) | Rust-based canceler node for watchtower security | [docs](./docs/canceler-network.md) |
-| [frontend](./packages/frontend) | Web application for bridge interface | TBD |
+| [frontend](./packages/frontend) | Web application for bridge interface | [docs](./docs/frontend.md) |
 
 ## Quick Start
 
@@ -167,7 +167,7 @@ cl8y-bridge-monorepo/
 │   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
 │   ├── operator/               # Rust bridge operator service
 │   ├── canceler/               # Rust canceler node for watchtower security
-│   └── frontend/               # Web application (TBD)
+│   └── frontend/               # Web application (Vite + React)
 ├── scripts/                    # Deployment and test scripts
 │   ├── deploy-terra-local.sh   # LocalTerra deployment
 │   ├── deploy-terra-testnet.sh # Terra testnet deployment
@@ -206,10 +206,26 @@ make test-operator      # Run operator unit tests
 make test-integration   # Run integration tests
 make e2e-test           # Run E2E tests
 
-# Deployment
-make deploy             # Deploy all contracts
-make deploy-evm         # Deploy EVM contracts only
-make deploy-terra       # Deploy Terra contracts only
+# Deployment - Local
+make deploy             # Deploy all contracts locally
+make deploy-evm         # Deploy EVM contracts to Anvil
+make deploy-terra       # Deploy Terra contracts to LocalTerra
+
+# Deployment - Testnet
+make deploy-evm-bsc-testnet    # Deploy to BSC Testnet
+make deploy-evm-opbnb-testnet  # Deploy to opBNB Testnet
+make deploy-terra-testnet      # Deploy to Terra Classic Testnet
+
+# Deployment - Mainnet (DANGER!)
+make deploy-evm-bsc-mainnet    # Deploy to BSC Mainnet
+make deploy-evm-opbnb-mainnet  # Deploy to opBNB Mainnet
+make deploy-terra-mainnet      # Deploy to Terra Classic Mainnet
+
+# Monitoring
+make start-monitoring   # Start Prometheus + Grafana
+make stop-monitoring    # Stop monitoring services
+# Prometheus: http://localhost:9091
+# Grafana: http://localhost:3000 (admin/admin)
 
 # Development
 make operator           # Run the operator
@@ -226,7 +242,8 @@ Development progress is tracked in sprint documents:
 - [SPRINT2.md](./SPRINT2.md) - Terra Classic Upgrade Design (COMPLETE)
 - [SPRINT3.md](./SPRINT3.md) - Terra Classic Watchtower Implementation (COMPLETE)
 - [SPRINT4.md](./SPRINT4.md) - Integration Testing & Deployment Preparation (COMPLETE)
-- [SPRINT5.md](./SPRINT5.md) - Production Readiness & Full E2E Flows (NEXT)
+- [SPRINT5.md](./SPRINT5.md) - Production Readiness & Full E2E Flows (COMPLETE)
+- [SPRINT6.md](./SPRINT6.md) - Frontend Development & Production Validation (NEXT)
 
 ## License
 

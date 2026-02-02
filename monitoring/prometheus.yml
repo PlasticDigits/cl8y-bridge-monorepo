@@ -1,0 +1,45 @@
+# Prometheus configuration for CL8Y Bridge monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alerting configuration (optional - requires Alertmanager)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files for alerting
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # CL8Y Bridge Operator
+  - job_name: 'cl8y-operator'
+    static_configs:
+      - targets: ['host.docker.internal:9090']
+        labels:
+          service: 'operator'
+    # Alternative for non-Docker deployments:
+    # - targets: ['localhost:9090']
+
+  # CL8Y Bridge Canceler (if running)
+  - job_name: 'cl8y-canceler'
+    static_configs:
+      - targets: ['host.docker.internal:9091']
+        labels:
+          service: 'canceler'
+    # Scrape less frequently since canceler is less active
+    scrape_interval: 30s
+
+  # Node exporter for system metrics (optional)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']

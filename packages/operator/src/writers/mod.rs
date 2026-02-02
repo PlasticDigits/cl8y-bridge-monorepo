@@ -1,72 +1,30 @@
-use chrono::{DateTime, Utc};
 use eyre::Result;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub mod evm;
+pub mod retry;
 pub mod terra;
 
 pub use evm::EvmWriter;
+pub use retry::{RetryConfig, RetryContext, classify_error, with_retry};
 pub use terra::TerraWriter;
 
-/// Retry configuration for transaction submission
+/// Circuit breaker configuration for writer managers
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct RetryConfig {
-    /// Maximum number of retry attempts
-    pub max_retries: u32,
-    /// Initial backoff duration
-    pub initial_backoff: Duration,
-    /// Maximum backoff duration
-    pub max_backoff: Duration,
-    /// Backoff multiplier for exponential growth
-    pub backoff_multiplier: f64,
-    /// Circuit breaker: consecutive failures before pausing
-    pub circuit_breaker_threshold: u32,
+pub struct CircuitBreakerConfig {
+    /// Consecutive failures before pausing
+    pub threshold: u32,
     /// How long to pause when circuit breaker trips
-    pub circuit_breaker_pause: Duration,
+    pub pause_duration: Duration,
 }
 
-impl Default for RetryConfig {
+impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
-            max_retries: 5,
-            initial_backoff: Duration::from_secs(1),
-            max_backoff: Duration::from_secs(60),
-            backoff_multiplier: 2.0,
-            circuit_breaker_threshold: 10,
-            circuit_breaker_pause: Duration::from_secs(300), // 5 minutes
-        }
-    }
-}
-
-#[allow(dead_code)]
-impl RetryConfig {
-    /// Calculate backoff duration for a given attempt
-    pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
-        let backoff_secs = self.initial_backoff.as_secs_f64()
-            * self.backoff_multiplier.powi(attempt as i32);
-        let capped = backoff_secs.min(self.max_backoff.as_secs_f64());
-        Duration::from_secs_f64(capped)
-    }
-
-    /// Check if we should retry based on attempt count
-    pub fn should_retry(&self, attempt: u32) -> bool {
-        attempt < self.max_retries
-    }
-    
-    /// Calculate the next retry_after timestamp for a failed attempt
-    pub fn next_retry_after(&self, attempt: u32) -> DateTime<Utc> {
-        let backoff = self.backoff_for_attempt(attempt);
-        Utc::now() + chrono::Duration::from_std(backoff).unwrap_or(chrono::Duration::seconds(60))
-    }
-    
-    /// Check if a transaction is ready for retry based on retry_after
-    pub fn is_ready_for_retry(&self, retry_after: Option<DateTime<Utc>>) -> bool {
-        match retry_after {
-            Some(time) => Utc::now() >= time,
-            None => true, // No retry_after means ready immediately
+            threshold: 10,
+            pause_duration: Duration::from_secs(300), // 5 minutes
         }
     }
 }
@@ -76,6 +34,7 @@ pub struct WriterManager {
     evm_writer: EvmWriter,
     terra_writer: TerraWriter,
     retry_config: RetryConfig,
+    circuit_breaker: CircuitBreakerConfig,
     consecutive_evm_failures: u32,
     consecutive_terra_failures: u32,
 }
@@ -90,6 +49,7 @@ impl WriterManager {
             evm_writer,
             terra_writer,
             retry_config: RetryConfig::default(),
+            circuit_breaker: CircuitBreakerConfig::default(),
             consecutive_evm_failures: 0,
             consecutive_terra_failures: 0,
         })
@@ -115,13 +75,13 @@ impl WriterManager {
     
     async fn process_pending(&mut self) -> Result<()> {
         // Check EVM circuit breaker
-        if self.consecutive_evm_failures >= self.retry_config.circuit_breaker_threshold {
+        if self.consecutive_evm_failures >= self.circuit_breaker.threshold {
             tracing::warn!(
                 failures = self.consecutive_evm_failures,
-                pause_secs = self.retry_config.circuit_breaker_pause.as_secs(),
+                pause_secs = self.circuit_breaker.pause_duration.as_secs(),
                 "EVM circuit breaker tripped, pausing EVM writer"
             );
-            tokio::time::sleep(self.retry_config.circuit_breaker_pause).await;
+            tokio::time::sleep(self.circuit_breaker.pause_duration).await;
             self.consecutive_evm_failures = 0;
         }
         
@@ -132,9 +92,11 @@ impl WriterManager {
             }
             Err(e) => {
                 self.consecutive_evm_failures += 1;
+                let error_class = classify_error(&e.to_string());
                 let backoff = self.retry_config.backoff_for_attempt(self.consecutive_evm_failures);
                 tracing::error!(
                     error = %e,
+                    ?error_class,
                     consecutive_failures = self.consecutive_evm_failures,
                     next_backoff_secs = backoff.as_secs(),
                     "Error processing EVM approvals, will retry with backoff"
@@ -144,13 +106,13 @@ impl WriterManager {
         }
         
         // Check Terra circuit breaker
-        if self.consecutive_terra_failures >= self.retry_config.circuit_breaker_threshold {
+        if self.consecutive_terra_failures >= self.circuit_breaker.threshold {
             tracing::warn!(
                 failures = self.consecutive_terra_failures,
-                pause_secs = self.retry_config.circuit_breaker_pause.as_secs(),
+                pause_secs = self.circuit_breaker.pause_duration.as_secs(),
                 "Terra circuit breaker tripped, pausing Terra writer"
             );
-            tokio::time::sleep(self.retry_config.circuit_breaker_pause).await;
+            tokio::time::sleep(self.circuit_breaker.pause_duration).await;
             self.consecutive_terra_failures = 0;
         }
         
@@ -161,9 +123,11 @@ impl WriterManager {
             }
             Err(e) => {
                 self.consecutive_terra_failures += 1;
+                let error_class = classify_error(&e.to_string());
                 let backoff = self.retry_config.backoff_for_attempt(self.consecutive_terra_failures);
                 tracing::error!(
                     error = %e,
+                    ?error_class,
                     consecutive_failures = self.consecutive_terra_failures,
                     next_backoff_secs = backoff.as_secs(),
                     "Error processing Terra releases, will retry with backoff"
@@ -174,4 +138,23 @@ impl WriterManager {
         
         Ok(())
     }
+
+    /// Get health status
+    pub fn health_status(&self) -> HealthStatus {
+        HealthStatus {
+            evm_healthy: self.consecutive_evm_failures < self.circuit_breaker.threshold,
+            terra_healthy: self.consecutive_terra_failures < self.circuit_breaker.threshold,
+            evm_pending_executions: self.evm_writer.pending_execution_count(),
+            terra_pending_executions: self.terra_writer.pending_execution_count(),
+        }
+    }
+}
+
+/// Writer health status
+#[derive(Debug, Clone)]
+pub struct HealthStatus {
+    pub evm_healthy: bool,
+    pub terra_healthy: bool,
+    pub evm_pending_executions: usize,
+    pub terra_pending_executions: usize,
 }

@@ -28,7 +28,9 @@
 //! - Distributed coordination with other cancelers
 
 mod config;
+mod evm_client;
 mod hash;
+mod terra_client;
 mod verifier;
 mod watcher;
 

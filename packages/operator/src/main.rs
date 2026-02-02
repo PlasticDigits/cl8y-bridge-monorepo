@@ -6,6 +6,7 @@ mod db;
 pub mod hash;
 mod metrics;
 mod multi_evm;
+mod terra_client;
 mod types;
 mod watchers;
 mod writers;

@@ -13,8 +13,12 @@ path = "src/main.rs"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# Web3
+# Web3/EVM
 alloy = { version = "0.8", features = ["full", "rpc-types-mev"] }
+
+# Cosmos/Terra interactions
+cosmrs = { version = "0.16", features = ["cosmwasm"] }
+bip39 = "2.0"
 
 # HTTP/API
 reqwest = { version = "0.12", features = ["json"] }

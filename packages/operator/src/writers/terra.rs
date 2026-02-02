@@ -5,8 +5,6 @@
 //! 2. Submits ApproveWithdraw to Terra contract (starts delay timer)
 //! 3. After delay elapses, submits ExecuteWithdraw to complete the transfer
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -22,6 +20,7 @@ use crate::hash::{
     bytes32_to_hex, compute_transfer_id, encode_evm_address, evm_chain_key, localterra_chain_key,
     terra_chain_key,
 };
+use crate::terra_client::TerraClient;
 use crate::types::ChainKey;
 
 /// Pending approval tracking for auto-execution
@@ -42,8 +41,8 @@ pub struct TerraWriter {
     lcd_url: String,
     chain_id: String,
     contract_address: String,
-    mnemonic: String,
     client: Client,
+    terra_client: TerraClient,
     db: PgPool,
     /// Withdraw delay in seconds (queried from contract)
     withdraw_delay: u64,
@@ -61,6 +60,13 @@ impl TerraWriter {
             .build()
             .wrap_err("Failed to create HTTP client")?;
 
+        // Create Terra client for transaction signing
+        let terra_client = TerraClient::new(
+            &terra_config.lcd_url,
+            &terra_config.chain_id,
+            &terra_config.mnemonic,
+        )?;
+
         // Query withdraw delay from contract (default to 60 seconds if query fails)
         let withdraw_delay = Self::query_withdraw_delay(&client, &terra_config.lcd_url, &terra_config.bridge_address)
             .await
@@ -68,6 +74,7 @@ impl TerraWriter {
 
         info!(
             delay_seconds = withdraw_delay,
+            operator_address = %terra_client.address,
             "Terra writer initialized with withdraw delay"
         );
 
@@ -75,8 +82,8 @@ impl TerraWriter {
             lcd_url: terra_config.lcd_url.clone(),
             chain_id: terra_config.chain_id.clone(),
             contract_address: terra_config.bridge_address.clone(),
-            mnemonic: terra_config.mnemonic.clone(),
             client,
+            terra_client,
             db,
             withdraw_delay,
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
@@ -293,16 +300,15 @@ impl TerraWriter {
             false,                           // Don't deduct from amount
         );
 
-        // Serialize to JSON
+        // Serialize to JSON for logging
         let msg_json = serde_json::to_string(&msg)?;
         debug!(msg = %msg_json, "ApproveWithdraw message");
 
-        // TODO: Sign and broadcast transaction using mnemonic
-        // For now, return a placeholder tx hash
-        let tx_hash = format!(
-            "approve_{}",
-            hex::encode(&withdraw_hash[..8])
-        );
+        // Sign and broadcast the transaction
+        let tx_hash = self.terra_client
+            .execute_contract(&self.contract_address, &msg, vec![])
+            .await
+            .map_err(|e| eyre!("Failed to execute ApproveWithdraw: {}", e))?;
 
         Ok((tx_hash, withdraw_hash))
     }
@@ -311,16 +317,15 @@ impl TerraWriter {
     async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
         let msg = build_execute_withdraw_msg(withdraw_hash);
 
-        // Serialize to JSON
+        // Serialize to JSON for logging
         let msg_json = serde_json::to_string(&msg)?;
         debug!(msg = %msg_json, "ExecuteWithdraw message");
 
-        // TODO: Sign and broadcast transaction using mnemonic
-        // For now, return a placeholder tx hash
-        let tx_hash = format!(
-            "execute_{}",
-            hex::encode(&withdraw_hash[..8])
-        );
+        // Sign and broadcast the transaction
+        let tx_hash = self.terra_client
+            .execute_contract(&self.contract_address, &msg, vec![])
+            .await
+            .map_err(|e| eyre!("Failed to execute ExecuteWithdraw: {}", e))?;
 
         Ok(tx_hash)
     }
@@ -346,5 +351,10 @@ impl TerraWriter {
     /// Get count of pending executions
     pub fn pending_execution_count(&self) -> usize {
         self.pending_executions.len()
+    }
+
+    /// Get the operator's Terra address
+    pub fn operator_address(&self) -> String {
+        self.terra_client.address.to_string()
     }
 }

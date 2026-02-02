@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ConnectWallet } from './components/ConnectWallet'
+import { WalletButton } from './components/WalletButton'
 import { BridgeForm } from './components/BridgeForm'
 import { TransactionHistory } from './components/TransactionHistory'
 
@@ -16,7 +17,12 @@ function App() {
               <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"></div>
               <span className="text-xl font-bold text-white">CL8Y Bridge</span>
             </div>
-            <ConnectWallet />
+            <div className="flex items-center gap-3">
+              {/* Terra Wallet Button */}
+              <WalletButton />
+              {/* EVM Wallet Button */}
+              <ConnectWallet />
+            </div>
           </div>
         </div>
       </header>
