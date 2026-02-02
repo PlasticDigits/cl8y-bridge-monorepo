@@ -210,9 +210,9 @@ This project uses [WorkSplit](https://github.com/PlasticDigits/WorkSplit) for AI
 ## Sprint Documentation
 
 Development progress is tracked in sprint documents:
-- [SPRINT_2.md](./SPRINT_2.md) - Terra Classic Upgrade Design
-- [SPRINT_3.md](./SPRINT_3.md) - Terra integration, E2E testing
-- [SPRINT_4.md](./SPRINT_4.md) - Production hardening, frontend
+- [SPRINT2.md](./SPRINT2.md) - Terra Classic Upgrade Design (COMPLETE)
+- [SPRINT3.md](./SPRINT3.md) - Terra Classic Watchtower Implementation (COMPLETE)
+- [SPRINT4.md](./SPRINT4.md) - Integration Testing & Deployment (NEXT)
 
 ## License
 

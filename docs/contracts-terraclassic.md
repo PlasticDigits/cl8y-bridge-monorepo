@@ -2,15 +2,52 @@
 
 This document describes the CosmWasm smart contracts deployed on Terra Classic.
 
-**Source:** [packages/contracts-terraclassic/](../packages/contracts-terraclassic/)
+**Source:** [packages/contracts-terraclassic/](../packages/contracts-terraclassic/)  
+**Upgrade Spec:** [terraclassic-upgrade-spec.md](./terraclassic-upgrade-spec.md)
 
 ## Overview
 
 The Terra Classic bridge contract handles:
 - Locking native tokens (LUNC, USTC) and CW20 tokens for bridging out
-- Releasing tokens when bridging in from EVM chains
-- Watchtower security model (approve-delay-cancel)
+- **Approve-delay-execute pattern** for incoming withdrawals (watchtower security)
+- Canceler-based fraud prevention during delay window
+- Rate limiting per token
 - Fee collection and administration
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Users
+        User[User Wallet]
+    end
+    
+    subgraph TerraClassic["Terra Classic"]
+        Bridge[CL8Y Bridge Contract]
+        subgraph State["Contract State"]
+            Approvals[Withdraw Approvals]
+            Deposits[Deposit Hashes]
+            Cancelers[Canceler List]
+            RateLimits[Rate Limits]
+        end
+    end
+    
+    subgraph Operators
+        Op[Bridge Operator]
+        Cancel[Canceler Nodes]
+    end
+    
+    subgraph EVM["EVM Chain"]
+        EVMBridge[EVM Bridge]
+    end
+    
+    User -->|Lock tokens| Bridge
+    User -->|ExecuteWithdraw| Bridge
+    Op -->|ApproveWithdraw| Bridge
+    Cancel -->|CancelWithdrawApproval| Bridge
+    Bridge -->|Store| State
+    Bridge <-->|Verify hashes| EVMBridge
+```
 
 ## Contract Structure
 
@@ -85,19 +122,147 @@ cw20::Cw20ExecuteMsg::Send {
 }
 ```
 
-#### Release Tokens
+### Watchtower Pattern Messages (v2.0)
 
-Called by operators to approve incoming withdrawals:
+The watchtower pattern replaces immediate release with approve-delay-execute:
+
+#### ApproveWithdraw
+
+Called by operator to create a pending approval:
 
 ```rust
+ExecuteMsg::ApproveWithdraw {
+    src_chain_key: Binary,      // 32 bytes
+    token: String,
+    recipient: String,
+    dest_account: Binary,       // 32 bytes (for hash verification)
+    amount: Uint128,
+    nonce: u64,
+    fee: Uint128,
+    fee_recipient: String,
+    deduct_from_amount: bool,
+}
+```
+
+**Flow:**
+1. Operator detects deposit on source chain
+2. Operator calls `ApproveWithdraw` with matching parameters
+3. Contract computes canonical hash and stores approval
+4. 5-minute delay window begins
+5. Cancelers verify approval against source chain
+6. If valid, user/operator calls `ExecuteWithdraw` after delay
+
+#### ExecuteWithdraw
+
+Called by anyone (typically user) after delay has elapsed:
+
+```rust
+ExecuteMsg::ExecuteWithdraw {
+    withdraw_hash: Binary,      // 32-byte transferId
+}
+```
+
+**Requirements:**
+- Approval exists and is not cancelled
+- Delay has elapsed (`block_time >= approved_at + withdraw_delay`)
+- Rate limits not exceeded
+
+#### CancelWithdrawApproval
+
+Called by cancelers to block fraudulent approvals:
+
+```rust
+ExecuteMsg::CancelWithdrawApproval {
+    withdraw_hash: Binary,
+}
+```
+
+**When to cancel:**
+- No matching deposit found on source chain
+- Parameter mismatch (amount, recipient, etc.)
+- Suspicious activity detected
+
+#### ReenableWithdrawApproval
+
+Called by admin to restore cancelled approvals (reorg recovery):
+
+```rust
+ExecuteMsg::ReenableWithdrawApproval {
+    withdraw_hash: Binary,
+}
+```
+
+**Effect:** Clears `cancelled` flag and resets delay timer.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Operator
+    participant Bridge as Terra Bridge
+    participant Canceler
+    participant EVM as EVM Chain
+    
+    User->>EVM: Deposit tokens
+    EVM-->>Operator: DepositRequest event
+    
+    Operator->>Bridge: ApproveWithdraw(params)
+    Bridge->>Bridge: Compute hash, store approval
+    Bridge-->>Canceler: WithdrawApproved event
+    
+    Note over Bridge: 5-minute delay begins
+    
+    par Verification Window
+        Canceler->>EVM: Query deposit by hash
+        alt Deposit Valid
+            Note over Canceler: No action
+        else Deposit Invalid
+            Canceler->>Bridge: CancelWithdrawApproval(hash)
+        end
+    end
+    
+    Note over Bridge: Delay elapsed
+    
+    User->>Bridge: ExecuteWithdraw(hash)
+    Bridge->>User: Transfer tokens
+```
+
+### Legacy Messages (v1.x - Deprecated)
+
+#### Release Tokens (DEPRECATED)
+
+The immediate `Release` message is deprecated in favor of `ApproveWithdraw` + `ExecuteWithdraw`:
+
+```rust
+// DEPRECATED - Do not use in new integrations
 ExecuteMsg::Release {
     nonce: u64,
-    sender: String,      // EVM sender address
-    recipient: String,   // Terra recipient address
-    token: String,       // Token denom or CW20 address
+    sender: String,
+    recipient: String,
+    token: String,
     amount: Uint128,
     source_chain_id: u64,
     signatures: Vec<String>,
+}
+```
+
+### Canceler Management Messages
+
+```rust
+// Add a canceler address (admin only)
+ExecuteMsg::AddCanceler { address: String }
+
+// Remove a canceler address (admin only)
+ExecuteMsg::RemoveCanceler { address: String }
+
+// Set withdrawal delay (admin only, 60-86400 seconds)
+ExecuteMsg::SetWithdrawDelay { delay_seconds: u64 }
+
+// Set rate limit for a token (admin only)
+ExecuteMsg::SetRateLimit {
+    token: String,
+    max_per_transaction: Uint128,
+    max_per_period: Uint128,
+    period_duration: u64,
 }
 ```
 
@@ -137,6 +302,7 @@ ExecuteMsg::RecoverAsset { asset, amount, recipient }
 ### QueryMsg
 
 ```rust
+// Core queries
 QueryMsg::Config {}                    // Returns ConfigResponse
 QueryMsg::Status {}                    // Returns StatusResponse
 QueryMsg::Stats {}                     // Returns StatsResponse
@@ -144,13 +310,24 @@ QueryMsg::Chain { chain_id }           // Returns ChainResponse
 QueryMsg::Chains { start_after, limit } // Returns ChainsResponse
 QueryMsg::Token { token }              // Returns TokenResponse
 QueryMsg::Tokens { start_after, limit } // Returns TokensResponse
-QueryMsg::Operators {}                 // Returns OperatorsResponse
+QueryMsg::Relayers {}                  // Returns RelayersResponse
 QueryMsg::NonceUsed { nonce }          // Returns NonceUsedResponse
 QueryMsg::CurrentNonce {}              // Returns NonceResponse
 QueryMsg::Transaction { nonce }        // Returns TransactionResponse
 QueryMsg::LockedBalance { token }      // Returns LockedBalanceResponse
 QueryMsg::PendingAdmin {}              // Returns Option<PendingAdminResponse>
 QueryMsg::SimulateBridge { token, amount, dest_chain_id } // Returns SimulationResponse
+
+// Watchtower queries (v2.0)
+QueryMsg::WithdrawApproval { withdraw_hash } // Returns WithdrawApprovalResponse
+QueryMsg::ComputeWithdrawHash { ... }  // Returns ComputeHashResponse
+QueryMsg::DepositHash { deposit_hash } // Returns Option<DepositInfoResponse>
+QueryMsg::DepositByNonce { nonce }     // Returns Option<DepositInfoResponse>
+QueryMsg::Cancelers {}                 // Returns CancelersResponse
+QueryMsg::IsCanceler { address }       // Returns IsCancelerResponse
+QueryMsg::WithdrawDelay {}             // Returns WithdrawDelayResponse
+QueryMsg::RateLimit { token }          // Returns Option<RateLimitResponse>
+QueryMsg::PeriodUsage { token }        // Returns PeriodUsageResponse
 ```
 
 ## State
@@ -174,16 +351,48 @@ pub struct Config {
 | Key | Type | Description |
 |-----|------|-------------|
 | `CONFIG` | `Config` | Contract configuration |
-| `OPERATORS` | `Map<Addr, bool>` | Registered operators |
-| `OPERATOR_COUNT` | `u32` | Number of active operators |
+| `RELAYERS` | `Map<Addr, bool>` | Registered operators/relayers |
+| `RELAYER_COUNT` | `u32` | Number of active operators |
 | `CHAINS` | `Map<String, ChainConfig>` | Supported chains |
 | `TOKENS` | `Map<String, TokenConfig>` | Supported tokens |
 | `OUTGOING_NONCE` | `u64` | Next outgoing nonce |
-| `USED_NONCES` | `Map<u64, bool>` | Used incoming nonces |
+| `USED_NONCES` | `Map<u64, bool>` | Used incoming nonces (legacy) |
 | `TRANSACTIONS` | `Map<u64, BridgeTransaction>` | Transaction history |
 | `LOCKED_BALANCES` | `Map<String, Uint128>` | Locked token balances |
 | `STATS` | `Stats` | Bridge statistics |
 | `PENDING_ADMIN` | `PendingAdmin` | Pending admin transfer |
+
+### Watchtower State (v2.0)
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `WITHDRAW_DELAY` | `u64` | Delay in seconds (default 300) |
+| `WITHDRAW_APPROVALS` | `Map<[u8;32], WithdrawApproval>` | Pending approvals by hash |
+| `WITHDRAW_NONCE_USED` | `Map<([u8;32], u64), bool>` | Per-source-chain nonce tracking |
+| `DEPOSIT_HASHES` | `Map<[u8;32], DepositInfo>` | Outgoing deposits for verification |
+| `CANCELERS` | `Map<Addr, bool>` | Authorized canceler addresses |
+| `RATE_LIMITS` | `Map<String, RateLimitConfig>` | Per-token rate limits |
+| `PERIOD_TOTALS` | `Map<(String, u64), Uint128>` | Rate limit period tracking |
+
+### WithdrawApproval Structure
+
+```rust
+pub struct WithdrawApproval {
+    pub src_chain_key: [u8; 32],
+    pub token: String,
+    pub recipient: Addr,
+    pub dest_account: [u8; 32],
+    pub amount: Uint128,
+    pub nonce: u64,
+    pub fee: Uint128,
+    pub fee_recipient: Addr,
+    pub approved_at: Timestamp,
+    pub is_approved: bool,
+    pub deduct_from_amount: bool,
+    pub cancelled: bool,
+    pub executed: bool,
+}
+```
 
 ## Security Features
 
@@ -270,8 +479,11 @@ See [packages/contracts-terraclassic/scripts/README.md](../packages/contracts-te
 
 ## Related Documentation
 
+- [Terra Classic Upgrade Spec](./terraclassic-upgrade-spec.md) - Complete v2.0 technical specification
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [EVM Contracts](./contracts-evm.md) - Partner chain contracts
 - [Operator](./operator.md) - Off-chain operator service
 - [Security Model](./security-model.md) - Watchtower pattern
+- [Gap Analysis](./gap-analysis-terraclassic.md) - Security gap analysis
+- [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements

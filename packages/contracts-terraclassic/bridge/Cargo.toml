@@ -24,6 +24,8 @@ thiserror.workspace = true
 schemars.workspace = true
 serde.workspace = true
 common = { path = "../packages/common" }
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+hex = "0.4"
 
 [dev-dependencies]
 cw-multi-test.workspace = true

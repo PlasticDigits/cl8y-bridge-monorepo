@@ -25,6 +25,12 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 ### Security
 
 - [Security Model](./security-model.md) - Watchtower pattern and trust model
+- [Gap Analysis](./gap-analysis-terraclassic.md) - Terra Classic security gap analysis
+- [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements between EVM and Terra
+
+### Technical Specifications
+
+- [Terra Classic Upgrade Spec](./terraclassic-upgrade-spec.md) - Complete v2.0 watchtower implementation specification
 
 ### Testing
 
@@ -51,14 +57,17 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 
 ## Current Status
 
-**Active Sprint:** [Sprint 5](../SPRINT_5.md) - E2E Testing Infrastructure & Production Readiness
+**Completed:** [Sprint 3](../SPRINT3.md) - Terra Classic Watchtower Implementation
+
+**Next:** [Sprint 4](../SPRINT4.md) - Integration Testing & Deployment
 
 | Metric | Value |
 |--------|-------|
 | EVM Contract Tests | 59 passing |
+| Terra Contract Tests | 7 passing (hash parity verified) |
 | Operator Tests | 24 (19 unit + 5 integration) |
 | Frontend | Builds, renders correctly |
-| E2E Tests | Requires manual setup (Sprint 5 priority) |
+| E2E Tests | Requires manual setup (Sprint 4 priority) |
 
 ## Getting Started
 
