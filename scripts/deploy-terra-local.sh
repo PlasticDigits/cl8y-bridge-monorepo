@@ -101,10 +101,11 @@ store_contract() {
 instantiate_contract() {
     log_info "Instantiating contract..."
     
+    # Use 10 second delay for local testing (production uses 300 seconds / 5 minutes)
     INIT_MSG=$(cat << EOF
 {
     "admin": "$ADMIN",
-    "relayers": ["$ADMIN"],
+    "operators": ["$ADMIN"],
     "min_signatures": 1,
     "min_bridge_amount": "1000000",
     "max_bridge_amount": "1000000000000000",
@@ -135,6 +136,33 @@ EOF
     log_info "Contract Address: $CONTRACT"
 }
 
+# Configure for local testing (10 second delay instead of 5 minutes)
+configure_local() {
+    log_info "Configuring for local testing..."
+    
+    # Set withdraw delay to 10 seconds (60 is minimum allowed, but for testing purposes)
+    # Note: Contract enforces minimum 60 seconds, so we use that
+    SET_DELAY_MSG='{"set_withdraw_delay":{"delay_seconds":60}}'
+    
+    TX=$(terrad tx wasm execute "$CONTRACT" "$SET_DELAY_MSG" \
+        --from "$KEY_NAME" \
+        --chain-id "$CHAIN_ID" \
+        --node "$NODE" \
+        --gas auto --gas-adjustment 1.4 \
+        --fees 50000uluna \
+        -y -o json 2>&1)
+    
+    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Set withdraw delay TX: $TX_HASH"
+        sleep 6
+    else
+        log_warn "Could not set withdraw delay (may already be default)"
+    fi
+    
+    log_info "Local configuration complete"
+}
+
 # Main
 main() {
     log_info "=== CL8Y Bridge LocalTerra Deployment ==="
@@ -143,6 +171,7 @@ main() {
     setup_key
     store_contract
     instantiate_contract
+    configure_local
     
     echo ""
     log_info "=== Deployment Complete ==="
@@ -156,7 +185,7 @@ main() {
     echo ""
     log_info "Next steps:"
     echo "  1. Run: ./scripts/setup-bridge.sh"
-    echo "  2. Run: make relayer"
+    echo "  2. Run: make operator"
     echo "  3. Run: make test-transfer"
 }
 

@@ -23,6 +23,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [contracts-evm](./packages/contracts-evm) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) | [docs](./docs/contracts-evm.md) |
 | [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic | [docs](./docs/contracts-terraclassic.md) |
 | [operator](./packages/operator) | Rust-based bridge operator service | [docs](./docs/operator.md) |
+| [canceler](./packages/canceler) | Rust-based canceler node for watchtower security | [docs](./docs/canceler-network.md) |
 | [frontend](./packages/frontend) | Web application for bridge interface | TBD |
 
 ## Quick Start
@@ -38,6 +39,9 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 ```bash
 # Start local infrastructure (Anvil, LocalTerra, PostgreSQL)
 make start
+
+# Check service status
+make status
 
 # Deploy contracts to local chains
 make deploy
@@ -113,10 +117,13 @@ See [Testing Guide](./docs/testing.md) for environment setup and troubleshooting
 
 | Script | Purpose |
 |--------|---------|
+| [`scripts/status.sh`](./scripts/status.sh) | Check status of all services |
 | [`scripts/deploy-terra-local.sh`](./scripts/deploy-terra-local.sh) | Deploy Terra contracts to LocalTerra |
+| [`scripts/deploy-terra-testnet.sh`](./scripts/deploy-terra-testnet.sh) | Deploy Terra contracts to testnet |
+| [`scripts/deploy-terra-mainnet.sh`](./scripts/deploy-terra-mainnet.sh) | Deploy Terra contracts to mainnet |
 | [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections |
 | [`scripts/test-transfer.sh`](./scripts/test-transfer.sh) | Interactive transfer testing |
-| [`scripts/e2e-test.sh`](./scripts/e2e-test.sh) | Automated E2E test suite |
+| [`scripts/e2e-test.sh`](./scripts/e2e-test.sh) | Automated E2E test suite (watchtower pattern) |
 
 ## Building
 
@@ -159,9 +166,13 @@ cl8y-bridge-monorepo/
 │   ├── contracts-evm/          # Foundry project for Solidity contracts
 │   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
 │   ├── operator/               # Rust bridge operator service
+│   ├── canceler/               # Rust canceler node for watchtower security
 │   └── frontend/               # Web application (TBD)
 ├── scripts/                    # Deployment and test scripts
 │   ├── deploy-terra-local.sh   # LocalTerra deployment
+│   ├── deploy-terra-testnet.sh # Terra testnet deployment
+│   ├── deploy-terra-mainnet.sh # Terra mainnet deployment
+│   ├── status.sh               # Service status checker
 │   ├── setup-bridge.sh         # Cross-chain configuration
 │   ├── test-transfer.sh        # Interactive transfers
 │   └── e2e-test.sh             # Automated E2E tests
@@ -178,6 +189,7 @@ cl8y-bridge-monorepo/
 make start              # Start Docker services
 make stop               # Stop Docker services
 make reset              # Stop and remove volumes
+make status             # Check status of all services
 make logs               # View service logs
 
 # Building
@@ -189,6 +201,7 @@ make build-operator     # Build operator
 # Testing
 make test               # Run all tests
 make test-evm           # Run EVM contract tests
+make test-terra         # Run Terra contract tests
 make test-operator      # Run operator unit tests
 make test-integration   # Run integration tests
 make e2e-test           # Run E2E tests
@@ -212,7 +225,8 @@ This project uses [WorkSplit](https://github.com/PlasticDigits/WorkSplit) for AI
 Development progress is tracked in sprint documents:
 - [SPRINT2.md](./SPRINT2.md) - Terra Classic Upgrade Design (COMPLETE)
 - [SPRINT3.md](./SPRINT3.md) - Terra Classic Watchtower Implementation (COMPLETE)
-- [SPRINT4.md](./SPRINT4.md) - Integration Testing & Deployment (NEXT)
+- [SPRINT4.md](./SPRINT4.md) - Integration Testing & Deployment Preparation (COMPLETE)
+- [SPRINT5.md](./SPRINT5.md) - Production Readiness & Full E2E Flows (NEXT)
 
 ## License
 

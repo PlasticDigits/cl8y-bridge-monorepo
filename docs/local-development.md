@@ -15,6 +15,9 @@ This guide explains how to set up a fully local development environment for test
 # Start all services
 make start
 
+# Check service status
+make status
+
 # Deploy contracts
 make deploy
 

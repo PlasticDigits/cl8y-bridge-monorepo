@@ -41,6 +41,9 @@ pub struct TerraConfig {
     pub chain_id: String,
     pub bridge_address: String,
     pub mnemonic: String,
+    /// Optional fee recipient address for Terra withdrawals
+    #[serde(default)]
+    pub fee_recipient: Option<String>,
 }
 
 /// Relayer configuration
@@ -137,6 +140,7 @@ impl Config {
                 .map_err(|_| eyre!("TERRA_BRIDGE_ADDRESS environment variable is required"))?,
             mnemonic: env::var("TERRA_MNEMONIC")
                 .map_err(|_| eyre!("TERRA_MNEMONIC environment variable is required"))?,
+            fee_recipient: env::var("TERRA_FEE_RECIPIENT").ok(),
         };
 
         let relayer = RelayerConfig {
@@ -299,6 +303,7 @@ mod tests {
                 chain_id: "columbus-5".to_string(),
                 bridge_address: "terra1...".to_string(),
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
+                fee_recipient: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,
@@ -349,6 +354,7 @@ mod tests {
                 chain_id: "columbus-5".to_string(),
                 bridge_address: "terra1...".to_string(),
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
+                fee_recipient: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,

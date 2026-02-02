@@ -23,8 +23,10 @@
 
 pub mod contract;
 pub mod error;
+mod execute;
 pub mod hash;
 pub mod msg;
+mod query;
 pub mod state;
 
 pub use crate::error::ContractError;

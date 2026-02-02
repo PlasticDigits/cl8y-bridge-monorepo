@@ -142,9 +142,16 @@ pub fn encode_terra_address(deps: Deps, addr: &Addr) -> StdResult<[u8; 32]> {
     let bytes = canonical.as_slice();
 
     let mut result = [0u8; 32];
-    // Left-pad: 20-byte address goes in last 20 bytes (positions 12-31)
-    let start = 32 - bytes.len();
-    result[start..].copy_from_slice(bytes);
+
+    // Handle varying canonical address sizes (20 bytes on-chain, variable in mock)
+    if bytes.len() <= 32 {
+        // Left-pad: address goes in last N bytes
+        let start = 32 - bytes.len();
+        result[start..].copy_from_slice(bytes);
+    } else {
+        // If longer than 32 bytes (shouldn't happen), take last 32 bytes
+        result.copy_from_slice(&bytes[bytes.len() - 32..]);
+    }
 
     Ok(result)
 }

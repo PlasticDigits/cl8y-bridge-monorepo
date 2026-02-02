@@ -3,6 +3,7 @@ mod config;
 mod confirmation;
 mod contracts;
 mod db;
+pub mod hash;
 mod metrics;
 mod multi_evm;
 mod types;

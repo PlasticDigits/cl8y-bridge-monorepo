@@ -311,6 +311,89 @@ If source chain experiences a reorg:
 | Internet | - | (existing) |
 | **Total** | $75 | $2-5 |
 
+## MVP Implementation
+
+The MVP canceler (`packages/canceler`) provides basic verification functionality:
+
+### Current MVP Features
+
+- **Polling**: Regularly checks for new approvals on EVM and Terra
+- **Hash Verification**: Computes transfer IDs to verify approval parameters
+- **Logging**: Logs verification results and identifies invalid approvals
+
+### MVP Limitations
+
+The MVP does not yet implement:
+
+- Actual cancel transaction submission (logs "CANCEL REQUIRED" instead)
+- Full event subscription (uses polling instead)
+- Stake/slashing integration
+- Multi-chain coordinator
+
+### Running the MVP
+
+```bash
+cd packages/canceler
+
+# Set environment variables
+export EVM_RPC_URL=http://localhost:8545
+export EVM_CHAIN_ID=31337
+export EVM_BRIDGE_ADDRESS=0x...
+export EVM_PRIVATE_KEY=0x...
+export TERRA_LCD_URL=http://localhost:1317
+export TERRA_RPC_URL=http://localhost:26657
+export TERRA_CHAIN_ID=localterra
+export TERRA_BRIDGE_ADDRESS=terra1...
+export TERRA_MNEMONIC="abandon abandon..."
+
+# Build and run
+cargo run --release
+```
+
+## Multi-Chain Support
+
+The canceler supports both EVM and Terra Classic chains:
+
+### EVM Cancellation
+
+```solidity
+// Canceler calls on EVM bridge
+bridge.cancelWithdrawApproval(withdrawHash);
+```
+
+### Terra Cancellation
+
+```json
+// Canceler submits to Terra bridge
+{
+  "cancel_withdraw_approval": {
+    "withdraw_hash": "base64_encoded_hash"
+  }
+}
+```
+
+## Future Development
+
+Planned enhancements for full production deployment:
+
+### Stake and Slashing
+
+- Cancelers will stake tokens as collateral
+- Malicious cancellations (false positives) may result in slashing
+- Good cancellations (catching fraud) will be rewarded
+
+### Distributed Coordination
+
+- Cancelers will share verification results
+- Consensus among cancelers for high-value transactions
+- Automatic failover when cancelers go offline
+
+### Enhanced Verification
+
+- Multi-RPC verification (redundant source chain queries)
+- Reorg protection (wait for finality before deciding)
+- Historical deposit caching for faster lookups
+
 ## Related Documentation
 
 - [Security Model](./security-model.md) - Watchtower pattern explanation

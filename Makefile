@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help
+.PHONY: start stop reset deploy operator test-transfer logs help status
 
 # Default target
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  make start          - Start all services (Anvil, LocalTerra, PostgreSQL)"
 	@echo "  make stop           - Stop all services"
 	@echo "  make reset          - Stop and remove all volumes"
+	@echo "  make status         - Check status of all services"
 	@echo "  make logs           - View service logs"
 	@echo ""
 	@echo "Development:"
@@ -23,8 +24,10 @@ help:
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test-evm       - Run EVM contract tests"
+	@echo "  make test-terra     - Run Terra contract tests"
 	@echo "  make test-operator  - Run operator tests"
 	@echo "  make test           - Run all tests"
+	@echo "  make e2e-test       - Run E2E watchtower pattern tests"
 
 # Infrastructure
 start:
@@ -41,6 +44,9 @@ reset:
 
 logs:
 	docker-compose logs -f
+
+status:
+	./scripts/status.sh
 
 logs-anvil:
 	docker-compose logs -f anvil
@@ -67,10 +73,13 @@ build: build-evm build-terra build-operator
 test-evm:
 	cd packages/contracts-evm && forge test -vvv
 
+test-terra:
+	cd packages/contracts-terraclassic/bridge && cargo test
+
 test-operator:
 	cd packages/operator && cargo test
 
-test: test-evm test-operator
+test: test-evm test-terra test-operator
 
 # Deployment
 deploy: deploy-evm deploy-terra setup-bridge
