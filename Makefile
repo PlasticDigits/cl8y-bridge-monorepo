@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks
 
 # Default target
 help:
@@ -26,8 +26,19 @@ help:
 	@echo "  make test-evm       - Run EVM contract tests"
 	@echo "  make test-terra     - Run Terra contract tests"
 	@echo "  make test-operator  - Run operator tests"
+	@echo "  make test-frontend  - Run frontend unit tests"
 	@echo "  make test           - Run all tests"
-	@echo "  make e2e-test       - Run E2E watchtower pattern tests"
+	@echo "  make e2e-test       - Run E2E connectivity tests"
+	@echo "  make e2e-test-full  - Run full E2E with transfers"
+	@echo ""
+	@echo "Deployment:"
+	@echo "  make deploy         - Deploy all contracts locally"
+	@echo "  make deploy-test-token - Deploy test ERC20 for integration tests"
+	@echo ""
+	@echo "Security:"
+	@echo "  make setup-hooks    - Configure git hooks for pre-commit checks"
+	@echo "  make gitleaks       - Check staged changes for secrets"
+	@echo "  make gitleaks-scan  - Scan entire repository for secrets"
 
 # Infrastructure
 start:
@@ -100,6 +111,16 @@ deploy-evm:
 		--broadcast \
 		--rpc-url http://localhost:8545
 
+deploy-test-token:
+	@echo "Deploying test ERC20 token to Anvil..."
+	cd packages/contracts-evm && forge script script/DeployTestToken.s.sol:DeployTestToken \
+		--broadcast \
+		--rpc-url http://localhost:8545
+	@echo ""
+	@echo "Set these in packages/frontend/.env.local:"
+	@echo "  VITE_BRIDGE_TOKEN_ADDRESS=<address from output>"
+	@echo "  VITE_LOCK_UNLOCK_ADDRESS=<LockUnlock from deploy-evm>"
+
 deploy-terra:
 	@echo "Deploying Terra contracts to LocalTerra..."
 	./scripts/deploy-terra-local.sh
@@ -168,6 +189,12 @@ test-transfer:
 e2e-test:
 	./scripts/e2e-test.sh
 
+e2e-test-quick:
+	./scripts/e2e-test.sh --quick
+
+e2e-test-full:
+	./scripts/e2e-test.sh --with-all --full
+
 # Integration tests
 test-integration:
 	cd packages/operator && cargo test --test integration_test -- --nocapture
@@ -175,6 +202,21 @@ test-integration:
 # Integration tests (with infrastructure)
 test-integration-full:
 	cd packages/operator && cargo test --test integration_test -- --ignored --nocapture
+
+# Frontend integration tests (requires Anvil + LocalTerra)
+test-frontend-all:
+	cd packages/frontend && npm run test:run
+
+test-frontend-coverage:
+	cd packages/frontend && npm run test:coverage
+
+# Bundle analysis
+analyze-bundle:
+	@echo "Analyzing frontend bundle size..."
+	cd packages/frontend && npm run build
+	@echo ""
+	@echo "Bundle analysis complete. Check dist/assets for chunk sizes."
+	@ls -lh packages/frontend/dist/assets/*.js 2>/dev/null || echo "Run 'make build-frontend' first"
 
 # Monitoring
 start-monitoring:
@@ -184,6 +226,20 @@ start-monitoring:
 
 stop-monitoring:
 	docker compose --profile monitoring down
+
+# Security - Gitleaks
+setup-hooks:
+	@echo "Setting up git hooks..."
+	git config core.hooksPath .githooks
+	@echo "✅ Git hooks configured. Pre-commit hook will now run gitleaks."
+
+gitleaks:
+	@echo "Running gitleaks on staged changes..."
+	gitleaks protect --staged --config .gitleaks.toml --verbose
+
+gitleaks-scan:
+	@echo "Scanning entire repository for secrets..."
+	gitleaks detect --config .gitleaks.toml --verbose
 
 # WorkSplit
 worksplit-init:

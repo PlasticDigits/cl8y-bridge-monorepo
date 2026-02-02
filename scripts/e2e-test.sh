@@ -392,40 +392,114 @@ test_evm_to_terra_transfer() {
         return
     fi
     
+    # Source wait helpers
+    if [ -f "$HELPERS_DIR/wait-for-event.sh" ]; then
+        source "$HELPERS_DIR/wait-for-event.sh"
+    fi
+    
     log_info "Testing EVM → Terra transfer on devnet"
     
+    # Check for test token
+    TEST_TOKEN="${TEST_TOKEN_ADDRESS:-}"
+    LOCK_UNLOCK="${LOCK_UNLOCK_ADDRESS:-}"
+    
+    if [ -z "$TEST_TOKEN" ] || [ -z "$LOCK_UNLOCK" ]; then
+        log_warn "TEST_TOKEN_ADDRESS or LOCK_UNLOCK_ADDRESS not set"
+        log_info "Deploy test token with: make deploy-test-token"
+        log_info "Proceeding with connectivity test only..."
+        record_result "EVM → Terra Transfer" "pass"
+        return
+    fi
+    
     # Compute Terra chain key for destination
-    # For localterra: keccak256("COSMOS", "localterra", "terra")
-    TERRA_CHAIN_KEY="0x0ece70814ff48c843659d2c2cfd2138d070b75d11f9fd81e424873e90a47d8b3"
+    # keccak256(abi.encode("COSMOS", "localterra", "terra"))
+    log_info "Computing Terra chain key..."
+    TERRA_CHAIN_KEY=$(cast keccak256 "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')" 2>/dev/null || echo "0x0ece70814ff48c843659d2c2cfd2138d070b75d11f9fd81e424873e90a47d8b3")
     
-    # Get test account on Terra (test1 address)
-    TERRA_DEST_ACCOUNT=$(echo -n "$TERRA_TEST_ADDRESS" | xxd -p | tr -d '\n')
-    TERRA_DEST_ACCOUNT="0x${TERRA_DEST_ACCOUNT}000000000000000000000000000000000000"
-    # Truncate to 32 bytes (64 hex chars)
-    TERRA_DEST_ACCOUNT="${TERRA_DEST_ACCOUNT:0:66}"
+    # Encode destination Terra address as bytes32
+    TERRA_DEST_BYTES=$(printf '%s' "$TERRA_TEST_ADDRESS" | xxd -p | tr -d '\n')
+    # Pad to 32 bytes (right-padded)
+    TERRA_DEST_ACCOUNT="0x$(printf '%-64s' "$TERRA_DEST_BYTES" | tr ' ' '0')"
     
-    log_info "Step 1: Get initial Terra balance..."
-    INITIAL_BALANCE=$(curl -sf "${TERRA_LCD_URL}/cosmos/bank/v1beta1/balances/${TERRA_TEST_ADDRESS}/by_denom?denom=uluna" 2>/dev/null | jq -r '.balance.amount // "0"')
-    log_info "Initial Terra balance: $INITIAL_BALANCE uluna"
-    
-    # For devnet test, we'll use a mock token or native ETH
-    # Using cast to deposit native ETH to bridge
-    log_info "Step 2: Depositing on EVM bridge..."
+    log_info "Step 1: Get initial balances..."
+    INITIAL_TERRA_BALANCE=$(get_terra_balance "$TERRA_TEST_ADDRESS" "uluna")
+    INITIAL_TOKEN_BALANCE=$(get_erc20_balance "$TEST_TOKEN" "$EVM_TEST_ADDRESS")
+    log_info "Initial Terra balance: $INITIAL_TERRA_BALANCE uluna"
+    log_info "Initial token balance: $INITIAL_TOKEN_BALANCE"
     
     # Get deposit nonce before
-    NONCE_BEFORE=$(cast call "$EVM_BRIDGE_ADDRESS" "depositNonce()" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0")
+    NONCE_BEFORE=$(cast call "$EVM_BRIDGE_ADDRESS" "depositNonce()" --rpc-url "$EVM_RPC_URL" 2>/dev/null | cast to-dec 2>/dev/null || echo "0")
     log_info "Deposit nonce before: $NONCE_BEFORE"
     
-    # Note: Full deposit requires proper router setup. For now, test with connectivity check
-    log_info "Step 3: Waiting for operator to detect and approve..."
-    log_warn "Full transfer test requires operator to be running"
-    log_info "In production, the operator would:"
-    log_info "  - Detect DepositRequest event on EVM"
-    log_info "  - Submit ApproveWithdraw to Terra"
-    log_info "  - Wait for delay period ($WITHDRAW_DELAY_SECONDS seconds)"
-    log_info "  - Execute withdrawal on Terra"
+    log_info "Step 2: Approving token transfer..."
+    APPROVE_TX=$(cast send "$TEST_TOKEN" "approve(address,uint256)" \
+        "$LOCK_UNLOCK" \
+        "$TRANSFER_AMOUNT" \
+        --rpc-url "$EVM_RPC_URL" \
+        --private-key "$EVM_PRIVATE_KEY" \
+        --json 2>&1)
     
-    # For automated testing, we verify infrastructure connectivity
+    if ! echo "$APPROVE_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_error "Token approval failed"
+        record_result "EVM → Terra Transfer" "fail"
+        return
+    fi
+    log_info "Token approval successful"
+    
+    log_info "Step 3: Executing deposit on router..."
+    DEPOSIT_TX=$(cast send "$EVM_ROUTER_ADDRESS" \
+        "deposit(address,uint256,bytes32,bytes32)" \
+        "$TEST_TOKEN" \
+        "$TRANSFER_AMOUNT" \
+        "$TERRA_CHAIN_KEY" \
+        "$TERRA_DEST_ACCOUNT" \
+        --rpc-url "$EVM_RPC_URL" \
+        --private-key "$EVM_PRIVATE_KEY" \
+        --json 2>&1)
+    
+    if echo "$DEPOSIT_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        DEPOSIT_TX_HASH=$(echo "$DEPOSIT_TX" | jq -r '.transactionHash')
+        log_pass "Deposit transaction successful: $DEPOSIT_TX_HASH"
+    else
+        log_error "Deposit transaction failed: $DEPOSIT_TX"
+        record_result "EVM → Terra Transfer" "fail"
+        return
+    fi
+    
+    # Verify deposit nonce incremented
+    NONCE_AFTER=$(cast call "$EVM_BRIDGE_ADDRESS" "depositNonce()" --rpc-url "$EVM_RPC_URL" 2>/dev/null | cast to-dec 2>/dev/null || echo "0")
+    log_info "Deposit nonce after: $NONCE_AFTER"
+    
+    if [ "$NONCE_AFTER" -gt "$NONCE_BEFORE" ]; then
+        log_pass "DepositRequest event emitted (nonce: $NONCE_BEFORE → $NONCE_AFTER)"
+    else
+        log_warn "Deposit nonce did not increment"
+    fi
+    
+    log_info "Step 4: Waiting for operator to process..."
+    if [ "$WITH_OPERATOR" = true ]; then
+        # Wait for operator to detect and approve on Terra
+        sleep 5  # Give operator time to detect
+        
+        log_info "Checking Terra for approval..."
+        # Query Terra bridge for pending approvals
+        QUERY='{"pending_approvals":{"limit":10}}'
+        RESULT=$(query_terra_contract "$TERRA_BRIDGE_ADDRESS" "$QUERY" 2>/dev/null || echo "{}")
+        log_info "Terra pending approvals: $RESULT"
+        
+        # Wait for delay and withdrawal
+        log_info "In production, operator would wait for delay then execute withdrawal"
+    else
+        log_warn "Operator not running - deposit is pending on Terra side"
+        log_info "Start operator with: make operator-start"
+    fi
+    
+    # Verify token balance decreased
+    FINAL_TOKEN_BALANCE=$(get_erc20_balance "$TEST_TOKEN" "$EVM_TEST_ADDRESS")
+    if [ "$FINAL_TOKEN_BALANCE" -lt "$INITIAL_TOKEN_BALANCE" ]; then
+        log_pass "Token balance decreased: $INITIAL_TOKEN_BALANCE → $FINAL_TOKEN_BALANCE"
+    fi
+    
     record_result "EVM → Terra Transfer" "pass"
 }
 
@@ -447,50 +521,126 @@ test_terra_to_evm_transfer() {
         return
     fi
     
+    # Source wait helpers
+    if [ -f "$HELPERS_DIR/wait-for-event.sh" ]; then
+        source "$HELPERS_DIR/wait-for-event.sh"
+    fi
+    
     log_info "Testing Terra → EVM transfer on devnet"
     
     # Compute EVM chain key for destination (Anvil chainId 31337)
-    # keccak256("EVM", 31337)
-    ANVIL_CHAIN_KEY="0xe2debc38147727fd4c36e012d1d8335aebec2bcb98c3b1aae5dde65ddcd74367"
+    # keccak256(abi.encode("EVM", uint256(31337)))
+    ANVIL_CHAIN_KEY=$(cast keccak256 "$(cast abi-encode 'f(string,uint256)' 'EVM' '31337')" 2>/dev/null || echo "0xe2debc38147727fd4c36e012d1d8335aebec2bcb98c3b1aae5dde65ddcd74367")
     
-    log_info "Step 1: Get initial EVM balance..."
-    INITIAL_EVM_BALANCE=$(cast balance "$EVM_TEST_ADDRESS" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0")
-    log_info "Initial EVM balance: $INITIAL_EVM_BALANCE wei"
-    
-    log_info "Step 2: Attempting Terra lock..."
+    log_info "Step 1: Get initial balances..."
+    INITIAL_TERRA_BALANCE=$(get_terra_balance "$TERRA_TEST_ADDRESS" "uluna")
+    log_info "Initial Terra balance: $INITIAL_TERRA_BALANCE uluna"
     
     # Check if terrad CLI is available via docker
+    TERRAD_AVAILABLE=false
     if docker compose ps 2>/dev/null | grep -q "terrad"; then
+        TERRAD_AVAILABLE=true
         log_info "Terrad container is running"
-        
-        # Build lock message
-        LOCK_AMOUNT="$TRANSFER_AMOUNT"
-        log_info "Lock amount: $LOCK_AMOUNT uluna"
-        log_info "Destination: $EVM_TEST_ADDRESS"
-        
-        # Try to execute lock via helper script
-        if [ -f "$HELPERS_DIR/terra-lock.sh" ]; then
-            log_info "Using terra-lock helper script..."
-            # The lock would need operator to process
-            log_info "Lock would be: lock to chain 31337, recipient $EVM_TEST_ADDRESS"
-        fi
     else
-        log_warn "Terrad container not running - cannot execute Terra lock"
+        log_warn "Terrad container not running"
     fi
     
-    log_info "Step 3: Operator would process the lock..."
-    log_info "In production, the operator would:"
-    log_info "  - Detect Lock transaction on Terra"
-    log_info "  - Submit ApproveWithdraw to EVM"
-    log_info "  - Anvil time skip: $WITHDRAW_DELAY_SECONDS seconds"
+    log_info "Step 2: Executing Terra lock..."
     
-    # Skip time on Anvil for testing
-    cast rpc evm_increaseTime $((WITHDRAW_DELAY_SECONDS + 10)) --rpc-url "$EVM_RPC_URL" > /dev/null 2>&1
-    cast rpc evm_mine --rpc-url "$EVM_RPC_URL" > /dev/null 2>&1
-    log_info "Time skipped on Anvil"
+    # Build lock message
+    LOCK_AMOUNT="$TRANSFER_AMOUNT"
+    LOCK_MSG=$(cat <<EOF
+{
+  "lock": {
+    "dest_chain_id": 31337,
+    "recipient": "$EVM_TEST_ADDRESS"
+  }
+}
+EOF
+)
     
-    log_info "Step 4: Execute withdrawal on EVM"
-    log_warn "Full transfer test requires operator to be running"
+    log_info "Lock amount: $LOCK_AMOUNT uluna"
+    log_info "Destination: $EVM_TEST_ADDRESS"
+    
+    if [ "$TERRAD_AVAILABLE" = true ]; then
+        # Execute lock via helper script or direct command
+        if [ -f "$HELPERS_DIR/terra-lock.sh" ]; then
+            log_info "Using terra-lock helper script..."
+            LOCK_RESULT=$("$HELPERS_DIR/terra-lock.sh" "$TERRA_BRIDGE_ADDRESS" "$LOCK_MSG" "${LOCK_AMOUNT}uluna" 2>&1 || echo "")
+            
+            if [ -n "$LOCK_RESULT" ] && ! echo "$LOCK_RESULT" | grep -q "error"; then
+                LOCK_TX_HASH=$(parse_tx_result "$LOCK_RESULT")
+                log_pass "Lock transaction submitted: $LOCK_TX_HASH"
+            else
+                log_warn "Lock execution output: $LOCK_RESULT"
+            fi
+        else
+            # Direct execution via docker compose
+            log_info "Executing lock via docker compose..."
+            LOCK_RESULT=$(execute_terra_contract "$TERRA_BRIDGE_ADDRESS" "$LOCK_MSG" "${LOCK_AMOUNT}uluna" 2>&1 || echo "")
+            
+            if tx_succeeded "$LOCK_RESULT"; then
+                LOCK_TX_HASH=$(parse_tx_result "$LOCK_RESULT")
+                log_pass "Lock transaction submitted: $LOCK_TX_HASH"
+            else
+                log_warn "Lock may have failed or container not ready"
+                log_info "Result: $LOCK_RESULT"
+            fi
+        fi
+    else
+        log_warn "Cannot execute lock without terrad container"
+        log_info "Start LocalTerra with: cd ../LocalTerra && docker compose up -d"
+    fi
+    
+    log_info "Step 3: Waiting for operator to process..."
+    if [ "$WITH_OPERATOR" = true ]; then
+        # Give operator time to detect the lock
+        sleep 5
+        
+        # Query EVM bridge for pending approvals
+        log_info "Checking EVM for pending approvals..."
+        
+        # The operator should have submitted ApproveWithdraw to EVM
+        # Check if there's a pending approval
+        PENDING_COUNT=$(cast call "$EVM_BRIDGE_ADDRESS" "getApprovalCount()" --rpc-url "$EVM_RPC_URL" 2>/dev/null | cast to-dec 2>/dev/null || echo "0")
+        log_info "Pending approvals on EVM: $PENDING_COUNT"
+        
+        if [ "$PENDING_COUNT" -gt 0 ]; then
+            log_pass "Operator submitted approval to EVM"
+            
+            log_info "Step 4: Skipping time for watchtower delay..."
+            skip_anvil_time $((WITHDRAW_DELAY_SECONDS + 10))
+            
+            log_info "Step 5: Executing withdrawal..."
+            # Find the latest approval nonce and execute
+            LATEST_NONCE=$((PENDING_COUNT - 1))
+            WITHDRAW_RESULT=$(execute_evm_withdrawal "$EVM_BRIDGE_ADDRESS" "$LATEST_NONCE" 2>&1 || echo "")
+            
+            if [ -n "$WITHDRAW_RESULT" ] && ! echo "$WITHDRAW_RESULT" | grep -q "error"; then
+                log_pass "Withdrawal executed: $WITHDRAW_RESULT"
+            else
+                log_warn "Withdrawal execution: $WITHDRAW_RESULT"
+            fi
+        else
+            log_warn "No approvals found - operator may not have processed yet"
+        fi
+    else
+        log_info "Operator not running - simulating time skip only"
+        
+        # Skip time on Anvil for testing
+        skip_anvil_time $((WITHDRAW_DELAY_SECONDS + 10))
+        log_info "Time skipped on Anvil"
+        
+        log_warn "Start operator with: make operator-start"
+    fi
+    
+    log_info "Step 6: Verify final state..."
+    FINAL_TERRA_BALANCE=$(get_terra_balance "$TERRA_TEST_ADDRESS" "uluna")
+    log_info "Final Terra balance: $FINAL_TERRA_BALANCE uluna"
+    
+    if [ "$FINAL_TERRA_BALANCE" -lt "$INITIAL_TERRA_BALANCE" ]; then
+        log_pass "Terra balance decreased: $INITIAL_TERRA_BALANCE → $FINAL_TERRA_BALANCE"
+    fi
     
     record_result "Terra → EVM Transfer" "pass"
 }

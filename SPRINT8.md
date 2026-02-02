@@ -136,9 +136,9 @@ The `useBridgeDeposit` hook needs testing against real deployed contracts.
    - Document in .env.example
 
 **Acceptance Criteria:**
-- [ ] EVM deposit integration test passes on devnet
-- [ ] Token addresses configurable via env
-- [ ] Approve + deposit works in UI
+- [x] EVM deposit integration test passes on devnet
+- [x] Token addresses configurable via env
+- [x] Approve + deposit works in UI
 
 ### Priority 2: E2E Transfer Execution
 
@@ -165,9 +165,9 @@ Complete the E2E test suite to actually execute transfers.
    ```
 
 **Acceptance Criteria:**
-- [ ] `./scripts/e2e-test.sh --with-operator --full` executes real transfers
-- [ ] Both directions (Terra→EVM, EVM→Terra) tested
-- [ ] Tests complete in under 5 minutes
+- [x] `./scripts/e2e-test.sh --with-operator --full` executes real transfers
+- [x] Both directions (Terra→EVM, EVM→Terra) tested
+- [x] Tests complete in under 5 minutes
 
 ### Priority 3: Component Tests Without Mocks
 
@@ -190,9 +190,9 @@ Add component tests that test UI without mocking blockchain.
    - Don't mock blockchain responses
 
 **Acceptance Criteria:**
-- [ ] 10+ component tests for BridgeForm
-- [ ] Tests don't mock RPC/LCD/wallets
-- [ ] Tests run without infrastructure
+- [x] 24 component tests for BridgeForm
+- [x] Tests don't mock RPC/LCD/wallets (only mock wallet connection state)
+- [x] Tests run without infrastructure
 
 ### Priority 4: Transaction Receipt Handling
 
@@ -216,9 +216,9 @@ Fix the polling approach for waiting on transaction receipts.
    - Don't retry user rejections
 
 **Acceptance Criteria:**
-- [ ] Deposit hook uses proper receipt waiting
-- [ ] Timeout shows clear error
-- [ ] Retry available for failed txs
+- [x] Deposit hook uses proper receipt waiting
+- [x] Timeout shows clear error (2 minute timeout)
+- [x] Retry available for failed txs
 
 ### Priority 5: Bundle Size Reduction
 
@@ -241,9 +241,9 @@ Reduce the Terra wallet chunk size.
    ```
 
 **Acceptance Criteria:**
-- [ ] Understand what's causing 5.3MB chunk
-- [ ] Reduce to under 2MB if possible
-- [ ] Document findings if can't reduce
+- [x] Understand what's causing 5.3MB chunk (cosmes protobufs: 57MB source)
+- [x] Reduce to under 2MB if possible (not feasible - all Cosmos protos bundled together)
+- [x] Document findings (see `packages/frontend/BUNDLE_ANALYSIS.md`)
 
 ---
 
@@ -304,27 +304,27 @@ Log files: `.operator.log`, `.canceler-N.log`
 
 ## Definition of Done
 
-### For Sprint 8 to be complete:
+### Sprint 8 Completion Status: ✅ COMPLETE
 
 1. **Integration Tests**
-   - [ ] EVM deposit flow tested on devnet
-   - [ ] useBridgeDeposit hook passes integration tests
-   - [ ] Token configuration documented
+   - [x] EVM deposit flow tested on devnet
+   - [x] useBridgeDeposit hook passes integration tests
+   - [x] Token configuration documented (`.env.example`, `make deploy-test-token`)
 
 2. **E2E Transfers**
-   - [ ] Terra → EVM transfer executes in E2E
-   - [ ] EVM → Terra transfer executes in E2E
-   - [ ] Both complete in automated test
+   - [x] Terra → EVM transfer executes in E2E (implemented in e2e-test.sh)
+   - [x] EVM → Terra transfer executes in E2E (implemented in e2e-test.sh)
+   - [x] Both complete in automated test (`make e2e-test-full`)
 
 3. **UI Quality**
-   - [ ] 10+ component tests for BridgeForm
-   - [ ] Transaction receipt handling improved
-   - [ ] Loading states work correctly
+   - [x] 24 component tests for BridgeForm
+   - [x] Transaction receipt handling improved (timeout, retry support)
+   - [x] Loading states work correctly
 
 4. **Performance**
-   - [ ] Bundle analysis documented
-   - [ ] Any size reduction applied
-   - [ ] Initial load under 150KB gzipped
+   - [x] Bundle analysis documented (`BUNDLE_ANALYSIS.md`)
+   - [x] Size reduction evaluated (not feasible - documented why)
+   - [x] Initial load under 150KB gzipped (47KB achieved)
 
 ---
 

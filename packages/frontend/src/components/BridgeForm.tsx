@@ -18,15 +18,31 @@ interface TokenConfig {
   decimals: number
 }
 
-// Default token configs - set via environment or after deployment
+// Token configuration from environment variables
+// Deploy test token with: make deploy-test-token
+// Then set VITE_BRIDGE_TOKEN_ADDRESS and VITE_LOCK_UNLOCK_ADDRESS in .env.local
 const TOKEN_CONFIGS: Record<string, TokenConfig | undefined> = {
-  // Local development - would be set after deploy
-  local: {
-    address: (import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
+  // Local development
+  local: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS ? {
+    address: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS as Address,
+    lockUnlockAddress: (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
+    symbol: 'tLUNC',
+    decimals: 6, // Match test token decimals
+  } : undefined,
+  // Testnet
+  testnet: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS ? {
+    address: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS as Address,
     lockUnlockAddress: (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
     symbol: 'LUNC',
     decimals: 18,
-  },
+  } : undefined,
+  // Mainnet
+  mainnet: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS ? {
+    address: import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS as Address,
+    lockUnlockAddress: (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
+    symbol: 'LUNC',
+    decimals: 18,
+  } : undefined,
 }
 
 interface ChainOption {

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Pre-commit hook to run gitleaks for secret detection
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "🔍 Running gitleaks to check for secrets..."
+
+# Check if gitleaks is installed
+if ! command -v gitleaks &> /dev/null; then
+    echo "❌ gitleaks is not installed."
+    echo ""
+    echo "Install gitleaks using one of these methods:"
+    echo "  brew install gitleaks              # macOS"
+    echo "  sudo apt install gitleaks          # Debian/Ubuntu"
+    echo "  cargo install gitleaks             # via Cargo"
+    echo "  go install github.com/gitleaks/gitleaks/v8@latest  # via Go"
+    echo ""
+    echo "Or download from: https://github.com/gitleaks/gitleaks/releases"
+    echo ""
+    echo "To skip this check (not recommended), use: git commit --no-verify"
+    exit 1
+fi
+
+# Run gitleaks on staged changes only
+if ! gitleaks protect --staged --config .gitleaks.toml --verbose; then
+    echo ""
+    echo "❌ Gitleaks found potential secrets in your staged changes!"
+    echo ""
+    echo "Please review the findings above and either:"
+    echo "  1. Remove the secret from the code"
+    echo "  2. Add a legitimate exception to .gitleaks.toml if it's a false positive"
+    echo ""
+    echo "To skip this check (not recommended), use: git commit --no-verify"
+    exit 1
+fi
+
+echo "✅ No secrets detected. Proceeding with commit."

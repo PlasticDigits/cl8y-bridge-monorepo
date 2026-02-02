@@ -1,0 +1,127 @@
+# Gitleaks configuration for CL8Y Bridge Monorepo
+# https://github.com/gitleaks/gitleaks
+
+title = "CL8Y Bridge Gitleaks Config"
+
+[extend]
+# Use the default gitleaks config as a base
+useDefault = true
+
+# Global allowlist - files and patterns that should be ignored
+[allowlist]
+description = "Global allowlist"
+
+# Files to ignore
+paths = [
+    '''\.lock$''',
+    '''package-lock\.json$''',
+    '''\.min\.js$''',
+    '''\.min\.css$''',
+    '''\.wasm$''',
+    '''\.pdf$''',
+    # Test fixtures and mocks
+    '''test/.*fixture''',
+    '''__mocks__/''',
+    # Foundry lib dependencies (third-party)
+    '''packages/contracts-evm/lib/''',
+    '''packages/evm-contracts/lib/''',
+    # Documentation and sprint logs (contain examples, not real secrets)
+    '''docs/.*\.md$''',
+    '''SPRINT.*\.md$''',
+    # Example env files (contain placeholder values)
+    '''\.env\.example$''',
+]
+
+# Common false positives
+regexes = [
+    # Anvil's default test private key (well-known, not a secret)
+    '''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+    # Hardhat default test accounts
+    '''0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d''',
+    # Placeholder/example keys (usually all zeros or obvious patterns)
+    '''0x0{64}''',
+    '''0xdead[a-f0-9]{60}''',
+    '''0xbeef[a-f0-9]{60}''',
+    # Generic placeholder text
+    '''YOUR_.*_HERE''',
+    '''REPLACE_.*_KEY''',
+    '''<.*_KEY>''',
+    '''example\.com''',
+    '''test@test\.com''',
+    # Well-known test JWT (jwt.io example)
+    '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ''',
+]
+
+# Rules can be customized or disabled
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api_key|apikey|api-key)\s*[:=]\s*['"]?([a-zA-Z0-9_\-]{20,})['"]?'''
+keywords = ["api_key", "apikey", "api-key"]
+
+[rules.allowlist]
+regexes = [
+    # Environment variable references (not actual secrets)
+    '''process\.env\.[A-Z_]+''',
+    '''std::env::var''',
+    '''env!''',
+    '''\$\{[A-Z_]+\}''',
+]
+
+[[rules]]
+id = "private-key"
+description = "Private Key (generic)"
+regex = '''(?i)(private[_-]?key)\s*[:=]\s*['"]?([a-fA-F0-9]{64})['"]?'''
+keywords = ["private_key", "privatekey", "private-key"]
+
+[rules.allowlist]
+regexes = [
+    # Test/development keys (Anvil, Hardhat, etc.)
+    '''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key ID"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+keywords = ["AKIA", "AGPA", "AIDA", "AROA", "AIPA", "ANPA", "ANVA", "ASIA"]
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS Secret Access Key"
+regex = '''(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]'''
+keywords = ["aws"]
+
+[[rules]]
+id = "mnemonic-phrase"
+description = "Mnemonic seed phrase"
+regex = '''(?i)(mnemonic|seed)\s*[:=]\s*['"]([a-z]+\s+){11,23}[a-z]+['"]'''
+keywords = ["mnemonic", "seed"]
+
+[rules.allowlist]
+regexes = [
+    # Example/test mnemonics
+    '''test test test test test test test test test test test junk''',
+    # BIP39 test mnemonic (all zeros - well-known)
+    '''abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about''',
+    # LocalTerra default test mnemonic (well-known, only for local development)
+    '''notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius''',
+]
+
+[[rules]]
+id = "jwt-token"
+description = "JWT Token"
+regex = '''eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*'''
+keywords = ["eyJ"]
+
+[[rules]]
+id = "infura-api-key"
+description = "Infura API Key"
+regex = '''(?i)infura(.{0,20})?['\"][a-f0-9]{32}['\"]'''
+keywords = ["infura"]
+
+[[rules]]
+id = "alchemy-api-key"
+description = "Alchemy API Key"
+regex = '''(?i)alchemy(.{0,20})?['\"][a-zA-Z0-9_-]{32,}['\"]'''
+keywords = ["alchemy"]
