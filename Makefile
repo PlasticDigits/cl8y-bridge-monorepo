@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy relayer test-transfer logs help
+.PHONY: start stop reset deploy operator test-transfer logs help
 
 # Default target
 help:
@@ -12,18 +12,18 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make deploy         - Deploy contracts to local chains"
-	@echo "  make relayer        - Run the relayer service"
+	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
 	@echo "Building:"
 	@echo "  make build-evm      - Build EVM contracts"
 	@echo "  make build-terra    - Build Terra contracts"
-	@echo "  make build-relayer  - Build relayer"
+	@echo "  make build-operator - Build operator"
 	@echo "  make build          - Build all packages"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test-evm       - Run EVM contract tests"
-	@echo "  make test-relayer   - Run relayer tests"
+	@echo "  make test-operator  - Run operator tests"
 	@echo "  make test           - Run all tests"
 
 # Infrastructure
@@ -58,19 +58,19 @@ build-evm:
 build-terra:
 	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown
 
-build-relayer:
-	cd packages/relayer && cargo build
+build-operator:
+	cd packages/operator && cargo build
 
-build: build-evm build-terra build-relayer
+build: build-evm build-terra build-operator
 
 # Testing
 test-evm:
 	cd packages/contracts-evm && forge test -vvv
 
-test-relayer:
-	cd packages/relayer && cargo test
+test-operator:
+	cd packages/operator && cargo test
 
-test: test-evm test-relayer
+test: test-evm test-operator
 
 # Deployment
 deploy: deploy-evm deploy-terra setup-bridge
@@ -93,12 +93,12 @@ setup-bridge:
 	@echo "Configuring bridge connections..."
 	./scripts/setup-bridge.sh
 
-# Relayer
-relayer:
-	cd packages/relayer && cargo run
+# Operator
+operator:
+	cd packages/operator && cargo run
 
-relayer-migrate:
-	cd packages/relayer && sqlx migrate run
+operator-migrate:
+	cd packages/operator && sqlx migrate run
 
 # Test transfer
 test-transfer:
@@ -110,19 +110,19 @@ e2e-test:
 
 # Integration tests
 test-integration:
-	cd packages/relayer && cargo test --test integration_test -- --nocapture
+	cd packages/operator && cargo test --test integration_test -- --nocapture
 
 # Integration tests (with infrastructure)
 test-integration-full:
-	cd packages/relayer && cargo test --test integration_test -- --ignored --nocapture
+	cd packages/operator && cargo test --test integration_test -- --ignored --nocapture
 
 # WorkSplit
 worksplit-init:
-	cd packages/relayer && worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
+	cd packages/operator && worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
 	cd packages/contracts-evm && worksplit init --lang solidity --model worksplit-coder-glm-4.7:32k
 	cd packages/contracts-terraclassic && worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
 
 worksplit-status:
-	@echo "=== Relayer ===" && cd packages/relayer && worksplit status || true
+	@echo "=== Operator ===" && cd packages/operator && worksplit status || true
 	@echo "=== EVM Contracts ===" && cd packages/contracts-evm && worksplit status || true
 	@echo "=== Terra Contracts ===" && cd packages/contracts-terraclassic && worksplit status || true

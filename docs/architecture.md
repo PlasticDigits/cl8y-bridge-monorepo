@@ -23,7 +23,8 @@ flowchart TB
     end
 
     subgraph Infra[Infrastructure]
-        Relayer[Relayer Service]
+        Operator[Operator Service]
+        Canceler[Canceler Network]
         DB[(PostgreSQL)]
     end
 
@@ -35,11 +36,13 @@ flowchart TB
 
     TerraUser -->|lock| TerraBridge
 
-    Bridge -.->|DepositRequest event| Relayer
-    TerraBridge -.->|Lock tx| Relayer
-    Relayer -->|approveWithdraw| Bridge
-    Relayer -->|Release| TerraBridge
-    Relayer --> DB
+    Bridge -.->|DepositRequest event| Operator
+    TerraBridge -.->|Lock tx| Operator
+    Operator -->|approveWithdraw| Bridge
+    Operator -->|ApproveWithdraw| TerraBridge
+    Operator --> DB
+    Canceler -.->|verify & cancel| Bridge
+    Canceler -.->|verify & cancel| TerraBridge
 ```
 
 ## Components
@@ -62,18 +65,28 @@ flowchart TB
 
 | Contract | Purpose | Documentation |
 |----------|---------|---------------|
-| `bridge` | Lock/release tokens, multi-relayer signatures | [contracts-terraclassic.md](./contracts-terraclassic.md) |
+| `bridge` | Lock/release tokens, watchtower security | [contracts-terraclassic.md](./contracts-terraclassic.md) |
 
 ### Infrastructure
 
-#### Relayer ([packages/relayer/](../packages/relayer/))
+#### Operator ([packages/operator/](../packages/operator/))
 
-The relayer is an off-chain service that:
+The operator is an off-chain service that:
 - Watches for deposit/lock events on both chains
-- Submits approval/release transactions to complete transfers
+- Submits approval transactions to destination chains
 - Tracks state in PostgreSQL for idempotency and recovery
+- Works with the canceler network for security
 
-See [Relayer Documentation](./relayer.md) for details.
+See [Operator Documentation](./operator.md) for details.
+
+#### Canceler Network
+
+Independent nodes that:
+- Monitor approval events on destination chains
+- Verify approvals against source chain deposits
+- Cancel fraudulent approvals during the delay window
+
+See [Canceler Network](./canceler-network.md) for details.
 
 ## Bridge Modes
 
@@ -87,12 +100,13 @@ Used when tokens exist natively on both chains.
 sequenceDiagram
     participant User
     participant SourceChain
-    participant Relayer
+    participant Operator
     participant DestChain
 
     User->>SourceChain: Lock tokens
-    SourceChain-->>Relayer: Lock event
-    Relayer->>DestChain: Approve withdrawal
+    SourceChain-->>Operator: Lock event
+    Operator->>DestChain: Approve withdrawal
+    Note over DestChain: 5 min delay (cancelers can verify)
     User->>DestChain: Withdraw tokens
     DestChain->>DestChain: Unlock tokens to user
 ```
@@ -105,29 +119,94 @@ Used for wrapped/synthetic tokens.
 sequenceDiagram
     participant User
     participant SourceChain
-    participant Relayer
+    participant Operator
     participant DestChain
 
     User->>SourceChain: Burn tokens
-    SourceChain-->>Relayer: Burn event
-    Relayer->>DestChain: Approve withdrawal
+    SourceChain-->>Operator: Burn event
+    Operator->>DestChain: Approve withdrawal
+    Note over DestChain: 5 min delay (cancelers can verify)
     User->>DestChain: Withdraw tokens
     DestChain->>DestChain: Mint tokens to user
 ```
 
 ## Security Model
 
-### Multi-Signature Relayers (Terra Classic)
+CL8Y Bridge uses a **watchtower security model** that provides strong security guarantees while maintaining fast transfer times. See [Security Model](./security-model.md) for comprehensive documentation.
 
-The Terra Classic contract requires a configurable threshold of relayer signatures to release tokens:
-- Prevents single point of failure
+### Trust Model
+
+```mermaid
+flowchart TB
+    subgraph Trust["Trust Hierarchy"]
+        Admin[Admin<br/>Full control, emergency powers]
+        Operator[Bridge Operator<br/>Submit approvals]
+        Canceler[Cancelers<br/>Verify & cancel fraud]
+        User[Users<br/>Execute withdrawals]
+    end
+    
+    Admin -->|manages| Operator
+    Admin -->|manages| Canceler
+    Operator -->|approves for| User
+    Canceler -->|protects| User
+```
+
+| Role | Trust Requirement | Can Cause |
+|------|-------------------|-----------|
+| **Admin** | Fully trusted | Configuration changes, fund recovery |
+| **Operator** | Semi-trusted | Approval delays (not theft - cancelers prevent) |
+| **Cancelers** | Minimally trusted | False-positive cancellations (admin can reenable) |
+| **Users** | Untrusted | Only self-harm possible |
+
+### Watchtower Pattern
+
+The core security mechanism:
+
+1. **Operator approves** a withdrawal based on source chain deposit
+2. **5-minute delay** begins before execution is possible
+3. **Cancelers verify** the approval against source chain state
+4. **Cancel if fraud** detected, otherwise withdrawal proceeds
+
+**Key Insight**: An attacker must fool **all** cancelers. A defender only needs **one** honest canceler.
+
+### Canonical Hash Verification
+
+Transfers are identified by deterministic hashes computed from:
+- Source chain key
+- Destination chain key  
+- Token address
+- Recipient address
+- Amount
+- Nonce
+
+This enables cancelers to verify approvals against source chain deposits with cryptographic certainty.
+
+### Defense in Depth
+
+| Layer | Mechanism | Protection |
+|-------|-----------|------------|
+| 1 | Operator approval | Only authorized operators can approve |
+| 2 | Delay window | Time for detection and response |
+| 3 | Canceler network | Decentralized fraud detection |
+| 4 | Hash verification | Cryptographic proof of validity |
+| 5 | Rate limiting | Caps exposure per time period |
+| 6 | Admin intervention | Emergency pause and recovery |
+
+### Multi-Signature (Terra Classic - Current)
+
+The current Terra Classic contract uses multi-sig verification (being upgraded to watchtower model):
+- Configurable signature threshold for releases
 - Signatures verified on-chain
+- **Note**: Being replaced with approve-delay-cancel pattern for parity with EVM
+
+**Note**: Terra Classic is being upgraded to the watchtower model for parity with EVM. See [Gap Analysis](./gap-analysis-terraclassic.md).
 
 ### Withdrawal Delay (EVM)
 
 EVM withdrawals have a configurable delay (default 5 minutes):
 - Allows cancellation of fraudulent approvals
 - Provides time for monitoring and intervention
+- Reenabling cancelled approvals resets the timer
 
 ### Guard Modules
 
@@ -147,7 +226,11 @@ Chains are identified by canonical keys:
 
 ## Related Documentation
 
+- [Security Model](./security-model.md) - Watchtower pattern and roles
 - [Crosschain Transfer Flows](./crosschain-flows.md) - Detailed step-by-step flows
 - [EVM Contracts](./contracts-evm.md) - EVM contract details
 - [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm contract details
-- [Relayer](./relayer.md) - Relayer service documentation
+- [Gap Analysis](./gap-analysis-terraclassic.md) - Terra Classic security gaps
+- [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements
+- [Operator](./operator.md) - Operator service documentation
+- [Canceler Network](./canceler-network.md) - Canceler node setup

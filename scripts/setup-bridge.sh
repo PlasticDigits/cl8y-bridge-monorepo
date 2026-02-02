@@ -166,7 +166,7 @@ main() {
     echo "  Terra Bridge: $TERRA_BRIDGE_ADDRESS"
     echo ""
     log_info "Next steps:"
-    echo "  1. Update packages/relayer/.env with bridge addresses"
+    echo "  1. Update packages/operator/.env with bridge addresses"
     echo "  2. Run: make relayer"
     echo "  3. Run: make test-transfer"
 }

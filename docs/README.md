@@ -16,16 +16,20 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 
 ### Infrastructure
 
-- [Relayer](./relayer.md) - Bridge operator service that processes crosschain transfers
+- [Bridge Operator](./operator.md) - Operator service that submits withdrawal approvals
+- [Canceler Network](./canceler-network.md) - Canceler nodes that verify and protect transfers
 - [Frontend](./frontend.md) - React web application for bridge interface
 - [Local Development](./local-development.md) - Setting up local testnets for development and testing
 - [Deployment Guide](./deployment.md) - Production deployment procedures
-- [Multi-Relayer Setup](./multi-relayer.md) - Running multiple relayer instances for high availability
+
+### Security
+
+- [Security Model](./security-model.md) - Watchtower pattern and trust model
 
 ### Testing
 
 - [Testing Guide](./testing.md) - Comprehensive testing documentation including:
-  - Unit tests for relayer and contracts
+  - Unit tests for operator and contracts
   - Integration tests with database
   - End-to-end (E2E) cross-chain transfer tests
   - CI/CD test configuration
@@ -41,7 +45,7 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 |-----------|--------|-------|------------|
 | EVM Contracts | [packages/contracts-evm/src/](../packages/contracts-evm/src/) | [test/](../packages/contracts-evm/test/) (59 tests) | [BSC Mainnet](./deployment.md#bsc-mainnet) |
 | Terra Classic Contracts | [packages/contracts-terraclassic/](../packages/contracts-terraclassic/) | TBD | [Columbus-5](./deployment.md#terra-classic) |
-| Relayer | [packages/relayer/](../packages/relayer/) | [tests/](../packages/relayer/tests/) (24 tests) | [Docker](./deployment.md#relayer) |
+| Operator | [packages/operator/](../packages/operator/) | [tests/](../packages/operator/tests/) (24 tests) | [Docker](./deployment.md#operator) |
 | Frontend | [packages/frontend/](../packages/frontend/) | TBD | [Vite](./frontend.md) |
 | E2E Tests | [scripts/](../scripts/) | [e2e-test.sh](../scripts/e2e-test.sh) | N/A |
 
@@ -52,7 +56,7 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 | Metric | Value |
 |--------|-------|
 | EVM Contract Tests | 59 passing |
-| Relayer Tests | 24 (19 unit + 5 integration) |
+| Operator Tests | 24 (19 unit + 5 integration) |
 | Frontend | Builds, renders correctly |
 | E2E Tests | Requires manual setup (Sprint 5 priority) |
 
@@ -70,11 +74,12 @@ See the [Frontend README](../packages/frontend/README.md) for using the bridge i
 
 ### For Operators
 
-1. Review [Relayer](./relayer.md) documentation
-2. Follow [Deployment Guide](./deployment.md) for production setup
-3. Understand [Crosschain Transfer Flows](./crosschain-flows.md) for monitoring
+1. Review [Bridge Operator](./operator.md) and [Security Model](./security-model.md) documentation
+2. Review [Canceler Network](./canceler-network.md) for setting up cancelers
+3. Follow [Deployment Guide](./deployment.md) for production setup
+4. Understand [Crosschain Transfer Flows](./crosschain-flows.md) for monitoring
 
 ## Related Resources
 
-- [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec for relayer implementation
+- [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec for operator implementation
 - [Terra Classic Deployment Scripts](../packages/contracts-terraclassic/scripts/README.md) - Contract deployment procedures

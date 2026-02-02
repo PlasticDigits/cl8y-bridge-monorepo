@@ -1,0 +1,64 @@
+[package]
+name = "cl8y-operator"
+version = "0.1.0"
+edition = "2021"
+authors = ["CL8Y Team"]
+description = "Bridge operator for submit/approve CL8Y cross-chain transfers"
+license = "AGPL-3.0-only"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full", "signal"] }
+async-trait = "0.1"
+
+# EVM interactions
+alloy = { version = "0.1", features = ["full"] }
+alloy-primitives = "0.7"
+
+# Cosmos/Terra interactions
+cosmrs = { version = "0.16", features = ["cosmwasm"] }
+cosmwasm-std = "1.5"
+tendermint = "0.35"
+tendermint-rpc = { version = "0.35", features = ["http-client"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono", "bigdecimal"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+config = "0.14"
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+eyre = "0.6"
+color-eyre = "0.6"
+thiserror = "1.0"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+futures = "0.3"
+base64 = "0.22"
+bip39 = "2.0"
+
+# Metrics
+prometheus = "0.13"
+lazy_static = "1.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "cl8y-relayer"
+path = "src/main.rs"

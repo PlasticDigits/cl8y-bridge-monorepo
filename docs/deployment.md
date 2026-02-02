@@ -7,7 +7,7 @@ This guide covers production deployment of the CL8Y Bridge system.
 A complete deployment includes:
 1. EVM contracts on target chains (BSC, Ethereum, etc.)
 2. Terra Classic contracts on Columbus-5
-3. Relayer service
+3. Operator service
 4. Frontend application
 
 ## EVM Contracts
@@ -89,7 +89,7 @@ cast send $TOKEN_REGISTRY "addTokenDestChainKey(address,bytes32,bytes32,uint8)" 
 # Grant bridge operator role
 cast send $ACCESS_MANAGER "grantRole(bytes32,address,uint32)" \
   $BRIDGE_OPERATOR_ROLE \
-  $RELAYER_ADDRESS \
+  $OPERATOR_ADDRESS \
   0 \
   --rpc-url $RPC_URL
 ```
@@ -150,9 +150,9 @@ terrad tx wasm execute $BRIDGE_ADDRESS \
   --chain-id columbus-5 \
   -y
 
-# Add relayer
+# Add operator
 terrad tx wasm execute $BRIDGE_ADDRESS \
-  '{"add_relayer":{"relayer":"terra1..."}}' \
+  '{"add_operator":{"operator":"terra1..."}}' \
   --from $WALLET \
   --gas auto --gas-adjustment 1.3 \
   --node https://terra-classic-rpc.publicnode.com \
@@ -174,7 +174,7 @@ terrad tx wasm execute $BRIDGE_ADDRESS \
 |----------|---------|
 | Bridge | TBD |
 
-## Relayer
+## Operator
 
 ### Infrastructure Requirements
 
@@ -186,17 +186,17 @@ terrad tx wasm execute $BRIDGE_ADDRESS \
 
 ```bash
 # Build image
-docker build -t cl8y-relayer:latest -f packages/relayer/Dockerfile .
+docker build -t cl8y-operator:latest -f packages/operator/Dockerfile .
 
 # Run with docker-compose
-docker-compose -f docker-compose.prod.yml up -d relayer
+docker-compose -f docker-compose.prod.yml up -d operator
 ```
 
 ### Environment Configuration
 
 ```bash
 # Database (use managed PostgreSQL in production)
-DATABASE_URL=postgres://user:password@host:5432/relayer
+DATABASE_URL=postgres://user:password@host:5432/operator
 
 # EVM (use reliable RPC, not public endpoints)
 EVM_RPC_URL=https://your-rpc-provider.com
@@ -228,7 +228,8 @@ Set up monitoring for:
 
 ### High Availability
 
-For production, run multiple relayer instances:
+For production, deploy with the canceler network:
+- Run multiple canceler nodes for redundancy
 - Use database-level locking for job coordination
 - Deploy across multiple regions
 - Implement automatic failover
@@ -268,7 +269,7 @@ Using CosmWasm migration:
 2. Propose migration with code ID
 3. Execute migration
 
-### Relayer
+### Operator
 
 1. Deploy new version alongside current
 2. Drain current instance (stop accepting new jobs)
@@ -281,4 +282,5 @@ Using CosmWasm migration:
 - [System Architecture](./architecture.md) - Component overview
 - [EVM Contracts](./contracts-evm.md) - Contract details
 - [Terra Classic Contracts](./contracts-terraclassic.md) - Contract details
-- [Relayer](./relayer.md) - Relayer documentation
+- [Operator](./operator.md) - Operator documentation
+- [Canceler Network](./canceler-network.md) - Canceler setup

@@ -15,7 +15,7 @@ flowchart TB
     end
 
     subgraph Backend[Backend Services]
-        API[Relayer API]
+        API[Operator API]
         EVM[EVM RPC]
         Terra[Terra LCD]
     end
@@ -246,10 +246,10 @@ The app uses TailwindCSS with a dark theme. Key design tokens:
 
 ## API Integration
 
-### Relayer Status
+### Operator Status
 
 ```typescript
-// Fetch relayer status
+// Fetch operator status
 const response = await fetch(`${API_URL}/status`);
 const status = await response.json();
 // { uptime: 3600, pending_deposits: 5, ... }
@@ -292,4 +292,4 @@ const pending = await response.json();
 - [System Architecture](./architecture.md) - Overall system design
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation
-- [Relayer](./relayer.md) - Backend API documentation
+- [Operator](./operator.md) - Backend API documentation

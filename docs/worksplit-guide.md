@@ -36,7 +36,7 @@ packages/
 ├── contracts-terraclassic/
 │   ├── worksplit.toml
 │   └── jobs/
-└── relayer/
+└── operator/
     ├── worksplit.toml
     └── jobs/
 ```
@@ -52,8 +52,8 @@ worksplit init --lang solidity --model worksplit-coder-glm-4.7:32k
 cd packages/contracts-terraclassic
 worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
 
-# Relayer (Rust)
-cd packages/relayer
+# Operator (Rust)
+cd packages/operator
 worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
 ```
 
@@ -61,7 +61,7 @@ worksplit init --lang rust --model worksplit-coder-glm-4.7:32k
 
 Each package's `worksplit.toml`:
 
-#### Rust (Relayer, Terra Contracts)
+#### Rust (Operator, Terra Contracts)
 
 ```toml
 [ollama]
@@ -173,36 +173,36 @@ impl EvmWatcher {
 
 Batch jobs by **file dependencies**, not by task:
 
-### Relayer Example
+### Operator Example
 
 ```
 Batch 1 (foundational, no dependencies):
-├── relayer_001_types.md        → src/types.rs
-├── relayer_002_config.md       → src/config.rs
-├── relayer_003_db_models.md    → src/db/models.rs
-└── relayer_004_db_mod.md       → src/db/mod.rs
+├── operator_001_types.md        → src/types.rs
+├── operator_002_config.md       → src/config.rs
+├── operator_003_db_models.md    → src/db/models.rs
+└── operator_004_db_mod.md       → src/db/mod.rs
 
 Batch 2 (depends on Batch 1):
-├── relayer_005_watchers_mod.md → src/watchers/mod.rs
-├── relayer_006_watchers_evm.md → src/watchers/evm.rs
-└── relayer_007_watchers_terra.md → src/watchers/terra.rs
+├── operator_005_watchers_mod.md → src/watchers/mod.rs
+├── operator_006_watchers_evm.md → src/watchers/evm.rs
+└── operator_007_watchers_terra.md → src/watchers/terra.rs
 
 Batch 3 (depends on Batches 1-2):
-├── relayer_008_writers_mod.md  → src/writers/mod.rs
-├── relayer_009_writers_evm.md  → src/writers/evm.rs
-└── relayer_010_writers_terra.md → src/writers/terra.rs
+├── operator_008_writers_mod.md  → src/writers/mod.rs
+├── operator_009_writers_evm.md  → src/writers/evm.rs
+└── operator_010_writers_terra.md → src/writers/terra.rs
 
 Batch 4 (depends on all):
-└── relayer_011_main.md         → src/main.rs
+└── operator_011_main.md         → src/main.rs
 ```
 
 ### Running Batches
 
 ```bash
-cd packages/relayer
+cd packages/operator
 
 # Create batch 1 jobs
-worksplit new-job relayer_001_types --template replace -o src/ -f types.rs
+worksplit new-job operator_001_types --template replace -o src/ -f types.rs
 # ... create remaining jobs
 
 # Run batch 1
@@ -220,13 +220,13 @@ worksplit status
 worksplit validate
 
 # Preview prompt before running
-worksplit preview relayer_001_types
+worksplit preview operator_001_types
 
 # Run all pending jobs
 worksplit run
 
 # Run specific job
-worksplit run --job relayer_001_types
+worksplit run --job operator_001_types
 
 # Check status
 worksplit status
@@ -234,16 +234,16 @@ worksplit status -v          # Verbose
 worksplit status --summary   # One-line summary
 
 # Reset failed job
-worksplit reset relayer_001_types
+worksplit reset operator_001_types
 
 # Retry failed job
-worksplit retry relayer_001_types
+worksplit retry operator_001_types
 
 # Lint generated code
 worksplit lint
 
 # Auto-fix lint errors
-worksplit fix relayer_001_types
+worksplit fix operator_001_types
 ```
 
 ## Best Practices
@@ -390,5 +390,5 @@ Edit mode has lower success rate (~50-70%). If failing:
 ## Related Documentation
 
 - [Local Development](./local-development.md) - Development environment setup
-- [Relayer](./relayer.md) - Relayer architecture
+- [Operator](./operator.md) - Operator architecture
 - [WorkSplit README](https://github.com/PlasticDigits/WorkSplit) - Official documentation

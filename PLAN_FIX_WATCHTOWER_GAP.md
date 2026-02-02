@@ -203,52 +203,61 @@ The current Terra Classic contract:
 
 ## Multi-Week Implementation Plan
 
-### Week 1: Documentation - Security Model
+### Week 1: Documentation - Security Model ✅ COMPLETE
 
 **Objective:** Document the approve-delay-withdraw-cancel security model
 
 **Tasks:**
-- [ ] Create `docs/security-model.md` explaining:
+- [x] Create `docs/security-model.md` explaining:
   - The watchtower pattern
   - Relayer vs Canceler roles
   - Why delay windows matter
   - Economic incentives (approve is expensive, cancel is cheap)
   - Reorg handling with cancel/reenable
   
-- [ ] Update `docs/contracts-evm.md`:
+- [x] Update `docs/contracts-evm.md`:
   - Add "Security Model" section
   - Document the canceler role in the Roles table
   - Add sequence diagrams for cancel/reenable flows
 
-- [ ] Update `docs/architecture.md`:
+- [x] Update `docs/architecture.md`:
   - Add security model section
   - Explain the trust model
 
 **Deliverables:**
-- `docs/security-model.md` (new file)
-- Updated `docs/contracts-evm.md`
-- Updated `docs/architecture.md`
+- `docs/security-model.md` (new file) ✅
+- Updated `docs/contracts-evm.md` ✅
+- Updated `docs/architecture.md` ✅
 
 ---
 
-### Week 2: Gap Analysis Document
+### Week 2: Gap Analysis Document ✅ COMPLETE
 
 **Objective:** Formal gap analysis between EVM and Terra Classic contracts
 
 **Tasks:**
-- [ ] Create `docs/gap-analysis-terraclassic.md` documenting:
+- [x] Create `docs/gap-analysis-terraclassic.md` documenting:
   - Feature comparison table (EVM vs Terra Classic)
   - Missing features on Terra Classic
   - Security implications of current Terra Classic design
   - Risk assessment
   
-- [ ] Create `docs/crosschain-parity.md`:
+- [x] Create `docs/crosschain-parity.md`:
   - Document what parity means for the bridge
   - Define target state for Terra Classic
 
 **Deliverables:**
-- `docs/gap-analysis-terraclassic.md`
-- `docs/crosschain-parity.md`
+- `docs/gap-analysis-terraclassic.md` ✅
+- `docs/crosschain-parity.md` ✅
+
+**Resolved Decisions:**
+- `Release` message: Fully deprecated (not on mainnet)
+- Initial cancelers: Team-operated only
+- Withdraw delay: 5 minutes (match EVM)
+- Rate limiting: Include in implementation
+- Keccak: cosmwasm-crypto, fallback tiny-keccak
+- Deposit hashes on Terra: Yes (full parity)
+- Address encoding: Cosmos canonical bytes (20), left-padded to 32
 
 ---
 
@@ -488,7 +497,7 @@ The current Terra Classic contract:
   - Approve with mismatched hash components
 
 #### Integration Tests
-- [ ] Test relayer integration with new flow
+- [ ] Test operator integration with new flow
 - [ ] Test canceler monitoring simulation:
   - Canceler queries source chain for deposit hash
   - Canceler verifies approval matches
@@ -496,23 +505,23 @@ The current Terra Classic contract:
 - [ ] End-to-end test: EVM → Terra with new flow
 - [ ] End-to-end test: Terra → EVM (unchanged)
 
-#### Relayer Updates
+#### Operator Updates
 - [ ] Update Terra writer to use approve-then-execute pattern
 - [ ] Update hash computation to match contract
 - [ ] Add configuration for new flow
-- [ ] (Optional) Add canceler monitoring module to relayer
+- [ ] (Optional) Add canceler monitoring module to operator
 
 #### Documentation Updates
 - [ ] Update `docs/contracts-terraclassic.md` with new messages
 - [ ] Update `docs/crosschain-flows.md` with new diagrams
-- [ ] Update `docs/relayer.md` with new flow
+- [ ] Update `docs/operator.md` with new flow
 - [ ] Document hash computation for third-party integrators
 
 **Deliverables:**
 - Hash parity test suite (critical for security)
 - Unit test suite for new functionality
 - Integration test suite
-- Updated relayer (packages/relayer)
+- Updated operator (packages/operator)
 - Updated documentation
 
 ---

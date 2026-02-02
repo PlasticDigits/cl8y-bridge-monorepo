@@ -12,7 +12,8 @@ sequenceDiagram
     participant Router as BridgeRouter
     participant Bridge as CL8YBridge
     participant Token as ERC20 Token
-    participant Relayer
+    participant Operator
+    participant Canceler
     participant Terra as Terra Bridge
 
     Note over User: Approve token spend first
@@ -33,15 +34,21 @@ sequenceDiagram
 
     Bridge-->>Bridge: emit DepositRequest(destChainKey, destToken, destAccount, amount, nonce)
 
-    Note over Relayer: Wait for finality
+    Note over Operator: Wait for finality
 
-    Relayer->>Relayer: Observe DepositRequest event
-    Relayer->>Relayer: Collect relayer signatures
+    Operator->>Operator: Observe DepositRequest event
+    Operator->>Terra: ApproveWithdraw(params)
 
-    Relayer->>Terra: Release(nonce, sender, recipient, token, amount, chainId, signatures)
+    Note over Terra: 5-minute delay begins
+    
+    par Canceler Verification
+        Canceler->>Bridge: Query deposit hash
+        Note over Canceler: Verify approval matches deposit
+    end
 
-    Terra->>Terra: Verify signatures >= min_signatures
-    Terra->>Terra: Check nonce not used
+    Note over Terra: Delay elapsed
+
+    User->>Terra: ExecuteWithdraw(withdraw_hash)
     Terra->>User: Send tokens to recipient
 ```
 
@@ -53,7 +60,7 @@ sequenceDiagram
     participant Router as BridgeRouter
     participant WETH as WETH/WBNB
     participant Bridge as CL8YBridge
-    participant Relayer
+    participant Operator
     participant Terra as Terra Bridge
 
     User->>Router: depositNative{value: amount}(destChainKey, destAccount)
@@ -63,7 +70,9 @@ sequenceDiagram
 
     Bridge-->>Bridge: emit DepositRequest(...)
 
-    Relayer->>Terra: Release(...)
+    Operator->>Terra: ApproveWithdraw(...)
+    Note over Terra: 5-minute delay (cancelers verify)
+    User->>Terra: ExecuteWithdraw(hash)
     Terra->>User: Send tokens to recipient
 ```
 
@@ -75,7 +84,8 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant Terra as Terra Bridge
-    participant Relayer
+    participant Operator
+    participant Canceler
     participant Bridge as CL8YBridge
     participant Router as BridgeRouter
 
@@ -85,17 +95,25 @@ sequenceDiagram
     Terra->>Terra: Validate token enabled
     Terra->>Terra: Calculate fee
     Terra->>Terra: Lock tokens in contract
+    Terra->>Terra: Store deposit hash
     Terra->>Terra: Increment nonce
 
     Terra-->>Terra: emit attributes(method=lock, nonce, sender, recipient, token, amount, dest_chain_id)
 
-    Note over Relayer: Poll for Lock transactions
+    Note over Operator: Poll for Lock transactions
 
-    Relayer->>Relayer: Observe Lock tx attributes
-    Relayer->>Relayer: Compute approval parameters
+    Operator->>Operator: Observe Lock tx attributes
+    Operator->>Operator: Compute approval parameters
 
     alt ERC20 Path
-        Relayer->>Bridge: approveWithdraw(srcChainKey, token, to=user, amount, nonce, fee, feeRecipient, deductFromAmount=false)
+        Operator->>Bridge: approveWithdraw(srcChainKey, token, to=user, amount, nonce, fee, feeRecipient, deductFromAmount=false)
+
+        Note over Bridge: 5-minute delay begins
+
+        par Canceler Verification
+            Canceler->>Terra: Query deposit hash
+            Note over Canceler: Verify approval matches deposit
+        end
 
         Note over User: Wait for withdrawDelay (default 5 min)
 
@@ -106,7 +124,7 @@ sequenceDiagram
         Bridge->>FeeRecipient: Transfer fee
 
     else Native Path (receiving ETH/BNB)
-        Relayer->>Bridge: approveWithdraw(srcChainKey, weth, to=router, amount, nonce, fee, feeRecipient, deductFromAmount=true)
+        Operator->>Bridge: approveWithdraw(srcChainKey, weth, to=router, amount, nonce, fee, feeRecipient, deductFromAmount=true)
 
         Note over User: Wait for withdrawDelay
 
@@ -125,7 +143,7 @@ sequenceDiagram
     participant User
     participant CW20 as CW20 Token
     participant Terra as Terra Bridge
-    participant Relayer
+    participant Operator
     participant Bridge as CL8YBridge
 
     User->>CW20: Send(bridge, amount, msg=Lock{dest_chain_id, recipient})
@@ -135,9 +153,9 @@ sequenceDiagram
     Terra->>Terra: Validate and lock
     Terra-->>Terra: emit attributes(method=lock_cw20, ...)
 
-    Relayer->>Bridge: approveWithdraw(...)
+    Operator->>Bridge: approveWithdraw(...)
 
-    Note over User: Wait for delay
+    Note over Bridge: 5-minute delay (cancelers verify)
 
     User->>Bridge: withdraw(...)
 ```
@@ -198,19 +216,30 @@ bytes32 withdrawHash = keccak256(abi.encode(
 | `WithdrawNotApproved` | Approval missing or parameters mismatch | Verify approval exists with correct parameters |
 | `WithdrawDelayNotElapsed` | User tried to withdraw before delay | Wait for delay period |
 | `NonceAlreadyUsed` | Replay attack or duplicate | Nonce already processed |
-| `InsufficientSignatures` | Not enough relayer signatures | Wait for more relayers to sign |
+| `ApprovalCancelled` | Canceler flagged approval as fraudulent | Investigate; admin may reenable if false positive |
 
 ### Reorg Handling
 
 If a deposit is reorged out:
 
-1. Relayer calls `cancelWithdrawApproval(withdrawHash)` on destination
-2. If deposit reappears, relayer calls `reenableWithdrawApproval(withdrawHash)`
+1. Operator or canceler calls `cancelWithdrawApproval(withdrawHash)` on destination
+2. If deposit reappears, admin calls `reenableWithdrawApproval(withdrawHash)`
 3. Reenabling resets the delay timer
+
+### Cancellation Flow
+
+If a canceler detects a fraudulent approval:
+
+1. Canceler queries source chain for deposit hash
+2. If deposit doesn't exist or parameters mismatch → canceler calls `cancelWithdrawApproval`
+3. Approval is blocked; user's withdraw call will revert
+4. If false positive, admin can reenable after investigation
 
 ## Related Documentation
 
 - [System Architecture](./architecture.md) - Component overview
+- [Security Model](./security-model.md) - Watchtower pattern
 - [EVM Contracts](./contracts-evm.md) - Contract interfaces
 - [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm messages
-- [Relayer](./relayer.md) - Relayer operation details
+- [Operator](./operator.md) - Operator service details
+- [Canceler Network](./canceler-network.md) - Canceler setup

@@ -239,10 +239,137 @@ Extended OpenZeppelin AccessManager with role enumeration.
 
 | Role | Permissions |
 |------|-------------|
-| Admin | Full access, role management |
-| Bridge Operator | `approveWithdraw`, `cancelWithdrawApproval`, `reenableWithdrawApproval` |
+| Admin | Full access, role management, `reenableWithdrawApproval` |
+| Bridge Operator | `approveWithdraw`, `cancelWithdrawApproval` |
+| Canceler | `cancelWithdrawApproval` only |
 | Guard Manager | Add/remove guard modules |
 | Token Manager | Add/update tokens in registry |
+
+---
+
+## Security Model
+
+The EVM contracts implement a **watchtower security model** with approve-delay-cancel mechanics. See [Security Model](./security-model.md) for comprehensive documentation.
+
+### Canonical TransferId Hash
+
+Every transfer is identified by a unique hash enabling cross-chain verification:
+
+```solidity
+bytes32 transferId = keccak256(abi.encode(
+    srcChainKey,        // Source chain identifier
+    destChainKey,       // Destination chain identifier  
+    destTokenAddress,   // Token address on destination (bytes32)
+    destAccount,        // Recipient account (bytes32)
+    amount,             // Normalized amount
+    nonce               // Unique nonce from source chain
+));
+```
+
+This hash is computed identically on both source and destination chains, allowing cancelers to verify approvals against deposits.
+
+### Withdrawal Flow with Security
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Source as Source Chain
+    participant Operator as Bridge Operator
+    participant Bridge as CL8YBridge
+    participant Canceler
+    
+    User->>Source: deposit(token, amount, destChainKey, destAccount)
+    Source-->>Source: Store depositHash in _depositHashes
+    Source-->>Operator: DepositRequest event
+    
+    Operator->>Bridge: approveWithdraw(srcChainKey, token, to, amount, nonce, fee, feeRecipient)
+    Bridge->>Bridge: Compute withdrawHash
+    Bridge->>Bridge: Check _withdrawNonceUsed[srcChainKey][nonce] == false
+    Bridge->>Bridge: Store WithdrawApproval, set approvedAt = now
+    Bridge-->>Canceler: WithdrawApproved event
+    
+    Note over Bridge: 5-minute delay window begins
+    
+    par Canceler Verification
+        Canceler->>Source: getDepositFromHash(withdrawHash)
+        alt Deposit Valid
+            Note over Canceler: No action needed
+        else Deposit Invalid
+            Canceler->>Bridge: cancelWithdrawApproval(withdrawHash)
+            Bridge->>Bridge: Set approval.cancelled = true
+        end
+    end
+    
+    Note over Bridge: Delay elapsed
+    
+    User->>Bridge: withdraw(srcChainKey, token, to, amount, nonce)
+    Bridge->>Bridge: Verify: isApproved && !cancelled && !executed
+    Bridge->>Bridge: Verify: block.timestamp >= approvedAt + withdrawDelay
+    Bridge->>User: Transfer tokens
+```
+
+### Cancel Flow
+
+Cancelers call `cancelWithdrawApproval` when they detect a fraudulent or invalid approval:
+
+```mermaid
+sequenceDiagram
+    participant Canceler
+    participant Bridge as CL8YBridge
+    participant Source as Source Chain
+    
+    Bridge-->>Canceler: WithdrawApproved(withdrawHash, ...)
+    
+    Canceler->>Source: Query deposit by hash
+    Source-->>Canceler: Not found / Mismatch
+    
+    Canceler->>Bridge: cancelWithdrawApproval(withdrawHash)
+    Bridge->>Bridge: Verify caller has CANCELER role
+    Bridge->>Bridge: Load approval, verify isApproved && !executed
+    Bridge->>Bridge: Set cancelled = true
+    Bridge-->>Bridge: Emit WithdrawApprovalCancelled(withdrawHash)
+```
+
+### Reenable Flow
+
+Admin can reenable cancelled approvals (e.g., after a blockchain reorg resolves):
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant Bridge as CL8YBridge
+    participant User
+    
+    Note over Bridge: Approval was cancelled (possibly due to reorg)
+    
+    Admin->>Bridge: reenableWithdrawApproval(withdrawHash)
+    Bridge->>Bridge: Verify caller is Admin
+    Bridge->>Bridge: Verify approval.cancelled == true
+    Bridge->>Bridge: Set cancelled = false
+    Bridge->>Bridge: Reset approvedAt = block.timestamp
+    Bridge-->>Bridge: Emit WithdrawApprovalReenabled(withdrawHash)
+    
+    Note over Bridge: New 5-minute delay begins
+    
+    User->>Bridge: withdraw(...) after delay
+```
+
+### Nonce Tracking
+
+Nonces are tracked per source chain to prevent duplicate approvals:
+
+```solidity
+// Key: srcChainKey => nonce => used
+mapping(bytes32 => mapping(uint256 => bool)) private _withdrawNonceUsed;
+
+// In approveWithdraw:
+require(!_withdrawNonceUsed[srcChainKey][nonce], "NonceAlreadyUsed");
+_withdrawNonceUsed[srcChainKey][nonce] = true;
+```
+
+This prevents:
+- Same deposit being approved twice from the same source chain
+- Replay attacks using old nonces
 
 ## Guard Modules
 
@@ -290,7 +417,10 @@ Test files in [packages/contracts-evm/test/](../packages/contracts-evm/test/).
 
 ## Related Documentation
 
+- [Security Model](./security-model.md) - Watchtower pattern and security guarantees
 - [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Terra Classic Contracts](./contracts-terraclassic.md) - Partner chain contracts
+- [Gap Analysis](./gap-analysis-terraclassic.md) - Security parity analysis
+- [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements

@@ -7,8 +7,8 @@ This document explains the testing strategy, test types, and how to run end-to-e
 | Test Type | Count | Status |
 |-----------|-------|--------|
 | EVM Contract Tests | 59 | All passing |
-| Relayer Unit Tests | 19 | All passing |
-| Relayer Integration Tests | 5 | All passing (3 ignored, need LocalTerra) |
+| Operator Unit Tests | 19 | All passing |
+| Operator Integration Tests | 5 | All passing (3 ignored, need LocalTerra) |
 | Frontend Tests | 0 | Not implemented |
 | E2E Tests | - | Requires manual setup |
 
@@ -20,7 +20,7 @@ This document explains the testing strategy, test types, and how to run end-to-e
 |-----------|----------|---------|------------------------|
 | Unit Tests | `packages/*/tests/` | Test individual functions | No |
 | Contract Tests | `packages/contracts-evm/test/` | Test Solidity contracts | No (uses Foundry) |
-| Integration Tests | `packages/relayer/tests/` | Test component interactions | Partial |
+| Integration Tests | `packages/operator/tests/` | Test component interactions | Partial |
 | E2E Tests | `scripts/e2e-test.sh` | Full transfer flows | Yes |
 
 ## Quick Start
@@ -39,12 +39,12 @@ make e2e-test
 
 ## Unit Tests
 
-### Relayer Unit Tests
+### Operator Unit Tests
 
-Located in `packages/relayer/tests/integration_test.rs`, these tests verify core logic without requiring running services.
+Located in `packages/operator/tests/integration_test.rs`, these tests verify core logic without requiring running services.
 
 ```bash
-cd packages/relayer
+cd packages/operator
 cargo test --test integration_test
 ```
 
@@ -55,12 +55,12 @@ cargo test --test integration_test
 - `test_amount_conversion` - Validates 6↔18 decimal conversion
 - `test_keccak256_computation` - Ensures hash functions work correctly
 
-### Relayer Type Tests
+### Operator Type Tests
 
-Located in `packages/relayer/src/types.rs`, unit tests for core types:
+Located in `packages/operator/src/types.rs`, unit tests for core types:
 
 ```bash
-cd packages/relayer
+cd packages/operator
 cargo test types::tests
 ```
 
@@ -105,7 +105,7 @@ forge test --match-test testDepositMintBurn
 
 ## Integration Tests
 
-Integration tests verify the relayer can connect to and interact with both chains.
+Integration tests verify the operator can connect to and interact with both chains.
 
 ### Prerequisites
 
@@ -128,7 +128,7 @@ cd packages/contracts-evm
 forge script script/DeployLocal.s.sol:DeployLocal --broadcast --rpc-url http://localhost:8545
 
 # Set environment variables
-export DATABASE_URL="postgres://relayer:relayer@localhost:5433/relayer"
+export DATABASE_URL="postgres://operator:operator@localhost:5433/operator"
 export EVM_RPC_URL="http://localhost:8545"
 export TERRA_RPC_URL="http://localhost:26657"
 export TERRA_LCD_URL="http://localhost:1317"
@@ -136,7 +136,7 @@ export EVM_BRIDGE_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
 export TERRA_BRIDGE_ADDRESS="terra1..."  # Set after deployment
 
 # Run all tests including infrastructure-dependent ones
-cd packages/relayer
+cd packages/operator
 cargo test --test integration_test -- --include-ignored
 ```
 
@@ -155,7 +155,7 @@ E2E tests verify complete cross-chain transfers through the entire system.
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Anvil     │     │  Relayer    │     │ LocalTerra  │
+│   Anvil     │     │  Operator   │     │ LocalTerra  │
 │   (EVM)     │◄────┤  Service    ├────►│  (Cosmos)   │
 │  Port 8545  │     │             │     │ Port 26657  │
 └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
@@ -206,7 +206,7 @@ E2E tests verify complete cross-chain transfers through the entire system.
 # Set required environment variables
 export EVM_BRIDGE_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
 export TERRA_BRIDGE_ADDRESS="terra1..."
-export DATABASE_URL="postgres://relayer:relayer@localhost:5433/relayer"
+export DATABASE_URL="postgres://operator:operator@localhost:5433/operator"
 
 # Run automated E2E test
 ./scripts/e2e-test.sh
@@ -249,7 +249,7 @@ Create a `.env.test` file for consistent test configuration:
 
 ```bash
 # Database
-DATABASE_URL=postgres://relayer:relayer@localhost:5433/relayer
+DATABASE_URL=postgres://operator:operator@localhost:5433/operator
 
 # EVM (Anvil)
 EVM_RPC_URL=http://localhost:8545
@@ -280,9 +280,9 @@ source .env.test
 
 ### Checking Coverage
 
-**Relayer (Rust):**
+**Operator (Rust):**
 ```bash
-cd packages/relayer
+cd packages/operator
 cargo tarpaulin --out Html
 open tarpaulin-report.html
 ```
@@ -298,7 +298,7 @@ forge coverage
 | Component | Target | Current |
 |-----------|--------|---------|
 | EVM Contracts | 90% | ~85% |
-| Relayer Core | 80% | ~60% |
+| Operator Core | 80% | ~60% |
 | Integration | 100% E2E paths | 2/2 |
 
 ---
@@ -322,7 +322,7 @@ Tests run automatically on pull requests via GitHub Actions.
 ```bash
 # Run the same checks as CI
 make test-evm        # Forge tests
-make test-relayer    # Cargo tests
+make test-operator   # Cargo tests
 make build           # Build all packages
 ```
 
@@ -376,5 +376,5 @@ curl -s http://localhost:1317/cosmos/bank/v1beta1/balances/terra1x46rqay4d3cssq8
 - [Local Development](./local-development.md) - Setting up the development environment
 - [Architecture](./architecture.md) - System design and components
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
-- [Relayer](./relayer.md) - Relayer configuration and operation
-- [Multi-Relayer](./multi-relayer.md) - Running multiple relayer instances
+- [Operator](./operator.md) - Operator configuration and operation
+- [Canceler Network](./canceler-network.md) - Running canceler nodes

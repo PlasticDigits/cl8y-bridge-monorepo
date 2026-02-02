@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/relayer/**'
+      - 'packages/operator/**'
       - 'packages/contracts-evm/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/relayer/**'
+      - 'packages/operator/**'
       - 'packages/contracts-evm/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
@@ -31,9 +31,9 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: relayer
-          POSTGRES_PASSWORD: relayer
-          POSTGRES_DB: relayer
+          POSTGRES_USER: operator
+          POSTGRES_PASSWORD: operator
+          POSTGRES_DB: operator
         ports:
           - 5433:5432
         options: >-
@@ -62,7 +62,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: packages/relayer -> target
+          workspaces: packages/operator -> target
 
       - name: Cache Docker images
         uses: satackey/action-docker-layer-caching@v0.0.11
@@ -100,17 +100,17 @@ jobs:
             echo "Bridge deployed at: $BRIDGE_ADDRESS"
           fi
 
-      - name: Build Relayer
-        working-directory: packages/relayer
+      - name: Build Operator
+        working-directory: packages/operator
         env:
-          DATABASE_URL: postgres://relayer:relayer@localhost:5433/relayer
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
         run: |
           cargo build --release
 
       - name: Run Database Migrations
-        working-directory: packages/relayer
+        working-directory: packages/operator
         env:
-          DATABASE_URL: postgres://relayer:relayer@localhost:5433/relayer
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
         run: |
           cargo run --release -- --migrate-only || true
 
@@ -120,30 +120,30 @@ jobs:
           EVM_CHAIN_ID: 31337
           EVM_BRIDGE_ADDRESS: ${{ steps.contracts.outputs.EVM_BRIDGE_ADDRESS }}
           EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-          DATABASE_URL: postgres://relayer:relayer@localhost:5433/relayer
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
           TERRA_RPC_URL: ""
           TERRA_LCD_URL: ""
           TERRA_BRIDGE_ADDRESS: ""
           RUST_LOG: info
         run: |
-          # Run relayer in background
-          cd packages/relayer
+          # Run operator in background
+          cd packages/operator
           timeout 60 cargo run --release &
-          RELAYER_PID=$!
+          OPERATOR_PID=$!
           sleep 10
           
           # Run a basic health check
-          curl -sf http://localhost:9090/health || echo "Health check failed (relayer may not have started)"
+          curl -sf http://localhost:9090/health || echo "Health check failed (operator may not have started)"
           
-          # Kill relayer
-          kill $RELAYER_PID 2>/dev/null || true
+          # Kill operator
+          kill $OPERATOR_PID 2>/dev/null || true
           
           echo "E2E basic test completed"
 
       - name: Run Unit Tests
-        working-directory: packages/relayer
+        working-directory: packages/operator
         env:
-          DATABASE_URL: postgres://relayer:relayer@localhost:5433/relayer
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
         run: |
           cargo test --release -- --nocapture
 
@@ -153,6 +153,6 @@ jobs:
         with:
           name: e2e-logs
           path: |
-            packages/relayer/target/release/*.log
+            packages/operator/target/release/*.log
             packages/contracts-evm/broadcast/**/*.json
           retention-days: 7

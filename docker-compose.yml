@@ -44,21 +44,21 @@ services:
       retries: 10
       start_period: 60s
 
-  # PostgreSQL for relayer state
+  # PostgreSQL for operator state
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: relayer
-      POSTGRES_PASSWORD: relayer
-      POSTGRES_DB: relayer
+      POSTGRES_USER: operator
+      POSTGRES_PASSWORD: operator
+      POSTGRES_DB: operator
     ports:
       - "${POSTGRES_PORT:-5433}:5432"  # Use 5433 to avoid conflict with local PostgreSQL
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Note: Migrations are run by the relayer via sqlx, not via init scripts
-      # - ./packages/relayer/migrations:/docker-entrypoint-initdb.d:ro
+      # Note: Migrations are run by the operator via sqlx, not via init scripts
+      # - ./packages/operator/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U relayer -d relayer"]
+      test: ["CMD-SHELL", "pg_isready -U operator -d operator"]
       interval: 5s
       timeout: 5s
       retries: 5

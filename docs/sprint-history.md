@@ -37,8 +37,8 @@ This document tracks the development history of the CL8Y Bridge project across s
 | Unit Tests | ✅ Complete | Tests for types.rs |
 
 #### Test Results
-- Relayer unit tests: 19 passed
-- Relayer integration tests: 5 passed, 3 ignored
+- Operator unit tests: 19 passed
+- Operator integration tests: 5 passed, 3 ignored
 - EVM contract tests: 59 passed
 - Frontend: Builds and renders correctly
 
@@ -50,7 +50,7 @@ This document tracks the development history of the CL8Y Bridge project across s
 
 ---
 
-### Sprint 3: E2E Testing, Metrics, Multi-Relayer Docs
+### Sprint 3: E2E Testing, Metrics, Canceler Docs
 
 **Status:** Completed
 
@@ -59,11 +59,11 @@ This document tracks the development history of the CL8Y Bridge project across s
 - Deployment scripts (`scripts/deploy-terra-local.sh`, `scripts/setup-bridge.sh`)
 - E2E test script (`scripts/e2e-test.sh`)
 - Prometheus metrics (`src/metrics.rs`)
-- Multi-relayer documentation (`docs/multi-relayer.md`)
+- Canceler network documentation (`docs/canceler-network.md`)
 
 ---
 
-### Sprint 2: Core Relayer Implementation
+### Sprint 2: Core Operator Implementation
 
 **Status:** Completed
 
@@ -98,7 +98,7 @@ This document tracks the development history of the CL8Y Bridge project across s
 |---------|-------|----------|
 | contracts-evm | ~5,000 | Solidity |
 | contracts-terraclassic | ~2,000 | Rust (CosmWasm) |
-| relayer | ~3,500 | Rust |
+| operator | ~3,500 | Rust |
 | frontend | ~800 | TypeScript/React |
 | scripts | ~500 | Bash |
 | docs | ~2,000 | Markdown |
@@ -108,7 +108,7 @@ This document tracks the development history of the CL8Y Bridge project across s
 | Package | Tests | Coverage |
 |---------|-------|----------|
 | contracts-evm | 59 | ~85% |
-| relayer | 24 | ~60% |
+| operator | 24 | ~60% |
 | frontend | 0 | 0% |
 
 ### WorkSplit Statistics (Sprint 4)
@@ -132,7 +132,7 @@ This document tracks the development history of the CL8Y Bridge project across s
 - [ ] Production deployment guide
 
 ### Medium Term (Sprint 7-9)
-- [ ] Multi-relayer coordination
+- [ ] Canceler network expansion
 - [ ] EVM-to-EVM bridging
 - [ ] Rate limiting
 - [ ] Admin dashboard

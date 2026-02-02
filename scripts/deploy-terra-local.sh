@@ -151,7 +151,7 @@ main() {
     echo "TERRA_BRIDGE_ADDRESS=$CONTRACT"
     echo "========================================"
     echo ""
-    log_info "Add this to packages/relayer/.env:"
+    log_info "Add this to packages/operator/.env:"
     echo "  TERRA_BRIDGE_ADDRESS=$CONTRACT"
     echo ""
     log_info "Next steps:"

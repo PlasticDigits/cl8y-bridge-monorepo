@@ -9,11 +9,12 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | Document | Description |
 |----------|-------------|
 | [System Architecture](./docs/architecture.md) | High-level system design |
+| [Security Model](./docs/security-model.md) | Watchtower pattern and trust model |
 | [Crosschain Transfer Flows](./docs/crosschain-flows.md) | Detailed transfer diagrams |
 | [Local Development](./docs/local-development.md) | Setting up local testnets |
 | [Testing Guide](./docs/testing.md) | Unit, integration, and E2E tests |
 | [Deployment Guide](./docs/deployment.md) | Production deployment |
-| [Multi-Relayer Setup](./docs/multi-relayer.md) | Running multiple relayer instances |
+| [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 
 ## Packages
 
@@ -21,7 +22,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 |---------|-------------|---------------|
 | [contracts-evm](./packages/contracts-evm) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) | [docs](./docs/contracts-evm.md) |
 | [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic | [docs](./docs/contracts-terraclassic.md) |
-| [relayer](./packages/relayer) | Rust-based bridge operator service | [docs](./docs/relayer.md) |
+| [operator](./packages/operator) | Rust-based bridge operator service | [docs](./docs/operator.md) |
 | [frontend](./packages/frontend) | Web application for bridge interface | TBD |
 
 ## Quick Start
@@ -41,8 +42,8 @@ make start
 # Deploy contracts to local chains
 make deploy
 
-# Run relayer
-make relayer
+# Run operator
+make operator
 
 # Run a test transfer
 make test-transfer
@@ -66,8 +67,8 @@ make test
 # Run EVM contract tests
 make test-evm
 
-# Run relayer tests
-make test-relayer
+# Run operator tests
+make test-operator
 
 # Run integration tests (requires running services)
 make test-integration
@@ -134,10 +135,10 @@ cd packages/contracts-terraclassic
 cargo build --release --target wasm32-unknown-unknown
 ```
 
-### Relayer
+### Operator
 
 ```bash
-cd packages/relayer
+cd packages/operator
 cargo build
 cargo run
 ```
@@ -157,7 +158,7 @@ cl8y-bridge-monorepo/
 ├── packages/
 │   ├── contracts-evm/          # Foundry project for Solidity contracts
 │   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
-│   ├── relayer/                # Rust relayer service
+│   ├── operator/               # Rust bridge operator service
 │   └── frontend/               # Web application (TBD)
 ├── scripts/                    # Deployment and test scripts
 │   ├── deploy-terra-local.sh   # LocalTerra deployment
@@ -183,12 +184,12 @@ make logs               # View service logs
 make build              # Build all packages
 make build-evm          # Build EVM contracts
 make build-terra        # Build Terra contracts
-make build-relayer      # Build relayer
+make build-operator     # Build operator
 
 # Testing
 make test               # Run all tests
 make test-evm           # Run EVM contract tests
-make test-relayer       # Run relayer unit tests
+make test-operator      # Run operator unit tests
 make test-integration   # Run integration tests
 make e2e-test           # Run E2E tests
 
@@ -198,7 +199,7 @@ make deploy-evm         # Deploy EVM contracts only
 make deploy-terra       # Deploy Terra contracts only
 
 # Development
-make relayer            # Run the relayer
+make operator           # Run the operator
 make test-transfer      # Interactive transfer test
 ```
 
@@ -209,7 +210,7 @@ This project uses [WorkSplit](https://github.com/PlasticDigits/WorkSplit) for AI
 ## Sprint Documentation
 
 Development progress is tracked in sprint documents:
-- [SPRINT_2.md](./SPRINT_2.md) - Relayer writers, EVM integration
+- [SPRINT_2.md](./SPRINT_2.md) - Terra Classic Upgrade Design
 - [SPRINT_3.md](./SPRINT_3.md) - Terra integration, E2E testing
 - [SPRINT_4.md](./SPRINT_4.md) - Production hardening, frontend
 

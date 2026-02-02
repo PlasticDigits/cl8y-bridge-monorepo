@@ -5,7 +5,7 @@ This guide explains how to set up a fully local development environment for test
 ## Prerequisites
 
 - Docker and Docker Compose
-- Rust toolchain (for relayer and Terra contracts)
+- Rust toolchain (for operator and Terra contracts)
 - Foundry (for EVM contracts)
 - Node.js 18+ (for scripts)
 
@@ -38,13 +38,13 @@ flowchart LR
     end
 
     subgraph Host[Host Machine]
-        Relayer[Relayer]
+        Operator[Operator]
         Scripts[Test Scripts]
     end
 
-    Relayer --> Anvil
-    Relayer --> Terra
-    Relayer --> Postgres
+    Operator --> Anvil
+    Operator --> Terra
+    Operator --> Postgres
     Scripts --> Anvil
     Scripts --> Terra
 ```
@@ -97,9 +97,9 @@ Mnemonic: notice oak worry limit wrap speak medal online prefer cluster roof add
 #### PostgreSQL
 
 - **Port:** 5432
-- **Database:** relayer
-- **User:** relayer
-- **Password:** relayer
+- **Database:** operator
+- **User:** operator
+- **Password:** operator
 
 ## Contract Deployment
 
@@ -135,7 +135,7 @@ terrad tx wasm store artifacts/bridge.wasm \
 
 # Instantiate
 terrad tx wasm instantiate $CODE_ID \
-  '{"admin":"terra1...","relayers":["terra1..."],"min_signatures":1,...}' \
+  '{"admin":"terra1...","operators":["terra1..."],"withdraw_delay":300,...}' \
   --from test1 \
   --label "bridge" \
   --admin terra1... \
@@ -161,10 +161,10 @@ terrad tx wasm execute $TERRA_BRIDGE \
   -y
 ```
 
-## Running the Relayer
+## Running the Operator
 
 ```bash
-cd packages/relayer
+cd packages/operator
 
 # Create .env from example
 cp .env.example .env
@@ -173,7 +173,7 @@ cp .env.example .env
 # Run migrations
 sqlx migrate run
 
-# Start relayer
+# Start operator
 cargo run
 ```
 
@@ -191,7 +191,7 @@ cast send $ROUTER "deposit(address,uint256,bytes32,bytes32)" \
   --rpc-url http://localhost:8545 \
   --private-key $PRIVATE_KEY
 
-# Check relayer picked it up
+# Check operator picked it up
 curl http://localhost:8080/status
 
 # Verify on Terra
@@ -212,7 +212,7 @@ terrad tx wasm execute $TERRA_BRIDGE \
   --chain-id localterra \
   -y
 
-# Wait for relayer to approve
+# Wait for operator to approve
 sleep 10
 
 # Withdraw on EVM (after delay)
@@ -242,8 +242,8 @@ make reset
 # Deploy contracts to local chains
 make deploy
 
-# Run relayer
-make relayer
+# Run operator
+make operator
 
 # Run test transfer
 make test-transfer
@@ -282,21 +282,21 @@ docker-compose logs localterra
 docker-compose ps postgres
 
 # Test connection
-psql postgres://relayer:relayer@localhost:5432/relayer -c "SELECT 1"
+psql postgres://operator:operator@localhost:5432/operator -c "SELECT 1"
 ```
 
-### Relayer Not Processing
+### Operator Not Processing
 
 1. Check database connection
 2. Verify contract addresses in config
-3. Check relayer has correct permissions on both chains
-4. View relayer logs for errors
+3. Check operator has correct permissions on both chains
+4. View operator logs for errors
 
 ## Environment Variables Reference
 
 ```bash
 # Database
-DATABASE_URL=postgres://relayer:relayer@localhost:5432/relayer
+DATABASE_URL=postgres://operator:operator@localhost:5432/operator
 
 # EVM
 EVM_RPC_URL=http://localhost:8545
@@ -312,7 +312,7 @@ TERRA_CHAIN_ID=localterra
 TERRA_BRIDGE_ADDRESS=terra1...
 TERRA_MNEMONIC="..."
 
-# Relayer
+# Operator
 POLL_INTERVAL_MS=1000
 FINALITY_BLOCKS=1
 ```
@@ -320,6 +320,7 @@ FINALITY_BLOCKS=1
 ## Related Documentation
 
 - [System Architecture](./architecture.md) - Overall system design
+- [Security Model](./security-model.md) - Watchtower pattern
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
-- [Relayer](./relayer.md) - Relayer documentation
+- [Bridge Operator](./operator.md) - Operator documentation
 - [WorkSplit Guide](./worksplit-guide.md) - Using WorkSplit for development

@@ -9,7 +9,7 @@ This document describes the CosmWasm smart contracts deployed on Terra Classic.
 The Terra Classic bridge contract handles:
 - Locking native tokens (LUNC, USTC) and CW20 tokens for bridging out
 - Releasing tokens when bridging in from EVM chains
-- Multi-relayer signature verification
+- Watchtower security model (approve-delay-cancel)
 - Fee collection and administration
 
 ## Contract Structure
@@ -39,7 +39,7 @@ packages/contracts-terraclassic/
 ```rust
 pub struct InstantiateMsg {
     pub admin: String,
-    pub relayers: Vec<String>,
+    pub operators: Vec<String>,
     pub min_signatures: u32,
     pub min_bridge_amount: Uint128,
     pub max_bridge_amount: Uint128,
@@ -87,7 +87,7 @@ cw20::Cw20ExecuteMsg::Send {
 
 #### Release Tokens
 
-Called by relayers with signatures to release incoming tokens:
+Called by operators to approve incoming withdrawals:
 
 ```rust
 ExecuteMsg::Release {
@@ -112,9 +112,9 @@ ExecuteMsg::UpdateChain { chain_id, name, bridge_address, enabled }
 ExecuteMsg::AddToken { token, is_native, evm_token_address, terra_decimals, evm_decimals }
 ExecuteMsg::UpdateToken { token, evm_token_address, enabled }
 
-// Relayer management
-ExecuteMsg::AddRelayer { relayer }
-ExecuteMsg::RemoveRelayer { relayer }
+// Operator management
+ExecuteMsg::AddOperator { operator }
+ExecuteMsg::RemoveOperator { operator }
 ExecuteMsg::UpdateMinSignatures { min_signatures }
 
 // Configuration
@@ -144,7 +144,7 @@ QueryMsg::Chain { chain_id }           // Returns ChainResponse
 QueryMsg::Chains { start_after, limit } // Returns ChainsResponse
 QueryMsg::Token { token }              // Returns TokenResponse
 QueryMsg::Tokens { start_after, limit } // Returns TokensResponse
-QueryMsg::Relayers {}                  // Returns RelayersResponse
+QueryMsg::Operators {}                 // Returns OperatorsResponse
 QueryMsg::NonceUsed { nonce }          // Returns NonceUsedResponse
 QueryMsg::CurrentNonce {}              // Returns NonceResponse
 QueryMsg::Transaction { nonce }        // Returns TransactionResponse
@@ -174,8 +174,8 @@ pub struct Config {
 | Key | Type | Description |
 |-----|------|-------------|
 | `CONFIG` | `Config` | Contract configuration |
-| `RELAYERS` | `Map<Addr, bool>` | Registered relayers |
-| `RELAYER_COUNT` | `u32` | Number of active relayers |
+| `OPERATORS` | `Map<Addr, bool>` | Registered operators |
+| `OPERATOR_COUNT` | `u32` | Number of active operators |
 | `CHAINS` | `Map<String, ChainConfig>` | Supported chains |
 | `TOKENS` | `Map<String, TokenConfig>` | Supported tokens |
 | `OUTGOING_NONCE` | `u64` | Next outgoing nonce |
@@ -187,11 +187,13 @@ pub struct Config {
 
 ## Security Features
 
-### Multi-Relayer Signatures
+### Watchtower Security Model
 
 - Configurable `min_signatures` threshold
-- Signatures verified before releasing tokens
-- Relayers can be added/removed by admin
+- Operators submit approval transactions
+- 5-minute delay before execution (configurable)
+- Cancelers can block fraudulent approvals during delay
+- See [Security Model](./security-model.md) for details
 
 ### Admin Timelock
 
@@ -225,7 +227,7 @@ Fees are sent to `fee_collector` address.
 
 ## Transaction Attributes
 
-Lock transactions emit attributes for relayer observation:
+Lock transactions emit attributes for operator observation:
 
 | Attribute | Description |
 |-----------|-------------|
@@ -271,4 +273,5 @@ See [packages/contracts-terraclassic/scripts/README.md](../packages/contracts-te
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [EVM Contracts](./contracts-evm.md) - Partner chain contracts
-- [Relayer](./relayer.md) - Off-chain relayer service
+- [Operator](./operator.md) - Off-chain operator service
+- [Security Model](./security-model.md) - Watchtower pattern

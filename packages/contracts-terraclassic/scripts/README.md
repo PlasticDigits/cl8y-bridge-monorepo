@@ -4,7 +4,7 @@ This directory contains scripts and configuration for deploying CL8Y Bridge cont
 
 ## Prerequisites
 
-1. **Install terrad CLI**: Follow the [TerraClassic documentation](https://classic-docs.terra.money/docs/develop/terrad/install-terrad.html)
+1. **Install terrad CLI**: Follow the [TerraClassic documentation](https://docs.terra-classic.io/docs/develop/terrad/install-terrad.html)
 
 2. **Configure wallet**:
    ```bash
