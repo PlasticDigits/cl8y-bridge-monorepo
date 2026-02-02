@@ -1,12 +1,33 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useAccount } from 'wagmi'
+import { Address } from 'viem'
 import { useWallet } from '../hooks/useWallet'
+import { useBridgeDeposit } from '../hooks/useBridgeDeposit'
 import { executeContractWithCoins } from '../services/wallet'
-import { CONTRACTS, DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../utils/constants'
+import { CONTRACTS, DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS, NETWORKS } from '../utils/constants'
 import { parseAmount, formatAmount } from '../utils/format'
 
 type Direction = 'evm-to-terra' | 'terra-to-evm'
-type TransferStatus = 'idle' | 'pending' | 'approved' | 'completed' | 'error'
+type TransferStatus = 'idle' | 'pending' | 'approving' | 'approved' | 'completed' | 'error'
+
+// Token configuration for bridging
+interface TokenConfig {
+  address: Address
+  lockUnlockAddress: Address
+  symbol: string
+  decimals: number
+}
+
+// Default token configs - set via environment or after deployment
+const TOKEN_CONFIGS: Record<string, TokenConfig | undefined> = {
+  // Local development - would be set after deploy
+  local: {
+    address: (import.meta.env.VITE_BRIDGE_TOKEN_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
+    lockUnlockAddress: (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address,
+    symbol: 'LUNC',
+    decimals: 18,
+  },
+}
 
 interface ChainOption {
   id: string
@@ -28,6 +49,25 @@ export function BridgeForm() {
   // Terra wallet state
   const { connected: isTerraConnected, address: terraAddress, luncBalance } = useWallet()
 
+  // Get token config for current network
+  const tokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+
+  // EVM deposit hook
+  const {
+    status: depositStatus,
+    approvalTxHash,
+    depositTxHash,
+    error: depositError,
+    isLoading: isDepositLoading,
+    currentAllowance,
+    tokenBalance,
+    deposit: executeEvmDeposit,
+    reset: resetDeposit,
+  } = useBridgeDeposit(tokenConfig ? {
+    tokenAddress: tokenConfig.address,
+    lockUnlockAddress: tokenConfig.lockUnlockAddress,
+  } : undefined)
+
   // Form state
   const [direction, setDirection] = useState<Direction>('terra-to-evm')
   const [amount, setAmount] = useState('')
@@ -38,6 +78,23 @@ export function BridgeForm() {
   const [status, setStatus] = useState<TransferStatus>('idle')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Sync EVM deposit status with form status
+  useEffect(() => {
+    if (depositStatus === 'approving' || depositStatus === 'waiting-approval') {
+      setStatus('approving')
+    } else if (depositStatus === 'depositing' || depositStatus === 'waiting-deposit') {
+      setStatus('pending')
+    } else if (depositStatus === 'success') {
+      setStatus('completed')
+      setTxHash(depositTxHash || null)
+      setIsSubmitting(false)
+    } else if (depositStatus === 'error') {
+      setStatus('error')
+      setError(depositError || 'Deposit failed')
+      setIsSubmitting(false)
+    }
+  }, [depositStatus, depositTxHash, depositError])
 
   // Determine which wallet is needed based on source chain
   const sourceChainInfo = chains.find(c => c.id === sourceChain)
@@ -132,9 +189,37 @@ export function BridgeForm() {
   }
 
   const handleEvmDeposit = async (_amountMicro: string) => {
-    // EVM deposit would use wagmi hooks
-    // This requires additional implementation with wagmi's writeContract
-    throw new Error('EVM deposit not yet implemented in UI. Use command line for now.')
+    if (!tokenConfig) {
+      throw new Error('Token configuration not available for this network')
+    }
+
+    // Determine destination Terra chain ID
+    const destTerraChainId = NETWORKS[DEFAULT_NETWORK].terra.chainId
+
+    // Recipient address - use provided or connected Terra address
+    const recipientAddr = recipient || terraAddress || ''
+    if (!recipientAddr) {
+      throw new Error('Please provide a recipient address or connect your Terra wallet')
+    }
+
+    if (!recipientAddr.startsWith('terra1')) {
+      throw new Error('Invalid Terra address. Must start with "terra1"')
+    }
+
+    console.log('Executing EVM deposit:', { 
+      amount, 
+      destChainId: destTerraChainId, 
+      recipient: recipientAddr,
+      tokenAddress: tokenConfig.address,
+    })
+
+    // Execute the deposit via the hook
+    await executeEvmDeposit(
+      amount,
+      destTerraChainId,
+      recipientAddr,
+      tokenConfig.decimals
+    )
   }
 
   return (
@@ -144,12 +229,33 @@ export function BridgeForm() {
         <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
           <p className="text-green-400 text-sm font-medium">Transaction submitted!</p>
           <p className="text-green-500/70 text-xs mt-1 font-mono break-all">{txHash}</p>
+          {approvalTxHash && approvalTxHash !== txHash && (
+            <p className="text-green-500/50 text-xs mt-1">
+              Approval tx: <span className="font-mono">{approvalTxHash.slice(0, 10)}...</span>
+            </p>
+          )}
+        </div>
+      )}
+
+      {status === 'approving' && (
+        <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4">
+          <p className="text-yellow-400 text-sm font-medium">Approving token transfer...</p>
+          <p className="text-yellow-500/70 text-xs mt-1">Please confirm the approval in your wallet</p>
         </div>
       )}
       
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
           <p className="text-red-400 text-sm">{error}</p>
+          {status === 'error' && (
+            <button 
+              type="button"
+              onClick={() => { setError(null); setStatus('idle'); resetDeposit(); }}
+              className="text-red-300 text-xs mt-2 underline"
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
 
@@ -182,6 +288,16 @@ export function BridgeForm() {
         {isSourceTerra && isTerraConnected && (
           <p className="text-xs text-gray-500 mt-1">
             Balance: {formatAmount(luncBalance, DECIMALS.LUNC)} LUNC
+          </p>
+        )}
+        {isSourceEvm && isEvmConnected && tokenBalance !== undefined && tokenConfig && (
+          <p className="text-xs text-gray-500 mt-1">
+            Balance: {formatAmount(tokenBalance.toString(), tokenConfig.decimals)} {tokenConfig.symbol}
+            {currentAllowance !== undefined && currentAllowance > 0n && (
+              <span className="text-gray-600 ml-2">
+                (Approved: {formatAmount(currentAllowance.toString(), tokenConfig.decimals)})
+              </span>
+            )}
           </p>
         )}
       </div>
@@ -284,12 +400,14 @@ export function BridgeForm() {
       {/* Submit Button */}
       <button
         type="submit"
-        disabled={!isWalletConnected || !amount || isSubmitting}
+        disabled={!isWalletConnected || !amount || isSubmitting || isDepositLoading}
         className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-all"
       >
         {!isWalletConnected
           ? `Connect ${isSourceTerra ? 'Terra' : 'EVM'} Wallet`
-          : isSubmitting
+          : status === 'approving'
+          ? 'Approving...'
+          : isSubmitting || isDepositLoading
           ? 'Processing...'
           : `Bridge ${isSourceTerra ? 'from Terra' : 'from EVM'}`}
       </button>

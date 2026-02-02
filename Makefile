@@ -79,7 +79,16 @@ test-terra:
 test-operator:
 	cd packages/operator && cargo test
 
-test: test-evm test-terra test-operator
+test-canceler:
+	cd packages/canceler && cargo test
+
+test-frontend:
+	cd packages/frontend && npm run test:unit
+
+test-frontend-integration:
+	cd packages/frontend && npm run test:integration
+
+test: test-evm test-terra test-operator test-canceler test-frontend
 
 # Deployment - Local
 deploy: deploy-evm deploy-terra setup-bridge
@@ -126,8 +135,30 @@ deploy-terra-mainnet:
 operator:
 	cd packages/operator && cargo run
 
+operator-start:
+	./scripts/operator-ctl.sh start
+
+operator-stop:
+	./scripts/operator-ctl.sh stop
+
+operator-status:
+	./scripts/operator-ctl.sh status
+
 operator-migrate:
 	cd packages/operator && sqlx migrate run
+
+# Canceler
+canceler:
+	cd packages/canceler && cargo run
+
+canceler-start:
+	./scripts/canceler-ctl.sh start
+
+canceler-stop:
+	./scripts/canceler-ctl.sh stop
+
+canceler-status:
+	./scripts/canceler-ctl.sh status
 
 # Test transfer
 test-transfer:

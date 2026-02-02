@@ -14,9 +14,12 @@
 #
 # Usage:
 #   ./scripts/e2e-test.sh
-#   ./scripts/e2e-test.sh --skip-terra     # Skip Terra tests (Anvil only)
-#   ./scripts/e2e-test.sh --quick          # Quick connectivity tests only
-#   ./scripts/e2e-test.sh --full           # Full transfer tests (slower)
+#   ./scripts/e2e-test.sh --skip-terra      # Skip Terra tests (Anvil only)
+#   ./scripts/e2e-test.sh --quick           # Quick connectivity tests only
+#   ./scripts/e2e-test.sh --full            # Full transfer tests (slower)
+#   ./scripts/e2e-test.sh --with-operator   # Start/stop operator automatically
+#   ./scripts/e2e-test.sh --with-canceler   # Start/stop canceler automatically
+#   ./scripts/e2e-test.sh --with-all        # Start/stop both operator and canceler
 
 set -e
 
@@ -71,12 +74,19 @@ POLL_INTERVAL=2
 SKIP_TERRA=false
 QUICK_MODE=false
 FULL_MODE=false
+WITH_OPERATOR=false
+WITH_CANCELER=false
+STARTED_OPERATOR=false
+STARTED_CANCELER=false
 
 for arg in "$@"; do
     case $arg in
         --skip-terra) SKIP_TERRA=true ;;
         --quick) QUICK_MODE=true ;;
         --full) FULL_MODE=true ;;
+        --with-operator) WITH_OPERATOR=true ;;
+        --with-canceler) WITH_CANCELER=true ;;
+        --with-all) WITH_OPERATOR=true; WITH_CANCELER=true ;;
     esac
 done
 
@@ -99,6 +109,57 @@ record_result() {
 }
 
 # ============================================================================
+# Operator/Canceler Management
+# ============================================================================
+
+start_operator_if_needed() {
+    if [ "$WITH_OPERATOR" = true ]; then
+        log_step "Starting operator..."
+        if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+            log_info "Operator already running"
+        else
+            "$SCRIPT_DIR/operator-ctl.sh" start
+            STARTED_OPERATOR=true
+            sleep 3  # Give it time to initialize
+        fi
+    fi
+}
+
+stop_operator_if_started() {
+    if [ "$STARTED_OPERATOR" = true ]; then
+        log_step "Stopping operator..."
+        "$SCRIPT_DIR/operator-ctl.sh" stop || true
+    fi
+}
+
+start_canceler_if_needed() {
+    if [ "$WITH_CANCELER" = true ]; then
+        log_step "Starting canceler..."
+        if "$SCRIPT_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
+            log_info "Canceler already running"
+        else
+            "$SCRIPT_DIR/canceler-ctl.sh" start 1
+            STARTED_CANCELER=true
+            sleep 2  # Give it time to initialize
+        fi
+    fi
+}
+
+stop_canceler_if_started() {
+    if [ "$STARTED_CANCELER" = true ]; then
+        log_step "Stopping canceler..."
+        "$SCRIPT_DIR/canceler-ctl.sh" stop 1 || true
+    fi
+}
+
+# Cleanup function for trap
+cleanup() {
+    log_info "Cleaning up..."
+    stop_operator_if_started
+    stop_canceler_if_started
+}
+
+# ============================================================================
 # Prerequisites Check
 # ============================================================================
 
@@ -114,6 +175,22 @@ check_prereqs() {
             failed=1
         fi
     done
+    
+    # Show operator/canceler status
+    echo ""
+    echo "Service Status:"
+    if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+        echo -e "  ${GREEN}●${NC} Operator: running"
+    else
+        echo -e "  ${YELLOW}○${NC} Operator: not running"
+    fi
+    
+    if "$SCRIPT_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
+        echo -e "  ${GREEN}●${NC} Canceler: running"
+    else
+        echo -e "  ${YELLOW}○${NC} Canceler: not running"
+    fi
+    echo ""
     
     # Check docker compose
     if ! docker compose version &> /dev/null 2>&1; then
@@ -486,9 +563,23 @@ main() {
     else
         log_info "Running STANDARD test suite"
     fi
+    
+    if [ "$WITH_OPERATOR" = true ]; then
+        log_info "Will manage operator lifecycle"
+    fi
+    if [ "$WITH_CANCELER" = true ]; then
+        log_info "Will manage canceler lifecycle"
+    fi
     echo ""
     
+    # Set up cleanup trap
+    trap cleanup EXIT
+    
     check_prereqs
+    
+    # Start services if requested
+    start_operator_if_needed
+    start_canceler_if_needed
     
     # EVM Tests
     echo ""

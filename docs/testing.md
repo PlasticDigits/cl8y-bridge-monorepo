@@ -2,6 +2,50 @@
 
 This document explains the testing strategy, test types, and how to run end-to-end (E2E) tests for the CL8Y Bridge.
 
+## Testing Philosophy: No Blockchain Mocks
+
+**Critical: This project does NOT mock blockchain infrastructure.**
+
+All tests involving blockchain interactions run against real infrastructure:
+- **LocalTerra** for Terra Classic
+- **Anvil** for EVM chains
+- Real wallet signing (or test keys)
+- Real contract execution
+
+### What We DO Test in Isolation
+
+| Test Type | Example | Infrastructure |
+|-----------|---------|----------------|
+| Pure functions | `formatAmount()`, `parseAmount()` | None |
+| Configuration | Validate constants structure | None |
+| Hash computation | `keccak256` tests | None |
+| Component rendering | React UI elements | jsdom only |
+
+### What We DO NOT Mock
+
+| Never Mock | Why |
+|------------|-----|
+| RPC responses | Gas, nonces, state differ in mocks |
+| LCD queries | CosmWasm execution differs |
+| Wallet signing | Cannot meaningfully mock |
+| Contract calls | State and events must be real |
+| Event polling | Timing and ordering matters |
+
+### Skip Integration Tests
+
+When infrastructure isn't available:
+
+```bash
+# Frontend: skip integration tests
+SKIP_INTEGRATION=true npm run test:run
+
+# Canceler: only unit tests run by default
+cargo test  # Integration tests are #[ignore]
+
+# To run integration tests
+INTEGRATION_TEST=1 cargo test -- --ignored
+```
+
 ## Current Test Status
 
 | Test Type | Count | Status |
@@ -9,10 +53,13 @@ This document explains the testing strategy, test types, and how to run end-to-e
 | EVM Contract Tests | 59 | All passing |
 | Operator Unit Tests | 19 | All passing |
 | Operator Integration Tests | 5 | All passing (3 ignored, need LocalTerra) |
-| Frontend Tests | 0 | Not implemented |
-| E2E Tests | - | Requires manual setup |
+| Canceler Unit Tests | 2 | All passing |
+| Canceler Integration Tests | 10 | Require LocalTerra/Anvil |
+| Frontend Unit Tests | 62 | All passing |
+| Frontend Integration Tests | 11 | Require LocalTerra/Anvil |
+| E2E Tests | - | Automated with --with-operator flag |
 
-> **Note:** E2E test automation is a Sprint 5 priority. Currently requires manual environment setup.
+> **Note:** E2E tests can now automatically manage operator and canceler lifecycle.
 
 ## Test Types Overview
 
@@ -26,13 +73,49 @@ This document explains the testing strategy, test types, and how to run end-to-e
 ## Quick Start
 
 ```bash
-# Run all tests without infrastructure
+# Run all unit tests without infrastructure
 make test
 
 # Run with full infrastructure (E2E)
 make start
 make deploy
 make e2e-test
+
+# E2E with automatic operator/canceler management
+./scripts/e2e-test.sh --with-all --full
+```
+
+### Frontend Tests
+
+```bash
+cd packages/frontend
+
+# Run unit tests only (no infrastructure)
+npm run test:unit
+
+# Run all tests including integration
+npm run test:run
+
+# Run integration tests only (requires LocalTerra + Anvil)
+npm run test:integration
+
+# Watch mode for development
+npm run test
+
+# Coverage report
+npm run test:coverage
+```
+
+### Canceler Tests
+
+```bash
+cd packages/canceler
+
+# Run unit tests only
+cargo test
+
+# Run integration tests (requires infrastructure)
+INTEGRATION_TEST=1 cargo test --test integration_test -- --ignored
 ```
 
 ---

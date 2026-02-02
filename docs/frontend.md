@@ -271,14 +271,65 @@ The app uses TailwindCSS with a dark theme:
 - [x] Responsive design
 - [x] Dark theme
 - [x] Terra → EVM lock transaction
+- [x] EVM → Terra deposit transaction (useBridgeDeposit hook)
+- [x] Approve → Deposit two-step flow
+- [x] Vitest unit tests (62 tests)
+- [x] Integration tests with real infrastructure
+- [x] Bundle optimization (10KB gzipped initial load)
 
 ### TODO
-- [ ] EVM → Terra deposit transaction (wagmi writeContract)
 - [ ] Real-time transaction status updates
 - [ ] Transaction history persistence
 - [ ] Error recovery and retry
 - [ ] Mobile optimization
 - [ ] E2E tests with Playwright
+
+## Hooks
+
+### useBridgeDeposit
+
+Hook for EVM → Terra deposits with approve → deposit flow.
+
+```typescript
+import { useBridgeDeposit } from '../hooks/useBridgeDeposit'
+
+function MyComponent() {
+  const {
+    status,           // 'idle' | 'checking-allowance' | 'approving' | ...
+    approvalTxHash,   // Transaction hash for approval
+    depositTxHash,    // Transaction hash for deposit
+    error,            // Error message if failed
+    isLoading,        // True during transaction
+    currentAllowance, // Current token allowance
+    tokenBalance,     // User's token balance
+    deposit,          // Function to execute deposit
+    reset,            // Function to reset state
+  } = useBridgeDeposit({
+    tokenAddress: '0x...',
+    lockUnlockAddress: '0x...',
+  })
+
+  const handleDeposit = () => {
+    deposit('100', 'localterra', 'terra1...', 18)
+  }
+}
+```
+
+## Testing
+
+```bash
+# Run unit tests
+npm run test:unit
+
+# Run integration tests (requires LocalTerra + Anvil)
+npm run test:integration
+
+# Watch mode
+npm run test
+
+# Coverage
+npm run test:coverage
+```
 
 ## Related Documentation
 

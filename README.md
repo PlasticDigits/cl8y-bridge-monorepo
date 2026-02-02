@@ -62,6 +62,38 @@ See [Local Development Guide](./docs/local-development.md) for detailed instruct
 
 The project includes comprehensive tests at multiple levels. See the full [Testing Guide](./docs/testing.md) for details.
 
+### Testing Philosophy: No Mocks for Blockchain
+
+**This project does NOT mock blockchain infrastructure in tests.** All RPC, LCD, wallet, and contract interactions use real infrastructure:
+
+| What We Test | How We Test It |
+|--------------|----------------|
+| EVM contracts | Foundry tests against in-memory EVM |
+| Terra contracts | Cargo tests with CosmWasm VM |
+| Frontend blockchain calls | Real LocalTerra + Anvil devnet |
+| Canceler event polling | Real LocalTerra + Anvil devnet |
+| E2E transfers | Full infrastructure with real transactions |
+
+**Why no mocks?**
+- Mocks hide integration bugs that only appear with real chains
+- Gas estimation, sequence numbers, and timing behave differently in mocks
+- Wallet signing flows cannot be meaningfully mocked
+- Contract state and events must be tested against real execution
+
+**What we DO test in isolation:**
+- Pure utility functions (formatting, parsing, hashing)
+- Configuration validation
+- UI component rendering (with React Testing Library)
+
+Tests requiring infrastructure are skipped when infrastructure isn't available:
+```bash
+# Unit tests only (no infrastructure)
+SKIP_INTEGRATION=true npm run test:run
+
+# Full tests (requires LocalTerra + Anvil running)
+npm run test:run
+```
+
 ### Quick Test Commands
 
 ```bash
@@ -74,11 +106,20 @@ make test-evm
 # Run operator tests
 make test-operator
 
+# Run canceler tests
+make test-canceler
+
+# Run frontend tests
+make test-frontend
+
 # Run integration tests (requires running services)
 make test-integration
 
 # Run full E2E tests (requires full infrastructure)
 make e2e-test
+
+# E2E with automatic operator/canceler management
+./scripts/e2e-test.sh --with-operator --with-canceler --full
 ```
 
 ### Test Types
@@ -87,8 +128,27 @@ make e2e-test
 |------|---------|-------------|
 | Unit Tests | `make test` | Core logic, no dependencies |
 | Contract Tests | `make test-evm` | Solidity tests via Foundry |
+| Frontend Tests | `make test-frontend` | Vitest unit tests |
+| Canceler Tests | `make test-canceler` | Canceler unit/integration |
 | Integration Tests | `make test-integration` | Relayer with database |
 | E2E Tests | `make e2e-test` | Full cross-chain transfers |
+
+### Operator & Canceler Control
+
+```bash
+# Start/stop operator in background
+make operator-start
+make operator-stop
+make operator-status
+
+# Start/stop canceler in background
+make canceler-start
+make canceler-stop
+make canceler-status
+
+# Run E2E with managed services
+./scripts/e2e-test.sh --with-all --full
+```
 
 ### E2E Testing
 
@@ -243,7 +303,8 @@ Development progress is tracked in sprint documents:
 - [SPRINT3.md](./SPRINT3.md) - Terra Classic Watchtower Implementation (COMPLETE)
 - [SPRINT4.md](./SPRINT4.md) - Integration Testing & Deployment Preparation (COMPLETE)
 - [SPRINT5.md](./SPRINT5.md) - Production Readiness & Full E2E Flows (COMPLETE)
-- [SPRINT6.md](./SPRINT6.md) - Frontend Development & Production Validation (NEXT)
+- [SPRINT6.md](./SPRINT6.md) - Frontend Development & Production Validation (COMPLETE)
+- [SPRINT7.md](./SPRINT7.md) - Testing, Polish & Production Readiness (CURRENT)
 
 ## License
 
