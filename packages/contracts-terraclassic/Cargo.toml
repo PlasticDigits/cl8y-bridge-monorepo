@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "bridge",
     "packages/common",
+    "external/cw20-mintable",
 ]
 
 [workspace.package]
@@ -14,13 +15,14 @@ license = "AGPL-3.0"
 repository = "https://github.com/CL8Y-Bridge-EVM-smartcontracts"
 
 [workspace.dependencies]
+# Terra Classic compatible versions (matches cw20-mintable which is live on mainnet)
 cosmwasm-std = { version = "1.5.11", features = ["staking"] }
 cosmwasm-schema = "1.5.9"
 cw-storage-plus = "1.2.0"
 cw2 = "1.1.2"
 cw20 = "1.1.2"
 cw20-base = "1.1.2"
-cw-multi-test = "1.0.0"
+cw-multi-test = "1.2.0"
 thiserror = "1.0.4"
 schemars = "0.8.15"
 serde = { version = "1.0.188", default-features = false, features = ["derive"] }

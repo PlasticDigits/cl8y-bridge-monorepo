@@ -331,9 +331,8 @@ Log files: `.operator.log`, `.canceler-N.log`
 ## Quick Start for Next Agent
 
 ```bash
-# Start infrastructure
-docker compose up -d anvil postgres
-cd ../LocalTerra && docker compose up -d terrad
+# Start infrastructure (uses official classic-terra/localterra-core:0.5.18 image)
+docker compose up -d anvil localterra postgres
 
 # Deploy contracts
 make deploy

@@ -14,7 +14,7 @@
 
 1. **Transaction signing untested** - Terra/EVM signing compiles but hasn't been tested on testnet
 2. **E2E tests shallow** - Check connectivity but don't execute actual transfers
-3. **LocalTerra image changed** - Switched to `ghcr.io/mint-cash/localterra:latest`, needs verification
+3. **LocalTerra image changed** - ~~Switched to `ghcr.io/mint-cash/localterra:latest`~~ **RESOLVED in Sprint 9:** Now uses official `classic-terra/localterra-core:0.5.18` with config from `classic-terra/localterra`
 4. **Canceler event polling** - `poll_evm_approvals()` and `poll_terra_approvals()` are stubs
 5. **Dead code warnings** - Should clean up or actually use the code
 

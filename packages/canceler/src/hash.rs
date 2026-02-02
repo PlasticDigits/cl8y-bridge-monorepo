@@ -55,6 +55,16 @@ pub fn cosmos_chain_key(chain_id: &str) -> [u8; 32] {
     abi_encode_chain_key("COSMW", &inner_hash)
 }
 
+/// Terra Classic mainnet chain key (columbus-5)
+pub fn terra_chain_key() -> [u8; 32] {
+    cosmos_chain_key("columbus-5")
+}
+
+/// LocalTerra chain key (for testing)
+pub fn localterra_chain_key() -> [u8; 32] {
+    cosmos_chain_key("localterra")
+}
+
 fn abi_encode_string_hash(s: &str) -> [u8; 32] {
     let str_bytes = s.as_bytes();
     let len = str_bytes.len();

@@ -156,8 +156,7 @@ End-to-end tests verify complete transfer flows:
 
 1. **Start infrastructure:**
    ```bash
-   docker compose up -d anvil postgres
-   cd ../LocalTerra && docker compose up -d terrad
+   docker compose up -d anvil localterra postgres
    ```
 
 2. **Deploy contracts:**

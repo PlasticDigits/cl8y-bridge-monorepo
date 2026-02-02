@@ -6,6 +6,7 @@
 #
 # Prerequisites:
 # - Both bridges deployed (EVM and Terra)
+# - LocalTerra container running
 # - Environment variables set (or pass as args)
 #
 # Usage:
@@ -15,8 +16,10 @@ set -e
 
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
-TERRA_NODE="${TERRA_RPC_URL:-http://localhost:26657}"
+TERRA_NODE="http://localhost:26657"
+TERRA_LCD="${TERRA_LCD_URL:-http://localhost:1317}"
 TERRA_CHAIN_ID="${TERRA_CHAIN_ID:-localterra}"
+CONTAINER_NAME="${LOCALTERRA_CONTAINER:-cl8y-bridge-monorepo-localterra-1}"
 
 # Contract addresses (must be set)
 EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-}"
@@ -37,6 +40,11 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Run terrad command via docker exec
+terrad_exec() {
+    docker exec "$CONTAINER_NAME" terrad "$@"
+}
+
 # Validate addresses
 check_addresses() {
     if [ -z "$EVM_BRIDGE_ADDRESS" ]; then
@@ -48,6 +56,13 @@ check_addresses() {
     if [ -z "$TERRA_BRIDGE_ADDRESS" ]; then
         log_error "TERRA_BRIDGE_ADDRESS not set"
         log_info "Deploy Terra contracts first: ./scripts/deploy-terra-local.sh"
+        exit 1
+    fi
+    
+    # Check LocalTerra container is running
+    if ! docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
+        log_error "LocalTerra container not running: $CONTAINER_NAME"
+        log_info "Start with: docker compose up -d localterra"
         exit 1
     fi
     
@@ -87,66 +102,111 @@ setup_terra_side() {
     
     # Add Anvil (chain ID 31337) as supported chain
     log_info "Adding EVM chain to Terra bridge..."
-    terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
-        "{\"add_chain\":{\"chain_id\":31337,\"name\":\"Anvil Local\",\"bridge_address\":\"$EVM_BRIDGE_ADDRESS\"}}" \
+    
+    ADD_CHAIN_MSG="{\"add_chain\":{\"chain_id\":31337,\"name\":\"Anvil Local\",\"bridge_address\":\"$EVM_BRIDGE_ADDRESS\"}}"
+    
+    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_CHAIN_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
-        --node "$TERRA_NODE" \
-        --gas auto --gas-adjustment 1.4 \
-        --fees 5000uluna \
-        -y || log_warn "Chain registration failed (may already exist)"
+        --gas auto --gas-adjustment 1.5 \
+        --fees 10000000uluna \
+        --broadcast-mode sync \
+        -y -o json 2>&1) || log_warn "Chain registration failed (may already exist or unsupported)"
     
-    sleep 3
+    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Add chain TX: $TX_HASH"
+        sleep 6
+    fi
     
     # Add uluna as supported token
     log_info "Adding LUNC token..."
-    terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
-        "{\"add_token\":{\"token\":\"uluna\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000001234\",\"terra_decimals\":6,\"evm_decimals\":18}}" \
+    ADD_TOKEN_MSG="{\"add_token\":{\"token\":\"uluna\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000001234\",\"terra_decimals\":6,\"evm_decimals\":18}}"
+    
+    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_TOKEN_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
-        --node "$TERRA_NODE" \
-        --gas auto --gas-adjustment 1.4 \
-        --fees 5000uluna \
-        -y || log_warn "Token registration failed (may already exist)"
+        --gas auto --gas-adjustment 1.5 \
+        --fees 10000000uluna \
+        --broadcast-mode sync \
+        -y -o json 2>&1) || log_warn "Token registration failed (may already exist or unsupported)"
     
-    sleep 3
+    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Add LUNC TX: $TX_HASH"
+        sleep 6
+    fi
     
     # Add uusd (USTC) as supported token
     log_info "Adding USTC token..."
-    terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
-        "{\"add_token\":{\"token\":\"uusd\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000005678\",\"terra_decimals\":6,\"evm_decimals\":18}}" \
+    ADD_USD_MSG="{\"add_token\":{\"token\":\"uusd\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000005678\",\"terra_decimals\":6,\"evm_decimals\":18}}"
+    
+    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_USD_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
-        --node "$TERRA_NODE" \
-        --gas auto --gas-adjustment 1.4 \
-        --fees 5000uluna \
-        -y || log_warn "Token registration failed (may already exist)"
+        --gas auto --gas-adjustment 1.5 \
+        --fees 10000000uluna \
+        --broadcast-mode sync \
+        -y -o json 2>&1) || log_warn "Token registration failed (may already exist or unsupported)"
+    
+    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Add USTC TX: $TX_HASH"
+        sleep 6
+    fi
     
     log_info "Terra side configured"
 }
 
-# Add relayer permissions
-setup_relayer() {
-    log_info "=== Configuring Relayer ==="
+# Add operator permissions
+setup_operator() {
+    log_info "=== Configuring Operator ==="
     
-    # Get relayer Terra address from key
-    RELAYER_TERRA=$(terrad keys show "$TERRA_KEY" -a 2>/dev/null || echo "")
-    RELAYER_EVM="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"  # Anvil account 0
+    # The test1 key is already the operator from instantiation
+    OPERATOR_TERRA="terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v"
+    OPERATOR_EVM="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"  # Anvil account 0
     
-    if [ -n "$RELAYER_TERRA" ]; then
-        log_info "Adding relayer to Terra bridge: $RELAYER_TERRA"
-        terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" \
-            "{\"add_relayer\":{\"relayer\":\"$RELAYER_TERRA\"}}" \
-            --from "$TERRA_KEY" \
-            --chain-id "$TERRA_CHAIN_ID" \
-            --node "$TERRA_NODE" \
-            --gas auto --gas-adjustment 1.4 \
-            --fees 5000uluna \
-            -y || log_warn "Relayer add failed (may already exist)"
+    log_info "Operator Terra address: $OPERATOR_TERRA"
+    log_info "Operator EVM address: $OPERATOR_EVM"
+    
+    # Try to add operator if there's an add_operator message
+    ADD_OP_MSG="{\"add_operator\":{\"operator\":\"$OPERATOR_TERRA\"}}"
+    
+    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_OP_MSG" \
+        --from "$TERRA_KEY" \
+        --chain-id "$TERRA_CHAIN_ID" \
+        --gas auto --gas-adjustment 1.5 \
+        --fees 10000000uluna \
+        --broadcast-mode sync \
+        -y -o json 2>&1) || log_warn "Operator add failed (may already exist or not needed)"
+    
+    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Add operator TX: $TX_HASH"
+        sleep 6
     fi
     
-    log_info "Relayer EVM address: $RELAYER_EVM"
-    log_info "Relayer configured"
+    log_info "Operator configured"
+}
+
+# Verify configuration
+verify_config() {
+    log_info "=== Verifying Configuration ==="
+    
+    # Query Terra bridge config
+    CONFIG_QUERY='{"config":{}}'
+    CONFIG_B64=$(echo -n "$CONFIG_QUERY" | base64 -w0)
+    CONFIG=$(curl -sf "${TERRA_LCD}/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}/smart/${CONFIG_B64}" 2>/dev/null | jq '.data' 2>/dev/null)
+    
+    if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
+        log_info "Terra bridge config: $CONFIG"
+    else
+        log_warn "Could not query Terra bridge config"
+    fi
+    
+    # Query EVM bridge withdraw delay
+    DELAY=$(cast call "$EVM_BRIDGE_ADDRESS" "withdrawDelay()" --rpc-url "$EVM_RPC_URL" 2>/dev/null | cast to-dec 2>/dev/null || echo "N/A")
+    log_info "EVM withdraw delay: $DELAY seconds"
 }
 
 # Main
@@ -156,7 +216,8 @@ main() {
     check_addresses
     setup_evm_side
     setup_terra_side
-    setup_relayer
+    setup_operator
+    verify_config
     
     echo ""
     log_info "=== Bridge Configuration Complete ==="
@@ -167,7 +228,7 @@ main() {
     echo ""
     log_info "Next steps:"
     echo "  1. Update packages/operator/.env with bridge addresses"
-    echo "  2. Run: make relayer"
+    echo "  2. Run: make operator"
     echo "  3. Run: make test-transfer"
 }
 

@@ -202,9 +202,8 @@ These tests require:
 ### Running Integration Tests
 
 ```bash
-# Start infrastructure
-docker compose up -d anvil postgres
-cd ../LocalTerra && docker compose up -d terrad
+# Start infrastructure (uses official classic-terra/localterra-core:0.5.18 image)
+docker compose up -d anvil localterra postgres
 
 # Deploy EVM contracts
 cd packages/contracts-evm
@@ -257,12 +256,8 @@ E2E tests verify complete cross-chain transfers through the entire system.
 
 1. **Docker services running:**
    ```bash
-   # From project root
-   docker compose up -d anvil postgres
-   
-   # From LocalTerra directory (cloned separately)
-   cd ../LocalTerra
-   docker compose up -d terrad
+   # From project root (uses official classic-terra/localterra-core:0.5.18 image)
+   docker compose up -d anvil localterra postgres
    ```
 
 2. **Contracts deployed:**

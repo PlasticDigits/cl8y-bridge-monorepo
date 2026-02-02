@@ -36,6 +36,17 @@ target/
 !*.wasm.gz
 
 # ===================
+# Infrastructure (Docker-generated)
+# ===================
+infra/
+packages/contracts-terraclassic/artifacts.*/
+
+# ===================
+# External dependencies (cloned repos)
+# ===================
+packages/contracts-terraclassic/external/
+
+# ===================
 # IDE
 # ===================
 .idea/

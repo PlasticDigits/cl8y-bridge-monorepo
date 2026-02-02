@@ -14,10 +14,21 @@ services:
       timeout: 5s
       retries: 5
 
-  # Local Terra Classic chain using mint-cash/LocalTerra
-  # This is a well-maintained LocalTerra for Terra Classic
+  # Local Terra Classic chain
+  # Image: ghcr.io/plasticdigits/localterra-cl8y (pre-configured LocalTerra)
+  # Source: https://github.com/PlasticDigits/localterra-cl8y
+  # 
+  # Features:
+  # - Fast block times (~200ms)
+  # - Pre-funded test account with LUNC, USTC, etc.
+  # - All APIs enabled (RPC, LCD, gRPC)
+  # - CosmWasm 1.5.x support
+  #
+  # Chain ID: localterra
+  # Test account: terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v
+  # Mnemonic: notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius
   localterra:
-    image: ghcr.io/mint-cash/localterra:latest
+    image: ghcr.io/plasticdigits/localterra-cl8y:latest
     platform: linux/amd64
     ports:
       - "26657:26657"  # RPC
@@ -25,13 +36,14 @@ services:
       - "9090:9090"    # gRPC
       - "9091:9091"    # gRPC-web
     volumes:
-      - localterra-data:/app
+      # Persist chain data (optional - remove for fresh state each run)
+      - localterra-data:/home/terra/.terra
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:26657/status"]
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
 
   # PostgreSQL for operator state
   postgres:
@@ -55,13 +67,14 @@ services:
   # Terrad CLI container for E2E testing
   # Provides terrad command for automated Terra interactions
   terrad-cli:
-    image: terramoney/localterra-core:latest
+    # Uses the same image as localterra
+    image: ghcr.io/plasticdigits/localterra-cl8y:latest
     platform: linux/amd64
     entrypoint: /bin/sh
     command: -c "sleep infinity"
     volumes:
       - ./scripts:/scripts:ro
-      - terrad-keys:/root/.terra
+      - terrad-keys:/home/terra/.terra
     depends_on:
       localterra:
         condition: service_healthy

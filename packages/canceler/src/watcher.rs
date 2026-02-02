@@ -8,7 +8,7 @@ use std::time::Duration;
 use alloy::primitives::{Address, FixedBytes};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
-use base64::Engine;
+use base64::Engine as _;
 use eyre::{eyre, Result, WrapErr};
 use std::str::FromStr;
 use tokio::sync::mpsc;
@@ -68,8 +68,11 @@ impl CancelerWatcher {
     pub async fn new(config: &Config) -> Result<Self> {
         let verifier = ApprovalVerifier::new(
             &config.evm_rpc_url,
+            &config.evm_bridge_address,
+            config.evm_chain_id,
             &config.terra_lcd_url,
             &config.terra_bridge_address,
+            &config.terra_chain_id,
         );
 
         let evm_client = EvmClient::new(
@@ -324,10 +327,8 @@ impl CancelerWatcher {
             }
         });
 
-        let query_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            serde_json::to_string(&query)?,
-        );
+        let query_b64 = base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_string(&query)?);
 
         let url = format!(
             "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
@@ -354,10 +355,9 @@ impl CancelerWatcher {
                             .as_str()
                             .unwrap_or("");
                         
-                        let withdraw_hash_bytes = base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            withdraw_hash_b64
-                        ).unwrap_or_default();
+                        let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
+                            .decode(withdraw_hash_b64)
+                            .unwrap_or_default();
 
                         if withdraw_hash_bytes.len() != 32 {
                             continue;
@@ -439,10 +439,9 @@ impl CancelerWatcher {
     /// Helper to parse bytes32 from JSON (base64 encoded)
     fn parse_bytes32_from_json(&self, value: &serde_json::Value) -> [u8; 32] {
         let b64 = value.as_str().unwrap_or("");
-        let bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            b64
-        ).unwrap_or_default();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap_or_default();
         
         let mut result = [0u8; 32];
         if bytes.len() >= 32 {

@@ -65,7 +65,7 @@ src/
 
 ## TODO (Sprint 5+)
 
-- [ ] Terra wallet connection (@terra-money/wallet-kit)
+- [ ] Terra wallet connection (@classic-terra/wallet-kit)
 - [ ] Actual bridge transaction submission
 - [ ] Real-time transaction status from relayer API
 - [ ] Token selection with balances
