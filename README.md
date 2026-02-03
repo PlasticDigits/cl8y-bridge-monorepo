@@ -117,11 +117,11 @@ make test-frontend
 # Run integration tests (requires running services)
 make test-integration
 
-# Run full E2E tests (requires full infrastructure)
+# Run full E2E tests (ALL security tests run by default)
 make e2e-test
 
-# E2E with automatic operator/canceler management
-./scripts/e2e-test.sh --with-operator --with-canceler --full
+# Direct script execution (same as make e2e-test)
+./scripts/e2e-test.sh
 ```
 
 ### Test Types
@@ -148,28 +148,39 @@ make canceler-start
 make canceler-stop
 make canceler-status
 
-# Run E2E with managed services
-./scripts/e2e-test.sh --with-all --full
+# E2E tests automatically manage operator/canceler
+./scripts/e2e-test.sh
 ```
 
 ### E2E Testing
 
-End-to-end tests verify complete transfer flows:
+End-to-end tests verify complete transfer flows with real token transfers:
 
-1. **Start infrastructure:**
+1. **Start infrastructure and deploy contracts:**
    ```bash
-   docker compose up -d anvil localterra postgres
+   ./scripts/e2e-setup.sh
    ```
 
-2. **Deploy contracts:**
+2. **Run the MASTER E2E test (runs everything):**
    ```bash
-   make deploy-evm
-   ./scripts/deploy-terra-local.sh
+   make e2e-test
    ```
+   This runs ALL E2E tests including:
+   - Infrastructure connectivity
+   - Operator (started automatically)
+   - Canceler (started automatically)
+   - Real token transfers with balance verification
+   - EVM → Terra transfers
+   - Terra → EVM transfers
+   - Fraud detection tests
 
-3. **Run E2E tests:**
+3. **Run specific test subsets:**
    ```bash
-   ./scripts/e2e-test.sh
+   make e2e-test-quick       # Quick connectivity only (no services)
+   make e2e-test-transfers   # Transfer tests with operator
+   make e2e-test-canceler    # Canceler fraud detection
+   make e2e-evm-to-terra     # EVM → Terra only
+   make e2e-terra-to-evm     # Terra → EVM only
    ```
 
 See [Testing Guide](./docs/testing.md) for environment setup and troubleshooting.

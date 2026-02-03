@@ -322,10 +322,37 @@ deploy_terra_contracts() {
         fi
         
         log_info "Store TX: $TX_HASH"
-        log_info "Waiting for confirmation..."
-        sleep 10
+        log_info "Waiting for confirmation (checking TX status)..."
         
-        CODE_ID=$(docker exec "$CONTAINER_NAME" terrad query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+        # Wait for TX to be confirmed with retry
+        local MAX_RETRIES=12
+        local RETRY=0
+        local TX_RESULT=""
+        while [ $RETRY -lt $MAX_RETRIES ]; do
+            sleep 5
+            RETRY=$((RETRY + 1))
+            
+            # Check TX status
+            TX_RESULT=$(docker exec "$CONTAINER_NAME" terrad query tx "$TX_HASH" -o json 2>&1 || echo "pending")
+            if echo "$TX_RESULT" | grep -q '"code":0'; then
+                log_info "TX confirmed at retry $RETRY"
+                break
+            elif echo "$TX_RESULT" | grep -q "pending\|not found"; then
+                log_info "TX still pending (attempt $RETRY/$MAX_RETRIES)..."
+            else
+                log_warn "TX query returned: ${TX_RESULT:0:100}"
+            fi
+        done
+        
+        # Extract code_id from the TX events (more reliable than list-code which has indexing delays)
+        local TX_CODE_ID=$(echo "$TX_RESULT" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value' 2>/dev/null || echo "")
+        
+        if [ -n "$TX_CODE_ID" ]; then
+            CODE_ID="$TX_CODE_ID"
+        else
+            # Fallback to list-code query
+            CODE_ID=$(docker exec "$CONTAINER_NAME" terrad query wasm list-code -o json 2>&1 | jq -r '.code_infos[-1].code_id // "null"')
+        fi
     fi
     
     log_info "Using code ID: $CODE_ID"
@@ -358,13 +385,31 @@ deploy_terra_contracts() {
     
     log_info "Instantiate TX: $TX_HASH"
     log_info "Waiting for confirmation..."
-    sleep 8
     
-    # Get contract address
-    TERRA_BRIDGE_ADDRESS=$(docker exec "$CONTAINER_NAME" terrad query wasm list-contract-by-code "$CODE_ID" -o json | jq -r '.contracts[-1]')
+    # Wait for instantiate TX to be confirmed
+    local INST_RETRY=0
+    local INST_TX_RESULT=""
+    while [ $INST_RETRY -lt 12 ]; do
+        sleep 5
+        INST_RETRY=$((INST_RETRY + 1))
+        INST_TX_RESULT=$(docker exec "$CONTAINER_NAME" terrad query tx "$TX_HASH" -o json 2>&1 || echo "pending")
+        if echo "$INST_TX_RESULT" | grep -q '"code":0'; then
+            log_info "Instantiate TX confirmed"
+            break
+        fi
+    done
+    
+    # Extract contract address from TX events
+    TERRA_BRIDGE_ADDRESS=$(echo "$INST_TX_RESULT" | jq -r '.events[] | select(.type=="instantiate") | .attributes[] | select(.key=="_contract_address") | .value' 2>/dev/null || echo "")
+    
+    # Fallback to list-contract-by-code if TX extraction failed
+    if [ -z "$TERRA_BRIDGE_ADDRESS" ] || [ "$TERRA_BRIDGE_ADDRESS" = "null" ]; then
+        TERRA_BRIDGE_ADDRESS=$(docker exec "$CONTAINER_NAME" terrad query wasm list-contract-by-code "$CODE_ID" -o json 2>&1 | jq -r '.contracts[-1]')
+    fi
     
     if [ -z "$TERRA_BRIDGE_ADDRESS" ] || [ "$TERRA_BRIDGE_ADDRESS" = "null" ]; then
         log_error "Failed to get Terra bridge address"
+        log_error "TX result: ${INST_TX_RESULT:0:500}"
         return 1
     fi
     
@@ -616,7 +661,7 @@ TERRA_BRIDGE_ADDRESS=${TERRA_BRIDGE_ADDRESS:-}
 TERRA_MNEMONIC="notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius"
 
 # Database Configuration
-DATABASE_URL=postgres://operator:operator@localhost:${E2E_POSTGRES_PORT:-5433}/operator
+DATABASE_URL=postgres://operator:operator@127.0.0.1:${E2E_POSTGRES_PORT:-5433}/operator
 
 # Operator Configuration
 FINALITY_BLOCKS=1
@@ -751,8 +796,8 @@ print_summary() {
     echo ""
     echo "To run E2E tests:"
     echo "  source .env.e2e && ./scripts/e2e-test.sh"
-    echo "  # or"
-    echo "  source .env.local && ./scripts/e2e-test.sh --full"
+    echo ""
+    echo "All security tests run by default. Use --no-* flags only for debugging."
     echo ""
     echo "To tear down:"
     echo "  ./scripts/e2e-teardown.sh"

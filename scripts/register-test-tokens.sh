@@ -299,8 +299,8 @@ main() {
     echo "  CW20 on Terra: ${TERRA_CW20_ADDRESS:-not deployed}"
     echo ""
     echo "Next steps:"
-    echo "  1. Start operator: make operator-start"
-    echo "  2. Run transfer test: ./scripts/e2e-test.sh --full --with-operator"
+    echo "  1. Run E2E tests: ./scripts/e2e-test.sh"
+    echo "     (All security tests run by default - operator/canceler/transfers)"
     echo ""
 }
 

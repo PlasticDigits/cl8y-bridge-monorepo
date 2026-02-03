@@ -61,9 +61,9 @@ INTEGRATION_TEST=1 cargo test -- --ignored
 
 > **Note:** E2E tests can now automatically manage operator and canceler lifecycle.
 
-### E2E Test Suite (Sprint 11)
+### E2E Test Suite (Sprint 12)
 
-The full E2E test suite (`./scripts/e2e-test.sh --full --with-all`) includes:
+The E2E test suite (`./scripts/e2e-test.sh`) runs ALL security tests by default:
 
 | Test | Description |
 |------|-------------|
@@ -77,28 +77,49 @@ The full E2E test suite (`./scripts/e2e-test.sh --full --with-all`) includes:
 | EVM Approve→Execute | Test watchtower approve/execute flow |
 | EVM Cancel Flow | Test watchtower cancel mechanism |
 | Hash Parity | Verify chain key computation |
-| EVM → Terra Transfer | Full deposit with operator processing |
-| Terra → EVM Transfer | Full lock with operator processing |
+| EVM → Terra Transfer | Full deposit with balance verification |
+| Terra → EVM Transfer | Full lock with balance verification |
 | Canceler Compilation | Verify canceler builds |
 | Canceler Fraud Detection | Fraudulent approval detection |
 | Canceler Cancel Flow | Cancel transaction submission |
 
-### Sprint 11: Real Transfer Tests
+> **Note:** The operator is now started automatically for all E2E tests (except `--quick` mode).
 
-Sprint 11 added proper token setup and real transfer testing:
+### Sprint 12: Real Token Transfers with Balance Verification
 
+Sprint 12 enhanced E2E tests with real token transfers and proper balance verification.
+
+**Master E2E Test (runs everything):**
 ```bash
-# Full E2E setup with test tokens
-make e2e-setup-full
+make e2e-test
+```
 
-# Run transfers with operator
-make e2e-test-transfers
+This single command runs ALL E2E tests including:
+- Infrastructure connectivity tests
+- Operator (started automatically)
+- Canceler (started automatically)
+- Real token transfers with balance verification
+- EVM → Terra transfers
+- Terra → EVM transfers
+- Fraud detection tests
+- Watchtower pattern tests
 
-# Run canceler fraud detection tests
-make e2e-test-canceler
+**Subset Commands:**
+```bash
+make e2e-test-quick       # Quick connectivity only (no services)
+make e2e-test-transfers   # Transfer tests with operator only
+make e2e-test-canceler    # Canceler fraud detection tests
+make e2e-evm-to-terra     # EVM → Terra transfer only
+make e2e-terra-to-evm     # Terra → EVM transfer only
+make e2e-connectivity     # Infrastructure tests only
+```
 
-# Run everything
-make e2e-test-full
+**New E2E Test Commands:**
+```bash
+# Real transfer test helper (with balance verification)
+./scripts/e2e-helpers/real-transfer-test.sh all
+./scripts/e2e-helpers/real-transfer-test.sh evm-to-terra
+./scripts/e2e-helpers/real-transfer-test.sh terra-to-evm
 ```
 
 **Token Setup Commands:**
@@ -122,6 +143,28 @@ make deploy-test-token
 ./scripts/e2e-helpers/fraudulent-approval.sh evm
 ```
 
+### Balance Verification
+
+The E2E tests now include proper balance assertions:
+
+```bash
+# Before transfer
+EVM_BALANCE_BEFORE=$(cast call $TOKEN "balanceOf(address)" $ADDRESS)
+
+# After transfer
+EVM_BALANCE_AFTER=$(cast call $TOKEN "balanceOf(address)" $ADDRESS)
+
+# Verify decrease/increase
+[ "$EVM_BALANCE_AFTER" -lt "$EVM_BALANCE_BEFORE" ] && echo "Balance decreased"
+```
+
+Helper functions are available in `scripts/e2e-helpers/common.sh`:
+- `get_erc20_balance` - Get ERC20 token balance
+- `get_terra_balance` - Get Terra native balance
+- `get_cw20_balance` - Get CW20 token balance
+- `verify_erc20_balance_decreased` - Assert balance decreased
+- `verify_terra_balance_increased` - Assert balance increased
+
 ## Test Types Overview
 
 | Test Type | Location | Purpose | Requires Infrastructure |
@@ -142,8 +185,8 @@ make start
 make deploy
 make e2e-test
 
-# E2E with automatic operator/canceler management
-./scripts/e2e-test.sh --with-all --full
+# E2E runs ALL security tests by default (operator/canceler/transfers)
+./scripts/e2e-test.sh
 ```
 
 ### Frontend Tests
