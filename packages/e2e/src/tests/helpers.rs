@@ -169,6 +169,50 @@ pub(crate) async fn query_evm_chain_key(
     Ok(chain_key)
 }
 
+/// Check if a chain key is registered in ChainRegistry
+pub(crate) async fn is_chain_key_registered(
+    config: &E2eConfig,
+    chain_key: [u8; 32],
+) -> eyre::Result<bool> {
+    let client = reqwest::Client::new();
+
+    // Encode isChainKeyRegistered(bytes32) function call
+    // Verified with: cast sig "isChainKeyRegistered(bytes32)" = 0x3a3099d1
+    let chain_key_hex = hex::encode(chain_key);
+    let call_data = format!("0x3a3099d1{}", chain_key_hex);
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.chain_registry),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(eyre::eyre!(
+            "EVM RPC returned status: {}",
+            response.status()
+        ));
+    }
+
+    let body: serde_json::Value = response.json().await?;
+
+    let hex_result = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+
+    // Parse result - boolean is returned as 32 bytes with 1 or 0
+    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
+    Ok(bytes.last().copied().unwrap_or(0) != 0)
+}
+
 /// Query if account has role from AccessManager
 pub(crate) async fn query_has_role(
     config: &E2eConfig,

@@ -968,11 +968,11 @@ pub async fn test_cw20_deployment(config: &E2eConfig, cw20_address: Option<&str>
 
     let terra_client = TerraClient::new(&config.terra);
 
-    // Query the CW20 token info
+    // Query the CW20 token info (use CLI since LocalTerra LCD returns 501)
     let query = serde_json::json!({ "token_info": {} });
 
     match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(info) => {
@@ -1018,7 +1018,7 @@ pub async fn test_cw20_balance_query(config: &E2eConfig, cw20_address: Option<&s
     let terra_client = TerraClient::new(&config.terra);
     let test_address = &config.test_accounts.terra_address;
 
-    // Query CW20 balance
+    // Query CW20 balance (use CLI since LocalTerra LCD returns 501)
     let query = serde_json::json!({
         "balance": {
             "address": test_address
@@ -1026,7 +1026,7 @@ pub async fn test_cw20_balance_query(config: &E2eConfig, cw20_address: Option<&s
     });
 
     match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(result) => {
@@ -1090,7 +1090,7 @@ pub async fn test_cw20_mint_burn_pattern(
     let terra_client = TerraClient::new(&config.terra);
     let test_address = &config.test_accounts.terra_address;
 
-    // Step 1: Get initial CW20 balance
+    // Step 1: Get initial CW20 balance (use CLI since LocalTerra LCD returns 501)
     let query = serde_json::json!({
         "balance": {
             "address": test_address
@@ -1098,7 +1098,7 @@ pub async fn test_cw20_mint_burn_pattern(
     });
 
     let initial_balance = match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(result) => {
@@ -1143,9 +1143,9 @@ pub async fn test_cw20_mint_burn_pattern(
         }
     }
 
-    // Step 3: Verify balance increased
+    // Step 3: Verify balance increased (use CLI since LocalTerra LCD returns 501)
     let final_balance = match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(result) => {
@@ -1213,9 +1213,12 @@ pub async fn test_cw20_lock_unlock_pattern(
 
     let terra_client = TerraClient::new(&config.terra);
     let test_address = &config.test_accounts.terra_address;
-    let evm_recipient = format!("{}", config.test_accounts.evm_address);
+    // Terra bridge expects 64-char hex (32 bytes) for recipient
+    // EVM address is 20 bytes, left-pad with zeros to make 32 bytes
+    let evm_addr_hex = hex::encode(config.test_accounts.evm_address.as_slice());
+    let evm_recipient = format!("{:0>64}", evm_addr_hex);
 
-    // Step 1: Get initial CW20 balance
+    // Step 1: Get initial CW20 balance (use CLI since LocalTerra LCD returns 501)
     let query = serde_json::json!({
         "balance": {
             "address": test_address
@@ -1223,7 +1226,7 @@ pub async fn test_cw20_lock_unlock_pattern(
     });
 
     let initial_balance = match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(result) => {
@@ -1244,7 +1247,7 @@ pub async fn test_cw20_lock_unlock_pattern(
 
     info!("Initial CW20 balance: {}", initial_balance);
 
-    let lock_amount: u128 = 100_000; // 0.1 tokens with 6 decimals
+    let lock_amount: u128 = 1_000_000; // 1 token with 6 decimals (bridge minimum)
 
     if initial_balance < lock_amount {
         return TestResult::skip(
@@ -1295,9 +1298,9 @@ pub async fn test_cw20_lock_unlock_pattern(
         }
     }
 
-    // Step 3: Verify balance decreased
+    // Step 3: Verify balance decreased (use CLI since LocalTerra LCD returns 501)
     let final_balance = match terra_client
-        .query_contract::<serde_json::Value>(cw20, &query)
+        .query_contract_cli::<serde_json::Value>(cw20, &query)
         .await
     {
         Ok(result) => {
@@ -1316,22 +1319,40 @@ pub async fn test_cw20_lock_unlock_pattern(
         }
     };
 
-    if initial_balance - final_balance >= lock_amount {
+    let balance_change = initial_balance.saturating_sub(final_balance);
+
+    // Bridge takes a 0.3% fee (30 bps), so actual locked = amount - fee
+    let expected_fee = lock_amount * 30 / 10000; // 0.3%
+    let expected_change_min = lock_amount.saturating_sub(expected_fee * 2); // Allow some tolerance
+
+    if balance_change >= expected_change_min {
+        let actual_fee = lock_amount.saturating_sub(balance_change);
         info!(
-            "CW20 balance decreased: {} -> {} (locked {})",
-            initial_balance, final_balance, lock_amount
+            "CW20 lock successful: {} -> {} (locked {}, fee {} = {:.2}%)",
+            initial_balance,
+            final_balance,
+            balance_change,
+            actual_fee,
+            (actual_fee as f64 / lock_amount as f64) * 100.0
+        );
+        TestResult::pass(name, start.elapsed())
+    } else if balance_change > 0 {
+        // Some balance was deducted but less than expected
+        info!(
+            "CW20 partial lock: {} -> {} (change: {}, expected: ~{})",
+            initial_balance, final_balance, balance_change, lock_amount
         );
         TestResult::pass(name, start.elapsed())
     } else {
-        // Balance didn't decrease - lock may have failed silently
-        warn!(
-            "CW20 balance change: {} -> {} (expected -{}, got -{})",
-            initial_balance,
-            final_balance,
-            lock_amount,
-            initial_balance.saturating_sub(final_balance)
-        );
-        TestResult::pass(name, start.elapsed()) // Pass with warning for infrastructure check
+        // No balance change - lock failed
+        TestResult::fail(
+            name,
+            format!(
+                "CW20 lock failed - no balance change: {} -> {}",
+                initial_balance, final_balance
+            ),
+            start.elapsed(),
+        )
     }
 }
 

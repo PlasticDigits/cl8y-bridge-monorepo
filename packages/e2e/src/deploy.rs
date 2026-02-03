@@ -458,11 +458,20 @@ pub async fn deploy_test_token(
     Ok(Some(token_address))
 }
 
-/// Deploy a simple test ERC20 token using cast (no forge script needed)
+/// Deploy a simple test ERC20 token using forge
 ///
-/// This uses `cast` to deploy a pre-compiled ERC20 bytecode directly.
+/// This uses forge to deploy an OpenZeppelin ERC20PresetMinterPauser contract.
 /// The token will have 18 decimals and mint initial supply to the deployer.
+///
+/// # Arguments
+/// * `project_root` - Path to monorepo root (to find contracts-evm)
+/// * `rpc_url` - EVM RPC URL
+/// * `private_key` - Private key for deployment
+/// * `name` - Token name
+/// * `symbol` - Token symbol
+/// * `initial_supply` - Initial supply to mint (in wei)
 pub async fn deploy_test_token_simple(
+    project_root: &Path,
     rpc_url: &str,
     private_key: &str,
     name: &str,
@@ -474,36 +483,74 @@ pub async fn deploy_test_token_simple(
         name, symbol, initial_supply
     );
 
-    // Use forge create with OpenZeppelin ERC20
-    // This requires the contracts-evm package to be available
+    // Run forge from contracts-evm directory where OpenZeppelin is installed
+    let contracts_dir = project_root.join("packages").join("contracts-evm");
+
+    if !contracts_dir.exists() {
+        return Err(eyre!(
+            "contracts-evm directory not found at: {}",
+            contracts_dir.display()
+        ));
+    }
+
+    // Use forge create with our MockMintableToken
     let output = std::process::Command::new("forge")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .current_dir(&contracts_dir)
         .args([
             "create",
             "--rpc-url",
             rpc_url,
             "--private-key",
             private_key,
-            "lib/openzeppelin-contracts/contracts/token/ERC20/presets/ERC20PresetMinterPauser.sol:ERC20PresetMinterPauser",
+            "--broadcast",
+            "test/mocks/MockMintableToken.sol:MockMintableToken",
             "--constructor-args",
             name,
             symbol,
+            "18", // decimals
             "--json",
         ])
         .output()?;
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Failed to deploy test token: {}", stderr));
+        return Err(eyre!(
+            "Failed to deploy test token: stdout={}, stderr={}",
+            stdout,
+            stderr
+        ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|e| eyre!("Failed to parse forge output: {}", e))?;
-
-    let deployed_to = json["deployedTo"]
-        .as_str()
-        .ok_or_else(|| eyre!("No deployedTo in forge output"))?;
+    // Parse the deployed address from forge output
+    // Format can be either JSON or plain text like "Deployed to: 0x..."
+    let deployed_to =
+        if let Some(json_line) = stdout.lines().find(|line| line.trim().starts_with('{')) {
+            // Try JSON parsing first
+            let json: serde_json::Value = serde_json::from_str(json_line).map_err(|e| {
+                eyre!(
+                    "Failed to parse forge JSON output: {}. stdout={}, stderr={}",
+                    e,
+                    stdout,
+                    stderr
+                )
+            })?;
+            json["deployedTo"]
+                .as_str()
+                .ok_or_else(|| eyre!("No deployedTo in forge JSON output: {}", json))?
+                .to_string()
+        } else if let Some(line) = stdout.lines().find(|line| line.starts_with("Deployed to:")) {
+            // Parse plain text format: "Deployed to: 0x..."
+            line.trim_start_matches("Deployed to:").trim().to_string()
+        } else {
+            return Err(eyre!(
+                "Could not find deployed address in forge output: stdout={}, stderr={}",
+                stdout,
+                stderr
+            ));
+        };
 
     let token_address: Address = deployed_to.parse()?;
     info!("Test token deployed at: {}", token_address);

@@ -96,6 +96,22 @@ contract DeployLocal is Script {
         routerSel[1] = router.unpause.selector;
         accessManager.setTargetFunctionRole(address(router), routerSel, OPERATOR_ROLE_BRIDGE);
 
+        // Configure function roles for ChainRegistry
+        bytes4[] memory chainSel = new bytes4[](5);
+        chainSel[0] = chainRegistry.addEVMChainKey.selector;
+        chainSel[1] = chainRegistry.addCOSMWChainKey.selector;
+        chainSel[2] = chainRegistry.addSOLChainKey.selector;
+        chainSel[3] = chainRegistry.removeChainKey.selector;
+        chainSel[4] = chainRegistry.addChainKey.selector;
+        accessManager.setTargetFunctionRole(address(chainRegistry), chainSel, OPERATOR_ROLE_BRIDGE);
+
+        // Configure function roles for TokenRegistry
+        bytes4[] memory tokenSel = new bytes4[](3);
+        tokenSel[0] = tokenRegistry.addToken.selector;
+        tokenSel[1] = tokenRegistry.addTokenDestChainKey.selector;
+        tokenSel[2] = tokenRegistry.setTokenBridgeType.selector;
+        accessManager.setTargetFunctionRole(address(tokenRegistry), tokenSel, OPERATOR_ROLE_BRIDGE);
+
         vm.stopBroadcast();
 
         // Output for scripts to parse

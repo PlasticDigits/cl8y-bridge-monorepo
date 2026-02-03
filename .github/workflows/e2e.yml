@@ -101,12 +101,18 @@ jobs:
       - name: Start LocalTerra
         run: |
           # Pull and start LocalTerra container
+          # Using ghcr.io/plasticdigits/localterra-cl8y:latest (same as docker-compose.yml)
+          # - Pre-configured for Terra Classic
+          # - Fast block times (~200ms)
+          # - CosmWasm 1.5.x support
           docker run -d \
             --name localterra \
+            --platform linux/amd64 \
             -p 26657:26657 \
             -p 1317:1317 \
             -p 9090:9090 \
-            terramoney/localterra:bombay
+            -p 9091:9091 \
+            ghcr.io/plasticdigits/localterra-cl8y:latest
           
           # Wait for LocalTerra to be ready (up to 5 minutes)
           echo "Waiting for LocalTerra to start..."

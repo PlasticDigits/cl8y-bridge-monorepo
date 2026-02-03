@@ -14,6 +14,7 @@
 
 use crate::chain_config;
 use crate::config::{E2eConfig, EvmContracts};
+use crate::deploy;
 use crate::docker::DockerCompose;
 use crate::services::ServiceManager;
 use alloy::primitives::{Address, B256};
@@ -300,6 +301,38 @@ impl E2eSetup {
         })
     }
 
+    /// Deploy a test ERC20 token for E2E testing
+    ///
+    /// This deploys an ERC20 token with minting capability for testing transfers.
+    /// Returns the deployed token address.
+    pub async fn deploy_test_token(&self) -> Result<Option<Address>> {
+        info!("Deploying test ERC20 token");
+
+        let rpc_url = self.config.evm.rpc_url.as_str();
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+
+        // Deploy test token with initial supply
+        match deploy::deploy_test_token_simple(
+            &self.project_root,
+            rpc_url,
+            &private_key,
+            "Test Bridge Token",
+            "TBT",
+            1_000_000_000_000_000_000_000_000, // 1M tokens with 18 decimals
+        )
+        .await
+        {
+            Ok(address) => {
+                info!("Test token deployed at: {}", address);
+                Ok(Some(address))
+            }
+            Err(e) => {
+                warn!("Failed to deploy test token: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
     /// Deploy Terra contracts (if LocalTerra running)
     ///
     /// This deploys the Terra bridge contract:
@@ -419,6 +452,34 @@ impl E2eSetup {
             }
         }
 
+        // Wait for transaction to be confirmed to avoid sequence mismatch
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+        // Step 4: Register local EVM chain (31337) as supported destination
+        let add_chain_msg = serde_json::json!({
+            "add_chain": {
+                "chain_id": self.config.evm.chain_id,
+                "name": "LocalAnvil",
+                "bridge_address": format!("{}", self.config.evm.contracts.bridge)
+            }
+        });
+
+        match terra
+            .execute_contract(&bridge_address, &add_chain_msg, None)
+            .await
+        {
+            Ok(tx_hash) => {
+                info!(
+                    "Local EVM chain {} registered on Terra bridge, tx: {}",
+                    self.config.evm.chain_id, tx_hash
+                );
+            }
+            Err(e) => {
+                warn!("Failed to register local EVM chain on Terra bridge: {}", e);
+                // Continue anyway, basic bridge is deployed
+            }
+        }
+
         info!("Terra bridge deployment complete: {}", bridge_address);
         Ok(Some(bridge_address))
     }
@@ -470,7 +531,8 @@ impl E2eSetup {
     pub async fn grant_roles(&self, deployed: &DeployedContracts) -> Result<()> {
         info!("Granting roles to test accounts");
 
-        let private_key = format!("0x{:x}", self.config.evm.private_key);
+        // Use test account's private key (Anvil's default account)
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let test_address = self.config.test_accounts.evm_address;
         let rpc_url = self.config.evm.rpc_url.as_str();
 
@@ -511,7 +573,8 @@ impl E2eSetup {
     pub async fn register_chain_keys(&self, deployed: &DeployedContracts) -> Result<B256> {
         info!("Registering Terra chain key on ChainRegistry");
 
-        let private_key = format!("0x{:x}", self.config.evm.private_key);
+        // Use test account's private key (Anvil's default account)
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let rpc_url = self.config.evm.rpc_url.as_str();
         let chain_id = &self.config.terra.chain_id; // "localterra"
 
@@ -551,7 +614,8 @@ impl E2eSetup {
 
         info!("Registering test token {} on TokenRegistry", token);
 
-        let private_key = format!("0x{:x}", self.config.evm.private_key);
+        // Use test account's private key (Anvil's default account)
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let rpc_url = self.config.evm.rpc_url.as_str();
 
         // Register token with LockUnlock bridge type
@@ -873,6 +937,22 @@ impl E2eSetup {
         let mut deployed = self.deploy_evm_contracts().await?;
         on_step(SetupStep::DeployEvmContracts, true);
 
+        // Deploy Test ERC20 Token for cross-chain transfers
+        on_step(SetupStep::DeployTestToken, true);
+        match self.deploy_test_token().await {
+            Ok(Some(token_address)) => {
+                deployed.test_token = Some(token_address);
+                info!("Test token deployed: {}", token_address);
+            }
+            Ok(None) => {
+                warn!("Test token deployment skipped");
+            }
+            Err(e) => {
+                warn!("Test token deployment failed: {}", e);
+            }
+        }
+        on_step(SetupStep::DeployTestToken, deployed.test_token.is_some());
+
         // Deploy Terra Contracts
         on_step(SetupStep::DeployTerraContracts, true);
         let terra_bridge = self.deploy_terra_contracts().await?;
@@ -892,6 +972,48 @@ impl E2eSetup {
         if let Some(ref addr) = cw20_address {
             self.config.terra.cw20_address = Some(addr.clone());
             info!("CW20 token address set in config: {}", addr);
+
+            // Register the CW20 token on Terra bridge for cross-chain transfers
+            if let Some(ref bridge_addr) = deployed.terra_bridge {
+                let terra = crate::terra::TerraClient::new(&self.config.terra);
+
+                // Wait for previous tx to confirm
+                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+                // Add token to Terra bridge
+                // The EVM token address must be 64-char hex (32 bytes, left-padded)
+                // EVM address is 20 bytes, so pad with 24 zeros (48 chars)
+                let evm_token = deployed
+                    .test_token
+                    .map(|t| format!("{:0>64}", hex::encode(t.as_slice())))
+                    .unwrap_or_else(|| "0".repeat(64));
+
+                let add_token_msg = serde_json::json!({
+                    "add_token": {
+                        "token": addr,
+                        "is_native": false,
+                        "evm_token_address": evm_token,
+                        "terra_decimals": 6,
+                        "evm_decimals": 18
+                    }
+                });
+
+                match terra
+                    .execute_contract(bridge_addr, &add_token_msg, None)
+                    .await
+                {
+                    Ok(tx_hash) => {
+                        info!(
+                            "CW20 token {} registered on Terra bridge, tx: {}",
+                            addr, tx_hash
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to register CW20 on Terra bridge: {}", e);
+                        // Continue anyway - basic deployment worked
+                    }
+                }
+            }
         }
         on_step(SetupStep::DeployCw20Token, true);
 
@@ -981,6 +1103,7 @@ pub enum SetupStep {
     WaitForServices,
     RunMigrations,
     DeployEvmContracts,
+    DeployTestToken,
     DeployTerraContracts,
     DeployCw20Token,
     GrantRoles,
@@ -1000,6 +1123,7 @@ impl SetupStep {
             Self::WaitForServices => "Wait for Services",
             Self::RunMigrations => "Run Migrations",
             Self::DeployEvmContracts => "Deploy EVM Contracts",
+            Self::DeployTestToken => "Deploy Test Token",
             Self::DeployTerraContracts => "Deploy Terra Contracts",
             Self::DeployCw20Token => "Deploy CW20 Token",
             Self::GrantRoles => "Grant Roles",

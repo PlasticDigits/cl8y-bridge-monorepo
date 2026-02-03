@@ -241,11 +241,13 @@ pub async fn register_cosmw_chain_key(
 ) -> Result<B256> {
     info!("Registering COSMW chain key for: {}", chain_id);
 
-    // First check if already registered
-    let existing = get_cosmw_chain_key(chain_registry, chain_id, rpc_url).await?;
-    if existing != B256::ZERO {
-        info!("Chain key already registered: {}", existing);
-        return Ok(existing);
+    // Compute the chain key first
+    let chain_key = get_cosmw_chain_key(chain_registry, chain_id, rpc_url).await?;
+
+    // Check if it's actually registered in the contract's EnumerableSet
+    if is_chain_key_registered(chain_registry, chain_key, rpc_url).await? {
+        info!("Chain key already registered: {}", chain_key);
+        return Ok(chain_key);
     }
 
     // Register chain key: addCOSMWChainKey(string)
@@ -328,6 +330,41 @@ pub async fn get_cosmw_chain_key(
         .map_err(|e| eyre!("Failed to parse chain key '{}': {}", hex_str, e))?;
 
     Ok(chain_key)
+}
+
+/// Check if a chain key is registered in ChainRegistry
+///
+/// # Arguments
+/// * `chain_registry` - Address of the ChainRegistry contract
+/// * `chain_key` - The chain key to check
+/// * `rpc_url` - EVM RPC URL
+pub async fn is_chain_key_registered(
+    chain_registry: Address,
+    chain_key: B256,
+    rpc_url: &str,
+) -> Result<bool> {
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "call",
+            "--rpc-url",
+            rpc_url,
+            &format!("{}", chain_registry),
+            "isChainKeyRegistered(bytes32)(bool)",
+            &format!("{}", chain_key),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to check chain key registration: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = stdout.trim();
+
+    // Parse boolean result (cast returns "true" or "false")
+    Ok(result == "true")
 }
 
 /// Register Terra chain key on ChainRegistry
@@ -470,7 +507,7 @@ pub async fn add_token_dest_chain_key(
         return Ok(());
     }
 
-    // addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destTokenAddress, uint8 decimals)
+    // addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destTokenAddress, uint256 decimals)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -480,7 +517,7 @@ pub async fn add_token_dest_chain_key(
             "--private-key",
             private_key,
             &format!("{}", token_registry),
-            "addTokenDestChainKey(address,bytes32,bytes32,uint8)",
+            "addTokenDestChainKey(address,bytes32,bytes32,uint256)",
             &format!("{}", token),
             &format!("{}", dest_chain_key),
             &format!("{}", dest_token_address),
@@ -531,22 +568,23 @@ async fn is_token_dest_chain_registered(
 
 /// Encode a Terra address (or native denom) as bytes32
 ///
-/// For CW20 addresses or native denoms, this encodes the string as left-padded bytes32.
+/// For short denoms (like "uluna"), encodes as left-padded bytes.
+/// For longer addresses (CW20 contract addresses), uses keccak256 hash
+/// since Terra bech32 addresses are too long to fit in 32 bytes.
 pub fn encode_terra_token_address(token: &str) -> B256 {
+    use alloy::primitives::keccak256;
+
     let token_bytes = token.as_bytes();
-    let mut bytes = [0u8; 32];
 
-    // Left-pad the token bytes (terra addresses are typically ~44 chars, denoms like "uluna" are 5)
-    let start = if token_bytes.len() <= 32 {
-        0
+    if token_bytes.len() <= 32 {
+        // Short denoms can be encoded directly
+        let mut bytes = [0u8; 32];
+        bytes[..token_bytes.len()].copy_from_slice(token_bytes);
+        B256::from_slice(&bytes)
     } else {
-        token_bytes.len() - 32
-    };
-
-    let copy_len = token_bytes.len().min(32);
-    bytes[..copy_len].copy_from_slice(&token_bytes[start..start + copy_len]);
-
-    B256::from_slice(&bytes)
+        // Long addresses (CW20 contracts) are hashed to fit in 32 bytes
+        keccak256(token_bytes)
+    }
 }
 
 /// Register test tokens on TokenRegistry for E2E testing
@@ -667,7 +705,12 @@ pub async fn deploy_cw20_token(
 
     docker_cp(wasm_path, &container_wasm).await?;
 
+    // Get current latest code_id BEFORE storing (to detect when new code is indexed)
+    let prev_code_id = get_latest_code_id().await.unwrap_or(0);
+    debug!("Previous code_id before CW20 store: {}", prev_code_id);
+
     // Step 2: Store WASM code
+    // Use higher fees for CW20 WASM (can be larger than bridge WASM)
     info!("Storing CW20 WASM code...");
     let _store_output = terrad_exec(&[
         "tx",
@@ -683,7 +726,7 @@ pub async fn deploy_cw20_token(
         "--gas-adjustment",
         "1.5",
         "--fees",
-        "10000000uluna",
+        "150000000uluna",
         "--broadcast-mode",
         "sync",
         "-y",
@@ -694,11 +737,8 @@ pub async fn deploy_cw20_token(
     ])
     .await?;
 
-    // Wait for transaction to be included
-    tokio::time::sleep(Duration::from_secs(8)).await;
-
-    // Get code ID from list-code
-    let code_id = get_latest_code_id().await?;
+    // Wait for new code_id to appear (greater than previous)
+    let code_id = wait_for_new_code_id(prev_code_id, 10).await?;
     info!("CW20 code stored with ID: {}", code_id);
 
     // Step 3: Instantiate contract
@@ -842,31 +882,47 @@ async fn get_latest_code_id() -> Result<u64> {
     let json: serde_json::Value = serde_json::from_str(&output)
         .map_err(|e| eyre!("Failed to parse list-code response: {}", e))?;
 
-    let code_id = json["code_infos"]
-        .as_array()
-        .and_then(|arr| arr.last())
-        .and_then(|info| info["code_id"].as_str())
-        .or_else(|| {
-            json["code_infos"]
-                .as_array()
-                .and_then(|arr| arr.last())
-                .and_then(|info| info["code_id"].as_u64())
-                .map(|_| "")
-        })
-        .ok_or_else(|| eyre!("No code_id found in list-code response"))?;
-
-    // Handle both string and number code_id
-    if code_id.is_empty() {
-        json["code_infos"]
-            .as_array()
-            .and_then(|arr| arr.last())
-            .and_then(|info| info["code_id"].as_u64())
-            .ok_or_else(|| eyre!("Failed to parse code_id"))
-    } else {
-        code_id
-            .parse()
-            .map_err(|e| eyre!("Failed to parse code_id '{}': {}", code_id, e))
+    // Try to get code_id from the last entry in code_infos
+    if let Some(arr) = json["code_infos"].as_array() {
+        if let Some(last) = arr.last() {
+            // Try string first, then number
+            if let Some(s) = last["code_id"].as_str() {
+                return s
+                    .parse()
+                    .map_err(|e| eyre!("Failed to parse code_id '{}': {}", s, e));
+            }
+            if let Some(n) = last["code_id"].as_u64() {
+                return Ok(n);
+            }
+        }
     }
+
+    // Return 0 if no codes found (empty chain)
+    Ok(0)
+}
+
+/// Get the latest code_id, waiting for it to be greater than a minimum value
+/// This is used after storing WASM to ensure the new code is indexed
+async fn wait_for_new_code_id(min_code_id: u64, max_attempts: u32) -> Result<u64> {
+    for attempt in 0..max_attempts {
+        let current = get_latest_code_id().await?;
+        if current > min_code_id {
+            return Ok(current);
+        }
+        debug!(
+            "Waiting for new code_id (attempt {}/{}): current={}, min={}",
+            attempt + 1,
+            max_attempts,
+            current,
+            min_code_id
+        );
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    Err(eyre!(
+        "Timeout waiting for new code_id > {} after {} attempts",
+        min_code_id,
+        max_attempts
+    ))
 }
 
 /// Get contract address by code ID

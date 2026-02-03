@@ -240,6 +240,52 @@ impl TerraClient {
             .map_err(|e| eyre!("Failed to parse query response: {}", e))
     }
 
+    /// Query a CosmWasm contract using terrad CLI
+    /// This is used when the REST API is not available (e.g., LocalTerra returns 501)
+    pub async fn query_contract_cli<T: DeserializeOwned>(
+        &self,
+        contract_address: &str,
+        query: &serde_json::Value,
+    ) -> Result<T> {
+        let query_json = serde_json::to_string(query)?;
+        info!(
+            "Querying contract {} via CLI with: {}",
+            contract_address, query_json
+        );
+
+        let args = vec![
+            "query",
+            "wasm",
+            "contract-state",
+            "smart",
+            contract_address,
+            &query_json,
+            "-o",
+            "json",
+        ];
+
+        let output = self.exec_terrad(&args).await?;
+
+        // Parse the response - terrad wraps the result in a "data" field
+        let response: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+            eyre!(
+                "Failed to parse CLI query response: {}. Output: {}",
+                e,
+                output
+            )
+        })?;
+
+        // The actual data is in the "data" field
+        if let Some(data) = response.get("data") {
+            serde_json::from_value(data.clone())
+                .map_err(|e| eyre!("Failed to parse contract data: {}", e))
+        } else {
+            // Try parsing the whole response as the expected type
+            serde_json::from_value(response)
+                .map_err(|e| eyre!("Failed to parse query response: {}", e))
+        }
+    }
+
     /// Get contract info
     pub async fn get_contract_info(&self, contract_address: &str) -> Result<ContractInfo> {
         let client = Client::new();
@@ -565,6 +611,7 @@ impl TerraClient {
 
         let msg_str = serde_json::to_string(msg)?;
         // Use --fees instead of --gas-prices for Terra Classic compatibility
+        // Use higher fees for complex operations like CW20 sends with submessages
         let mut args = vec![
             "tx",
             "wasm",
@@ -582,7 +629,7 @@ impl TerraClient {
             "--gas-adjustment",
             "1.5",
             "--fees",
-            "10000000uluna",
+            "150000000uluna",
             "--broadcast-mode",
             "sync",
             "-y",
