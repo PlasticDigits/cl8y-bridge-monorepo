@@ -45,9 +45,14 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Run terrad command via docker exec
-terrad_exec() {
-    docker exec "$CONTAINER_NAME" terrad --keyring-backend test "$@"
+# Run terrad TX command via docker exec (needs keyring-backend)
+terrad_tx() {
+    docker exec "$CONTAINER_NAME" terrad "$@" --keyring-backend test
+}
+
+# Run terrad query command via docker exec (no keyring needed)
+terrad_query() {
+    docker exec "$CONTAINER_NAME" terrad "$@"
 }
 
 # Setup test key in container (imports if not present)
@@ -55,11 +60,11 @@ setup_key() {
     log_info "Setting up test key in container..."
     
     # Check if key exists
-    if docker exec "$CONTAINER_NAME" terrad --keyring-backend test keys show "$KEY_NAME" > /dev/null 2>&1; then
+    if docker exec "$CONTAINER_NAME" terrad keys show "$KEY_NAME" --keyring-backend test > /dev/null 2>&1; then
         log_info "Key '$KEY_NAME' already exists in container"
     else
         log_info "Importing test key into container..."
-        echo "$TEST_MNEMONIC" | docker exec -i "$CONTAINER_NAME" terrad --keyring-backend test keys add "$KEY_NAME" --recover
+        echo "$TEST_MNEMONIC" | docker exec -i "$CONTAINER_NAME" terrad keys add "$KEY_NAME" --recover --keyring-backend test
     fi
 }
 
@@ -122,7 +127,7 @@ store_bridge_contract() {
     log_info "Storing bridge contract..."
     
     # Store contract (test1 key is already in the keyring from genesis)
-    TX=$(terrad_exec tx wasm store /tmp/wasm/bridge.wasm \
+    TX=$(terrad_tx tx wasm store /tmp/wasm/bridge.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
@@ -152,7 +157,7 @@ store_bridge_contract() {
     sleep 10
     
     # Get code ID from list-code
-    CODE_ID=$(terrad_exec query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+    CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
     
     if [ -z "$CODE_ID" ] || [ "$CODE_ID" = "null" ]; then
         log_error "Failed to get code ID"
@@ -181,7 +186,7 @@ instantiate_bridge_contract() {
 EOF
 )
     
-    TX=$(terrad_exec tx wasm instantiate "$BRIDGE_CODE_ID" "$INIT_MSG" \
+    TX=$(terrad_tx tx wasm instantiate "$BRIDGE_CODE_ID" "$INIT_MSG" \
         --label "cl8y-bridge-local" \
         --admin "$TEST_ADDRESS" \
         --from "$KEY_NAME" \
@@ -203,7 +208,7 @@ EOF
     sleep 8
     
     # Get contract address
-    BRIDGE_CONTRACT=$(terrad_exec query wasm list-contract-by-code "$BRIDGE_CODE_ID" -o json | jq -r '.contracts[-1]')
+    BRIDGE_CONTRACT=$(terrad_query query wasm list-contract-by-code "$BRIDGE_CODE_ID" -o json | jq -r '.contracts[-1]')
     
     if [ -z "$BRIDGE_CONTRACT" ] || [ "$BRIDGE_CONTRACT" = "null" ]; then
         log_error "Failed to get contract address"
@@ -221,7 +226,7 @@ store_cw20_contract() {
     
     log_info "Storing cw20-mintable contract..."
     
-    TX=$(terrad_exec tx wasm store /tmp/wasm/cw20_mintable.wasm \
+    TX=$(terrad_tx tx wasm store /tmp/wasm/cw20_mintable.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
@@ -241,7 +246,7 @@ store_cw20_contract() {
     sleep 8
     
     # Get code ID
-    CW20_CODE_ID=$(terrad_exec query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+    CW20_CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
     log_info "CW20-Mintable Code ID: $CW20_CODE_ID"
 }
 
@@ -274,7 +279,7 @@ instantiate_test_cw20() {
 EOF
 )
     
-    TX=$(terrad_exec tx wasm instantiate "$CW20_CODE_ID" "$CW20_INIT_MSG" \
+    TX=$(terrad_tx tx wasm instantiate "$CW20_CODE_ID" "$CW20_INIT_MSG" \
         --label "test-bridge-token" \
         --admin "$TEST_ADDRESS" \
         --from "$KEY_NAME" \
@@ -295,7 +300,7 @@ EOF
     sleep 8
     
     # Get CW20 contract address
-    CW20_CONTRACT=$(terrad_exec query wasm list-contract-by-code "$CW20_CODE_ID" -o json | jq -r '.contracts[-1]')
+    CW20_CONTRACT=$(terrad_query query wasm list-contract-by-code "$CW20_CODE_ID" -o json | jq -r '.contracts[-1]')
     log_info "CW20 Contract Address: $CW20_CONTRACT"
 }
 
@@ -306,7 +311,7 @@ configure_local() {
     # Set withdraw delay to 60 seconds (contract minimum)
     SET_DELAY_MSG='{"set_withdraw_delay":{"delay_seconds":60}}'
     
-    TX=$(terrad_exec tx wasm execute "$BRIDGE_CONTRACT" "$SET_DELAY_MSG" \
+    TX=$(terrad_tx tx wasm execute "$BRIDGE_CONTRACT" "$SET_DELAY_MSG" \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \

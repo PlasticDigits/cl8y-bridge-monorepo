@@ -305,7 +305,8 @@ Development progress is tracked in sprint documents:
 - [SPRINT6.md](./SPRINT6.md) - Frontend Development & Production Validation (COMPLETE)
 - [SPRINT7.md](./SPRINT7.md) - Testing, Polish & Production Readiness (COMPLETE)
 - [SPRINT8.md](./SPRINT8.md) - Integration Validation & Production Hardening (COMPLETE)
-- [SPRINT9.md](./SPRINT9.md) - Terra Classic Watchtower Implementation (CURRENT)
+- [SPRINT9.md](./SPRINT9.md) - Terra Classic Watchtower Implementation (COMPLETE)
+- [SPRINT10.md](./SPRINT10.md) - Full E2E Integration with LocalTerra (COMPLETE)
 
 See also: [PLAN_FIX_WATCHTOWER_GAP.md](./PLAN_FIX_WATCHTOWER_GAP.md) - Multi-week plan for Terra Classic security upgrade
 

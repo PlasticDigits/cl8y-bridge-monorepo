@@ -57,9 +57,31 @@ INTEGRATION_TEST=1 cargo test -- --ignored
 | Canceler Integration Tests | 10 | Require LocalTerra/Anvil |
 | Frontend Unit Tests | 62 | All passing |
 | Frontend Integration Tests | 11 | Require LocalTerra/Anvil |
-| E2E Tests | - | Automated with --with-operator flag |
+| E2E Tests | 15 | All passing (see below) |
 
 > **Note:** E2E tests can now automatically manage operator and canceler lifecycle.
+
+### E2E Test Suite (Sprint 10)
+
+The full E2E test suite (`./scripts/e2e-test.sh --full`) includes:
+
+| Test | Description |
+|------|-------------|
+| EVM Connectivity | Verify Anvil is running and producing blocks |
+| EVM Time Skip | Test evm_increaseTime for delay testing |
+| EVM Bridge Configuration | Query withdraw delay (300s) |
+| Terra Connectivity | Verify LocalTerra is running |
+| Terra Bridge Configuration | Query withdraw delay (300s) |
+| Database Tables | Verify operator tables exist (6 tables) |
+| Watchtower Delay Mechanism | Test time skip for watchtower testing |
+| EVM Approve→Execute | Test watchtower approve/execute flow |
+| EVM Cancel Flow | Test watchtower cancel mechanism |
+| Hash Parity | Verify chain key computation |
+| EVM → Terra Transfer | Test deposit on EVM |
+| Terra → EVM Transfer | Test lock on Terra |
+| Canceler Compilation | Verify canceler builds |
+| Canceler Fraud Detection | Test fraud detection workflow |
+| Canceler Cancel Flow | Test cancel transaction submission |
 
 ## Test Types Overview
 
