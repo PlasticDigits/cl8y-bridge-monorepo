@@ -65,9 +65,8 @@ jobs:
           version: nightly
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
@@ -269,9 +268,8 @@ jobs:
           version: nightly
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
