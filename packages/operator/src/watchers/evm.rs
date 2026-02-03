@@ -22,13 +22,11 @@ pub struct EvmWatcher {
 impl EvmWatcher {
     /// Create a new EVM watcher
     pub async fn new(config: &crate::config::EvmConfig, db: PgPool) -> Result<Self> {
-        let url = config.rpc_url.parse()
-            .wrap_err("Failed to parse RPC URL")?;
-        let provider = ProviderBuilder::new()
-            .on_http(url);
+        let url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
+        let provider = ProviderBuilder::new().on_http(url);
 
-        let bridge_address = Address::from_str(&config.bridge_address)
-            .wrap_err("Invalid bridge address")?;
+        let bridge_address =
+            Address::from_str(&config.bridge_address).wrap_err("Invalid bridge address")?;
 
         Ok(Self {
             provider,
@@ -72,8 +70,7 @@ impl EvmWatcher {
             self.process_block_range(from_block, to_block).await?;
 
             // Update last processed block
-            update_last_evm_block(&self.db, self.chain_id as i64, to_block as i64)
-                .await?;
+            update_last_evm_block(&self.db, self.chain_id as i64, to_block as i64).await?;
 
             tokio::time::sleep(poll_interval).await;
         }
@@ -181,13 +178,17 @@ impl EvmWatcher {
         let amount = U256::from_be_slice(&data[32..64]);
         let nonce = U256::from_be_slice(&data[64..96]);
 
-        let tx_hash = log.transaction_hash
+        let tx_hash = log
+            .transaction_hash
             .ok_or_else(|| eyre::eyre!("Missing transaction hash"))?;
-        let block_hash = log.block_hash
+        let block_hash = log
+            .block_hash
             .ok_or_else(|| eyre::eyre!("Missing block hash"))?;
-        let block_number = log.block_number
+        let block_number = log
+            .block_number
             .ok_or_else(|| eyre::eyre!("Missing block number"))?;
-        let log_index = log.log_index
+        let log_index = log
+            .log_index
             .ok_or_else(|| eyre::eyre!("Missing log index"))?;
 
         Ok(NewEvmDeposit {

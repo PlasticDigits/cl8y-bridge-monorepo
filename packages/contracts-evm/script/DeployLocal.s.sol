@@ -19,9 +19,9 @@ contract DeployLocal is Script {
         // Anvil default deployer private key
         uint256 deployerKey = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
         address deployer = vm.addr(deployerKey);
-        
+
         console.log("Deployer:", deployer);
-        
+
         vm.startBroadcast(deployerKey);
 
         // Deploy AccessManager with deployer as initial admin

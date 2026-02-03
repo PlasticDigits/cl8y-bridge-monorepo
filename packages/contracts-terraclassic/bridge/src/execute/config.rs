@@ -232,11 +232,12 @@ pub fn execute_update_token(
         return Err(ContractError::Unauthorized);
     }
 
-    let mut token_config = TOKENS
-        .may_load(deps.storage, token.clone())?
-        .ok_or(ContractError::TokenNotSupported {
-            token: token.clone(),
-        })?;
+    let mut token_config =
+        TOKENS
+            .may_load(deps.storage, token.clone())?
+            .ok_or(ContractError::TokenNotSupported {
+                token: token.clone(),
+            })?;
 
     if let Some(addr) = evm_token_address {
         token_config.evm_token_address = addr;

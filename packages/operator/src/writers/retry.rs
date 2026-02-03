@@ -2,9 +2,9 @@
 //!
 //! Provides exponential backoff, gas bumping, and dead letter queue functionality.
 
-use std::time::Duration;
 use chrono::{DateTime, Utc};
-use eyre::{Result, eyre};
+use eyre::{eyre, Result};
+use std::time::Duration;
 use tracing::{debug, warn};
 
 /// Transaction retry configuration
@@ -40,8 +40,8 @@ impl Default for RetryConfig {
 impl RetryConfig {
     /// Calculate backoff duration for a given attempt (0-indexed)
     pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
-        let backoff_secs = self.initial_backoff.as_secs_f64()
-            * self.backoff_multiplier.powi(attempt as i32);
+        let backoff_secs =
+            self.initial_backoff.as_secs_f64() * self.backoff_multiplier.powi(attempt as i32);
         let capped = backoff_secs.min(self.max_backoff.as_secs_f64());
         Duration::from_secs_f64(capped)
     }
@@ -59,7 +59,7 @@ impl RetryConfig {
 
         let multiplier = 1.0 + (self.gas_bump_percent as f64 / 100.0) * (attempt as f64);
         let capped_multiplier = multiplier.min(self.max_gas_multiplier);
-        
+
         (base_gas_price as f64 * capped_multiplier) as u128
     }
 
@@ -197,7 +197,10 @@ impl RetryContext {
             ErrorClass::NonceTooHigh => {
                 // Wait longer for pending transactions to clear
                 let backoff = self.config.max_backoff;
-                debug!(?backoff, "Nonce too high - waiting for pending transactions");
+                debug!(
+                    ?backoff,
+                    "Nonce too high - waiting for pending transactions"
+                );
                 RetryAction::RetryAfter(backoff)
             }
             ErrorClass::Underpriced => {
@@ -210,14 +213,21 @@ impl RetryContext {
                 );
                 let backoff = Duration::from_secs(1); // Retry quickly with bumped gas
                 debug!(new_gas, "Underpriced - retrying with bumped gas");
-                RetryAction::RetryWithGas { backoff, gas_price: new_gas }
+                RetryAction::RetryWithGas {
+                    backoff,
+                    gas_price: new_gas,
+                }
             }
             ErrorClass::Transient | ErrorClass::Unknown => {
                 if !self.config.should_retry(self.attempt) {
                     return RetryAction::DeadLetter;
                 }
                 let backoff = self.config.backoff_for_attempt(self.attempt);
-                debug!(?backoff, attempt = self.attempt, "Transient error - retrying");
+                debug!(
+                    ?backoff,
+                    attempt = self.attempt,
+                    "Transient error - retrying"
+                );
                 RetryAction::RetryAfter(backoff)
             }
         }
@@ -251,10 +261,7 @@ pub enum RetryAction {
 }
 
 /// Execute with retry logic
-pub async fn with_retry<F, T, Fut>(
-    config: &RetryConfig,
-    mut operation: F,
-) -> Result<T>
+pub async fn with_retry<F, T, Fut>(config: &RetryConfig, mut operation: F) -> Result<T>
 where
     F: FnMut(u32, Option<u128>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -263,7 +270,7 @@ where
 
     loop {
         let gas_price = ctx.last_gas_price;
-        
+
         match operation(ctx.attempt, gas_price).await {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -281,7 +288,10 @@ where
                         );
                         tokio::time::sleep(backoff).await;
                     }
-                    RetryAction::RetryWithGas { backoff, gas_price: new_gas } => {
+                    RetryAction::RetryWithGas {
+                        backoff,
+                        gas_price: new_gas,
+                    } => {
                         warn!(
                             attempt = ctx.attempt,
                             old_gas = ?gas_price,
@@ -312,7 +322,7 @@ mod tests {
     #[test]
     fn test_backoff_calculation() {
         let config = RetryConfig::default();
-        
+
         assert_eq!(config.backoff_for_attempt(0), Duration::from_secs(2));
         assert_eq!(config.backoff_for_attempt(1), Duration::from_secs(4));
         assert_eq!(config.backoff_for_attempt(2), Duration::from_secs(8));
@@ -325,7 +335,7 @@ mod tests {
     fn test_gas_bump() {
         let config = RetryConfig::default();
         let base = 1_000_000_000u128; // 1 gwei
-        
+
         assert_eq!(config.gas_price_for_attempt(base, 0), base);
         assert_eq!(config.gas_price_for_attempt(base, 1), 1_200_000_000); // +20%
         assert_eq!(config.gas_price_for_attempt(base, 2), 1_400_000_000); // +40%
@@ -335,7 +345,10 @@ mod tests {
     #[test]
     fn test_error_classification() {
         assert_eq!(classify_error("connection timeout"), ErrorClass::Transient);
-        assert_eq!(classify_error("replacement transaction underpriced"), ErrorClass::Underpriced);
+        assert_eq!(
+            classify_error("replacement transaction underpriced"),
+            ErrorClass::Underpriced
+        );
         assert_eq!(classify_error("nonce too low"), ErrorClass::NonceTooLow);
         assert_eq!(classify_error("execution reverted"), ErrorClass::Permanent);
         assert_eq!(classify_error("some unknown error"), ErrorClass::Unknown);

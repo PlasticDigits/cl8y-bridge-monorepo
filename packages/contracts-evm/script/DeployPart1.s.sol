@@ -182,8 +182,7 @@ contract DeployPart1 is Script {
     function _deployRouter(bytes32 baseSalt) internal {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "BridgeRouter"));
         router = BridgeRouter(
-            payable(
-                create3.deploy(
+            payable(create3.deploy(
                     salt,
                     abi.encodePacked(
                         type(BridgeRouter).creationCode,
@@ -197,8 +196,7 @@ contract DeployPart1 is Script {
                             guard
                         )
                     )
-                )
-            )
+                ))
         );
         console.log("BridgeRouter:", address(router));
     }

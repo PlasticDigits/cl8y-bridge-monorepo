@@ -60,7 +60,9 @@ impl EvmWriter {
             Address::from_str(&fee_config.fee_recipient).wrap_err("Invalid fee recipient")?;
 
         // Parse the private key
-        let signer: PrivateKeySigner = evm_config.private_key.parse()
+        let signer: PrivateKeySigner = evm_config
+            .private_key
+            .parse()
             .wrap_err("Invalid private key")?;
 
         info!(
@@ -92,12 +94,11 @@ impl EvmWriter {
 
     /// Query the withdraw delay from the contract
     async fn query_withdraw_delay(rpc_url: &str, bridge_address: Address) -> Result<u64> {
-        let provider = ProviderBuilder::new()
-            .on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        let provider = ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         let contract = CL8YBridge::new(bridge_address, provider);
         let delay = contract.withdrawDelay().call().await?;
-        
+
         Ok(delay._0.try_into().unwrap_or(300))
     }
 
@@ -268,9 +269,13 @@ impl EvmWriter {
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         // Parse addresses
-        let token: Address = deposit.token.parse()
+        let token: Address = deposit
+            .token
+            .parse()
             .map_err(|_| eyre!("Invalid token address: {}", deposit.token))?;
-        let to: Address = deposit.recipient.parse()
+        let to: Address = deposit
+            .recipient
+            .parse()
             .map_err(|_| eyre!("Invalid recipient address: {}", deposit.recipient))?;
 
         // Parse amount
@@ -317,14 +322,18 @@ impl EvmWriter {
         );
 
         // Send transaction
-        let pending_tx = call.send().await
+        let pending_tx = call
+            .send()
+            .await
             .map_err(|e| eyre!("Failed to send transaction: {}", e))?;
 
         let tx_hash = *pending_tx.tx_hash();
         info!(tx_hash = %tx_hash, "Transaction sent, waiting for confirmation");
 
         // Wait for confirmation
-        let receipt = pending_tx.get_receipt().await
+        let receipt = pending_tx
+            .get_receipt()
+            .await
             .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
 
         if !receipt.status() {
@@ -367,7 +376,8 @@ impl EvmWriter {
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
         // Get the approval to check fee
-        let approval = contract.getWithdrawApproval(FixedBytes::from(withdraw_hash))
+        let approval = contract
+            .getWithdrawApproval(FixedBytes::from(withdraw_hash))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get approval: {}", e))?;
@@ -384,17 +394,22 @@ impl EvmWriter {
             "Submitting withdraw execution"
         );
 
-        let call = contract.withdraw(FixedBytes::from(withdraw_hash))
+        let call = contract
+            .withdraw(FixedBytes::from(withdraw_hash))
             .value(fee_value);
 
-        let pending_tx = call.send().await
+        let pending_tx = call
+            .send()
+            .await
             .map_err(|e| eyre!("Failed to send withdraw tx: {}", e))?;
 
         let tx_hash = *pending_tx.tx_hash();
         info!(tx_hash = %tx_hash, "Withdraw transaction sent");
 
         // Wait for confirmation
-        let receipt = pending_tx.get_receipt().await
+        let receipt = pending_tx
+            .get_receipt()
+            .await
             .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
 
         if !receipt.status() {

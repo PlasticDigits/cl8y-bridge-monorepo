@@ -48,10 +48,9 @@ pub struct EvmClient {
 impl EvmClient {
     /// Create a new EVM client
     pub fn new(rpc_url: &str, bridge_address: &str, private_key: &str) -> Result<Self> {
-        let bridge_address = Address::from_str(bridge_address)
-            .wrap_err("Invalid bridge address")?;
-        let signer: PrivateKeySigner = private_key.parse()
-            .wrap_err("Invalid private key")?;
+        let bridge_address =
+            Address::from_str(bridge_address).wrap_err("Invalid bridge address")?;
+        let signer: PrivateKeySigner = private_key.parse().wrap_err("Invalid private key")?;
 
         info!(
             canceler_address = %signer.address(),
@@ -77,7 +76,8 @@ impl EvmClient {
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
         // First check if the approval exists and is not already cancelled/executed
-        let approval = contract.getWithdrawApproval(FixedBytes::from(withdraw_hash))
+        let approval = contract
+            .getWithdrawApproval(FixedBytes::from(withdraw_hash))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get approval: {}", e))?;
@@ -100,14 +100,18 @@ impl EvmClient {
         // Submit cancel transaction
         let call = contract.cancelWithdrawApproval(FixedBytes::from(withdraw_hash));
 
-        let pending_tx = call.send().await
+        let pending_tx = call
+            .send()
+            .await
             .map_err(|e| eyre!("Failed to send cancel tx: {}", e))?;
 
         let tx_hash = *pending_tx.tx_hash();
         info!(tx_hash = %tx_hash, "Cancel transaction sent");
 
         // Wait for confirmation
-        let receipt = pending_tx.get_receipt().await
+        let receipt = pending_tx
+            .get_receipt()
+            .await
             .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
 
         if !receipt.status() {
@@ -132,7 +136,8 @@ impl EvmClient {
 
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
-        let approval = contract.getWithdrawApproval(FixedBytes::from(withdraw_hash))
+        let approval = contract
+            .getWithdrawApproval(FixedBytes::from(withdraw_hash))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get approval: {}", e))?;

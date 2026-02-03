@@ -3,7 +3,6 @@ use eyre::Result;
 pub mod evm;
 pub mod terra;
 
-
 /// Configuration for the confirmation tracker
 #[derive(Debug, Clone)]
 pub struct ConfirmationConfig {
@@ -115,7 +114,11 @@ impl ConfirmationTracker {
                 "Checking approval confirmation"
             );
 
-            match self.evm_checker.check_approval_confirmation(&approval).await {
+            match self
+                .evm_checker
+                .check_approval_confirmation(&approval)
+                .await
+            {
                 Ok(result) => {
                     match result {
                         evm::ConfirmationResult::Confirmed => {
@@ -123,7 +126,12 @@ impl ConfirmationTracker {
                             tracing::info!(approval_id = id, tx_hash = %tx_hash, "Approval confirmed");
                         }
                         evm::ConfirmationResult::Failed => {
-                            crate::db::update_approval_failed(&self.db, id, "Transaction failed on-chain").await?;
+                            crate::db::update_approval_failed(
+                                &self.db,
+                                id,
+                                "Transaction failed on-chain",
+                            )
+                            .await?;
                             tracing::warn!(approval_id = id, tx_hash = %tx_hash, "Approval failed");
                         }
                         _ => {
@@ -159,7 +167,11 @@ impl ConfirmationTracker {
                 "Checking release confirmation"
             );
 
-            match self.terra_checker.check_release_confirmation(&release).await {
+            match self
+                .terra_checker
+                .check_release_confirmation(&release)
+                .await
+            {
                 Ok(result) => {
                     match result {
                         terra::ConfirmationResult::Confirmed => {
@@ -167,7 +179,12 @@ impl ConfirmationTracker {
                             tracing::info!(release_id = id, tx_hash = %tx_hash, "Release confirmed");
                         }
                         terra::ConfirmationResult::Failed => {
-                            crate::db::update_release_failed(&self.db, id, "Transaction failed on-chain").await?;
+                            crate::db::update_release_failed(
+                                &self.db,
+                                id,
+                                "Transaction failed on-chain",
+                            )
+                            .await?;
                             tracing::warn!(release_id = id, tx_hash = %tx_hash, "Release failed");
                         }
                         _ => {

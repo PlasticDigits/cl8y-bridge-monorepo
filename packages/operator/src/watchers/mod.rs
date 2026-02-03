@@ -22,13 +22,13 @@ impl WatcherManager {
     pub async fn new(config: &Config, db: PgPool) -> Result<Self> {
         let evm_watcher = EvmWatcher::new(&config.evm, db.clone()).await?;
         let terra_watcher = TerraWatcher::new(&config.terra, db).await?;
-        
+
         Ok(Self {
             evm_watcher,
             terra_watcher,
         })
     }
-    
+
     /// Run all watchers concurrently
     /// Returns when any watcher fails or shutdown signal received
     pub async fn run(&self, mut shutdown: mpsc::Receiver<()>) -> Result<()> {

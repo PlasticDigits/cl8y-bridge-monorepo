@@ -184,11 +184,11 @@ mod tests {
         // Test EVM chain key computation
         let key = ChainKey::evm(1);
         assert_eq!(key.0.len(), 32);
-        
+
         // Same chain ID should produce same key
         let key2 = ChainKey::evm(1);
         assert_eq!(key, key2);
-        
+
         // Different chain IDs should produce different keys
         let key3 = ChainKey::evm(56);
         assert_ne!(key, key3);
@@ -199,15 +199,15 @@ mod tests {
         // Test Cosmos chain key computation
         let key = ChainKey::cosmos("columbus-5", "terra");
         assert_eq!(key.0.len(), 32);
-        
+
         // Same params should produce same key
         let key2 = ChainKey::cosmos("columbus-5", "terra");
         assert_eq!(key, key2);
-        
+
         // Different chain IDs should produce different keys
         let key3 = ChainKey::cosmos("rebel-2", "terra");
         assert_ne!(key, key3);
-        
+
         // Different prefixes should produce different keys
         let key4 = ChainKey::cosmos("columbus-5", "osmo");
         assert_ne!(key, key4);
@@ -261,18 +261,18 @@ mod tests {
         let src_chain_key = ChainKey::cosmos("rebel-2", "terra");
         let token = EvmAddress::from_hex("0x0000000000000000000000000000000000001234").unwrap();
         let to = EvmAddress::from_hex("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap();
-        
+
         let hash = WithdrawHash::compute(&src_chain_key, &token, &to, "1000000", 42);
         assert_eq!(hash.0.len(), 32);
-        
+
         // Same inputs should produce same hash
         let hash2 = WithdrawHash::compute(&src_chain_key, &token, &to, "1000000", 42);
         assert_eq!(hash, hash2);
-        
+
         // Different amount should produce different hash
         let hash3 = WithdrawHash::compute(&src_chain_key, &token, &to, "2000000", 42);
         assert_ne!(hash, hash3);
-        
+
         // Different nonce should produce different hash
         let hash4 = WithdrawHash::compute(&src_chain_key, &token, &to, "1000000", 43);
         assert_ne!(hash, hash4);
@@ -283,10 +283,10 @@ mod tests {
         let src_chain_key = ChainKey::evm(1);
         let token = EvmAddress::from_hex("0x0000000000000000000000000000000000000001").unwrap();
         let to = EvmAddress::from_hex("0x0000000000000000000000000000000000000002").unwrap();
-        
+
         let hash = WithdrawHash::compute(&src_chain_key, &token, &to, "100", 1);
         let hex = hash.to_hex();
-        
+
         assert!(hex.starts_with("0x"));
         assert_eq!(hex.len(), 66); // 0x + 64 hex chars
     }

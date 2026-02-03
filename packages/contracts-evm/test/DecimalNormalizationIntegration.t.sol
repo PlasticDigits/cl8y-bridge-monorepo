@@ -27,7 +27,7 @@ contract DecimalNormalizationIntegrationTest is Test {
 
     // Test tokens with different decimal configurations
     TokenCl8yBridged public token18Decimals; // Source token with 18 decimals
-    MockToken6Decimals public token6Decimals;  // Source token with 6 decimals
+    MockToken6Decimals public token6Decimals; // Source token with 6 decimals
 
     // Test addresses
     address public owner = address(1);
@@ -37,10 +37,10 @@ contract DecimalNormalizationIntegrationTest is Test {
     address public user2 = address(5);
 
     // Chain identifiers for different decimal configurations
-    uint256 public constant ETH_CHAIN_ID = 1;      // 18 decimals
+    uint256 public constant ETH_CHAIN_ID = 1; // 18 decimals
     uint256 public constant POLYGON_CHAIN_ID = 137; // 6 decimals
-    uint256 public constant TEST_CHAIN_18 = 1001;  // Test chain with 18 decimals
-    uint256 public constant TEST_CHAIN_6 = 1002;    // Test chain with 6 decimals
+    uint256 public constant TEST_CHAIN_18 = 1001; // Test chain with 18 decimals
+    uint256 public constant TEST_CHAIN_6 = 1002; // Test chain with 6 decimals
 
     // Chain keys
     bytes32 public ethChainKey;
@@ -57,7 +57,7 @@ contract DecimalNormalizationIntegrationTest is Test {
     // Test amounts
     uint256 public constant INITIAL_MINT = 10000e18;
     uint256 public constant DEPOSIT_AMOUNT_18 = 3.5e18; // 3.5 tokens with 18 decimals
-    uint256 public constant DEPOSIT_AMOUNT_6 = 4.7e6;    // 4.7 tokens with 6 decimals
+    uint256 public constant DEPOSIT_AMOUNT_6 = 4.7e6; // 4.7 tokens with 6 decimals
 
     // Role identifiers
     uint64 public constant ADMIN_ROLE = 1;
@@ -187,7 +187,8 @@ contract DecimalNormalizationIntegrationTest is Test {
         token18Decimals = TokenCl8yBridged(token18Addr);
 
         // Create 6-decimal token
-        token6Decimals = new MockToken6Decimals("Token 6 Decimals", "T6", address(accessManager), "https://token6.com/logo.png");
+        token6Decimals =
+            new MockToken6Decimals("Token 6 Decimals", "T6", address(accessManager), "https://token6.com/logo.png");
 
         vm.stopPrank();
 
@@ -195,7 +196,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.startPrank(owner);
         bytes4[] memory mintSelectors18 = new bytes4[](1);
         mintSelectors18[0] = TokenCl8yBridged.mint.selector;
-        
+
         bytes4[] memory mintSelectors6 = new bytes4[](1);
         mintSelectors6[0] = MockToken6Decimals.mint.selector;
 
@@ -271,13 +272,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            polygonChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            sourceAmount
-        );
+        bridge.deposit(user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), sourceAmount);
 
         // Verify deposit effects
         assertEq(token18Decimals.balanceOf(user1), initialUser1Balance - sourceAmount, "User1 balance after deposit");
@@ -321,7 +316,11 @@ contract DecimalNormalizationIntegrationTest is Test {
         bridge.withdraw(withdrawHash);
 
         // Verify withdrawal effects
-        assertEq(token18Decimals.balanceOf(user2), initialUser2Balance + expectedDestAmount, "User2 received normalized amount");
+        assertEq(
+            token18Decimals.balanceOf(user2),
+            initialUser2Balance + expectedDestAmount,
+            "User2 received normalized amount"
+        );
 
         // Test 1a: Verify hash matching between source and destination
         // The deposit hash should match the withdraw hash when computed with the same parameters
@@ -334,20 +333,17 @@ contract DecimalNormalizationIntegrationTest is Test {
             nonce: 0 // Deposit nonce starts at 0
         });
         bytes32 expectedDepositHash = bridge.getDepositHash(expectedDeposit);
-        
+
         assertEq(depositHash, expectedDepositHash, "Deposit hash matches expected hash");
-        
+
         // Note: Deposit and withdraw hashes are different because they represent different perspectives
         // Deposit hash: from current chain to destination chain
         // Withdraw hash: from source chain to current chain
         // They should have the same transferId when computed with matching parameters
 
         // Test 1b: Verify amount normalization
-        uint256 directNormalizedAmount = bridge.normalizeAmountToDestinationDecimals(
-            address(token18Decimals), 
-            polygonChainKey, 
-            sourceAmount
-        );
+        uint256 directNormalizedAmount =
+            bridge.normalizeAmountToDestinationDecimals(address(token18Decimals), polygonChainKey, sourceAmount);
         assertEq(directNormalizedAmount, expectedDestAmount, "Direct normalization matches expected amount");
         assertEq(depositData.amount, expectedDestAmount, "Deposit amount matches normalized amount");
     }
@@ -369,13 +365,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            ethChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token6Decimals), 
-            sourceAmount
-        );
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(token6Decimals), sourceAmount);
 
         // Verify deposit effects
         assertEq(token6Decimals.balanceOf(user1), initialUser1Balance - sourceAmount, "User1 balance after deposit");
@@ -419,7 +409,11 @@ contract DecimalNormalizationIntegrationTest is Test {
         bridge.withdraw(withdrawHash);
 
         // Verify withdrawal effects
-        assertEq(token6Decimals.balanceOf(user2), initialUser2Balance + expectedDestAmount, "User2 received normalized amount");
+        assertEq(
+            token6Decimals.balanceOf(user2),
+            initialUser2Balance + expectedDestAmount,
+            "User2 received normalized amount"
+        );
 
         // Test 2a: Verify hash matching between source and destination
         Cl8YBridge.Deposit memory expectedDeposit = Cl8YBridge.Deposit({
@@ -431,19 +425,16 @@ contract DecimalNormalizationIntegrationTest is Test {
             nonce: 0 // Deposit nonce starts at 0
         });
         bytes32 expectedDepositHash = bridge.getDepositHash(expectedDeposit);
-        
+
         assertEq(depositHash, expectedDepositHash, "Deposit hash matches expected hash");
-        
+
         // Note: Deposit and withdraw hashes are different because they represent different perspectives
         // Deposit hash: from current chain to destination chain
         // Withdraw hash: from source chain to current chain
 
         // Test 2b: Verify amount normalization
-        uint256 directNormalizedAmount = bridge.normalizeAmountToDestinationDecimals(
-            address(token6Decimals), 
-            ethChainKey, 
-            sourceAmount
-        );
+        uint256 directNormalizedAmount =
+            bridge.normalizeAmountToDestinationDecimals(address(token6Decimals), ethChainKey, sourceAmount);
         assertEq(directNormalizedAmount, expectedDestAmount, "Direct normalization matches expected amount");
         assertEq(depositData.amount, expectedDestAmount, "Deposit amount matches normalized amount");
     }
@@ -465,13 +456,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            ethChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            sourceAmount
-        );
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), sourceAmount);
 
         // Verify deposit effects
         assertEq(token18Decimals.balanceOf(user1), initialUser1Balance - sourceAmount, "User1 balance after deposit");
@@ -515,7 +500,9 @@ contract DecimalNormalizationIntegrationTest is Test {
         bridge.withdraw(withdrawHash);
 
         // Verify withdrawal effects
-        assertEq(token18Decimals.balanceOf(user2), initialUser2Balance + expectedDestAmount, "User2 received same amount");
+        assertEq(
+            token18Decimals.balanceOf(user2), initialUser2Balance + expectedDestAmount, "User2 received same amount"
+        );
 
         // Test 3a: Verify hash matching between source and destination
         Cl8YBridge.Deposit memory expectedDeposit = Cl8YBridge.Deposit({
@@ -527,19 +514,16 @@ contract DecimalNormalizationIntegrationTest is Test {
             nonce: 0 // Deposit nonce starts at 0
         });
         bytes32 expectedDepositHash = bridge.getDepositHash(expectedDeposit);
-        
+
         assertEq(depositHash, expectedDepositHash, "Deposit hash matches expected hash");
-        
+
         // Note: Deposit and withdraw hashes are different because they represent different perspectives
         // Deposit hash: from current chain to destination chain
         // Withdraw hash: from source chain to current chain
 
         // Test 3b: Verify amount remains exactly equal
-        uint256 directNormalizedAmount = bridge.normalizeAmountToDestinationDecimals(
-            address(token18Decimals), 
-            ethChainKey, 
-            sourceAmount
-        );
+        uint256 directNormalizedAmount =
+            bridge.normalizeAmountToDestinationDecimals(address(token18Decimals), ethChainKey, sourceAmount);
         assertEq(directNormalizedAmount, expectedDestAmount, "Direct normalization returns same amount");
         assertEq(depositData.amount, expectedDestAmount, "Deposit amount equals source amount");
         assertEq(sourceAmount, expectedDestAmount, "Source and destination amounts are equal");
@@ -558,13 +542,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            polygonChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            sourceAmount
-        );
+        bridge.deposit(user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), sourceAmount);
 
         // Get deposit data
         bytes32[] memory depositHashes = bridge.getDepositHashes(0, 1);
@@ -572,13 +550,10 @@ contract DecimalNormalizationIntegrationTest is Test {
 
         // Verify precision loss
         assertEq(depositData.amount, expectedDestAmount, "Precision loss handled correctly");
-        
+
         // Verify direct normalization also shows precision loss
-        uint256 directNormalizedAmount = bridge.normalizeAmountToDestinationDecimals(
-            address(token18Decimals), 
-            polygonChainKey, 
-            sourceAmount
-        );
+        uint256 directNormalizedAmount =
+            bridge.normalizeAmountToDestinationDecimals(address(token18Decimals), polygonChainKey, sourceAmount);
         assertEq(directNormalizedAmount, expectedDestAmount, "Direct normalization shows precision loss");
     }
 
@@ -592,11 +567,7 @@ contract DecimalNormalizationIntegrationTest is Test {
 
         vm.prank(bridgeOperator);
         bridge.deposit(
-            user1, 
-            polygonChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            DEPOSIT_AMOUNT_18
+            user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), DEPOSIT_AMOUNT_18
         );
 
         bytes32[] memory depositHashes1 = bridge.getDepositHashes(0, 1);
@@ -609,13 +580,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            ethChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token6Decimals), 
-            DEPOSIT_AMOUNT_6
-        );
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(token6Decimals), DEPOSIT_AMOUNT_6);
 
         bytes32[] memory depositHashes2 = bridge.getDepositHashes(1, 1);
         Cl8YBridge.Deposit memory depositData2 = bridge.getDepositFromHash(depositHashes2[0]);
@@ -628,11 +593,7 @@ contract DecimalNormalizationIntegrationTest is Test {
 
         vm.prank(bridgeOperator);
         bridge.deposit(
-            user1, 
-            ethChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            DEPOSIT_AMOUNT_18
+            user1, ethChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), DEPOSIT_AMOUNT_18
         );
 
         bytes32[] memory depositHashes3 = bridge.getDepositHashes(2, 1);
@@ -655,13 +616,7 @@ contract DecimalNormalizationIntegrationTest is Test {
         vm.stopPrank();
 
         vm.prank(bridgeOperator);
-        bridge.deposit(
-            user1, 
-            polygonChainKey, 
-            bytes32(uint256(uint160(user2))), 
-            address(token18Decimals), 
-            sourceAmount
-        );
+        bridge.deposit(user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(token18Decimals), sourceAmount);
 
         bytes32[] memory depositHashes = bridge.getDepositHashes(0, 1);
 

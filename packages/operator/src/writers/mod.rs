@@ -8,7 +8,7 @@ pub mod retry;
 pub mod terra;
 
 pub use evm::EvmWriter;
-pub use retry::{RetryConfig, RetryContext, classify_error, with_retry};
+pub use retry::{classify_error, with_retry, RetryConfig, RetryContext};
 pub use terra::TerraWriter;
 
 /// Circuit breaker configuration for writer managers
@@ -44,7 +44,7 @@ impl WriterManager {
     pub async fn new(config: &crate::config::Config, db: PgPool) -> Result<Self> {
         let evm_writer = EvmWriter::new(&config.evm, &config.fees, db.clone()).await?;
         let terra_writer = TerraWriter::new(&config.terra, db).await?;
-        
+
         Ok(Self {
             evm_writer,
             terra_writer,
@@ -54,12 +54,12 @@ impl WriterManager {
             consecutive_terra_failures: 0,
         })
     }
-    
+
     /// Run all writers concurrently
     /// Processes pending approvals and releases
     pub async fn run(&mut self, mut shutdown: mpsc::Receiver<()>) -> Result<()> {
         let poll_interval = Duration::from_millis(5000);
-        
+
         loop {
             tokio::select! {
                 _ = self.process_pending() => {}
@@ -68,11 +68,11 @@ impl WriterManager {
                     return Ok(());
                 }
             }
-            
+
             tokio::time::sleep(poll_interval).await;
         }
     }
-    
+
     async fn process_pending(&mut self) -> Result<()> {
         // Check EVM circuit breaker
         if self.consecutive_evm_failures >= self.circuit_breaker.threshold {
@@ -84,7 +84,7 @@ impl WriterManager {
             tokio::time::sleep(self.circuit_breaker.pause_duration).await;
             self.consecutive_evm_failures = 0;
         }
-        
+
         // Process pending approvals (Terra -> EVM)
         match self.evm_writer.process_pending().await {
             Ok(()) => {
@@ -93,7 +93,9 @@ impl WriterManager {
             Err(e) => {
                 self.consecutive_evm_failures += 1;
                 let error_class = classify_error(&e.to_string());
-                let backoff = self.retry_config.backoff_for_attempt(self.consecutive_evm_failures);
+                let backoff = self
+                    .retry_config
+                    .backoff_for_attempt(self.consecutive_evm_failures);
                 tracing::error!(
                     error = %e,
                     ?error_class,
@@ -104,7 +106,7 @@ impl WriterManager {
                 tokio::time::sleep(backoff).await;
             }
         }
-        
+
         // Check Terra circuit breaker
         if self.consecutive_terra_failures >= self.circuit_breaker.threshold {
             tracing::warn!(
@@ -115,7 +117,7 @@ impl WriterManager {
             tokio::time::sleep(self.circuit_breaker.pause_duration).await;
             self.consecutive_terra_failures = 0;
         }
-        
+
         // Process pending releases (EVM -> Terra)
         match self.terra_writer.process_pending().await {
             Ok(()) => {
@@ -124,7 +126,9 @@ impl WriterManager {
             Err(e) => {
                 self.consecutive_terra_failures += 1;
                 let error_class = classify_error(&e.to_string());
-                let backoff = self.retry_config.backoff_for_attempt(self.consecutive_terra_failures);
+                let backoff = self
+                    .retry_config
+                    .backoff_for_attempt(self.consecutive_terra_failures);
                 tracing::error!(
                     error = %e,
                     ?error_class,
@@ -135,7 +139,7 @@ impl WriterManager {
                 tokio::time::sleep(backoff).await;
             }
         }
-        
+
         Ok(())
     }
 

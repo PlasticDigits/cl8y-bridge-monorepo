@@ -348,7 +348,8 @@ impl ApprovalVerifier {
             }
         });
 
-        let query_b64 = base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&query)?);
+        let query_b64 =
+            base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&query)?);
 
         let url = format!(
             "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",

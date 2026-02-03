@@ -86,7 +86,7 @@ mod infrastructure {
 
         let json: serde_json::Value = response.json().await.unwrap();
         let chain_id = json["result"].as_str().expect("Expected chain ID");
-        
+
         // Anvil default chain ID is 31337 (0x7a69)
         assert_eq!(chain_id, "0x7a69", "Expected Anvil chain ID 31337");
         println!("Anvil chain ID: {} (31337)", chain_id);
@@ -97,7 +97,10 @@ mod infrastructure {
     #[ignore = "requires LocalTerra running"]
     async fn test_localterra_connectivity() {
         let client = reqwest::Client::new();
-        let url = format!("{}/cosmos/base/tendermint/v1beta1/node_info", terra_lcd_url());
+        let url = format!(
+            "{}/cosmos/base/tendermint/v1beta1/node_info",
+            terra_lcd_url()
+        );
 
         let response = client
             .get(&url)
@@ -107,7 +110,10 @@ mod infrastructure {
 
         match response {
             Ok(resp) => {
-                assert!(resp.status().is_success(), "LocalTerra returned error status");
+                assert!(
+                    resp.status().is_success(),
+                    "LocalTerra returned error status"
+                );
                 let json: serde_json::Value = resp.json().await.unwrap();
                 let network = json["default_node_info"]["network"]
                     .as_str()
@@ -125,7 +131,10 @@ mod infrastructure {
     #[ignore = "requires LocalTerra running"]
     async fn test_localterra_blocks() {
         let client = reqwest::Client::new();
-        let url = format!("{}/cosmos/base/tendermint/v1beta1/blocks/latest", terra_lcd_url());
+        let url = format!(
+            "{}/cosmos/base/tendermint/v1beta1/blocks/latest",
+            terra_lcd_url()
+        );
 
         let response = client
             .get(&url)
@@ -137,7 +146,7 @@ mod infrastructure {
         let height = json["block"]["header"]["height"]
             .as_str()
             .expect("Expected height");
-        
+
         let height_num: u64 = height.parse().expect("Height should be numeric");
         assert!(height_num > 0, "Block height should be positive");
         println!("LocalTerra height: {}", height_num);
@@ -178,10 +187,10 @@ mod evm_client {
 
         let json: serde_json::Value = response.json().await.unwrap();
         let balance = json["result"].as_str().expect("Expected balance");
-        
+
         // Parse balance (hex string)
         let balance_wei = u128::from_str_radix(&balance[2..], 16).expect("Invalid balance hex");
-        
+
         // Should have significant balance (10000 ETH default)
         assert!(balance_wei > 0, "Balance should be positive");
         println!("Account {} balance: {} wei", test_address, balance_wei);
@@ -204,8 +213,9 @@ mod evm_client {
 
         let json: serde_json::Value = response.json().await.unwrap();
         let gas_price = json["result"].as_str().expect("Expected gas price");
-        
-        let gas_price_wei = u128::from_str_radix(&gas_price[2..], 16).expect("Invalid gas price hex");
+
+        let gas_price_wei =
+            u128::from_str_radix(&gas_price[2..], 16).expect("Invalid gas price hex");
         assert!(gas_price_wei > 0, "Gas price should be positive");
         println!("Gas price: {} wei", gas_price_wei);
     }
@@ -245,7 +255,7 @@ mod evm_client {
             .expect("Failed to call contract");
 
         let json: serde_json::Value = response.json().await.unwrap();
-        
+
         if let Some(result) = json["result"].as_str() {
             if result != "0x" {
                 let delay = u64::from_str_radix(&result[2..], 16).expect("Invalid delay hex");
@@ -270,7 +280,7 @@ mod terra_client {
     #[ignore = "requires LocalTerra running"]
     async fn test_terra_balance_query() {
         let client = reqwest::Client::new();
-        
+
         // LocalTerra test1 account
         let test_address = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
         let url = format!(
@@ -286,10 +296,12 @@ mod terra_client {
             .expect("Failed to query balance");
 
         let json: serde_json::Value = response.json().await.unwrap();
-        let balances = json["balances"].as_array().expect("Expected balances array");
-        
+        let balances = json["balances"]
+            .as_array()
+            .expect("Expected balances array");
+
         println!("Account {} has {} coin types", test_address, balances.len());
-        
+
         for balance in balances {
             let denom = balance["denom"].as_str().unwrap_or("unknown");
             let amount = balance["amount"].as_str().unwrap_or("0");
@@ -310,7 +322,7 @@ mod terra_client {
         };
 
         let client = reqwest::Client::new();
-        
+
         // Query config
         let query = serde_json::json!({"config": {}});
         let query_b64 = base64::Engine::encode(
@@ -354,7 +366,7 @@ mod terra_client {
         };
 
         let client = reqwest::Client::new();
-        
+
         // Query pending approvals
         let query = serde_json::json!({"pending_approvals": {"limit": 10}});
         let query_b64 = base64::Engine::encode(
@@ -397,14 +409,17 @@ mod hash {
     #[test]
     fn test_bytes32_hex_format() {
         let bytes: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
-        
+
         let hex = format!("0x{}", hex::encode(bytes));
-        assert_eq!(hex.len(), 66, "bytes32 hex should be 66 chars with 0x prefix");
+        assert_eq!(
+            hex.len(),
+            66,
+            "bytes32 hex should be 66 chars with 0x prefix"
+        );
         assert!(hex.starts_with("0x"), "Should have 0x prefix");
     }
 
@@ -412,17 +427,17 @@ mod hash {
     #[test]
     fn test_keccak256_computation() {
         use tiny_keccak::{Hasher, Keccak};
-        
+
         let mut hasher = Keccak::v256();
         let mut output = [0u8; 32];
-        
+
         hasher.update(b"test");
         hasher.finalize(&mut output);
-        
+
         // Known keccak256("test") result
         let expected = "9c22ff5f21f0b81b113e63f7db6da94fedef11b2119b4088b89664fb9a3cb658";
         let result = hex::encode(output);
-        
+
         assert_eq!(result, expected, "keccak256('test') mismatch");
     }
 }

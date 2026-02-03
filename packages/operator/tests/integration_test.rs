@@ -165,12 +165,10 @@ async fn test_terra_to_evm_transfer() {
     let terra_chain_key = compute_cosmos_chain_key("localterra", "terra");
     println!("Terra chain key: 0x{}", hex::encode(terra_chain_key));
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM deposits WHERE status = 'pending'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap_or(0);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deposits WHERE status = 'pending'")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
 
     println!("Pending deposits in database: {}", count);
 }
@@ -194,12 +192,10 @@ async fn test_evm_to_terra_transfer() {
     let evm_chain_key = compute_evm_chain_key(31337);
     println!("EVM chain key (Anvil): 0x{}", hex::encode(evm_chain_key));
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM deposits WHERE status = 'pending'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap_or(0);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deposits WHERE status = 'pending'")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
 
     println!("Pending deposits in database: {}", count);
 }
@@ -212,15 +208,24 @@ async fn test_evm_to_terra_transfer() {
 async fn test_chain_key_computation() {
     // Test EVM chain key computation
     let anvil_chain_key = compute_evm_chain_key(31337);
-    println!("Anvil (31337) chain key: 0x{}", hex::encode(anvil_chain_key));
+    println!(
+        "Anvil (31337) chain key: 0x{}",
+        hex::encode(anvil_chain_key)
+    );
 
     // Verify it's deterministic
     let anvil_chain_key_2 = compute_evm_chain_key(31337);
-    assert_eq!(anvil_chain_key, anvil_chain_key_2, "Chain key should be deterministic");
+    assert_eq!(
+        anvil_chain_key, anvil_chain_key_2,
+        "Chain key should be deterministic"
+    );
 
     // Test different chain IDs produce different keys
     let mainnet_chain_key = compute_evm_chain_key(1);
-    assert_ne!(anvil_chain_key, mainnet_chain_key, "Different chain IDs should produce different keys");
+    assert_ne!(
+        anvil_chain_key, mainnet_chain_key,
+        "Different chain IDs should produce different keys"
+    );
 
     // Test Terra chain key computation
     let terra_local_key = compute_cosmos_chain_key("localterra", "terra");
@@ -228,11 +233,17 @@ async fn test_chain_key_computation() {
 
     // Test mainnet Terra
     let terra_mainnet_key = compute_cosmos_chain_key("columbus-5", "terra");
-    assert_ne!(terra_local_key, terra_mainnet_key, "Different chain IDs should produce different keys");
+    assert_ne!(
+        terra_local_key, terra_mainnet_key,
+        "Different chain IDs should produce different keys"
+    );
 
     // Verify Terra key is deterministic
     let terra_local_key_2 = compute_cosmos_chain_key("localterra", "terra");
-    assert_eq!(terra_local_key, terra_local_key_2, "Chain key should be deterministic");
+    assert_eq!(
+        terra_local_key, terra_local_key_2,
+        "Chain key should be deterministic"
+    );
 }
 
 #[tokio::test]
@@ -240,7 +251,11 @@ async fn test_address_encoding() {
     // Test EVM address to bytes32 conversion
     let evm_address_hex = "70997970C51812dc3A010C7d01b50e0d17dc79C8";
     let evm_address_bytes = hex::decode(evm_address_hex).expect("Valid hex");
-    assert_eq!(evm_address_bytes.len(), 20, "EVM address should be 20 bytes");
+    assert_eq!(
+        evm_address_bytes.len(),
+        20,
+        "EVM address should be 20 bytes"
+    );
 
     // Convert to bytes32 (left-padded)
     let mut bytes32 = [0u8; 32];
@@ -248,11 +263,19 @@ async fn test_address_encoding() {
 
     // Verify padding
     assert_eq!(&bytes32[..12], &[0u8; 12], "Left padding should be zeros");
-    assert_eq!(&bytes32[12..], evm_address_bytes.as_slice(), "Address should be in last 20 bytes");
+    assert_eq!(
+        &bytes32[12..],
+        evm_address_bytes.as_slice(),
+        "Address should be in last 20 bytes"
+    );
 
     // Test round-trip
     let recovered: [u8; 20] = bytes32[12..].try_into().unwrap();
-    assert_eq!(recovered, evm_address_bytes.as_slice(), "Round-trip should preserve address");
+    assert_eq!(
+        recovered,
+        evm_address_bytes.as_slice(),
+        "Round-trip should preserve address"
+    );
 
     println!("EVM address: 0x{}", evm_address_hex);
     println!("As bytes32: 0x{}", hex::encode(bytes32));
@@ -266,7 +289,11 @@ async fn test_terra_address_encoding() {
     // Terra addresses are 44 characters, too long for bytes32
     // In cross-chain messages, we store the full address as variable-length bytes
     let addr_bytes = terra_address.as_bytes();
-    assert_eq!(addr_bytes.len(), 44, "Terra address should be 44 characters");
+    assert_eq!(
+        addr_bytes.len(),
+        44,
+        "Terra address should be 44 characters"
+    );
 
     // For storage, we use the full bytes (not truncated to 32)
     let mut storage = Vec::with_capacity(44);
@@ -314,7 +341,11 @@ async fn test_keccak256_computation() {
 
     // Known hash of "test"
     let expected = "9c22ff5f21f0b81b113e63f7db6da94fedef11b2119b4088b89664fb9a3cb658";
-    assert_eq!(hex::encode(hash), expected, "keccak256 should match expected value");
+    assert_eq!(
+        hex::encode(hash),
+        expected,
+        "keccak256 should match expected value"
+    );
 
     println!("keccak256('test'): 0x{}", hex::encode(hash));
 }

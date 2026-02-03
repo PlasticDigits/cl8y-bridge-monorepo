@@ -6,8 +6,8 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    register_counter_vec, register_gauge, register_gauge_vec, register_histogram_vec,
-    CounterVec, Encoder, Gauge, GaugeVec, HistogramVec, TextEncoder,
+    register_counter_vec, register_gauge, register_gauge_vec, register_histogram_vec, CounterVec,
+    Encoder, Gauge, GaugeVec, HistogramVec, TextEncoder,
 };
 use std::net::SocketAddr;
 use tokio::io::AsyncWriteExt;
@@ -139,7 +139,8 @@ pub async fn start_metrics_server(addr: SocketAddr) -> eyre::Result<()> {
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.write_all(&buffer).await;
             } else if request.contains("GET /health") {
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK";
+                let response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK";
                 let _ = socket.write_all(response.as_bytes()).await;
             } else {
                 let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
@@ -152,7 +153,9 @@ pub async fn start_metrics_server(addr: SocketAddr) -> eyre::Result<()> {
 /// Record a block processed
 pub fn record_block_processed(chain: &str, block_number: u64) {
     BLOCKS_PROCESSED.with_label_values(&[chain]).inc();
-    LATEST_BLOCK.with_label_values(&[chain]).set(block_number as f64);
+    LATEST_BLOCK
+        .with_label_values(&[chain])
+        .set(block_number as f64);
 }
 
 /// Record a deposit detected
@@ -163,7 +166,9 @@ pub fn record_deposit_detected(chain: &str) {
 /// Record an approval submitted
 pub fn record_approval_submitted(chain: &str, success: bool) {
     let status = if success { "success" } else { "failure" };
-    APPROVALS_SUBMITTED.with_label_values(&[chain, status]).inc();
+    APPROVALS_SUBMITTED
+        .with_label_values(&[chain, status])
+        .inc();
 }
 
 /// Record a release submitted
@@ -174,17 +179,23 @@ pub fn record_release_submitted(chain: &str, success: bool) {
 
 /// Record processing latency
 pub fn record_latency(direction: &str, seconds: f64) {
-    PROCESSING_LATENCY.with_label_values(&[direction]).observe(seconds);
+    PROCESSING_LATENCY
+        .with_label_values(&[direction])
+        .observe(seconds);
 }
 
 /// Update pending counts
 pub fn set_pending_deposits(chain: &str, count: i64) {
-    PENDING_DEPOSITS.with_label_values(&[chain]).set(count as f64);
+    PENDING_DEPOSITS
+        .with_label_values(&[chain])
+        .set(count as f64);
 }
 
 /// Update pending approvals
 pub fn set_pending_approvals(chain: &str, count: i64) {
-    PENDING_APPROVALS.with_label_values(&[chain]).set(count as f64);
+    PENDING_APPROVALS
+        .with_label_values(&[chain])
+        .set(count as f64);
 }
 
 /// Record an error
@@ -194,7 +205,9 @@ pub fn record_error(chain: &str, error_type: &str) {
 
 /// Update consecutive failures (circuit breaker)
 pub fn set_consecutive_failures(chain: &str, count: u32) {
-    CONSECUTIVE_FAILURES.with_label_values(&[chain]).set(count as f64);
+    CONSECUTIVE_FAILURES
+        .with_label_values(&[chain])
+        .set(count as f64);
 }
 
 /// Record last successful poll
@@ -204,15 +217,21 @@ pub fn record_successful_poll(chain: &str) {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs_f64();
-    LAST_SUCCESSFUL_POLL.with_label_values(&[chain]).set(timestamp);
+    LAST_SUCCESSFUL_POLL
+        .with_label_values(&[chain])
+        .set(timestamp);
 }
 
 /// Record fees collected
 pub fn record_fees(chain: &str, token: &str, amount: f64) {
-    FEES_COLLECTED.with_label_values(&[chain, token]).inc_by(amount);
+    FEES_COLLECTED
+        .with_label_values(&[chain, token])
+        .inc_by(amount);
 }
 
 /// Record volume bridged
 pub fn record_volume(direction: &str, token: &str, amount: f64) {
-    VOLUME_BRIDGED.with_label_values(&[direction, token]).inc_by(amount);
+    VOLUME_BRIDGED
+        .with_label_values(&[direction, token])
+        .inc_by(amount);
 }

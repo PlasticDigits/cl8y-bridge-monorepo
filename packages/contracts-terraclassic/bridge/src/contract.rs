@@ -15,11 +15,12 @@ use crate::error::ContractError;
 use crate::execute::{
     execute_accept_admin, execute_add_canceler, execute_add_chain, execute_add_operator,
     execute_add_token, execute_approve_withdraw, execute_cancel_admin_proposal,
-    execute_cancel_withdraw_approval, execute_execute_withdraw, execute_lock_native,
-    execute_pause, execute_propose_admin, execute_receive, execute_recover_asset,
+    execute_cancel_withdraw_approval, execute_execute_withdraw, execute_lock_native, execute_pause,
+    execute_propose_admin, execute_receive, execute_recover_asset,
     execute_reenable_withdraw_approval, execute_remove_canceler, execute_remove_operator,
     execute_set_rate_limit, execute_set_withdraw_delay, execute_unpause, execute_update_chain,
-    execute_update_fees, execute_update_limits, execute_update_min_signatures, execute_update_token,
+    execute_update_fees, execute_update_limits, execute_update_min_signatures,
+    execute_update_token,
 };
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{

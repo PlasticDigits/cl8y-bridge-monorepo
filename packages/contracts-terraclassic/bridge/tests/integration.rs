@@ -706,7 +706,7 @@ fn test_lock_stores_deposit_hash() {
     // Lock tokens - recipient must be a 64-char hex string (32 bytes)
     // This represents an EVM address left-padded to 32 bytes
     let recipient_hex = "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-    
+
     let res = app.execute_contract(
         user.clone(),
         contract_addr.clone(),

@@ -62,7 +62,7 @@ impl EvmConfirmation {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
-        
+
         Ok(Self {
             db,
             required_confirmations,
@@ -72,38 +72,51 @@ impl EvmConfirmation {
     }
 
     /// Check approval transaction confirmation
-    pub async fn check_approval_confirmation(&self, approval: &Approval) -> Result<ConfirmationResult> {
-        let tx_hash = approval.tx_hash.as_ref()
+    pub async fn check_approval_confirmation(
+        &self,
+        approval: &Approval,
+    ) -> Result<ConfirmationResult> {
+        let tx_hash = approval
+            .tx_hash
+            .as_ref()
             .ok_or_else(|| eyre!("Approval has no tx_hash"))?;
-        
+
         // 1. Get transaction receipt
         let receipt = self.get_transaction_receipt(tx_hash).await?;
-        
+
         // 2. If no receipt, transaction is still pending
         if receipt.is_none() {
             return Ok(ConfirmationResult::Pending);
         }
-        
+
         let receipt = receipt.unwrap();
-        
+
         // 3. Check if transaction failed
         if receipt.status == Some("0x0".to_string()) {
             return Ok(ConfirmationResult::Failed);
         }
-        
+
         // 4. Get current block number
         let current_block = self.get_block_number().await?;
-        
+
         // 5. Calculate confirmations
-        let tx_block = u64::from_str_radix(&receipt.block_number.unwrap_or_default().trim_start_matches("0x"), 16)?;
+        let tx_block = u64::from_str_radix(
+            &receipt
+                .block_number
+                .unwrap_or_default()
+                .trim_start_matches("0x"),
+            16,
+        )?;
         let confirmations = current_block.saturating_sub(tx_block);
-        
+
         // 6. Check if enough confirmations
         if confirmations >= self.required_confirmations as u64 {
             return Ok(ConfirmationResult::Confirmed);
         }
-        
-        Ok(ConfirmationResult::WaitingConfirmations(confirmations as u32))
+
+        Ok(ConfirmationResult::WaitingConfirmations(
+            confirmations as u32,
+        ))
     }
 
     /// Get transaction receipt from RPC
@@ -114,19 +127,20 @@ impl EvmConfirmation {
             "params": [tx_hash],
             "id": 1
         });
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&self.rpc_url)
             .json(&body)
             .send()
             .await?
             .json::<RpcResponse<TransactionReceipt>>()
             .await?;
-        
+
         if let Some(error) = response.error {
             return Err(eyre!("RPC error: {} - {}", error.code, error.message));
         }
-        
+
         Ok(response.result)
     }
 
@@ -138,18 +152,21 @@ impl EvmConfirmation {
             "params": [],
             "id": 1
         });
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&self.rpc_url)
             .json(&body)
             .send()
             .await?
             .json::<RpcResponse<String>>()
             .await?;
-        
-        let hex = response.result.ok_or_else(|| eyre!("No block number returned"))?;
+
+        let hex = response
+            .result
+            .ok_or_else(|| eyre!("No block number returned"))?;
         let block = u64::from_str_radix(hex.trim_start_matches("0x"), 16)?;
-        
+
         Ok(block)
     }
 }

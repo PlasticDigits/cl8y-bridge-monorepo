@@ -28,9 +28,9 @@ contract FactoryTokenCl8yBridged is AccessManaged {
         returns (address)
     {
         address token = address(
-            new TokenCl8yBridged{salt: keccak256(abi.encode(baseName, baseSymbol, msg.sender))}(
-                string.concat(baseName, NAME_SUFFIX), string.concat(baseSymbol, SYMBOL_SUFFIX), authority(), _logoLink
-            )
+            new TokenCl8yBridged{
+                salt: keccak256(abi.encode(baseName, baseSymbol, msg.sender))
+            }(string.concat(baseName, NAME_SUFFIX), string.concat(baseSymbol, SYMBOL_SUFFIX), authority(), _logoLink)
         );
         _tokens.add(token);
         logoLink = _logoLink;

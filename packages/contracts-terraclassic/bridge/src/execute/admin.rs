@@ -68,10 +68,7 @@ pub fn execute_propose_admin(
     Ok(Response::new()
         .add_attribute("method", "propose_admin")
         .add_attribute("new_admin", new_admin_addr.to_string())
-        .add_attribute(
-            "execute_after",
-            pending.execute_after.seconds().to_string(),
-        ))
+        .add_attribute("execute_after", pending.execute_after.seconds().to_string()))
 }
 
 /// Accept pending admin role (after timelock).

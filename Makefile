@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check
 
 # Default target
 help:
@@ -21,6 +21,10 @@ help:
 	@echo "  make build-terra    - Build Terra contracts"
 	@echo "  make build-operator - Build operator"
 	@echo "  make build          - Build all packages"
+	@echo ""
+	@echo "Formatting:"
+	@echo "  make fmt            - Format all packages (Rust + Solidity)"
+	@echo "  make fmt-check      - Check formatting without modifying files"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test-evm       - Run EVM contract tests"
@@ -80,6 +84,25 @@ logs-terra:
 
 logs-postgres:
 	docker-compose logs -f postgres
+
+# Formatting
+fmt:
+	@echo "Formatting all packages..."
+	cd packages/operator && cargo fmt
+	cd packages/canceler && cargo fmt
+	cd packages/contracts-terraclassic/bridge && cargo fmt
+	cd packages/contracts-evm && forge fmt
+	@echo "✅ All packages formatted"
+
+fmt-check:
+	@echo "Checking formatting..."
+	@FAILED=0; \
+	(cd packages/operator && cargo fmt --check) || FAILED=1; \
+	(cd packages/canceler && cargo fmt --check) || FAILED=1; \
+	(cd packages/contracts-terraclassic/bridge && cargo fmt --check) || FAILED=1; \
+	(cd packages/contracts-evm && forge fmt --check) || FAILED=1; \
+	if [ $$FAILED -eq 1 ]; then echo "❌ Formatting issues found. Run 'make fmt' to fix."; exit 1; fi
+	@echo "✅ All formatting checks passed"
 
 # Building
 build-evm:

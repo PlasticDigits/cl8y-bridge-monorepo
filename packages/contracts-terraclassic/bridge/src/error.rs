@@ -13,7 +13,6 @@ pub enum ContractError {
     // ========================================================================
     // Authorization Errors
     // ========================================================================
-
     #[error("Unauthorized: only admin can perform this action")]
     Unauthorized,
 
@@ -29,7 +28,6 @@ pub enum ContractError {
     // ========================================================================
     // Admin Errors
     // ========================================================================
-
     #[error("No pending admin change")]
     NoPendingAdmin,
 
@@ -39,7 +37,6 @@ pub enum ContractError {
     // ========================================================================
     // Bridge State Errors
     // ========================================================================
-
     #[error("Bridge is paused")]
     BridgePaused,
 
@@ -55,7 +52,6 @@ pub enum ContractError {
     // ========================================================================
     // Nonce Errors
     // ========================================================================
-
     #[error("Nonce already used: {nonce}")]
     NonceAlreadyUsed { nonce: u64 },
 
@@ -68,7 +64,6 @@ pub enum ContractError {
     // ========================================================================
     // Signature Errors (legacy)
     // ========================================================================
-
     #[error("Invalid signature")]
     InvalidSignature,
 
@@ -78,7 +73,6 @@ pub enum ContractError {
     // ========================================================================
     // Amount & Funds Errors
     // ========================================================================
-
     #[error("Invalid address: {reason}")]
     InvalidAddress { reason: String },
 
@@ -103,7 +97,6 @@ pub enum ContractError {
     // ========================================================================
     // Operator Errors
     // ========================================================================
-
     #[error("Operator already registered")]
     OperatorAlreadyRegistered,
 
@@ -116,7 +109,6 @@ pub enum ContractError {
     // ========================================================================
     // Watchtower Pattern Errors (v2.0)
     // ========================================================================
-
     #[error("Withdrawal not approved")]
     WithdrawNotApproved,
 
@@ -138,7 +130,6 @@ pub enum ContractError {
     // ========================================================================
     // Rate Limit Errors
     // ========================================================================
-
     #[error("Rate limit exceeded: {limit_type} limit is {limit}, requested {requested}")]
     RateLimitExceeded {
         limit_type: String,
@@ -149,7 +140,6 @@ pub enum ContractError {
     // ========================================================================
     // Validation Errors
     // ========================================================================
-
     #[error("Invalid hash length: expected 32 bytes, got {got}")]
     InvalidHashLength { got: usize },
 
@@ -159,7 +149,6 @@ pub enum ContractError {
     // ========================================================================
     // Recovery Errors
     // ========================================================================
-
     #[error("Asset recovery only available when bridge is paused")]
     RecoveryNotAvailable,
 }

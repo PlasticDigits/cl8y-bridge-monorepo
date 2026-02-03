@@ -150,8 +150,8 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
     for i in 1..=count {
         let prefix = format!("EVM_CHAIN_{}", i);
 
-        let name = std::env::var(format!("{}_NAME", prefix))
-            .unwrap_or_else(|_| format!("chain_{}", i));
+        let name =
+            std::env::var(format!("{}_NAME", prefix)).unwrap_or_else(|_| format!("chain_{}", i));
 
         let chain_id: u64 = std::env::var(format!("{}_CHAIN_ID", prefix))
             .map_err(|_| eyre!("Missing {}_CHAIN_ID", prefix))?

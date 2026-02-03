@@ -86,29 +86,32 @@ impl TerraClient {
             .wrap_err("Failed to create HTTP client")?;
 
         // Parse mnemonic and derive signing key
-        let mnemonic = Mnemonic::parse(mnemonic)
-            .map_err(|e| eyre!("Invalid mnemonic: {}", e))?;
-        
+        let mnemonic = Mnemonic::parse(mnemonic).map_err(|e| eyre!("Invalid mnemonic: {}", e))?;
+
         let seed = mnemonic.to_seed("");
-        let path: DerivationPath = TERRA_DERIVATION_PATH.parse()
+        let path: DerivationPath = TERRA_DERIVATION_PATH
+            .parse()
             .map_err(|e| eyre!("Invalid derivation path: {:?}", e))?;
-        
+
         let signing_key = SigningKey::derive_from_path(seed, &path)
             .map_err(|e| eyre!("Failed to derive signing key: {}", e))?;
-        
+
         // Get account address
         let public_key = signing_key.public_key();
-        let address = public_key.account_id("terra")
+        let address = public_key
+            .account_id("terra")
             .map_err(|e| eyre!("Failed to get account ID: {}", e))?;
 
         // Determine fallback URLs based on chain ID
         let fallback_urls = if chain_id == "columbus-5" {
-            MAINNET_LCD_ENDPOINTS.iter()
+            MAINNET_LCD_ENDPOINTS
+                .iter()
                 .filter(|u| **u != lcd_url)
                 .map(|s| s.to_string())
                 .collect()
         } else if chain_id == "rebel-2" {
-            TESTNET_LCD_ENDPOINTS.iter()
+            TESTNET_LCD_ENDPOINTS
+                .iter()
                 .filter(|u| **u != lcd_url)
                 .map(|s| s.to_string())
                 .collect()
@@ -140,9 +143,13 @@ impl TerraClient {
             self.lcd_url, self.address
         );
 
-        let response = self.client.get(&url).send().await
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .wrap_err("Failed to query account info")?;
-        
+
         if !response.status().is_success() {
             return Err(eyre!(
                 "Account query failed: {} - {}",
@@ -152,21 +159,28 @@ impl TerraClient {
         }
 
         let data: serde_json::Value = response.json().await?;
-        
+
         // Handle different account response formats
-        let account = data.get("account")
+        let account = data
+            .get("account")
             .ok_or_else(|| eyre!("Missing 'account' field in response"))?;
-        
+
         // Try to get sequence and account_number
-        let sequence = account.get("sequence")
+        let sequence = account
+            .get("sequence")
             .or_else(|| account.get("base_account").and_then(|b| b.get("sequence")))
             .and_then(|v| v.as_str())
             .unwrap_or("0")
             .parse()
             .unwrap_or(0);
-        
-        let account_number = account.get("account_number")
-            .or_else(|| account.get("base_account").and_then(|b| b.get("account_number")))
+
+        let account_number = account
+            .get("account_number")
+            .or_else(|| {
+                account
+                    .get("base_account")
+                    .and_then(|b| b.get("account_number"))
+            })
             .and_then(|v| v.as_str())
             .unwrap_or("0")
             .parse()
@@ -187,11 +201,9 @@ impl TerraClient {
         };
 
         let url = format!("{}/v1/txs/gas_prices", fcd_url);
-        
+
         match self.client.get(&url).send().await {
-            Ok(response) if response.status().is_success() => {
-                Ok(response.json().await?)
-            }
+            Ok(response) if response.status().is_success() => Ok(response.json().await?),
             _ => {
                 // Default gas prices if FCD is unavailable
                 warn!("Could not fetch gas prices, using defaults");
@@ -212,7 +224,7 @@ impl TerraClient {
     ) -> Result<String> {
         // Get account info for signing
         let account_info = self.get_account_info().await?;
-        
+
         // Get gas prices
         let gas_prices = self.get_gas_prices().await?;
         let gas_price: f64 = gas_prices.uluna.parse().unwrap_or(0.015);
@@ -223,7 +235,7 @@ impl TerraClient {
 
         // Build the message
         let msg_json = serde_json::to_vec(msg)?;
-        
+
         // Convert funds to coins
         let coins: Vec<Coin> = funds
             .iter()
@@ -236,7 +248,8 @@ impl TerraClient {
         // Create the MsgExecuteContract
         let execute_msg = cosmrs::cosmwasm::MsgExecuteContract {
             sender: self.address.clone(),
-            contract: contract_address.parse()
+            contract: contract_address
+                .parse()
                 .map_err(|e| eyre!("Invalid contract address: {:?}", e))?,
             msg: msg_json,
             funds: coins,
@@ -244,17 +257,16 @@ impl TerraClient {
 
         // Build transaction body
         let body = tx::Body::new(
-            vec![execute_msg.to_any().map_err(|e| eyre!("Failed to convert message: {}", e))?],
+            vec![execute_msg
+                .to_any()
+                .map_err(|e| eyre!("Failed to convert message: {}", e))?],
             "",
             0u32,
         );
 
         // Build auth info
         let public_key = self.signing_key.public_key();
-        let signer_info = SignerInfo::single_direct(
-            Some(public_key),
-            account_info.sequence,
-        );
+        let signer_info = SignerInfo::single_direct(Some(public_key), account_info.sequence);
 
         let fee = Fee::from_amount_and_gas(
             Coin {
@@ -267,22 +279,22 @@ impl TerraClient {
         let auth_info = signer_info.auth_info(fee);
 
         // Create sign doc
-        let chain_id = self.chain_id.parse()
+        let chain_id = self
+            .chain_id
+            .parse()
             .map_err(|_| eyre!("Invalid chain ID"))?;
-        
-        let sign_doc = SignDoc::new(
-            &body,
-            &auth_info,
-            &chain_id,
-            account_info.account_number,
-        ).map_err(|e| eyre!("Failed to create sign doc: {}", e))?;
+
+        let sign_doc = SignDoc::new(&body, &auth_info, &chain_id, account_info.account_number)
+            .map_err(|e| eyre!("Failed to create sign doc: {}", e))?;
 
         // Sign the transaction
-        let tx_raw = sign_doc.sign(&self.signing_key)
+        let tx_raw = sign_doc
+            .sign(&self.signing_key)
             .map_err(|e| eyre!("Failed to sign transaction: {}", e))?;
 
         // Serialize and broadcast
-        let tx_bytes = tx_raw.to_bytes()
+        let tx_bytes = tx_raw
+            .to_bytes()
             .map_err(|e| eyre!("Failed to serialize transaction: {}", e))?;
 
         self.broadcast_tx(&tx_bytes).await
@@ -295,10 +307,7 @@ impl TerraClient {
             .chain(self.fallback_urls.iter().map(|s| s.as_str()))
             .collect();
 
-        let tx_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            tx_bytes,
-        );
+        let tx_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, tx_bytes);
 
         let broadcast_request = serde_json::json!({
             "tx_bytes": tx_b64,
@@ -309,10 +318,11 @@ impl TerraClient {
 
         for url in urls {
             let broadcast_url = format!("{}/cosmos/tx/v1beta1/txs", url);
-            
+
             debug!(url = %broadcast_url, "Broadcasting transaction");
 
-            match self.client
+            match self
+                .client
                 .post(&broadcast_url)
                 .json(&broadcast_request)
                 .send()
@@ -320,30 +330,35 @@ impl TerraClient {
             {
                 Ok(response) => {
                     let status = response.status();
-                    let body: serde_json::Value = response.json().await
-                        .unwrap_or_else(|_| serde_json::json!({"error": "Failed to parse response"}));
+                    let body: serde_json::Value = response.json().await.unwrap_or_else(
+                        |_| serde_json::json!({"error": "Failed to parse response"}),
+                    );
 
                     if status.is_success() {
                         // Check for tx response
                         if let Some(tx_response) = body.get("tx_response") {
-                            let code = tx_response.get("code")
+                            let code = tx_response
+                                .get("code")
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0);
-                            
+
                             if code == 0 {
-                                let txhash = tx_response.get("txhash")
+                                let txhash = tx_response
+                                    .get("txhash")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                
+
                                 info!(txhash = %txhash, "Transaction broadcast successful");
                                 return Ok(txhash);
                             } else {
-                                let raw_log = tx_response.get("raw_log")
+                                let raw_log = tx_response
+                                    .get("raw_log")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("Unknown error");
-                                
-                                last_error = Some(eyre!("Transaction failed (code {}): {}", code, raw_log));
+
+                                last_error =
+                                    Some(eyre!("Transaction failed (code {}): {}", code, raw_log));
                                 continue;
                             }
                         }
@@ -370,16 +385,16 @@ impl TerraClient {
     ) -> Result<String> {
         // This is a fallback implementation using the LCD's amino/JSON signing
         // For Terra Classic, we may need to use this if cosmrs has compatibility issues
-        
+
         warn!("Using raw HTTP fallback for transaction signing");
-        
+
         // Get account info
         let account_info = self.get_account_info().await?;
-        
+
         // For raw HTTP, we need to construct the transaction manually
         // This requires the legacy amino signing which is more complex
         // For now, return an error directing to use simulate/estimate approach
-        
+
         Err(eyre!(
             "Raw HTTP signing not yet implemented. Account: {:?}, sequence: {}",
             self.address,

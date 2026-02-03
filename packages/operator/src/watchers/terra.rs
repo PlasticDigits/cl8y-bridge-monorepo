@@ -45,10 +45,8 @@ pub struct TerraWatcher {
 impl TerraWatcher {
     /// Create a new Terra watcher
     pub async fn new(config: &crate::config::TerraConfig, db: PgPool) -> Result<Self> {
-        let url: Url = config.rpc_url.parse()
-            .wrap_err("Failed to parse RPC URL")?;
-        let rpc_client = HttpClient::new(url)
-            .wrap_err("Failed to create RPC client")?;
+        let url: Url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
+        let rpc_client = HttpClient::new(url).wrap_err("Failed to create RPC client")?;
 
         Ok(Self {
             rpc_client,
@@ -89,8 +87,7 @@ impl TerraWatcher {
                 self.process_block(height).await?;
 
                 // Update last processed height
-                update_last_terra_block(&self.db, &self.chain_id, height as i64)
-                    .await?;
+                update_last_terra_block(&self.db, &self.chain_id, height as i64).await?;
             }
 
             tokio::time::sleep(poll_interval).await;
@@ -109,9 +106,7 @@ impl TerraWatcher {
         // Also query via LCD for transaction details
         let url = format!(
             "{}/cosmos/tx/v1beta1/txs?events=wasm._contract_address='{}'&events=tx.height={}",
-            self.lcd_url,
-            self.bridge_address,
-            height
+            self.lcd_url, self.bridge_address, height
         );
 
         let response: TxSearchResponse = reqwest::get(&url)
@@ -124,12 +119,8 @@ impl TerraWatcher {
         for tx in response.tx_responses {
             if let Some(deposit) = self.parse_lock_tx(&tx)? {
                 // Check if already exists
-                if !crate::db::terra_deposit_exists(
-                    &self.db,
-                    &deposit.tx_hash,
-                    deposit.nonce,
-                )
-                .await?
+                if !crate::db::terra_deposit_exists(&self.db, &deposit.tx_hash, deposit.nonce)
+                    .await?
                 {
                     crate::db::insert_terra_deposit(&self.db, &deposit).await?;
                     tracing::info!(

@@ -3,9 +3,9 @@
 //! This module defines all messages for instantiation, execution, and queries,
 //! including the watchtower pattern messages (v2.0).
 
+use common::AssetInfo;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Binary, Timestamp, Uint128};
-use common::AssetInfo;
 
 // ============================================================================
 // Instantiate & Migrate
@@ -44,7 +44,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Outgoing Transfers (Lock)
     // ========================================================================
-
     /// Lock tokens for bridging to an EVM chain
     /// User sends native tokens with this message
     Lock {
@@ -61,7 +60,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Watchtower Pattern (Incoming Transfers)
     // ========================================================================
-
     /// Approve a withdrawal (creates pending approval)
     ///
     /// Authorization: Operator only
@@ -130,7 +128,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Canceler Management
     // ========================================================================
-
     /// Add a canceler address
     ///
     /// Authorization: Admin only
@@ -150,7 +147,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Configuration
     // ========================================================================
-
     /// Set the global withdrawal delay
     ///
     /// Authorization: Admin only
@@ -174,7 +170,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Chain & Token Management
     // ========================================================================
-
     /// Add a new supported chain
     AddChain {
         chain_id: u64,
@@ -209,7 +204,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Operator Management
     // ========================================================================
-
     /// Register a new operator
     AddOperator { operator: String },
 
@@ -222,7 +216,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Bridge Configuration
     // ========================================================================
-
     /// Update bridge limits
     UpdateLimits {
         min_bridge_amount: Option<Uint128>,
@@ -238,7 +231,6 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Admin Operations
     // ========================================================================
-
     /// Pause the bridge (admin only)
     Pause {},
 
@@ -283,7 +275,6 @@ pub enum QueryMsg {
     // ========================================================================
     // Core Queries
     // ========================================================================
-
     /// Returns contract configuration
     #[returns(ConfigResponse)]
     Config {},
@@ -353,7 +344,6 @@ pub enum QueryMsg {
     // ========================================================================
     // Watchtower Queries
     // ========================================================================
-
     /// Get withdrawal approval by hash
     #[returns(WithdrawApprovalResponse)]
     WithdrawApproval { withdraw_hash: Binary },
@@ -391,7 +381,6 @@ pub enum QueryMsg {
     // ========================================================================
     // Canceler Queries
     // ========================================================================
-
     /// List all active cancelers
     #[returns(CancelersResponse)]
     Cancelers {},
@@ -403,7 +392,6 @@ pub enum QueryMsg {
     // ========================================================================
     // Configuration Queries
     // ========================================================================
-
     /// Get current withdraw delay
     #[returns(WithdrawDelayResponse)]
     WithdrawDelay {},

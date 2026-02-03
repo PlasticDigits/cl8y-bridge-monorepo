@@ -7,8 +7,8 @@
 //! - `ReenableWithdrawApproval` - Admin reenables a mistakenly cancelled approval
 
 use cosmwasm_std::{
-    to_json_binary, BankMsg, Binary, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response,
-    Storage, Uint128,
+    to_json_binary, BankMsg, Binary, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage,
+    Uint128,
 };
 use cw20::Cw20ExecuteMsg;
 
@@ -81,11 +81,12 @@ pub fn execute_approve_withdraw(
     let fee_recipient_addr = deps.api.addr_validate(&fee_recipient)?;
 
     // Check token is supported
-    let _token_config = TOKENS
-        .may_load(deps.storage, token.clone())?
-        .ok_or(ContractError::TokenNotSupported {
-            token: token.clone(),
-        })?;
+    let _token_config =
+        TOKENS
+            .may_load(deps.storage, token.clone())?
+            .ok_or(ContractError::TokenNotSupported {
+                token: token.clone(),
+            })?;
 
     // Compute withdraw hash (transferId)
     let dest_chain_key = terra_chain_key();

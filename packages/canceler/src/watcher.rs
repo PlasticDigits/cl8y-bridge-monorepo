@@ -147,11 +147,17 @@ impl CancelerWatcher {
         debug!("Polling EVM approvals");
 
         // Create provider
-        let provider = ProviderBuilder::new()
-            .on_http(self.config.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+        let provider = ProviderBuilder::new().on_http(
+            self.config
+                .evm_rpc_url
+                .parse()
+                .wrap_err("Invalid EVM RPC URL")?,
+        );
 
         // Get current block
-        let current_block = provider.get_block_number().await
+        let current_block = provider
+            .get_block_number()
+            .await
             .map_err(|e| eyre!("Failed to get block number: {}", e))?;
 
         // If first run, start from current block minus some lookback
@@ -182,11 +188,14 @@ impl CancelerWatcher {
         let contract = CL8YBridge::new(bridge_address, &provider);
 
         // Query event logs
-        let filter = contract.WithdrawApproved_filter()
+        let filter = contract
+            .WithdrawApproved_filter()
             .from_block(from_block)
             .to_block(to_block);
 
-        let logs = filter.query().await
+        let logs = filter
+            .query()
+            .await
             .map_err(|e| eyre!("Failed to query events: {}", e))?;
 
         info!(
@@ -201,8 +210,9 @@ impl CancelerWatcher {
             let withdraw_hash: [u8; 32] = event.withdrawHash.0;
 
             // Skip if already processed
-            if self.verified_hashes.contains(&withdraw_hash) || 
-               self.cancelled_hashes.contains(&withdraw_hash) {
+            if self.verified_hashes.contains(&withdraw_hash)
+                || self.cancelled_hashes.contains(&withdraw_hash)
+            {
                 continue;
             }
 
@@ -218,7 +228,8 @@ impl CancelerWatcher {
             );
 
             // Query approval details from contract for full info
-            let approval_info = contract.getWithdrawApproval(FixedBytes::from(withdraw_hash))
+            let approval_info = contract
+                .getWithdrawApproval(FixedBytes::from(withdraw_hash))
                 .call()
                 .await;
 
@@ -287,11 +298,16 @@ impl CancelerWatcher {
 
         // Query LCD for current height
         let client = reqwest::Client::new();
-        let status_url = format!("{}/cosmos/base/tendermint/v1beta1/blocks/latest", self.config.terra_lcd_url);
-        
+        let status_url = format!(
+            "{}/cosmos/base/tendermint/v1beta1/blocks/latest",
+            self.config.terra_lcd_url
+        );
+
         let current_height = match client.get(&status_url).send().await {
             Ok(resp) => {
-                let json: serde_json::Value = resp.json().await
+                let json: serde_json::Value = resp
+                    .json()
+                    .await
                     .map_err(|e| eyre!("Failed to parse status: {}", e))?;
                 json["block"]["header"]["height"]
                     .as_str()
@@ -327,19 +343,19 @@ impl CancelerWatcher {
             }
         });
 
-        let query_b64 = base64::engine::general_purpose::STANDARD
-            .encode(serde_json::to_string(&query)?);
+        let query_b64 =
+            base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&query)?);
 
         let url = format!(
             "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
-            self.config.terra_lcd_url,
-            self.config.terra_bridge_address,
-            query_b64
+            self.config.terra_lcd_url, self.config.terra_bridge_address, query_b64
         );
 
         match client.get(&url).send().await {
             Ok(resp) => {
-                let json: serde_json::Value = resp.json().await
+                let json: serde_json::Value = resp
+                    .json()
+                    .await
                     .map_err(|e| eyre!("Failed to parse approvals: {}", e))?;
 
                 // Parse pending approvals from response
@@ -351,10 +367,9 @@ impl CancelerWatcher {
 
                     for approval_json in approvals {
                         // Parse withdraw_hash from base64
-                        let withdraw_hash_b64 = approval_json["withdraw_hash"]
-                            .as_str()
-                            .unwrap_or("");
-                        
+                        let withdraw_hash_b64 =
+                            approval_json["withdraw_hash"].as_str().unwrap_or("");
+
                         let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
                             .decode(withdraw_hash_b64)
                             .unwrap_or_default();
@@ -367,33 +382,34 @@ impl CancelerWatcher {
                         withdraw_hash.copy_from_slice(&withdraw_hash_bytes);
 
                         // Skip if already processed
-                        if self.verified_hashes.contains(&withdraw_hash) || 
-                           self.cancelled_hashes.contains(&withdraw_hash) {
+                        if self.verified_hashes.contains(&withdraw_hash)
+                            || self.cancelled_hashes.contains(&withdraw_hash)
+                        {
                             continue;
                         }
 
                         // Parse other fields
-                        let src_chain_key = self.parse_bytes32_from_json(&approval_json["src_chain_key"]);
-                        let dest_chain_key = self.parse_bytes32_from_json(&approval_json["dest_chain_key"]);
-                        let dest_token_address = self.parse_bytes32_from_json(&approval_json["dest_token_address"]);
-                        let dest_account = self.parse_bytes32_from_json(&approval_json["dest_account"]);
-                        
+                        let src_chain_key =
+                            self.parse_bytes32_from_json(&approval_json["src_chain_key"]);
+                        let dest_chain_key =
+                            self.parse_bytes32_from_json(&approval_json["dest_chain_key"]);
+                        let dest_token_address =
+                            self.parse_bytes32_from_json(&approval_json["dest_token_address"]);
+                        let dest_account =
+                            self.parse_bytes32_from_json(&approval_json["dest_account"]);
+
                         let amount: u128 = approval_json["amount"]
                             .as_str()
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0);
-                        
-                        let nonce: u64 = approval_json["nonce"]
-                            .as_u64()
-                            .unwrap_or(0);
 
-                        let approved_at_timestamp: u64 = approval_json["approved_at"]
-                            .as_u64()
-                            .unwrap_or(0);
+                        let nonce: u64 = approval_json["nonce"].as_u64().unwrap_or(0);
 
-                        let delay_seconds: u64 = approval_json["delay_seconds"]
-                            .as_u64()
-                            .unwrap_or(300);
+                        let approved_at_timestamp: u64 =
+                            approval_json["approved_at"].as_u64().unwrap_or(0);
+
+                        let delay_seconds: u64 =
+                            approval_json["delay_seconds"].as_u64().unwrap_or(300);
 
                         info!(
                             withdraw_hash = %bytes32_to_hex(&withdraw_hash),
@@ -442,7 +458,7 @@ impl CancelerWatcher {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .unwrap_or_default();
-        
+
         let mut result = [0u8; 32];
         if bytes.len() >= 32 {
             result.copy_from_slice(&bytes[..32]);
@@ -478,7 +494,7 @@ impl CancelerWatcher {
                     reason = %reason,
                     "Approval is INVALID - submitting cancellation"
                 );
-                
+
                 // Submit cancel transaction
                 if let Err(e) = self.submit_cancel(approval).await {
                     error!(
@@ -505,17 +521,26 @@ impl CancelerWatcher {
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
         // Determine which chain the approval is on (the destination chain)
         // The dest_chain_key tells us where to submit the cancellation
-        
+
         let withdraw_hash = approval.withdraw_hash;
-        
+
         // Check if it's an EVM chain (try EVM first)
-        if self.evm_client.can_cancel(withdraw_hash).await.unwrap_or(false) {
+        if self
+            .evm_client
+            .can_cancel(withdraw_hash)
+            .await
+            .unwrap_or(false)
+        {
             info!(
                 hash = %bytes32_to_hex(&withdraw_hash),
                 "Submitting cancellation to EVM"
             );
-            
-            match self.evm_client.cancel_withdraw_approval(withdraw_hash).await {
+
+            match self
+                .evm_client
+                .cancel_withdraw_approval(withdraw_hash)
+                .await
+            {
                 Ok(tx_hash) => {
                     info!(
                         tx_hash = %tx_hash,
@@ -531,13 +556,21 @@ impl CancelerWatcher {
         }
 
         // Try Terra
-        if self.terra_client.can_cancel(withdraw_hash).await.unwrap_or(false) {
+        if self
+            .terra_client
+            .can_cancel(withdraw_hash)
+            .await
+            .unwrap_or(false)
+        {
             info!(
                 hash = %bytes32_to_hex(&withdraw_hash),
                 "Submitting cancellation to Terra"
             );
-            
-            let tx_hash = self.terra_client.cancel_withdraw_approval(withdraw_hash).await?;
+
+            let tx_hash = self
+                .terra_client
+                .cancel_withdraw_approval(withdraw_hash)
+                .await?;
             info!(
                 tx_hash = %tx_hash,
                 hash = %bytes32_to_hex(&withdraw_hash),

@@ -178,5 +178,8 @@ async fn build_pending_response(db: &PgPool) -> PendingResponse {
         })
         .collect();
 
-    PendingResponse { approvals, releases }
+    PendingResponse {
+        approvals,
+        releases,
+    }
 }

@@ -53,26 +53,32 @@ pub struct TerraClient {
 
 impl TerraClient {
     /// Create a new Terra client
-    pub fn new(lcd_url: &str, chain_id: &str, contract_address: &str, mnemonic: &str) -> Result<Self> {
+    pub fn new(
+        lcd_url: &str,
+        chain_id: &str,
+        contract_address: &str,
+        mnemonic: &str,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .wrap_err("Failed to create HTTP client")?;
 
         // Parse mnemonic and derive signing key
-        let mnemonic = Mnemonic::parse(mnemonic)
-            .map_err(|e| eyre!("Invalid mnemonic: {}", e))?;
-        
+        let mnemonic = Mnemonic::parse(mnemonic).map_err(|e| eyre!("Invalid mnemonic: {}", e))?;
+
         let seed = mnemonic.to_seed("");
-        let path: DerivationPath = TERRA_DERIVATION_PATH.parse()
+        let path: DerivationPath = TERRA_DERIVATION_PATH
+            .parse()
             .map_err(|e| eyre!("Invalid derivation path: {:?}", e))?;
-        
+
         let signing_key = SigningKey::derive_from_path(seed, &path)
             .map_err(|e| eyre!("Failed to derive signing key: {}", e))?;
-        
+
         // Get account address
         let public_key = signing_key.public_key();
-        let address = public_key.account_id("terra")
+        let address = public_key
+            .account_id("terra")
             .map_err(|e| eyre!("Failed to get account ID: {}", e))?;
 
         info!(
@@ -98,9 +104,13 @@ impl TerraClient {
             self.lcd_url, self.address
         );
 
-        let response = self.client.get(&url).send().await
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .wrap_err("Failed to query account info")?;
-        
+
         if !response.status().is_success() {
             return Err(eyre!(
                 "Account query failed: {} - {}",
@@ -110,19 +120,26 @@ impl TerraClient {
         }
 
         let data: serde_json::Value = response.json().await?;
-        
-        let account = data.get("account")
+
+        let account = data
+            .get("account")
             .ok_or_else(|| eyre!("Missing 'account' field in response"))?;
-        
-        let sequence = account.get("sequence")
+
+        let sequence = account
+            .get("sequence")
             .or_else(|| account.get("base_account").and_then(|b| b.get("sequence")))
             .and_then(|v| v.as_str())
             .unwrap_or("0")
             .parse()
             .unwrap_or(0);
-        
-        let account_number = account.get("account_number")
-            .or_else(|| account.get("base_account").and_then(|b| b.get("account_number")))
+
+        let account_number = account
+            .get("account_number")
+            .or_else(|| {
+                account
+                    .get("base_account")
+                    .and_then(|b| b.get("account_number"))
+            })
             .and_then(|v| v.as_str())
             .unwrap_or("0")
             .parse()
@@ -164,7 +181,9 @@ impl TerraClient {
 
         let execute_msg = cosmrs::cosmwasm::MsgExecuteContract {
             sender: self.address.clone(),
-            contract: self.contract_address.parse()
+            contract: self
+                .contract_address
+                .parse()
                 .map_err(|e| eyre!("Invalid contract address: {:?}", e))?,
             msg: msg_json,
             funds: vec![],
@@ -172,17 +191,16 @@ impl TerraClient {
 
         // Build transaction body
         let body = tx::Body::new(
-            vec![execute_msg.to_any().map_err(|e| eyre!("Failed to convert message: {}", e))?],
+            vec![execute_msg
+                .to_any()
+                .map_err(|e| eyre!("Failed to convert message: {}", e))?],
             "",
             0u32,
         );
 
         // Build auth info
         let public_key = self.signing_key.public_key();
-        let signer_info = SignerInfo::single_direct(
-            Some(public_key),
-            account_info.sequence,
-        );
+        let signer_info = SignerInfo::single_direct(Some(public_key), account_info.sequence);
 
         let fee = Fee::from_amount_and_gas(
             Coin {
@@ -195,22 +213,22 @@ impl TerraClient {
         let auth_info = signer_info.auth_info(fee);
 
         // Create sign doc
-        let chain_id = self.chain_id.parse()
+        let chain_id = self
+            .chain_id
+            .parse()
             .map_err(|_| eyre!("Invalid chain ID"))?;
-        
-        let sign_doc = SignDoc::new(
-            &body,
-            &auth_info,
-            &chain_id,
-            account_info.account_number,
-        ).map_err(|e| eyre!("Failed to create sign doc: {}", e))?;
+
+        let sign_doc = SignDoc::new(&body, &auth_info, &chain_id, account_info.account_number)
+            .map_err(|e| eyre!("Failed to create sign doc: {}", e))?;
 
         // Sign the transaction
-        let tx_raw = sign_doc.sign(&self.signing_key)
+        let tx_raw = sign_doc
+            .sign(&self.signing_key)
             .map_err(|e| eyre!("Failed to sign transaction: {}", e))?;
 
         // Serialize and broadcast
-        let tx_bytes = tx_raw.to_bytes()
+        let tx_bytes = tx_raw
+            .to_bytes()
             .map_err(|e| eyre!("Failed to serialize transaction: {}", e))?;
 
         let tx_hash = self.broadcast_tx(&tx_bytes).await?;
@@ -226,10 +244,7 @@ impl TerraClient {
 
     /// Broadcast a signed transaction
     async fn broadcast_tx(&self, tx_bytes: &[u8]) -> Result<String> {
-        let tx_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            tx_bytes,
-        );
+        let tx_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, tx_bytes);
 
         let broadcast_request = serde_json::json!({
             "tx_bytes": tx_b64,
@@ -237,10 +252,11 @@ impl TerraClient {
         });
 
         let broadcast_url = format!("{}/cosmos/tx/v1beta1/txs", self.lcd_url);
-        
+
         debug!(url = %broadcast_url, "Broadcasting transaction");
 
-        let response = self.client
+        let response = self
+            .client
             .post(&broadcast_url)
             .json(&broadcast_request)
             .send()
@@ -248,27 +264,32 @@ impl TerraClient {
             .map_err(|e| eyre!("Failed to broadcast: {}", e))?;
 
         let status = response.status();
-        let body: serde_json::Value = response.json().await
+        let body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or_else(|_| serde_json::json!({"error": "Failed to parse response"}));
 
         if status.is_success() {
             if let Some(tx_response) = body.get("tx_response") {
-                let code = tx_response.get("code")
+                let code = tx_response
+                    .get("code")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
-                
+
                 if code == 0 {
-                    let txhash = tx_response.get("txhash")
+                    let txhash = tx_response
+                        .get("txhash")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    
+
                     return Ok(txhash);
                 } else {
-                    let raw_log = tx_response.get("raw_log")
+                    let raw_log = tx_response
+                        .get("raw_log")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error");
-                    
+
                     return Err(eyre!("Transaction failed (code {}): {}", code, raw_log));
                 }
             }
@@ -301,11 +322,11 @@ impl TerraClient {
         match self.client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let json: serde_json::Value = resp.json().await?;
-                
+
                 let exists = json["data"]["exists"].as_bool().unwrap_or(false);
                 let cancelled = json["data"]["cancelled"].as_bool().unwrap_or(false);
                 let executed = json["data"]["executed"].as_bool().unwrap_or(false);
-                
+
                 Ok(exists && !cancelled && !executed)
             }
             _ => {

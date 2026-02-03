@@ -88,10 +88,12 @@ contract BridgeRouterScript is Script {
     }
 
     function _attachExistingComponents() internal {
-        chainRegistry =
-            chainRegistryAddress != address(0) ? ChainRegistry(chainRegistryAddress) : ChainRegistry(address(0));
-        tokenRegistry =
-            tokenRegistryAddress != address(0) ? TokenRegistry(tokenRegistryAddress) : TokenRegistry(address(0));
+        chainRegistry = chainRegistryAddress != address(0)
+            ? ChainRegistry(chainRegistryAddress)
+            : ChainRegistry(address(0));
+        tokenRegistry = tokenRegistryAddress != address(0)
+            ? TokenRegistry(tokenRegistryAddress)
+            : TokenRegistry(address(0));
         bridge = bridgeAddress != address(0) ? Cl8YBridge(bridgeAddress) : Cl8YBridge(address(0));
         mintBurn = mintBurnAddress != address(0) ? MintBurn(mintBurnAddress) : MintBurn(address(0));
         lockUnlock = lockUnlockAddress != address(0) ? LockUnlock(lockUnlockAddress) : LockUnlock(address(0));
@@ -163,9 +165,9 @@ contract BridgeRouterScript is Script {
 
     function _deployRouter(bytes32 baseSalt) internal {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "BridgeRouter"));
-        router = new BridgeRouter{salt: salt}(
-            address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress), guard
-        );
+        router = new BridgeRouter{
+            salt: salt
+        }(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress), guard);
         console.log("BridgeRouter deployed at:", address(router));
     }
 

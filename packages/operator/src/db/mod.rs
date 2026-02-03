@@ -56,12 +56,11 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
 
 /// Get pending EVM deposits (for creating releases on Terra)
 pub async fn get_pending_evm_deposits(pool: &PgPool) -> Result<Vec<EvmDeposit>> {
-    let rows = sqlx::query_as::<_, EvmDeposit>(
-        r#"SELECT * FROM evm_deposits WHERE status = 'pending'"#,
-    )
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get pending EVM deposits")?;
+    let rows =
+        sqlx::query_as::<_, EvmDeposit>(r#"SELECT * FROM evm_deposits WHERE status = 'pending'"#)
+            .fetch_all(pool)
+            .await
+            .wrap_err("Failed to get pending EVM deposits")?;
 
     Ok(rows)
 }
@@ -284,11 +283,10 @@ pub async fn insert_release(pool: &PgPool, release: &NewRelease) -> Result<i64> 
 
 /// Get pending releases for submission
 pub async fn get_pending_releases(pool: &PgPool) -> Result<Vec<Release>> {
-    let rows =
-        sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE status = 'pending'"#)
-            .fetch_all(pool)
-            .await
-            .wrap_err("Failed to get pending releases")?;
+    let rows = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE status = 'pending'"#)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get pending releases")?;
 
     Ok(rows)
 }
@@ -348,13 +346,12 @@ pub async fn release_exists(pool: &PgPool, src_chain_key: &[u8], nonce: i64) -> 
 
 /// Get last processed EVM block
 pub async fn get_last_evm_block(pool: &PgPool, chain_id: i64) -> Result<Option<i64>> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"SELECT last_processed_block FROM evm_blocks WHERE chain_id = $1"#,
-    )
-    .bind(chain_id)
-    .fetch_optional(pool)
-    .await
-    .wrap_err("Failed to get last EVM block")?;
+    let row: Option<(i64,)> =
+        sqlx::query_as(r#"SELECT last_processed_block FROM evm_blocks WHERE chain_id = $1"#)
+            .bind(chain_id)
+            .fetch_optional(pool)
+            .await
+            .wrap_err("Failed to get last EVM block")?;
 
     Ok(row.map(|r| r.0))
 }
@@ -379,13 +376,12 @@ pub async fn update_last_evm_block(pool: &PgPool, chain_id: i64, block_number: i
 
 /// Get last processed Terra block height
 pub async fn get_last_terra_block(pool: &PgPool, chain_id: &str) -> Result<Option<i64>> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"SELECT last_processed_height FROM terra_blocks WHERE chain_id = $1"#,
-    )
-    .bind(chain_id)
-    .fetch_optional(pool)
-    .await
-    .wrap_err("Failed to get last Terra block")?;
+    let row: Option<(i64,)> =
+        sqlx::query_as(r#"SELECT last_processed_height FROM terra_blocks WHERE chain_id = $1"#)
+            .bind(chain_id)
+            .fetch_optional(pool)
+            .await
+            .wrap_err("Failed to get last Terra block")?;
 
     Ok(row.map(|r| r.0))
 }
@@ -416,24 +412,21 @@ pub async fn update_last_terra_block(
 
 /// Get submitted approvals for confirmation checking
 pub async fn get_submitted_approvals(pool: &PgPool) -> Result<Vec<Approval>> {
-    let rows = sqlx::query_as::<_, Approval>(
-        r#"SELECT * FROM approvals WHERE status = 'submitted'"#,
-    )
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get submitted approvals")?;
+    let rows =
+        sqlx::query_as::<_, Approval>(r#"SELECT * FROM approvals WHERE status = 'submitted'"#)
+            .fetch_all(pool)
+            .await
+            .wrap_err("Failed to get submitted approvals")?;
 
     Ok(rows)
 }
 
 /// Get submitted releases for confirmation checking
 pub async fn get_submitted_releases(pool: &PgPool) -> Result<Vec<Release>> {
-    let rows = sqlx::query_as::<_, Release>(
-        r#"SELECT * FROM releases WHERE status = 'submitted'"#,
-    )
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get submitted releases")?;
+    let rows = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE status = 'submitted'"#)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get submitted releases")?;
 
     Ok(rows)
 }
@@ -489,7 +482,10 @@ pub async fn get_failed_approvals_for_retry(
 }
 
 /// Get failed releases that are ready for retry
-pub async fn get_failed_releases_for_retry(pool: &PgPool, max_attempts: i32) -> Result<Vec<Release>> {
+pub async fn get_failed_releases_for_retry(
+    pool: &PgPool,
+    max_attempts: i32,
+) -> Result<Vec<Release>> {
     let rows = sqlx::query_as::<_, Release>(
         r#"
         SELECT * FROM releases 
@@ -514,14 +510,12 @@ pub async fn update_approval_for_retry(
     id: i64,
     retry_after: chrono::DateTime<chrono::Utc>,
 ) -> Result<()> {
-    sqlx::query(
-        r#"UPDATE approvals SET status = 'pending', retry_after = $1 WHERE id = $2"#,
-    )
-    .bind(retry_after)
-    .bind(id)
-    .execute(pool)
-    .await
-    .wrap_err_with(|| format!("Failed to update approval {} for retry", id))?;
+    sqlx::query(r#"UPDATE approvals SET status = 'pending', retry_after = $1 WHERE id = $2"#)
+        .bind(retry_after)
+        .bind(id)
+        .execute(pool)
+        .await
+        .wrap_err_with(|| format!("Failed to update approval {} for retry", id))?;
 
     Ok(())
 }
@@ -532,14 +526,12 @@ pub async fn update_release_for_retry(
     id: i64,
     retry_after: chrono::DateTime<chrono::Utc>,
 ) -> Result<()> {
-    sqlx::query(
-        r#"UPDATE releases SET status = 'pending', retry_after = $1 WHERE id = $2"#,
-    )
-    .bind(retry_after)
-    .bind(id)
-    .execute(pool)
-    .await
-    .wrap_err_with(|| format!("Failed to update release {} for retry", id))?;
+    sqlx::query(r#"UPDATE releases SET status = 'pending', retry_after = $1 WHERE id = $2"#)
+        .bind(retry_after)
+        .bind(id)
+        .execute(pool)
+        .await
+        .wrap_err_with(|| format!("Failed to update release {} for retry", id))?;
 
     Ok(())
 }
@@ -548,60 +540,52 @@ pub async fn update_release_for_retry(
 
 /// Count pending deposits by chain
 pub async fn count_pending_deposits(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM evm_deposits WHERE status = 'pending'"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count pending deposits")?;
+    let row: (i64,) =
+        sqlx::query_as(r#"SELECT COUNT(*) FROM evm_deposits WHERE status = 'pending'"#)
+            .fetch_one(pool)
+            .await
+            .wrap_err("Failed to count pending deposits")?;
 
     Ok(row.0)
 }
 
 /// Count pending approvals
 pub async fn count_pending_approvals(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM approvals WHERE status = 'pending'"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count pending approvals")?;
+    let row: (i64,) = sqlx::query_as(r#"SELECT COUNT(*) FROM approvals WHERE status = 'pending'"#)
+        .fetch_one(pool)
+        .await
+        .wrap_err("Failed to count pending approvals")?;
 
     Ok(row.0)
 }
 
 /// Count submitted approvals
 pub async fn count_submitted_approvals(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM approvals WHERE status = 'submitted'"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count submitted approvals")?;
+    let row: (i64,) =
+        sqlx::query_as(r#"SELECT COUNT(*) FROM approvals WHERE status = 'submitted'"#)
+            .fetch_one(pool)
+            .await
+            .wrap_err("Failed to count submitted approvals")?;
 
     Ok(row.0)
 }
 
 /// Count pending releases
 pub async fn count_pending_releases(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM releases WHERE status = 'pending'"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count pending releases")?;
+    let row: (i64,) = sqlx::query_as(r#"SELECT COUNT(*) FROM releases WHERE status = 'pending'"#)
+        .fetch_one(pool)
+        .await
+        .wrap_err("Failed to count pending releases")?;
 
     Ok(row.0)
 }
 
 /// Count submitted releases
 pub async fn count_submitted_releases(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM releases WHERE status = 'submitted'"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count submitted releases")?;
+    let row: (i64,) = sqlx::query_as(r#"SELECT COUNT(*) FROM releases WHERE status = 'submitted'"#)
+        .fetch_one(pool)
+        .await
+        .wrap_err("Failed to count submitted releases")?;
 
     Ok(row.0)
 }
@@ -690,12 +674,11 @@ pub async fn count_pending_and_submitted_approvals(pool: &PgPool) -> Result<i64>
 
 /// Count total pending and submitted releases
 pub async fn count_pending_and_submitted_releases(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM releases WHERE status IN ('pending', 'submitted')"#,
-    )
-    .fetch_one(pool)
-    .await
-    .wrap_err("Failed to count pending/submitted releases")?;
+    let row: (i64,) =
+        sqlx::query_as(r#"SELECT COUNT(*) FROM releases WHERE status IN ('pending', 'submitted')"#)
+            .fetch_one(pool)
+            .await
+            .wrap_err("Failed to count pending/submitted releases")?;
 
     Ok(row.0)
 }

@@ -744,11 +744,13 @@ contract BridgeRouterTest is Test {
         return bridge.getWithdrawHash(w);
     }
 
-    function _hashNative(bytes32 srcChainKey, address token, address payable beneficiary, uint256 amount, uint256 nonce)
-        internal
-        view
-        returns (bytes32)
-    {
+    function _hashNative(
+        bytes32 srcChainKey,
+        address token,
+        address payable beneficiary,
+        uint256 amount,
+        uint256 nonce
+    ) internal view returns (bytes32) {
         Cl8YBridge.Withdraw memory w = Cl8YBridge.Withdraw({
             srcChainKey: srcChainKey,
             token: token,

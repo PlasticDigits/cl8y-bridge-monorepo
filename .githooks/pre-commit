@@ -1,14 +1,82 @@
 #!/bin/bash
-# Pre-commit hook to run gitleaks for secret detection
+# Pre-commit hook for:
+#   1. Formatting checks (Rust + Solidity)
+#   2. Secret detection (gitleaks)
+#
 # Install: git config core.hooksPath .githooks
+# Skip: git commit --no-verify (not recommended)
 
 set -e
 
-echo "🔍 Running gitleaks to check for secrets..."
+# Get the repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Track overall success
+CHECKS_PASSED=true
+
+# ==============================================================================
+# FORMATTING CHECKS
+# ==============================================================================
+
+echo "🔧 Checking code formatting..."
+
+# Get list of staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# Check if any Rust files in operator are staged
+if echo "$STAGED_FILES" | grep -q "^packages/operator/"; then
+    if command -v cargo &> /dev/null; then
+        echo "  → Checking operator (Rust)..."
+        if ! (cd "$REPO_ROOT/packages/operator" && cargo fmt --check 2>/dev/null); then
+            echo "❌ Operator has formatting issues. Run: cd packages/operator && cargo fmt"
+            CHECKS_PASSED=false
+        fi
+    fi
+fi
+
+# Check if any Rust files in canceler are staged
+if echo "$STAGED_FILES" | grep -q "^packages/canceler/"; then
+    if command -v cargo &> /dev/null; then
+        echo "  → Checking canceler (Rust)..."
+        if ! (cd "$REPO_ROOT/packages/canceler" && cargo fmt --check 2>/dev/null); then
+            echo "❌ Canceler has formatting issues. Run: cd packages/canceler && cargo fmt"
+            CHECKS_PASSED=false
+        fi
+    fi
+fi
+
+# Check if any Rust files in terra contracts are staged
+if echo "$STAGED_FILES" | grep -q "^packages/contracts-terraclassic/bridge/"; then
+    if command -v cargo &> /dev/null; then
+        echo "  → Checking Terra contracts (Rust)..."
+        if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo fmt --check 2>/dev/null); then
+            echo "❌ Terra contracts have formatting issues. Run: cd packages/contracts-terraclassic/bridge && cargo fmt"
+            CHECKS_PASSED=false
+        fi
+    fi
+fi
+
+# Check if any Solidity files in EVM contracts are staged
+if echo "$STAGED_FILES" | grep -q "^packages/contracts-evm/"; then
+    if command -v forge &> /dev/null; then
+        echo "  → Checking EVM contracts (Solidity)..."
+        # Only check src/, script/, test/ - not lib/
+        if ! (cd "$REPO_ROOT/packages/contracts-evm" && forge fmt --check src/ script/ test/ 2>/dev/null); then
+            echo "❌ EVM contracts have formatting issues. Run: cd packages/contracts-evm && forge fmt"
+            CHECKS_PASSED=false
+        fi
+    fi
+fi
+
+# ==============================================================================
+# SECRET DETECTION
+# ==============================================================================
+
+echo "🔍 Checking for secrets..."
 
 # Check if gitleaks is installed
 if ! command -v gitleaks &> /dev/null; then
-    echo "❌ gitleaks is not installed."
+    echo "⚠️  gitleaks is not installed. Skipping secret detection."
     echo ""
     echo "Install gitleaks using one of these methods:"
     echo "  brew install gitleaks              # macOS"
@@ -16,23 +84,30 @@ if ! command -v gitleaks &> /dev/null; then
     echo "  cargo install gitleaks             # via Cargo"
     echo "  go install github.com/gitleaks/gitleaks/v8@latest  # via Go"
     echo ""
-    echo "Or download from: https://github.com/gitleaks/gitleaks/releases"
+else
+    # Run gitleaks on staged changes only
+    if ! gitleaks protect --staged --config .gitleaks.toml --verbose; then
+        echo ""
+        echo "❌ Gitleaks found potential secrets in your staged changes!"
+        echo ""
+        echo "Please review the findings above and either:"
+        echo "  1. Remove the secret from the code"
+        echo "  2. Add a legitimate exception to .gitleaks.toml if it's a false positive"
+        CHECKS_PASSED=false
+    fi
+fi
+
+# ==============================================================================
+# FINAL RESULT
+# ==============================================================================
+
+if [ "$CHECKS_PASSED" = false ]; then
     echo ""
-    echo "To skip this check (not recommended), use: git commit --no-verify"
+    echo "❌ Pre-commit checks failed!"
+    echo ""
+    echo "Fix the issues above, then stage your changes and try again."
+    echo "To skip checks (not recommended): git commit --no-verify"
     exit 1
 fi
 
-# Run gitleaks on staged changes only
-if ! gitleaks protect --staged --config .gitleaks.toml --verbose; then
-    echo ""
-    echo "❌ Gitleaks found potential secrets in your staged changes!"
-    echo ""
-    echo "Please review the findings above and either:"
-    echo "  1. Remove the secret from the code"
-    echo "  2. Add a legitimate exception to .gitleaks.toml if it's a false positive"
-    echo ""
-    echo "To skip this check (not recommended), use: git commit --no-verify"
-    exit 1
-fi
-
-echo "✅ No secrets detected. Proceeding with commit."
+echo "✅ All pre-commit checks passed!"

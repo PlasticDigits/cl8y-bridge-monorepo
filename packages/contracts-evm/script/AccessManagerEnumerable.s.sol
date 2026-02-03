@@ -46,8 +46,9 @@ contract AccessManagerScript is Script {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "AccessManagerEnumerable"));
         address predicted = create3.predict(salt);
         if (predicted.code.length == 0) {
-            address deployed =
-                create3.deploy(salt, abi.encodePacked(type(AccessManagerEnumerable).creationCode, abi.encode(CZ_MANAGER)));
+            address deployed = create3.deploy(
+                salt, abi.encodePacked(type(AccessManagerEnumerable).creationCode, abi.encode(CZ_MANAGER))
+            );
             accessManager = AccessManagerEnumerable(deployed);
         } else {
             accessManager = AccessManagerEnumerable(predicted);

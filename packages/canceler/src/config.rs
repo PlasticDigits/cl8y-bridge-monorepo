@@ -39,8 +39,7 @@ impl Config {
         }
 
         Ok(Self {
-            evm_rpc_url: env::var("EVM_RPC_URL")
-                .map_err(|_| eyre!("EVM_RPC_URL required"))?,
+            evm_rpc_url: env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?,
             evm_chain_id: env::var("EVM_CHAIN_ID")
                 .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
                 .parse()

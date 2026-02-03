@@ -36,9 +36,12 @@ contract MaliciousTokenRegistryAdmin {
     /// @param token The token address to modify
     /// @param chainKey The chain key to add
     /// @param destTokenAddr The destination token address
-    function attemptDestChainKeyAdd(TokenRegistry tokenRegistry, address token, bytes32 chainKey, bytes32 destTokenAddr)
-        external
-    {
+    function attemptDestChainKeyAdd(
+        TokenRegistry tokenRegistry,
+        address token,
+        bytes32 chainKey,
+        bytes32 destTokenAddr
+    ) external {
         tokenRegistry.addTokenDestChainKey(token, chainKey, destTokenAddr, 18);
     }
 
@@ -47,9 +50,10 @@ contract MaliciousTokenRegistryAdmin {
     /// @param token The token address to manipulate
     function attemptMultipleMaliciousOps(TokenRegistry tokenRegistry, address token) external {
         try tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn) {
-            // If this succeeds (shouldn't), try more operations
-            // No longer applicable: accumulator APIs removed
-        } catch {
+        // If this succeeds (shouldn't), try more operations
+        // No longer applicable: accumulator APIs removed
+        }
+            catch {
             // Expected to fail due to access control
         }
     }

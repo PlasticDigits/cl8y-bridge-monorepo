@@ -349,7 +349,10 @@ pub fn query_compute_withdraw_hash(
 // ============================================================================
 
 /// Query a deposit by hash.
-pub fn query_deposit_hash(deps: Deps, deposit_hash: Binary) -> StdResult<Option<DepositInfoResponse>> {
+pub fn query_deposit_hash(
+    deps: Deps,
+    deposit_hash: Binary,
+) -> StdResult<Option<DepositInfoResponse>> {
     let hash_bytes: [u8; 32] = deposit_hash
         .to_vec()
         .try_into()

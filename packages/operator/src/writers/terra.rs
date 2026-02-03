@@ -68,9 +68,13 @@ impl TerraWriter {
         )?;
 
         // Query withdraw delay from contract (default to 60 seconds if query fails)
-        let withdraw_delay = Self::query_withdraw_delay(&client, &terra_config.lcd_url, &terra_config.bridge_address)
-            .await
-            .unwrap_or(60);
+        let withdraw_delay = Self::query_withdraw_delay(
+            &client,
+            &terra_config.lcd_url,
+            &terra_config.bridge_address,
+        )
+        .await
+        .unwrap_or(60);
 
         info!(
             delay_seconds = withdraw_delay,
@@ -271,7 +275,8 @@ impl TerraWriter {
 
         // Encode token address (for hash computation)
         let dest_token_address = if deposit.token.starts_with("0x") || deposit.token.len() == 40 {
-            encode_evm_address(&deposit.token).map_err(|e| eyre!("Failed to encode token: {}", e))?
+            encode_evm_address(&deposit.token)
+                .map_err(|e| eyre!("Failed to encode token: {}", e))?
         } else {
             // Native denom - use keccak256 of the denom string
             crate::hash::keccak256(deposit.token.as_bytes())
@@ -295,9 +300,9 @@ impl TerraWriter {
             dest_account,
             amount,
             deposit.nonce as u64,
-            0,                               // No fee for now
-            &self.fee_recipient,             // Fee recipient
-            false,                           // Don't deduct from amount
+            0,                   // No fee for now
+            &self.fee_recipient, // Fee recipient
+            false,               // Don't deduct from amount
         );
 
         // Serialize to JSON for logging
@@ -305,7 +310,8 @@ impl TerraWriter {
         debug!(msg = %msg_json, "ApproveWithdraw message");
 
         // Sign and broadcast the transaction
-        let tx_hash = self.terra_client
+        let tx_hash = self
+            .terra_client
             .execute_contract(&self.contract_address, &msg, vec![])
             .await
             .map_err(|e| eyre!("Failed to execute ApproveWithdraw: {}", e))?;
@@ -322,7 +328,8 @@ impl TerraWriter {
         debug!(msg = %msg_json, "ExecuteWithdraw message");
 
         // Sign and broadcast the transaction
-        let tx_hash = self.terra_client
+        let tx_hash = self
+            .terra_client
             .execute_contract(&self.contract_address, &msg, vec![])
             .await
             .map_err(|e| eyre!("Failed to execute ExecuteWithdraw: {}", e))?;

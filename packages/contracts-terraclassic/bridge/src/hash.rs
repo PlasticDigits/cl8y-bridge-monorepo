@@ -189,8 +189,8 @@ pub fn hex_to_bytes32(hex: &str) -> Result<[u8; 32], &'static str> {
 
     let mut result = [0u8; 32];
     for i in 0..32 {
-        result[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
-            .map_err(|_| "Invalid hex character")?;
+        result[i] =
+            u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| "Invalid hex character")?;
     }
     Ok(result)
 }
@@ -262,14 +262,7 @@ mod tests {
     /// Vector 1: All zeros - matches EVM HashVectors.t.sol testVector1_AllZeros
     #[test]
     fn test_vector1_all_zeros() {
-        let result = compute_transfer_id(
-            &[0u8; 32],
-            &[0u8; 32],
-            &[0u8; 32],
-            &[0u8; 32],
-            0,
-            0,
-        );
+        let result = compute_transfer_id(&[0u8; 32], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0);
 
         assert_eq!(
             bytes32_to_hex(&result),
@@ -359,14 +352,16 @@ mod tests {
     #[test]
     fn test_hex_roundtrip() {
         let original = [
-            0x1e, 0x99, 0x0e, 0x27, 0xf0, 0xd7, 0x97, 0x6b,
-            0xf2, 0xad, 0xbd, 0x60, 0xe2, 0x03, 0x84, 0xda,
-            0x01, 0x25, 0xb7, 0x6e, 0x28, 0x85, 0xa9, 0x6a,
-            0xa7, 0x07, 0xbc, 0xb0, 0x54, 0x10, 0x8b, 0x0d,
+            0x1e, 0x99, 0x0e, 0x27, 0xf0, 0xd7, 0x97, 0x6b, 0xf2, 0xad, 0xbd, 0x60, 0xe2, 0x03,
+            0x84, 0xda, 0x01, 0x25, 0xb7, 0x6e, 0x28, 0x85, 0xa9, 0x6a, 0xa7, 0x07, 0xbc, 0xb0,
+            0x54, 0x10, 0x8b, 0x0d,
         ];
 
         let hex = bytes32_to_hex(&original);
-        assert_eq!(hex, "0x1e990e27f0d7976bf2adbd60e20384da0125b76e2885a96aa707bcb054108b0d");
+        assert_eq!(
+            hex,
+            "0x1e990e27f0d7976bf2adbd60e20384da0125b76e2885a96aa707bcb054108b0d"
+        );
 
         let parsed = hex_to_bytes32(&hex).unwrap();
         assert_eq!(parsed, original);
@@ -414,10 +409,14 @@ mod tests {
         let dest_chain_key = cosmos_chain_key("columbus-5"); // Terra
 
         // Token: USDT on BSC (0x55d398326f99059fF775485246999027B3197955) left-padded
-        let dest_token_address = hex_to_bytes32("0x00000000000000000000000055d398326f99059ff775485246999027b3197955").unwrap();
+        let dest_token_address =
+            hex_to_bytes32("0x00000000000000000000000055d398326f99059ff775485246999027b3197955")
+                .unwrap();
 
         // Recipient: example address left-padded
-        let dest_account = hex_to_bytes32("0x0000000000000000000000001234567890abcdef1234567890abcdef12345678").unwrap();
+        let dest_account =
+            hex_to_bytes32("0x0000000000000000000000001234567890abcdef1234567890abcdef12345678")
+                .unwrap();
 
         let amount: u128 = 1_000_000; // 1 USDT (6 decimals)
         let nonce: u64 = 1;

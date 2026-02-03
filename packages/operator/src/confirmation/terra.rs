@@ -68,7 +68,7 @@ impl TerraConfirmation {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
-        
+
         Ok(Self {
             db,
             required_confirmations,
@@ -78,20 +78,25 @@ impl TerraConfirmation {
     }
 
     /// Check release transaction confirmation
-    pub async fn check_release_confirmation(&self, release: &Release) -> Result<ConfirmationResult> {
-        let tx_hash = release.tx_hash.as_ref()
+    pub async fn check_release_confirmation(
+        &self,
+        release: &Release,
+    ) -> Result<ConfirmationResult> {
+        let tx_hash = release
+            .tx_hash
+            .as_ref()
             .ok_or_else(|| eyre!("Release has no tx_hash"))?;
-        
+
         // 1. Query transaction from LCD
         let tx = self.get_transaction(tx_hash).await?;
-        
+
         // 2. If not found, might still be pending or failed
         if tx.is_none() {
             return Ok(ConfirmationResult::Pending);
         }
-        
+
         let tx = tx.unwrap();
-        
+
         // 3. Check if transaction failed (non-zero code)
         if tx.code != 0 {
             warn!(
@@ -102,31 +107,30 @@ impl TerraConfirmation {
             );
             return Ok(ConfirmationResult::Failed);
         }
-        
+
         // 4. Get current block height
         let current_height = self.get_current_block_height().await?;
-        
+
         // 5. Calculate confirmations
         let tx_height: u64 = tx.height.parse()?;
         let confirmations = current_height.saturating_sub(tx_height);
-        
+
         // 6. Check if enough confirmations
         if confirmations >= self.required_confirmations as u64 {
             return Ok(ConfirmationResult::Confirmed);
         }
-        
-        Ok(ConfirmationResult::WaitingConfirmations(confirmations as u32))
+
+        Ok(ConfirmationResult::WaitingConfirmations(
+            confirmations as u32,
+        ))
     }
 
     /// Get transaction from LCD
     async fn get_transaction(&self, tx_hash: &str) -> Result<Option<TxResponseInner>> {
         let url = format!("{}/cosmos/tx/v1beta1/txs/{}", self.lcd_url, tx_hash);
-        
-        let response = self.client
-            .get(&url)
-            .send()
-            .await;
-        
+
+        let response = self.client.get(&url).send().await;
+
         match response {
             Ok(resp) => {
                 if resp.status() == 404 {
@@ -144,17 +148,21 @@ impl TerraConfirmation {
 
     /// Get current block height from LCD
     async fn get_current_block_height(&self) -> Result<u64> {
-        let url = format!("{}/cosmos/base/tendermint/v1beta1/blocks/latest", self.lcd_url);
-        
-        let response = self.client
+        let url = format!(
+            "{}/cosmos/base/tendermint/v1beta1/blocks/latest",
+            self.lcd_url
+        );
+
+        let response = self
+            .client
             .get(&url)
             .send()
             .await?
             .json::<BlockResponse>()
             .await?;
-        
+
         let height: u64 = response.block.header.height.parse()?;
-        
+
         Ok(height)
     }
 }

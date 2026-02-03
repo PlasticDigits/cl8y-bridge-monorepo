@@ -90,8 +90,7 @@ impl Config {
     /// Load configuration from environment variables
     /// Loads .env file if present, then reads from environment
     pub fn load() -> Result<Self> {
-        Self::load_from_file(".env")
-            .or_else(|_| Self::load_from_env())
+        Self::load_from_file(".env").or_else(|_| Self::load_from_env())
     }
 
     /// Load from a specific .env file path
@@ -324,7 +323,8 @@ mod tests {
         assert!(config.validate().is_err());
 
         // Invalid bridge address
-        config.evm.private_key = "0x0000000000000000000000000000000000000000000000000000000000000001".to_string();
+        config.evm.private_key =
+            "0x0000000000000000000000000000000000000000000000000000000000000001".to_string();
         config.evm.bridge_address = "invalid".to_string();
         assert!(config.validate().is_err());
 

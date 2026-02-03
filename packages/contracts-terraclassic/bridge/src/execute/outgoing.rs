@@ -33,11 +33,11 @@ pub fn execute_lock_native(
 
     // Check destination chain
     let chain_key = dest_chain_id.to_string();
-    let chain = CHAINS
-        .may_load(deps.storage, chain_key.clone())?
-        .ok_or(ContractError::ChainNotSupported {
+    let chain = CHAINS.may_load(deps.storage, chain_key.clone())?.ok_or(
+        ContractError::ChainNotSupported {
             chain_id: dest_chain_id,
-        })?;
+        },
+    )?;
 
     if !chain.enabled {
         return Err(ContractError::ChainNotSupported {
@@ -61,11 +61,12 @@ pub fn execute_lock_native(
     let amount = coin.amount;
 
     // Check token is supported
-    let token_config = TOKENS
-        .may_load(deps.storage, token.clone())?
-        .ok_or(ContractError::TokenNotSupported {
-            token: token.clone(),
-        })?;
+    let token_config =
+        TOKENS
+            .may_load(deps.storage, token.clone())?
+            .ok_or(ContractError::TokenNotSupported {
+                token: token.clone(),
+            })?;
 
     if !token_config.enabled {
         return Err(ContractError::TokenNotSupported {
@@ -115,14 +116,14 @@ pub fn execute_lock_native(
 
     // Compute and store deposit hash for verification
     let dest_chain_key = evm_chain_key(dest_chain_id);
-    let dest_token_address = hex_to_bytes32(&token_config.evm_token_address)
-        .map_err(|e| ContractError::InvalidAddress {
+    let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
+        ContractError::InvalidAddress {
             reason: e.to_string(),
-        })?;
-    let dest_account =
-        hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {
-            reason: e.to_string(),
-        })?;
+        }
+    })?;
+    let dest_account = hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {
+        reason: e.to_string(),
+    })?;
 
     let deposit_info = DepositInfo {
         dest_chain_key,
@@ -202,11 +203,11 @@ pub fn execute_receive(
         } => {
             // Check destination chain
             let chain_key = dest_chain_id.to_string();
-            let chain = CHAINS
-                .may_load(deps.storage, chain_key.clone())?
-                .ok_or(ContractError::ChainNotSupported {
+            let chain = CHAINS.may_load(deps.storage, chain_key.clone())?.ok_or(
+                ContractError::ChainNotSupported {
                     chain_id: dest_chain_id,
-                })?;
+                },
+            )?;
 
             if !chain.enabled {
                 return Err(ContractError::ChainNotSupported {
@@ -215,11 +216,11 @@ pub fn execute_receive(
             }
 
             // Check token
-            let token_config = TOKENS
-                .may_load(deps.storage, token.clone())?
-                .ok_or(ContractError::TokenNotSupported {
+            let token_config = TOKENS.may_load(deps.storage, token.clone())?.ok_or(
+                ContractError::TokenNotSupported {
                     token: token.clone(),
-                })?;
+                },
+            )?;
 
             if !token_config.enabled {
                 return Err(ContractError::TokenNotSupported {
@@ -269,9 +270,11 @@ pub fn execute_receive(
 
             // Compute and store deposit hash
             let dest_chain_key = evm_chain_key(dest_chain_id);
-            let dest_token_address = hex_to_bytes32(&token_config.evm_token_address)
-                .map_err(|e| ContractError::InvalidAddress {
-                    reason: e.to_string(),
+            let dest_token_address =
+                hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
+                    ContractError::InvalidAddress {
+                        reason: e.to_string(),
+                    }
                 })?;
             let dest_account =
                 hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {

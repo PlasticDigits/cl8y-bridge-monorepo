@@ -51,9 +51,7 @@ contract HashVectors is Test {
         uint256 amount = 1000000000000000000; // 1e18
         uint256 nonce = 42;
 
-        bytes32 result = keccak256(
-            abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce)
-        );
+        bytes32 result = keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
 
         console.log("=== Vector 2: Simple Values ===");
         console.log("srcChainKey:");
@@ -111,9 +109,7 @@ contract HashVectors is Test {
         uint256 amount = 1000000; // 1 USDT (6 decimals)
         uint256 nonce = 1;
 
-        bytes32 result = keccak256(
-            abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce)
-        );
+        bytes32 result = keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
 
         console.log("=== Vector 5: Realistic BSC->Terra Transfer ===");
         console.log("srcChainKey (BSC):");
@@ -139,9 +135,7 @@ contract HashVectors is Test {
         uint256 amount = type(uint128).max; // Max u128
         uint256 nonce = type(uint64).max; // Max u64
 
-        bytes32 result = keccak256(
-            abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce)
-        );
+        bytes32 result = keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
 
         console.log("=== Vector 6: Maximum Values ===");
         console.log("srcChainKey: 0xffff...ffff");
