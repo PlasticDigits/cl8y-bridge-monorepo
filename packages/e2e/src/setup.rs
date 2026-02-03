@@ -2,10 +2,20 @@
 //!
 //! This module provides a comprehensive setup orchestration for E2E tests,
 //! replacing the bash script logic with idiomatic Rust.
+//!
+//! The setup process includes:
+//! 1. Docker services (Anvil, LocalTerra, PostgreSQL)
+//! 2. EVM contract deployment via forge script
+//! 3. Terra contract deployment (bridge WASM)
+//! 4. Role grants (OPERATOR_ROLE, CANCELER_ROLE)
+//! 5. Chain key registration (Terra on EVM ChainRegistry)
+//! 6. Token registration (test tokens with destination mappings)
+//! 7. CW20 deployment on LocalTerra
 
+use crate::chain_config;
 use crate::config::{E2eConfig, EvmContracts};
 use crate::docker::DockerCompose;
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256};
 use eyre::{eyre, Result};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -217,6 +227,9 @@ impl E2eSetup {
             bridge: contracts.bridge,
             router: contracts.router,
             terra_bridge: None,
+            cw20_token: None,
+            test_token: None,
+            terra_chain_key: None,
         })
     }
 
@@ -382,118 +395,157 @@ impl E2eSetup {
         Ok(())
     }
 
-    /// Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts
+    /// Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts via AccessManager.grantRole()
+    ///
+    /// This grants both roles to the test account, enabling:
+    /// - OPERATOR_ROLE: Allows calling approveWithdraw() for testing
+    /// - CANCELER_ROLE: Allows cancelling fraudulent approvals for testing
     pub async fn grant_roles(&self, deployed: &DeployedContracts) -> Result<()> {
         info!("Granting roles to test accounts");
 
-        let private_key = self.config.evm.private_key;
+        let private_key = format!("0x{:x}", self.config.evm.private_key);
         let test_address = self.config.test_accounts.evm_address;
+        let rpc_url = self.config.evm.rpc_url.as_str();
 
         // Grant OPERATOR_ROLE to test account
-        let operator_role = hex::encode([0x00u8; 32]); // Default OPERATOR_ROLE
-
-        let grant_operator_output = std::process::Command::new("forge")
-            .args([
-                "broadcast",
-                "--rpc-url",
-                &self.config.evm.rpc_url.to_string(),
-                "--private-key",
-                &format!("{:x}", private_key),
-                "--skip-simulate",
-            ])
-            .arg(format!(
-                "{} grantRole {} {}",
-                deployed.access_manager, operator_role, test_address
-            ))
-            .current_dir(&self.project_root)
-            .output();
-
-        match grant_operator_output {
-            Ok(output) if output.status.success() => {
-                info!("Granted OPERATOR_ROLE to test account");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!("Failed to grant OPERATOR_ROLE: {}", stderr);
-            }
-            Err(e) => {
-                warn!("Failed to execute grant role command: {}", e);
-            }
+        match chain_config::grant_operator_role(
+            deployed.access_manager,
+            test_address,
+            rpc_url,
+            &private_key,
+        )
+        .await
+        {
+            Ok(()) => info!("OPERATOR_ROLE granted to test account"),
+            Err(e) => warn!("Failed to grant OPERATOR_ROLE: {}", e),
         }
 
-        // Grant CANCELER_ROLE to test account
-        let canceler_role = hex::encode([0x01u8; 32]); // Default CANCELER_ROLE
-
-        let grant_canceler_output = std::process::Command::new("forge")
-            .args([
-                "broadcast",
-                "--rpc-url",
-                &self.config.evm.rpc_url.to_string(),
-                "--private-key",
-                &format!("{:x}", private_key),
-                "--skip-simulate",
-            ])
-            .arg(format!(
-                "{} grantRole {} {}",
-                deployed.access_manager, canceler_role, test_address
-            ))
-            .current_dir(&self.project_root)
-            .output();
-
-        match grant_canceler_output {
-            Ok(output) if output.status.success() => {
-                info!("Granted CANCELER_ROLE to test account");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!("Failed to grant CANCELER_ROLE: {}", stderr);
-            }
-            Err(e) => {
-                warn!("Failed to execute canceler role command: {}", e);
-            }
+        // Grant CANCELER_ROLE to test account (for fraud detection testing)
+        match chain_config::grant_canceler_role(
+            deployed.access_manager,
+            test_address,
+            rpc_url,
+            &private_key,
+        )
+        .await
+        {
+            Ok(()) => info!("CANCELER_ROLE granted to test account"),
+            Err(e) => warn!("Failed to grant CANCELER_ROLE: {}", e),
         }
 
+        info!("Role grants complete");
         Ok(())
     }
 
-    /// Register Terra chain key on ChainRegistry
-    pub async fn register_chain_keys(&self, deployed: &DeployedContracts) -> Result<()> {
+    /// Register Terra chain key on ChainRegistry via addCOSMWChainKey("localterra")
+    ///
+    /// This registers the Terra chain (localterra) on the EVM ChainRegistry,
+    /// returning the computed chain key (bytes32) for use in token registration.
+    pub async fn register_chain_keys(&self, deployed: &DeployedContracts) -> Result<B256> {
         info!("Registering Terra chain key on ChainRegistry");
 
-        let private_key = self.config.evm.private_key;
-        let terra_address = &self.config.test_accounts.terra_address;
+        let private_key = format!("0x{:x}", self.config.evm.private_key);
+        let rpc_url = self.config.evm.rpc_url.as_str();
+        let chain_id = &self.config.terra.chain_id; // "localterra"
 
-        // Register chain key on ChainRegistry
-        let register_output = std::process::Command::new("forge")
-            .args([
-                "broadcast",
-                "--rpc-url",
-                &self.config.evm.rpc_url.to_string(),
-                "--private-key",
-                &format!("{:x}", private_key),
-                "--skip-simulate",
-            ])
-            .arg(format!(
-                "{} registerChainKey {}",
-                deployed.chain_registry, terra_address
-            ))
-            .current_dir(&self.project_root)
-            .output();
+        let chain_key = chain_config::register_cosmw_chain_key(
+            deployed.chain_registry,
+            chain_id,
+            rpc_url,
+            &private_key,
+        )
+        .await?;
 
-        match register_output {
-            Ok(output) if output.status.success() => {
-                info!("Registered Terra chain key on ChainRegistry");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!("Failed to register chain key: {}", stderr);
-            }
-            Err(e) => {
-                warn!("Failed to execute register chain key command: {}", e);
-            }
+        info!("Terra chain key registered: {}", chain_key);
+        Ok(chain_key)
+    }
+
+    /// Register test tokens on TokenRegistry with destination chain mappings
+    ///
+    /// This registers the test ERC20 token with Terra as the destination chain,
+    /// enabling cross-chain transfers in E2E tests.
+    ///
+    /// # Arguments
+    /// * `deployed` - Deployed contract addresses
+    /// * `test_token` - Optional test ERC20 token address
+    /// * `terra_chain_key` - The Terra chain key from ChainRegistry
+    /// * `cw20_address` - Optional CW20 address on Terra
+    pub async fn register_tokens(
+        &self,
+        deployed: &DeployedContracts,
+        test_token: Option<Address>,
+        terra_chain_key: B256,
+        cw20_address: Option<&str>,
+    ) -> Result<()> {
+        let Some(token) = test_token else {
+            warn!("No test token address provided, skipping token registration");
+            return Ok(());
+        };
+
+        info!("Registering test token {} on TokenRegistry", token);
+
+        let private_key = format!("0x{:x}", self.config.evm.private_key);
+        let rpc_url = self.config.evm.rpc_url.as_str();
+
+        // Register token with LockUnlock bridge type
+        chain_config::register_token(
+            deployed.token_registry,
+            token,
+            chain_config::BridgeType::LockUnlock,
+            rpc_url,
+            &private_key,
+        )
+        .await?;
+
+        // Encode destination token (CW20 or uluna)
+        let dest_token = cw20_address.unwrap_or("uluna");
+        let dest_token_encoded = chain_config::encode_terra_token_address(dest_token);
+
+        // Add destination chain key (Terra decimals are 6)
+        chain_config::add_token_dest_chain_key(
+            deployed.token_registry,
+            token,
+            terra_chain_key,
+            dest_token_encoded,
+            6,
+            rpc_url,
+            &private_key,
+        )
+        .await?;
+
+        info!("Test token registered successfully");
+        Ok(())
+    }
+
+    /// Deploy CW20 test token on LocalTerra
+    ///
+    /// This deploys a CW20 mintable token on LocalTerra for E2E testing.
+    /// Returns the deployed contract address, or None if LocalTerra is not available.
+    pub async fn deploy_cw20_token(&self) -> Result<Option<String>> {
+        info!("Checking if LocalTerra is available for CW20 deployment");
+
+        // Check if LocalTerra is running
+        if !chain_config::is_localterra_running().await? {
+            warn!("LocalTerra not running, skipping CW20 deployment");
+            return Ok(None);
         }
 
-        Ok(())
+        let test_address = &self.config.test_accounts.terra_address;
+
+        match chain_config::deploy_test_cw20(&self.project_root, test_address).await {
+            Ok(Some(result)) => {
+                info!("CW20 deployed at: {}", result.contract_address);
+                Ok(Some(result.contract_address))
+            }
+            Ok(None) => {
+                warn!("CW20 WASM not found, skipping deployment");
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("CW20 deployment failed: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     /// Export all addresses to .env.e2e file
@@ -528,6 +580,21 @@ impl E2eSetup {
         // Add Terra addresses
         if let Some(terra_bridge) = &deployed.terra_bridge {
             content.push_str(&format!("TERRA_BRIDGE_ADDRESS={}\n", terra_bridge));
+        }
+
+        // Add CW20 token address
+        if let Some(cw20_token) = &deployed.cw20_token {
+            content.push_str(&format!("TERRA_CW20_ADDRESS={}\n", cw20_token));
+        }
+
+        // Add test token address
+        if let Some(test_token) = &deployed.test_token {
+            content.push_str(&format!("TEST_TOKEN_ADDRESS={}\n", test_token));
+        }
+
+        // Add Terra chain key
+        if let Some(chain_key) = &deployed.terra_chain_key {
+            content.push_str(&format!("TERRA_CHAIN_KEY={}\n", chain_key));
         }
 
         // Add test accounts
@@ -674,15 +741,50 @@ impl E2eSetup {
         deployed.terra_bridge = terra_bridge;
         on_step(SetupStep::DeployTerraContracts, true);
 
-        // Grant Roles
+        // Deploy CW20 Token on LocalTerra
+        on_step(SetupStep::DeployCw20Token, true);
+        let cw20_address = self.deploy_cw20_token().await?;
+        deployed.cw20_token = cw20_address.clone();
+        on_step(SetupStep::DeployCw20Token, true);
+
+        // Grant Roles (OPERATOR_ROLE and CANCELER_ROLE to test account)
         on_step(SetupStep::GrantRoles, true);
         self.grant_roles(&deployed).await?;
         on_step(SetupStep::GrantRoles, true);
 
-        // Register Chain Keys
+        // Register Chain Keys (Terra chain on EVM ChainRegistry)
         on_step(SetupStep::RegisterChainKeys, true);
-        self.register_chain_keys(&deployed).await?;
-        on_step(SetupStep::RegisterChainKeys, true);
+        let terra_chain_key = match self.register_chain_keys(&deployed).await {
+            Ok(key) => {
+                deployed.terra_chain_key = Some(key);
+                Some(key)
+            }
+            Err(e) => {
+                warn!("Failed to register chain keys: {}", e);
+                None
+            }
+        };
+        on_step(SetupStep::RegisterChainKeys, terra_chain_key.is_some());
+
+        // Register Tokens (test tokens with destination chain mappings)
+        on_step(SetupStep::RegisterTokens, true);
+        if let Some(chain_key) = terra_chain_key {
+            match self
+                .register_tokens(
+                    &deployed,
+                    deployed.test_token,
+                    chain_key,
+                    cw20_address.as_deref(),
+                )
+                .await
+            {
+                Ok(()) => info!("Tokens registered successfully"),
+                Err(e) => warn!("Token registration failed: {}", e),
+            }
+        } else {
+            warn!("Skipping token registration - no chain key available");
+        }
+        on_step(SetupStep::RegisterTokens, true);
 
         // Export Environment
         on_step(SetupStep::ExportEnvironment, true);
@@ -716,8 +818,10 @@ pub enum SetupStep {
     WaitForServices,
     DeployEvmContracts,
     DeployTerraContracts,
+    DeployCw20Token,
     GrantRoles,
     RegisterChainKeys,
+    RegisterTokens,
     ExportEnvironment,
     VerifySetup,
 }
@@ -731,8 +835,10 @@ impl SetupStep {
             Self::WaitForServices => "Wait for Services",
             Self::DeployEvmContracts => "Deploy EVM Contracts",
             Self::DeployTerraContracts => "Deploy Terra Contracts",
+            Self::DeployCw20Token => "Deploy CW20 Token",
             Self::GrantRoles => "Grant Roles",
             Self::RegisterChainKeys => "Register Chain Keys",
+            Self::RegisterTokens => "Register Tokens",
             Self::ExportEnvironment => "Export Environment",
             Self::VerifySetup => "Verify Setup",
         }
@@ -750,6 +856,9 @@ pub struct DeployedContracts {
     pub bridge: Address,
     pub router: Address,
     pub terra_bridge: Option<String>,
+    pub cw20_token: Option<String>,
+    pub test_token: Option<Address>,
+    pub terra_chain_key: Option<B256>,
 }
 
 /// Setup verification result

@@ -2,6 +2,7 @@ use alloy::primitives::B256;
 use std::fmt;
 use std::time::Duration;
 
+pub mod chain_config;
 pub mod config;
 pub mod deploy;
 pub mod docker;
@@ -11,8 +12,15 @@ pub mod setup;
 pub mod teardown;
 pub mod terra;
 pub mod tests;
+pub mod transfer_helpers;
 pub mod utils;
 
+pub use chain_config::{
+    configure_chains, deploy_cw20_token, deploy_test_cw20, grant_canceler_role,
+    grant_operator_role, grant_test_account_roles, register_cosmw_chain_key,
+    register_terra_chain_key, register_test_tokens, register_token, BridgeType, ChainConfigResult,
+    Cw20DeployResult, CANCELER_ROLE_ID, OPERATOR_ROLE_ID,
+};
 pub use config::E2eConfig;
 pub use deploy::{
     deploy_evm_contracts, deploy_test_token, deploy_test_token_simple, get_token_balance,
@@ -24,9 +32,20 @@ pub use services::ServiceManager;
 pub use setup::{E2eSetup, SetupResult, SetupStep};
 pub use teardown::{E2eTeardown, TeardownOptions, TeardownResult};
 pub use terra::TerraClient;
+pub use tests::evm_to_evm::{
+    run_evm_to_evm_tests, test_evm_to_evm_deposit, test_evm_to_evm_full_cycle, EvmToEvmOptions,
+    SecondaryEvmConfig,
+};
 pub use tests::{
-    run_all_tests, run_integration_tests, run_quick_tests, test_fraud_detection_full,
-    test_real_evm_to_terra_transfer, test_real_terra_to_evm_transfer, IntegrationTestOptions,
+    run_all_tests, run_extended_integration_tests, run_integration_tests, run_quick_tests,
+    test_evm_to_terra_with_verification, test_fraud_detection_full, test_full_transfer_cycle,
+    test_real_evm_to_terra_transfer, test_real_terra_to_evm_transfer,
+    test_terra_to_evm_with_verification, IntegrationTestOptions,
+};
+pub use transfer_helpers::{
+    deploy_erc20_token, mint_erc20_tokens, poll_for_approval, poll_for_withdrawal_ready,
+    skip_withdrawal_delay, verify_balance_increased, verify_withdrawal_executed, ApprovalInfo,
+    TokenDeployResult, TransferCycleOptions, TransferCycleResult,
 };
 
 /// Represents the outcome of a single test

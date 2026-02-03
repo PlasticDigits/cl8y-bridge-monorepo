@@ -2,6 +2,43 @@
 
 This document explains how to create job files for WorkSplit when breaking down a feature into implementable chunks.
 
+## CRITICAL: Job Files Are Requirements, Not Code
+
+**Ollama generates the code. You provide requirements and references.**
+
+DO NOT write full implementation code in job files. This defeats the purpose of using WorkSplit.
+
+### What to Include in Job Files
+
+| Include | Don't Include |
+|---------|---------------|
+| Requirements (what to implement) | Full implementation code |
+| Function signatures as references | Every line of output verbatim |
+| Code patterns/snippets to follow | Code you want copy-pasted |
+| Constraints and error handling | Long code blocks (50+ lines) |
+
+### Example: Good Job Content
+
+```markdown
+## Function: test_database_connectivity
+- Connect to DATABASE_URL from config.operator.database_url
+- Use tokio::time::timeout with 5s limit
+- Return TestResult::pass/fail based on connection success
+- Log connection status with tracing::info!
+
+Pattern to follow:
+```rust
+match tokio::time::timeout(Duration::from_secs(5), connect()).await {
+    Ok(Ok(_)) => TestResult::pass(...),
+    _ => TestResult::fail(...),
+}
+```
+```
+
+Check `jobs/archive/` for examples of properly formatted job files.
+
+---
+
 ## REQUIRED READING
 
 Before creating jobs, read the **Success Rate by Job Type** table in README.md.
@@ -126,6 +163,36 @@ Common edit mode failure causes:
 - Whitespace/indentation mismatches
 
 ---
+
+## The 1 Job = 1 File Rule
+
+**CRITICAL: Each job creates or replaces exactly ONE file.**
+
+Never ask a job to "implement some functions" or "modify part of a file". This fails because:
+- The LLM regenerates the entire file anyway
+- Auto-fix often reverts partial changes
+- Context gets lost between what to keep vs change
+
+### Correct Approaches
+
+| Scenario | Solution |
+|----------|----------|
+| Implement 5 of 25 functions | Regenerate entire file with 5 implemented |
+| Add code to existing file | Replace mode with full file content |
+| Modify multiple files | Create separate jobs (1 per file) |
+| Large file (500+ lines) | Split into modules first, then 1 job per module |
+
+### Example: Implementing Tests Incrementally
+
+```
+# BAD - Partial modification
+Job: "Implement tests 6-10 in stubs.rs, keep tests 1-5 and 11-25 unchanged"
+Result: LLM forgets context, reverts to stubs
+
+# GOOD - Full file replacement
+Job: "Create stubs.rs with 25 tests. Tests 1-10 implemented, tests 11-25 as stubs"
+Result: Complete file generated correctly
+```
 
 ## Job File Format
 

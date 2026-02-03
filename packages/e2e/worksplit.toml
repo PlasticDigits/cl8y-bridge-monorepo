@@ -10,7 +10,7 @@ timeout_seconds = 300
 
 [limits]
 max_output_lines = 900
-max_context_lines = 1000
+max_context_lines = 2000
 max_context_files = 2
 
 [behavior]
