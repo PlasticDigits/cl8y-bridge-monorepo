@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::evm_client::EvmClient;
 use crate::hash::bytes32_to_hex;
+use crate::server::{SharedMetrics, SharedStats};
 use crate::terra_client::TerraClient;
 use crate::verifier::{ApprovalVerifier, PendingApproval, VerificationResult};
 
@@ -62,10 +63,14 @@ pub struct CancelerWatcher {
     last_evm_block: u64,
     /// Last polled Terra height
     last_terra_height: u64,
+    /// Shared stats for health endpoint
+    stats: SharedStats,
+    /// Prometheus metrics
+    metrics: SharedMetrics,
 }
 
 impl CancelerWatcher {
-    pub async fn new(config: &Config) -> Result<Self> {
+    pub async fn new(config: &Config, stats: SharedStats, metrics: SharedMetrics) -> Result<Self> {
         let verifier = ApprovalVerifier::new(
             &config.evm_rpc_url,
             &config.evm_bridge_address,
@@ -88,7 +93,14 @@ impl CancelerWatcher {
             &config.terra_mnemonic,
         )?;
 
+        // Initialize stats with canceler ID
+        {
+            let mut s = stats.write().await;
+            s.canceler_id = config.canceler_id.clone();
+        }
+
         info!(
+            canceler_id = %config.canceler_id,
             evm_canceler = %evm_client.address(),
             terra_canceler = %terra_client.address,
             "Canceler watcher initialized"
@@ -103,6 +115,8 @@ impl CancelerWatcher {
             cancelled_hashes: HashSet::new(),
             last_evm_block: 0,
             last_terra_height: 0,
+            stats,
+            metrics,
         })
     }
 
@@ -289,6 +303,12 @@ impl CancelerWatcher {
         // Update last polled block
         self.last_evm_block = to_block;
 
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.last_evm_block = to_block;
+        }
+
         Ok(())
     }
 
@@ -449,6 +469,12 @@ impl CancelerWatcher {
         // Update last polled height
         self.last_terra_height = current_height;
 
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.last_terra_height = current_height;
+        }
+
         Ok(())
     }
 
@@ -487,6 +513,13 @@ impl CancelerWatcher {
                     "Approval verified as VALID"
                 );
                 self.verified_hashes.insert(approval.withdraw_hash);
+
+                // Update stats and metrics
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.verified_valid += 1;
+                }
+                self.metrics.verified_valid_total.inc();
             }
             VerificationResult::Invalid { reason } => {
                 warn!(
@@ -494,6 +527,13 @@ impl CancelerWatcher {
                     reason = %reason,
                     "Approval is INVALID - submitting cancellation"
                 );
+
+                // Update stats and metrics for invalid detection
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.verified_invalid += 1;
+                }
+                self.metrics.verified_invalid_total.inc();
 
                 // Submit cancel transaction
                 if let Err(e) = self.submit_cancel(approval).await {
@@ -504,6 +544,13 @@ impl CancelerWatcher {
                     );
                 } else {
                     self.cancelled_hashes.insert(approval.withdraw_hash);
+
+                    // Update cancelled count and metrics
+                    {
+                        let mut stats = self.stats.write().await;
+                        stats.cancelled_count += 1;
+                    }
+                    self.metrics.cancelled_total.inc();
                 }
             }
             VerificationResult::Pending => {

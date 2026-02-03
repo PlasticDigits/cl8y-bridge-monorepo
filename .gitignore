@@ -54,3 +54,9 @@ packages/contracts-terraclassic/external/
 *.swp
 *.swo
 .DS_Store
+
+# ===================
+# Relayer Logs
+# ===================
+.canceler*
+.operator*

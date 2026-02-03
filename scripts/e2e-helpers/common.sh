@@ -306,14 +306,43 @@ wait_for_operator_deposit_processing() {
 # Chain Key Computation
 # ============================================================================
 
-# Compute Terra chain key for LocalTerra
+# Get Terra chain key from ChainRegistry (correct computation)
+# ChainRegistry uses: keccak256(abi.encode("COSMW", keccak256(abi.encode("localterra"))))
 get_terra_chain_key() {
-    cast keccak256 "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')" 2>/dev/null
+    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    local RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
+    
+    # Get from ChainRegistry if available
+    local key=$(cast call "$CHAIN_REGISTRY" \
+        "getChainKeyCOSMW(string)(bytes32)" \
+        "localterra" \
+        --rpc-url "$RPC_URL" 2>/dev/null || echo "")
+    
+    if [ -n "$key" ] && [ "$key" != "0x0000000000000000000000000000000000000000000000000000000000000000" ]; then
+        echo "$key"
+    else
+        # Fallback: use env var if set
+        echo "${TERRA_CHAIN_KEY:-}"
+    fi
 }
 
-# Compute EVM chain key for Anvil (chain ID 31337)
+# Get EVM chain key from ChainRegistry for Anvil (chain ID 31337)
 get_anvil_chain_key() {
-    cast keccak256 "$(cast abi-encode 'f(string,uint256)' 'EVM' '31337')" 2>/dev/null
+    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    local RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
+    
+    # Get from ChainRegistry if available
+    local key=$(cast call "$CHAIN_REGISTRY" \
+        "getChainKeyEVM(uint256)(bytes32)" \
+        "31337" \
+        --rpc-url "$RPC_URL" 2>/dev/null || echo "")
+    
+    if [ -n "$key" ] && [ "$key" != "0x0000000000000000000000000000000000000000000000000000000000000000" ]; then
+        echo "$key"
+    else
+        # Fallback: use env var if set
+        echo "${EVM_CHAIN_KEY:-}"
+    fi
 }
 
 # Encode Terra address as bytes32 (right-padded)

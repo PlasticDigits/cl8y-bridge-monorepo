@@ -17,24 +17,29 @@
 //! This MVP implementation:
 //! - Polls for new approvals on EVM and Terra
 //! - Verifies approvals by checking source chain deposit hashes
-//! - Logs verification results (cancel submission not yet implemented)
+//! - Submits cancel transactions for invalid approvals
+//! - Exposes health endpoint for monitoring
 //!
-//! # Future Development
+//! # Health Endpoint
 //!
-//! Full implementation will add:
-//! - Actual cancel transaction submission
-//! - Multi-chain support
-//! - Stake/slashing integration
-//! - Distributed coordination with other cancelers
+//! The canceler exposes HTTP endpoints for health monitoring:
+//! - GET /health - Full health status with stats
+//! - GET /healthz - Liveness probe
+//! - GET /readyz - Readiness probe
 
 mod config;
 mod evm_client;
 mod hash;
+mod server;
 mod terra_client;
 mod verifier;
 mod watcher;
 
+use std::sync::Arc;
+
 use config::Config;
+use server::{CancelerStats, Metrics, SharedMetrics, SharedStats};
+use tokio::sync::RwLock;
 use tracing::info;
 use watcher::CancelerWatcher;
 
@@ -54,12 +59,32 @@ async fn async_main() -> eyre::Result<()> {
 
     let config = Config::load()?;
     info!(
+        canceler_id = %config.canceler_id,
         evm_rpc = %config.evm_rpc_url,
         terra_lcd = %config.terra_lcd_url,
+        health_port = %config.health_port,
         "Configuration loaded"
     );
 
-    let mut watcher = CancelerWatcher::new(&config).await?;
+    // Create shared stats for health endpoint
+    let stats: SharedStats = Arc::new(RwLock::new(CancelerStats::default()));
+
+    // Create Prometheus metrics
+    let metrics: SharedMetrics = Arc::new(Metrics::new());
+
+    // Start HTTP server for health endpoint
+    let health_port = config.health_port;
+    let server_stats = Arc::clone(&stats);
+    let server_metrics = Arc::clone(&metrics);
+    tokio::spawn(async move {
+        if let Err(e) = server::start_server(health_port, server_stats, server_metrics).await {
+            tracing::error!(error = %e, "Health server error");
+        }
+    });
+
+    // Create the watcher with shared stats and metrics
+    let mut watcher =
+        CancelerWatcher::new(&config, Arc::clone(&stats), Arc::clone(&metrics)).await?;
 
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);

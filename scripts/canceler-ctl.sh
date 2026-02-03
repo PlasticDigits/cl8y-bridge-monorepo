@@ -119,6 +119,12 @@ start_canceler() {
     [ -z "$TERRA_RPC_URL" ] && export TERRA_RPC_URL="http://localhost:26657"
     [ -z "$POLL_INTERVAL_MS" ] && export POLL_INTERVAL_MS="5000"
     
+    # Set canceler ID and health port based on instance ID
+    export CANCELER_ID="${CANCELER_ID:-canceler-$id}"
+    # Use different health ports for different instances (9090, 9091, etc.)
+    local base_health_port="${HEALTH_PORT_BASE:-9090}"
+    export HEALTH_PORT=$((base_health_port + id - 1))
+    
     # Use different keys for different instances if provided
     local key_suffix=""
     [ "$id" != "1" ] && key_suffix="_$id"
@@ -152,6 +158,7 @@ start_canceler() {
     sleep 2
     if is_running "$id"; then
         log_info "Canceler $id started (PID: $pid)"
+        log_info "Health: http://localhost:$HEALTH_PORT/health"
         log_info "Logs: $log_file"
     else
         log_error "Canceler $id failed to start. Check logs:"

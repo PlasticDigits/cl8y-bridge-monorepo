@@ -62,3 +62,86 @@ groups:
         annotations:
           summary: "Polling stalled for {{ $labels.chain }}"
           description: "No successful poll in over 5 minutes"
+
+  # Canceler-specific alerts
+  - name: cl8y-canceler-alerts
+    rules:
+      # Canceler is down
+      - alert: CancelerDown
+        expr: up{job="cl8y-cancelers"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Canceler {{ $labels.instance }} is down"
+          description: "The canceler has been unreachable for more than 2 minutes. Fraud detection may be compromised."
+
+      # Canceler not processing blocks
+      - alert: CancelerNotProcessingBlocks
+        expr: increase(canceler_last_evm_block[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Canceler {{ $labels.canceler_id }} not processing EVM blocks"
+          description: "No new EVM blocks processed in 5 minutes. Fraud detection may be delayed."
+
+      # Canceler not processing Terra
+      - alert: CancelerNotProcessingTerra
+        expr: increase(canceler_last_terra_height[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Canceler {{ $labels.canceler_id }} not processing Terra blocks"
+          description: "No new Terra blocks processed in 5 minutes."
+
+      # Cancellation submitted (security event)
+      - alert: CancellationSubmitted
+        expr: increase(canceler_cancelled_count[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fraudulent approval cancelled by {{ $labels.canceler_id }}"
+          description: "A fraudulent approval was detected and cancelled. Investigate the source."
+
+      # High cancellation rate (possible attack)
+      - alert: HighCancellationRate
+        expr: increase(canceler_cancelled_count[1h]) > 5
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High cancellation rate detected"
+          description: "{{ $value }} cancellations in the last hour. Possible attack in progress."
+
+      # All cancelers down
+      - alert: AllCancelersDown
+        expr: count(up{job="cl8y-cancelers"} == 1) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ALL CANCELERS DOWN - CRITICAL"
+          description: "No cancelers are running. Bridge is vulnerable to fraud. PAUSE BRIDGE IMMEDIATELY."
+
+      # Insufficient cancelers (below minimum)
+      - alert: InsufficientCancelers
+        expr: count(up{job="cl8y-cancelers"} == 1) < 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Insufficient cancelers running"
+          description: "Only {{ $value }} canceler(s) running. Minimum 2 recommended for production."
+
+      # Canceler health check failing
+      - alert: CancelerUnhealthy
+        expr: canceler_health_status != 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Canceler {{ $labels.canceler_id }} unhealthy"
+          description: "Canceler reporting unhealthy status. Check logs for details."

@@ -434,26 +434,57 @@ configure_terra_bridge() {
     log_info "Setting withdraw delay to 300 seconds..."
     local SET_DELAY_MSG='{"set_withdraw_delay":{"delay_seconds":300}}'
     
-    docker exec "$CONTAINER_NAME" terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$SET_DELAY_MSG" \
+    local SET_DELAY_TX=$(docker exec "$CONTAINER_NAME" terrad tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$SET_DELAY_MSG" \
         --from test1 \
         --chain-id localterra \
         --gas auto --gas-adjustment 1.5 \
         --fees 10000000uluna \
         --broadcast-mode sync \
-        -y --keyring-backend test 2>&1 > /dev/null || true
+        -y -o json --keyring-backend test 2>&1)
     
-    sleep 5
-    
-    # Verify configuration
-    local QUERY='{"withdraw_delay":{}}'
-    local QUERY_B64=$(echo -n "$QUERY" | base64 -w0)
-    local DELAY=$(curl -sf "http://localhost:1317/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}/smart/${QUERY_B64}" 2>/dev/null | jq -r '.data.delay_seconds // empty' || echo "")
-    
-    if [ "$DELAY" = "300" ]; then
-        log_info "Terra bridge configured: withdraw delay = 300s"
-    else
-        log_warn "Could not verify Terra bridge configuration (delay=$DELAY)"
+    # Extract txhash for confirmation
+    local TX_HASH=$(echo "$SET_DELAY_TX" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 || echo "")
+    if [ -z "$TX_HASH" ]; then
+        TX_HASH=$(echo "$SET_DELAY_TX" | jq -r '.txhash' 2>/dev/null || echo "")
     fi
+    
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Set withdraw delay TX: $TX_HASH"
+        
+        # Wait for TX confirmation with retries
+        local RETRY=0
+        while [ $RETRY -lt 10 ]; do
+            sleep 3
+            RETRY=$((RETRY + 1))
+            
+            local TX_RESULT=$(docker exec "$CONTAINER_NAME" terrad query tx "$TX_HASH" -o json 2>&1 || echo "pending")
+            if echo "$TX_RESULT" | grep -q '"code":0'; then
+                log_info "Set withdraw delay TX confirmed at retry $RETRY"
+                break
+            elif echo "$TX_RESULT" | grep -q "pending\|not found"; then
+                log_info "TX still pending (attempt $RETRY/10)..."
+            fi
+        done
+    else
+        log_warn "Could not get TX hash for set_withdraw_delay"
+        sleep 8  # Fallback wait
+    fi
+    
+    # Verify configuration with retries (LocalTerra can be slow to update state)
+    local DELAY=""
+    for i in {1..5}; do
+        local QUERY='{"withdraw_delay":{}}'
+        local QUERY_B64=$(echo -n "$QUERY" | base64 -w0)
+        DELAY=$(curl -sf "http://localhost:1317/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}/smart/${QUERY_B64}" 2>/dev/null | jq -r '.data.delay_seconds // empty' || echo "")
+        
+        if [ "$DELAY" = "300" ]; then
+            log_info "Terra bridge configured: withdraw delay = 300s"
+            return 0
+        fi
+        sleep 2
+    done
+    
+    log_warn "Could not verify Terra bridge configuration (delay=$DELAY)"
 }
 
 # Deploy test tokens (ERC20 on Anvil, CW20 on LocalTerra)
@@ -582,6 +613,41 @@ grant_operator_role() {
     log_info "Roles granted for E2E testing"
 }
 
+# Register Terra chain key on ChainRegistry
+register_terra_chain_key() {
+    log_step "Registering Terra chain key on ChainRegistry..."
+    
+    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    
+    # Add Terra (COSMW) chain key using addCOSMWChainKey("localterra")
+    log_info "Adding Terra chain key (COSMW/localterra)..."
+    local ADD_CHAIN_TX=$(cast send "$CHAIN_REGISTRY" \
+        "addCOSMWChainKey(string)" \
+        "localterra" \
+        --rpc-url http://localhost:8545 \
+        --private-key "$ADMIN_KEY" \
+        --json 2>&1) || true
+    
+    if echo "$ADD_CHAIN_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_info "Terra chain key registered on ChainRegistry"
+    else
+        log_warn "Terra chain key registration may have failed (could already be registered)"
+    fi
+    
+    # Verify chain key was registered by getting the computed key
+    TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY" \
+        "getChainKeyCOSMW(string)(bytes32)" \
+        "localterra" \
+        --rpc-url http://localhost:8545 2>/dev/null || echo "")
+    
+    if [ -n "$TERRA_CHAIN_KEY" ] && [ "$TERRA_CHAIN_KEY" != "0x0000000000000000000000000000000000000000000000000000000000000000" ]; then
+        log_info "Terra chain key: $TERRA_CHAIN_KEY"
+    else
+        log_warn "Could not verify Terra chain key"
+    fi
+}
+
 # Register test tokens on both bridges
 register_test_tokens() {
     log_step "Registering test tokens on bridges..."
@@ -592,10 +658,21 @@ register_test_tokens() {
     fi
     
     local TOKEN_REGISTRY="${TOKEN_REGISTRY_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}"
+    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
     local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     
-    # Compute Terra chain key
-    local TERRA_CHAIN_KEY=$(cast keccak256 "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')")
+    # Get Terra chain key from ChainRegistry (computed correctly)
+    local TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY" \
+        "getChainKeyCOSMW(string)(bytes32)" \
+        "localterra" \
+        --rpc-url http://localhost:8545 2>/dev/null || echo "")
+    
+    if [ -z "$TERRA_CHAIN_KEY" ] || [ "$TERRA_CHAIN_KEY" = "0x0000000000000000000000000000000000000000000000000000000000000000" ]; then
+        log_error "Terra chain key not found - run register_terra_chain_key first"
+        return 1
+    fi
+    
+    log_info "Using Terra chain key: $TERRA_CHAIN_KEY"
     
     # Encode destination token (CW20 address as bytes32)
     local DEST_TOKEN
@@ -608,22 +685,56 @@ register_test_tokens() {
         DEST_TOKEN="0x$(printf '%-64s' "$DEST_TOKEN" | tr ' ' '0')"
     fi
     
-    # Register on EVM TokenRegistry
-    # TokenType.LockUnlock = 0
-    local REG_TX=$(cast send "$TOKEN_REGISTRY" \
-        "registerToken(address,bytes32,bytes32,uint8)" \
+    log_info "Destination token address: $DEST_TOKEN"
+    
+    # Step 1: Add token with bridge type (LockUnlock = 1)
+    # BridgeTypeLocal: MintBurn = 0, LockUnlock = 1
+    log_info "Adding token to TokenRegistry..."
+    local ADD_TOKEN_TX=$(cast send "$TOKEN_REGISTRY" \
+        "addToken(address,uint8)" \
         "$TEST_TOKEN_ADDRESS" \
-        "$TERRA_CHAIN_KEY" \
-        "$DEST_TOKEN" \
-        "0" \
+        "1" \
         --rpc-url http://localhost:8545 \
         --private-key "$ADMIN_KEY" \
         --json 2>&1) || true
     
-    if echo "$REG_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
-        log_info "Token registered on EVM TokenRegistry"
+    if echo "$ADD_TOKEN_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_info "Token added to TokenRegistry"
     else
-        log_warn "Token registration may have failed (could already be registered)"
+        log_warn "Token add may have failed (could already be registered)"
+    fi
+    
+    # Step 2: Add destination chain key for the token
+    # addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destChainTokenAddress, uint256 decimals)
+    log_info "Adding token destination chain key..."
+    local ADD_DEST_TX=$(cast send "$TOKEN_REGISTRY" \
+        "addTokenDestChainKey(address,bytes32,bytes32,uint256)" \
+        "$TEST_TOKEN_ADDRESS" \
+        "$TERRA_CHAIN_KEY" \
+        "$DEST_TOKEN" \
+        "6" \
+        --rpc-url http://localhost:8545 \
+        --private-key "$ADMIN_KEY" \
+        --json 2>&1) || true
+    
+    if echo "$ADD_DEST_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_info "Token destination chain key registered"
+    else
+        log_warn "Token destination chain key registration may have failed"
+        log_info "TX result: $(echo "$ADD_DEST_TX" | head -c 200)"
+    fi
+    
+    # Verify token is properly registered
+    local IS_REGISTERED=$(cast call "$TOKEN_REGISTRY" \
+        "isTokenDestChainKeyRegistered(address,bytes32)(bool)" \
+        "$TEST_TOKEN_ADDRESS" \
+        "$TERRA_CHAIN_KEY" \
+        --rpc-url http://localhost:8545 2>/dev/null || echo "false")
+    
+    if [ "$IS_REGISTERED" = "true" ]; then
+        log_info "Token registration verified successfully"
+    else
+        log_warn "Token registration could not be verified (is_registered=$IS_REGISTERED)"
     fi
     
     log_info "Token registration complete"
@@ -632,6 +743,13 @@ register_test_tokens() {
 # Export environment variables for E2E tests
 export_env_file() {
     log_step "Exporting E2E environment variables..."
+    
+    # Get Terra chain key from ChainRegistry
+    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    local TERRA_CHAIN_KEY_VALUE=$(cast call "$CHAIN_REGISTRY" \
+        "getChainKeyCOSMW(string)(bytes32)" \
+        "localterra" \
+        --rpc-url http://localhost:8545 2>/dev/null || echo "")
     
     cat > "$ENV_FILE" << EOF
 # E2E Test Environment
@@ -648,6 +766,9 @@ TOKEN_REGISTRY_ADDRESS=${TOKEN_REGISTRY_ADDRESS:-0x9fE46736679d2D9a65F0992F2272d
 LOCK_UNLOCK_ADDRESS=${LOCK_UNLOCK_ADDRESS:-0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9}
 MINT_BURN_ADDRESS=${MINT_BURN_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
 EVM_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+# Chain Keys (computed from ChainRegistry)
+TERRA_CHAIN_KEY=${TERRA_CHAIN_KEY_VALUE:-}
 
 # Test Token Addresses
 TEST_TOKEN_ADDRESS=${TEST_TOKEN_ADDRESS:-}
@@ -826,6 +947,7 @@ main() {
     deploy_terra_contracts
     deploy_test_tokens
     grant_operator_role
+    register_terra_chain_key
     register_test_tokens
     export_env_file
     fund_test_accounts

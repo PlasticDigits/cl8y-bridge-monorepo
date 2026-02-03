@@ -6,6 +6,9 @@ use std::env;
 /// Canceler configuration
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Unique canceler instance ID for multi-canceler deployments
+    pub canceler_id: String,
+
     /// EVM RPC URL
     pub evm_rpc_url: String,
     /// EVM chain ID
@@ -29,6 +32,9 @@ pub struct Config {
 
     /// Poll interval in milliseconds
     pub poll_interval_ms: u64,
+
+    /// Health server port (default 9090)
+    pub health_port: u16,
 }
 
 impl Config {
@@ -39,7 +45,14 @@ impl Config {
             tracing::debug!("Loaded .env from {:?}", path);
         }
 
+        // Generate default canceler ID from hostname or random
+        let default_id = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| format!("canceler-{}", std::process::id()));
+
         Ok(Self {
+            canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
+
             evm_rpc_url: env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?,
             evm_chain_id: env::var("EVM_CHAIN_ID")
                 .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
@@ -65,6 +78,11 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5000),
+
+            health_port: env::var("HEALTH_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(9090),
         })
     }
 }
