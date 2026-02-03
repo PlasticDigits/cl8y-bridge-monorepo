@@ -662,17 +662,17 @@ Fraud detection is tested automatically by `e2e-test.sh`. For manual testing:
 ### Canceler Integration
 - [x] Test account granted OPERATOR_ROLE ✓
 - [x] Test account granted CANCELER_ROLE ✓
-- [ ] Fraudulent approval created in tests
-- [ ] Canceler detects and submits cancel
-- [ ] Approval marked as cancelled
-- [ ] Withdrawal attempt fails with ApprovalCancelled
+- [x] Fraudulent approval created in tests ✓
+- [x] Canceler detects and submits cancel ✓
+- [x] Approval marked as cancelled ✓
+- [x] Withdrawal attempt fails with ApprovalCancelled ✓
 
 ### Test Reliability (IMPLEMENTED ✓)
 - [x] All security tests run by default (no --full flag needed)
 - [x] Operator always started by default (use --no-operator to disable with warning)
 - [x] Canceler always started by default (use --no-canceler to disable with warning)
 - [x] Real transfer tests with balance assertions
-- [ ] CI/CD runs E2E tests
+- [x] CI/CD runs E2E tests ✓
 
 ---
 

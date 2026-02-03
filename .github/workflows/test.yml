@@ -4,17 +4,27 @@ on:
   push:
     paths:
       - 'packages/contracts-evm/**'
+      - 'packages/operator/**'
+      - 'packages/canceler/**'
+      - 'packages/contracts-terraclassic/**'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
       - 'packages/contracts-evm/**'
+      - 'packages/operator/**'
+      - 'packages/canceler/**'
+      - 'packages/contracts-terraclassic/**'
       - '.github/workflows/test.yml'
   workflow_dispatch:
 
 env:
   FOUNDRY_PROFILE: ci
+  CARGO_TERM_COLOR: always
 
 jobs:
+  # ==========================================================================
+  # EVM Contracts Tests
+  # ==========================================================================
   contracts-evm:
     strategy:
       fail-fast: true
@@ -50,3 +60,151 @@ jobs:
         run: |
           forge test -vvv
         id: test
+
+  # ==========================================================================
+  # Rust Operator Tests
+  # ==========================================================================
+  operator:
+    name: Operator
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: operator
+          POSTGRES_PASSWORD: operator
+          POSTGRES_DB: operator
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/operator -> target
+
+      - name: Check formatting
+        working-directory: packages/operator
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        working-directory: packages/operator
+        env:
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        working-directory: packages/operator
+        env:
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+        run: cargo build --release
+
+      - name: Run tests
+        working-directory: packages/operator
+        env:
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+          RUST_BACKTRACE: 1
+        run: cargo test --release -- --nocapture
+
+  # ==========================================================================
+  # Rust Canceler Tests
+  # ==========================================================================
+  canceler:
+    name: Canceler
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/canceler -> target
+
+      - name: Check formatting
+        working-directory: packages/canceler
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        working-directory: packages/canceler
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        working-directory: packages/canceler
+        run: cargo build --release
+
+      - name: Run tests
+        working-directory: packages/canceler
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --release -- --nocapture
+
+  # ==========================================================================
+  # Terra Contracts Tests (CosmWasm)
+  # ==========================================================================
+  contracts-terra:
+    name: Terra Contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/contracts-terraclassic/bridge -> target
+
+      - name: Check formatting
+        working-directory: packages/contracts-terraclassic/bridge
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        working-directory: packages/contracts-terraclassic/bridge
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        working-directory: packages/contracts-terraclassic/bridge
+        run: cargo build --release
+
+      - name: Build WASM
+        working-directory: packages/contracts-terraclassic/bridge
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Run tests
+        working-directory: packages/contracts-terraclassic/bridge
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test -- --nocapture
