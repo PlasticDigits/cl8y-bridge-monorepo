@@ -4,6 +4,7 @@
 //! for E2E test infrastructure, replacing shell scripts with idiomatic Rust.
 
 use crate::docker::DockerCompose;
+use crate::services::ServiceManager;
 use eyre::{eyre, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -50,21 +51,29 @@ impl E2eTeardown {
         Ok(start.clone())
     }
 
-    /// Stop running operator/relayer processes
+    /// Stop running operator/relayer/canceler processes
     pub async fn stop_relayer_processes(&self) -> Result<u32> {
-        info!("Stopping relayer processes");
+        info!("Stopping relayer and canceler processes");
 
+        // First, use ServiceManager to cleanly stop services via PID files
+        let mut services = ServiceManager::new(&self.project_root);
+        let _ = services.stop_all().await;
+
+        // Then look for any orphaned processes
         let orphans = self.find_orphans().await?;
         let mut count = 0;
         for p in orphans {
-            if p.name.contains("operator") || p.name.contains("relayer") {
+            if p.name.contains("operator")
+                || p.name.contains("relayer")
+                || p.name.contains("canceler")
+            {
                 if self.kill_process(p.pid).await {
                     count += 1;
                 }
             }
         }
 
-        info!("Stopped {} relayer process(es)", count);
+        info!("Stopped {} service process(es)", count);
         Ok(count)
     }
 
@@ -178,9 +187,9 @@ impl E2eTeardown {
             }
         }
 
-        // Find operator/relayer processes not associated with containers
+        // Find operator/relayer/canceler processes not associated with containers
         let operator_processes = self
-            .find_processes_by_name(&["operator", "relayer"])
+            .find_processes_by_name(&["operator", "relayer", "canceler"])
             .await?;
         for proc in operator_processes {
             if !self.is_container_process(proc.pid).await {

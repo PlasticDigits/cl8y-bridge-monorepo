@@ -135,6 +135,7 @@ pub struct TerraConfig {
     pub lcd_url: Url,
     pub chain_id: String,
     pub bridge_address: Option<String>,
+    pub cw20_address: Option<String>,
     pub mnemonic: Option<String>,
 }
 
@@ -145,6 +146,7 @@ impl Default for TerraConfig {
             lcd_url: Url::parse("http://localhost:1317").expect("valid default URL"),
             chain_id: "localterra".to_string(),
             bridge_address: None,
+            cw20_address: None,
             mnemonic: None,
         }
     }
@@ -162,6 +164,7 @@ impl TerraConfig {
             lcd_url: Url::parse(&lcd_url)?,
             chain_id: std::env::var("TERRA_CHAIN_ID").unwrap_or_else(|_| "localterra".to_string()),
             bridge_address: std::env::var("TERRA_BRIDGE_ADDRESS").ok(),
+            cw20_address: std::env::var("TERRA_CW20_ADDRESS").ok(),
             mnemonic: std::env::var("TERRA_MNEMONIC").ok(),
         })
     }

@@ -15,6 +15,7 @@
 use crate::chain_config;
 use crate::config::{E2eConfig, EvmContracts};
 use crate::docker::DockerCompose;
+use crate::services::ServiceManager;
 use alloy::primitives::{Address, B256};
 use eyre::{eyre, Result};
 use std::path::PathBuf;
@@ -26,6 +27,7 @@ pub struct E2eSetup {
     project_root: PathBuf,
     docker: DockerCompose,
     config: E2eConfig,
+    services: ServiceManager,
 }
 
 impl E2eSetup {
@@ -37,11 +39,13 @@ impl E2eSetup {
         let project_root = Self::find_monorepo_root(&project_root)?;
         let docker = DockerCompose::new(project_root.clone(), "e2e").await?;
         let config = E2eConfig::from_env()?;
+        let services = ServiceManager::new(&project_root);
 
         Ok(Self {
             project_root,
             docker,
             config,
+            services,
         })
     }
 
@@ -584,6 +588,9 @@ impl E2eSetup {
     ///
     /// This deploys a CW20 mintable token on LocalTerra for E2E testing.
     /// Returns the deployed contract address, or None if LocalTerra is not available.
+    ///
+    /// If the CW20 WASM is not found, attempts to download it using the
+    /// scripts/download-cw20-wasm.sh script.
     pub async fn deploy_cw20_token(&self) -> Result<Option<String>> {
         info!("Checking if LocalTerra is available for CW20 deployment");
 
@@ -591,6 +598,42 @@ impl E2eSetup {
         if !chain_config::is_localterra_running().await? {
             warn!("LocalTerra not running, skipping CW20 deployment");
             return Ok(None);
+        }
+
+        // Check if CW20 WASM exists, if not try to download it
+        let cw20_wasm_path = self
+            .project_root
+            .join("packages/contracts-terraclassic/artifacts/cw20_mintable.wasm");
+
+        if !cw20_wasm_path.exists() {
+            info!("CW20 WASM not found, attempting to download...");
+            let download_script = self.project_root.join("scripts/download-cw20-wasm.sh");
+
+            if download_script.exists() {
+                let output = std::process::Command::new("bash")
+                    .arg(&download_script)
+                    .current_dir(&self.project_root)
+                    .output();
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        info!("CW20 WASM downloaded successfully");
+                    }
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        warn!("CW20 WASM download failed: {}", stderr);
+                    }
+                    Err(e) => {
+                        warn!("Failed to run CW20 download script: {}", e);
+                    }
+                }
+            } else {
+                warn!(
+                    "CW20 download script not found at: {}",
+                    download_script.display()
+                );
+                warn!("Run: scripts/download-cw20-wasm.sh to download the CW20 WASM");
+            }
         }
 
         let test_address = &self.config.test_accounts.terra_address;
@@ -761,6 +804,33 @@ impl E2eSetup {
         true
     }
 
+    /// Get the current configuration (with updated Terra bridge address after deployment)
+    pub fn config(&self) -> &E2eConfig {
+        &self.config
+    }
+
+    /// Get mutable reference to config (for test modifications)
+    pub fn config_mut(&mut self) -> &mut E2eConfig {
+        &mut self.config
+    }
+
+    /// Stop the canceler service
+    pub async fn stop_canceler(&mut self) -> Result<()> {
+        info!("Stopping canceler service");
+        self.services.stop_canceler().await
+    }
+
+    /// Stop all managed services (canceler, etc.)
+    pub async fn stop_services(&mut self) -> Result<()> {
+        info!("Stopping all managed services");
+        self.services.stop_all().await
+    }
+
+    /// Check if canceler service is running
+    pub fn is_canceler_running(&self) -> bool {
+        self.services.is_canceler_running()
+    }
+
     /// Run complete setup with progress callback
     pub async fn run_full_setup<F>(&mut self, mut on_step: F) -> Result<SetupResult>
     where
@@ -806,13 +876,23 @@ impl E2eSetup {
         // Deploy Terra Contracts
         on_step(SetupStep::DeployTerraContracts, true);
         let terra_bridge = self.deploy_terra_contracts().await?;
-        deployed.terra_bridge = terra_bridge;
+        deployed.terra_bridge = terra_bridge.clone();
+        // Propagate Terra bridge address to config for tests to access
+        if let Some(ref addr) = terra_bridge {
+            self.config.terra.bridge_address = Some(addr.clone());
+            info!("Terra bridge address set in config: {}", addr);
+        }
         on_step(SetupStep::DeployTerraContracts, true);
 
         // Deploy CW20 Token on LocalTerra
         on_step(SetupStep::DeployCw20Token, true);
         let cw20_address = self.deploy_cw20_token().await?;
         deployed.cw20_token = cw20_address.clone();
+        // Propagate CW20 address to config for tests to access
+        if let Some(ref addr) = cw20_address {
+            self.config.terra.cw20_address = Some(addr.clone());
+            info!("CW20 token address set in config: {}", addr);
+        }
         on_step(SetupStep::DeployCw20Token, true);
 
         // Grant Roles (OPERATOR_ROLE and CANCELER_ROLE to test account)
@@ -854,6 +934,21 @@ impl E2eSetup {
         }
         on_step(SetupStep::RegisterTokens, true);
 
+        // Start Canceler Service (for fraud detection)
+        on_step(SetupStep::StartCanceler, true);
+        match self.services.start_canceler(&self.config).await {
+            Ok(pid) => {
+                info!("Canceler service started with PID {}", pid);
+            }
+            Err(e) => {
+                warn!("Failed to start canceler service: {} (tests may skip)", e);
+            }
+        }
+        on_step(
+            SetupStep::StartCanceler,
+            self.services.is_canceler_running(),
+        );
+
         // Export Environment
         on_step(SetupStep::ExportEnvironment, true);
         let env_file = self.export_environment(&deployed).await?;
@@ -891,6 +986,7 @@ pub enum SetupStep {
     GrantRoles,
     RegisterChainKeys,
     RegisterTokens,
+    StartCanceler,
     ExportEnvironment,
     VerifySetup,
 }
@@ -909,6 +1005,7 @@ impl SetupStep {
             Self::GrantRoles => "Grant Roles",
             Self::RegisterChainKeys => "Register Chain Keys",
             Self::RegisterTokens => "Register Tokens",
+            Self::StartCanceler => "Start Canceler Service",
             Self::ExportEnvironment => "Export Environment",
             Self::VerifySetup => "Verify Setup",
         }

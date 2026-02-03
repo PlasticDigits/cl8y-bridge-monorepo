@@ -123,5 +123,13 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(evm_to_evm::test_mock_chain_registration(config).await);
     // Note: test_evm_to_evm_deposit and test_evm_to_evm_full_cycle require token address
 
+    // CW20 Cross-Chain Transfer Tests (4) - IMPLEMENTED in integration.rs
+    // These tests use the CW20 address from config (set during setup)
+    let cw20_address = config.terra.cw20_address.as_deref();
+    results.push(integration::test_cw20_deployment(config, cw20_address).await);
+    results.push(integration::test_cw20_balance_query(config, cw20_address).await);
+    results.push(integration::test_cw20_mint_burn_pattern(config, cw20_address).await);
+    results.push(integration::test_cw20_lock_unlock_pattern(config, cw20_address).await);
+
     results
 }
