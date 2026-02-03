@@ -451,7 +451,7 @@ TERRA_CHAIN_ID=localterra
 TERRA_BRIDGE_ADDRESS=${TERRA_BRIDGE_ADDRESS:-}
 
 # Database Configuration
-DATABASE_URL=postgres://operator:operator@localhost:5433/operator
+DATABASE_URL=postgres://operator:operator@localhost:${E2E_POSTGRES_PORT:-5433}/operator
 
 # API Configuration
 API_PORT=$E2E_API_PORT

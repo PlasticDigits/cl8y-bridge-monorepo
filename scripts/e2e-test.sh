@@ -827,15 +827,21 @@ EOF
 test_database() {
     log_step "=== TEST: Database State ==="
     
-    if ! command -v psql &> /dev/null; then
-        log_warn "psql not found - skipping database tests"
+    local tables=""
+    
+    # Try docker exec first (most reliable)
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "postgres"; then
+        local CONTAINER=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
+        tables=$(docker exec "$CONTAINER" psql -U operator -d operator -t -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | tr -d ' ' || echo "")
+    elif command -v psql &> /dev/null; then
+        # Fall back to psql if available
+        tables=$(psql "$DATABASE_URL" -t -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | tr -d ' ' || echo "")
+    else
+        log_warn "No postgres client available - skipping database tests"
         return
     fi
-    
-    # Check tables exist
-    local tables
-    tables=$(psql "$DATABASE_URL" -t -c \
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | tr -d ' ' || echo "")
     
     if echo "$tables" | grep -qE "deposits|evm_deposits|terra_deposits"; then
         log_info "Found deposit tables"
