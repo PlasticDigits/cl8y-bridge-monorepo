@@ -9,9 +9,12 @@
 #   1. Formatting (Rust + Solidity) - ALL packages
 #   2. Clippy linting (Rust) - ALL packages  
 #   3. Secret detection (gitleaks)
+#   4. Full E2E tests (starts infra, runs tests, tears down)
 #
 # Install: git config core.hooksPath .githooks
 # Skip: git commit --no-verify (NOT RECOMMENDED - security risk)
+#
+# NOTE: This hook runs FULL E2E tests. Commits will take 10-30+ minutes.
 # =============================================================================
 
 set -e
@@ -136,6 +139,25 @@ else
     else
         echo "    ✓ no secrets detected"
     fi
+fi
+
+# ==============================================================================
+# E2E TESTS - FULL SUITE WITH SETUP AND TEARDOWN
+# ==============================================================================
+
+echo ""
+echo "🧪 Running FULL E2E test suite..."
+echo "   This includes: infrastructure setup, all tests, teardown"
+echo "   Expected time: 10-30 minutes"
+echo ""
+
+cd "$REPO_ROOT"
+if ! make e2e-test; then
+    echo ""
+    echo "❌ E2E tests failed!"
+    CHECKS_PASSED=false
+else
+    echo "    ✓ all E2E tests passed"
 fi
 
 # ==============================================================================

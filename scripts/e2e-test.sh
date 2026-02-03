@@ -31,10 +31,13 @@
 
 set -e
 
-# Get script directory
+# Get script directory - use absolute paths to avoid issues with sourcing
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPERS_DIR="$SCRIPT_DIR/e2e-helpers"
+
+# Store scripts path explicitly for ctl scripts (in case SCRIPT_DIR gets modified)
+SCRIPTS_DIR="$SCRIPT_DIR"
 
 # Source common helpers
 if [ -f "$HELPERS_DIR/common.sh" ]; then
@@ -200,10 +203,10 @@ start_operator_if_needed() {
     fi
     
     log_step "Starting operator (security-critical)..."
-    if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_info "Operator already running"
     else
-        if "$SCRIPT_DIR/operator-ctl.sh" start 2>/dev/null; then
+        if "$SCRIPTS_DIR/operator-ctl.sh" start 2>/dev/null; then
             STARTED_OPERATOR=true
             sleep 3  # Give it time to initialize
             log_info "Operator started successfully"
@@ -218,7 +221,7 @@ start_operator_if_needed() {
 stop_operator_if_started() {
     if [ "$STARTED_OPERATOR" = true ]; then
         log_step "Stopping operator..."
-        "$SCRIPT_DIR/operator-ctl.sh" stop || true
+        "$SCRIPTS_DIR/operator-ctl.sh" stop || true
     fi
 }
 
@@ -229,10 +232,10 @@ start_canceler_if_needed() {
     fi
     
     log_step "Starting canceler (fraud prevention)..."
-    if "$SCRIPT_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
+    if "$SCRIPTS_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
         log_info "Canceler already running"
     else
-        if "$SCRIPT_DIR/canceler-ctl.sh" start 1 2>/dev/null; then
+        if "$SCRIPTS_DIR/canceler-ctl.sh" start 1 2>/dev/null; then
             STARTED_CANCELER=true
             sleep 2  # Give it time to initialize
             log_info "Canceler started successfully"
@@ -246,7 +249,7 @@ start_canceler_if_needed() {
 stop_canceler_if_started() {
     if [ "$STARTED_CANCELER" = true ]; then
         log_step "Stopping canceler..."
-        "$SCRIPT_DIR/canceler-ctl.sh" stop 1 || true
+        "$SCRIPTS_DIR/canceler-ctl.sh" stop 1 || true
     fi
 }
 
@@ -278,13 +281,13 @@ check_prereqs() {
     # Show operator/canceler status
     echo ""
     echo "Service Status:"
-    if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         echo -e "  ${GREEN}●${NC} Operator: running"
     else
         echo -e "  ${YELLOW}○${NC} Operator: not running"
     fi
     
-    if "$SCRIPT_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
+    if "$SCRIPTS_DIR/canceler-ctl.sh" status > /dev/null 2>&1; then
         echo -e "  ${GREEN}●${NC} Canceler: running"
     else
         echo -e "  ${YELLOW}○${NC} Canceler: not running"
@@ -773,7 +776,7 @@ test_evm_to_terra_transfer() {
     # Step 6: Wait for operator processing
     log_info "Step 6: Waiting for operator to process..."
     
-    if [ "$STARTED_OPERATOR" = true ] || "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if [ "$STARTED_OPERATOR" = true ] || "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_info "Operator is running, waiting for deposit processing..."
         
         # Wait for operator to detect deposit
@@ -898,7 +901,7 @@ test_terra_to_evm_transfer() {
     # Step 4: Wait for operator processing
     log_info "Step 4: Waiting for operator to process..."
     
-    if [ "$STARTED_OPERATOR" = true ] || "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if [ "$STARTED_OPERATOR" = true ] || "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_info "Operator is running, waiting for lock processing..."
         
         # Wait for operator to detect lock and submit approval
@@ -1131,7 +1134,7 @@ test_operator_deposit_detection() {
     fi
     
     # Check if operator is running
-    if ! "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if ! "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_error "Operator not running - cannot test deposit detection"
         record_result "Operator Deposit Detection" "fail"
         return
@@ -1179,7 +1182,7 @@ test_operator_approval_creation() {
     fi
     
     # Check if operator is running
-    if ! "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if ! "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_error "Operator not running - cannot test approval creation"
         record_result "Operator Approval Creation" "fail"
         return
@@ -1220,7 +1223,7 @@ test_operator_withdrawal_execution() {
     fi
     
     # Check if operator is running
-    if ! "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+    if ! "$SCRIPTS_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
         log_error "Operator not running - cannot test withdrawal execution"
         record_result "Operator Withdrawal Execution" "fail"
         return

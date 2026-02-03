@@ -4,6 +4,86 @@
 
 ---
 
+## 🚨 CRITICAL: Pre-commit E2E Tests Blocking - Fix Before Any Other Work
+
+### Context
+
+The pre-commit hook now runs FULL E2E tests on every commit (no flags, no skipping). This is by design - security-critical code should not be committed without full validation. However, the E2E tests are currently failing, which blocks all commits.
+
+**Current State:**
+- Pre-commit runs: formatting ✅, clippy ✅, gitleaks ✅, E2E tests ❌
+- E2E infrastructure starts correctly (Anvil, LocalTerra, PostgreSQL)
+- EVM contract deployment works
+- Terra contract deployment works
+- Basic connectivity tests pass
+
+### Failing Tests (must fix to unblock commits)
+
+#### 1. Terra Bridge Configuration Query Fails
+```
+[FAIL] TEST: Terra Bridge Configuration
+[WARN] Could not query Terra bridge config
+```
+- The `config {}` query to the Terra bridge contract returns empty
+- Need to verify the contract was instantiated correctly
+- May be a CosmWasm query format issue
+
+#### 2. EVM → Terra Deposit Transaction Reverts
+```
+[INFO] Step 3: Executing deposit on router...
+[ERROR] Deposit transaction failed
+```
+- Token approval succeeds
+- Deposit call to router reverts
+- Likely causes:
+  - Token not registered on bridge
+  - Chain not configured
+  - LockUnlock adapter not set up correctly
+
+### Files Changed (Uncommitted)
+
+These changes are staged but can't be committed until E2E passes:
+
+| File | Change |
+|------|--------|
+| `.githooks/pre-commit` | Runs FULL E2E tests with `make e2e-test` (no flags) |
+| `scripts/e2e-test.sh` | Fixed SCRIPTS_DIR path issue for operator-ctl.sh/canceler-ctl.sh |
+| `scripts/e2e-helpers/common.sh` | Fixed balance parsing (strip `[1e12]` formatting from cast output) |
+
+### How to Debug
+
+```bash
+# Start infrastructure manually
+./scripts/e2e-setup.sh
+
+# Source environment
+source .env.e2e
+
+# Test Terra bridge config query
+docker exec -it cl8y-bridge-monorepo-terrad-cli-1 terrad query wasm contract-state smart \
+  $TERRA_BRIDGE_ADDRESS '{"config":{}}' --node http://localterra:26657
+
+# Test EVM deposit manually
+cast send $EVM_ROUTER_ADDRESS "deposit(address,uint256,bytes32,bytes32)" \
+  $TEST_TOKEN 1000000 $TERRA_CHAIN_KEY $TERRA_DEST_ACCOUNT \
+  --rpc-url $EVM_RPC_URL --private-key $EVM_PRIVATE_KEY
+
+# Check if token is registered
+cast call $TOKEN_REGISTRY_ADDRESS "isTokenSupported(address)" $TEST_TOKEN \
+  --rpc-url $EVM_RPC_URL
+
+# Teardown when done
+./scripts/e2e-teardown.sh
+```
+
+### Priority
+
+**This is the #1 priority.** All other Sprint 13 work is blocked until E2E tests pass.
+
+The security enforcement is working correctly - it's blocking commits because tests fail. Fix the underlying issues, don't bypass the checks.
+
+---
+
 ## Sprint 12 Retrospective
 
 ### What Went Right

@@ -102,7 +102,10 @@ get_erc20_balance() {
     local token="$1"
     local account="$2"
     
-    cast call "$token" "balanceOf(address)(uint256)" "$account" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0"
+    # Get balance and strip any formatting (e.g., "1000000000000 [1e12]" -> "1000000000000")
+    local raw_balance
+    raw_balance=$(cast call "$token" "balanceOf(address)(uint256)" "$account" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0")
+    echo "$raw_balance" | awk '{print $1}'
 }
 
 # Get native balance on EVM
