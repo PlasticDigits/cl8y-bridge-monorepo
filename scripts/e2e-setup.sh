@@ -175,36 +175,51 @@ deploy_evm_contracts() {
         return 1
     }
     
-    # Extract deployed addresses from output or broadcast files
+    # Extract deployed addresses from broadcast file
     # The broadcast files are in broadcast/DeployLocal.s.sol/31337/run-latest.json
     BROADCAST_FILE="$PROJECT_ROOT/packages/contracts-evm/broadcast/DeployLocal.s.sol/31337/run-latest.json"
     
-    if [ -f "$BROADCAST_FILE" ]; then
-        # Extract bridge address from broadcast
-        EVM_BRIDGE_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "Cl8YBridge") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        ACCESS_MANAGER_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "AccessManagerEnumerable") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        CHAIN_REGISTRY_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "ChainRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        TOKEN_REGISTRY_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "TokenRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        LOCK_UNLOCK_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "LockUnlock") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        MINT_BURN_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "MintBurn") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        
-        if [ -n "$EVM_BRIDGE_ADDRESS" ] && [ "$EVM_BRIDGE_ADDRESS" != "null" ]; then
-            log_info "Bridge deployed at: $EVM_BRIDGE_ADDRESS"
-        else
-            log_warn "Could not extract bridge address from broadcast file"
-            # Fallback to known deterministic address
-            EVM_BRIDGE_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
-        fi
-    else
-        # Use deterministic addresses from Anvil
-        log_info "Using deterministic Anvil addresses"
-        ACCESS_MANAGER_ADDRESS="0x5FbDB2315678afecb367f032d93F642f64180aa3"
-        CHAIN_REGISTRY_ADDRESS="0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-        TOKEN_REGISTRY_ADDRESS="0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-        MINT_BURN_ADDRESS="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        LOCK_UNLOCK_ADDRESS="0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-        EVM_BRIDGE_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+    if [ ! -f "$BROADCAST_FILE" ]; then
+        log_error "Broadcast file not found: $BROADCAST_FILE"
+        log_error "EVM deployment may have failed or broadcast was not saved"
+        return 1
     fi
+    
+    # Extract all addresses from broadcast file
+    log_info "Extracting contract addresses from broadcast file..."
+    
+    ACCESS_MANAGER_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "AccessManagerEnumerable") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    CHAIN_REGISTRY_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "ChainRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    TOKEN_REGISTRY_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "TokenRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    MINT_BURN_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "MintBurn") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    LOCK_UNLOCK_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "LockUnlock") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    EVM_BRIDGE_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "Cl8YBridge") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    EVM_ROUTER_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "BridgeRouter") | .contractAddress' "$BROADCAST_FILE" | head -1)
+    
+    # Validate required addresses were extracted
+    local missing_addresses=()
+    [ -z "$ACCESS_MANAGER_ADDRESS" ] || [ "$ACCESS_MANAGER_ADDRESS" = "null" ] && missing_addresses+=("AccessManagerEnumerable")
+    [ -z "$CHAIN_REGISTRY_ADDRESS" ] || [ "$CHAIN_REGISTRY_ADDRESS" = "null" ] && missing_addresses+=("ChainRegistry")
+    [ -z "$TOKEN_REGISTRY_ADDRESS" ] || [ "$TOKEN_REGISTRY_ADDRESS" = "null" ] && missing_addresses+=("TokenRegistry")
+    [ -z "$MINT_BURN_ADDRESS" ] || [ "$MINT_BURN_ADDRESS" = "null" ] && missing_addresses+=("MintBurn")
+    [ -z "$LOCK_UNLOCK_ADDRESS" ] || [ "$LOCK_UNLOCK_ADDRESS" = "null" ] && missing_addresses+=("LockUnlock")
+    [ -z "$EVM_BRIDGE_ADDRESS" ] || [ "$EVM_BRIDGE_ADDRESS" = "null" ] && missing_addresses+=("Cl8YBridge")
+    [ -z "$EVM_ROUTER_ADDRESS" ] || [ "$EVM_ROUTER_ADDRESS" = "null" ] && missing_addresses+=("BridgeRouter")
+    
+    if [ ${#missing_addresses[@]} -gt 0 ]; then
+        log_error "Failed to extract addresses for: ${missing_addresses[*]}"
+        log_error "Check the broadcast file: $BROADCAST_FILE"
+        return 1
+    fi
+    
+    log_info "Deployed contract addresses:"
+    log_info "  AccessManager: $ACCESS_MANAGER_ADDRESS"
+    log_info "  ChainRegistry: $CHAIN_REGISTRY_ADDRESS"
+    log_info "  TokenRegistry: $TOKEN_REGISTRY_ADDRESS"
+    log_info "  MintBurn: $MINT_BURN_ADDRESS"
+    log_info "  LockUnlock: $LOCK_UNLOCK_ADDRESS"
+    log_info "  Cl8YBridge: $EVM_BRIDGE_ADDRESS"
+    log_info "  BridgeRouter: $EVM_ROUTER_ADDRESS"
     
     log_info "EVM contracts deployed successfully"
 }
@@ -578,13 +593,17 @@ deploy_test_tokens() {
 grant_operator_role() {
     log_step "Granting OPERATOR_ROLE to test account..."
     
-    local ACCESS_MANAGER="${ACCESS_MANAGER_ADDRESS:-0x5FbDB2315678afecb367f032d93F642f64180aa3}"
+    if [ -z "$ACCESS_MANAGER_ADDRESS" ]; then
+        log_error "ACCESS_MANAGER_ADDRESS not set. Run deploy_evm_contracts first."
+        return 1
+    fi
+    
     local TEST_ACCOUNT="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     local OPERATOR_ROLE_ID=1
     
     # Grant OPERATOR_ROLE (role ID 1)
-    local GRANT_TX=$(cast send "$ACCESS_MANAGER" \
+    local GRANT_TX=$(cast send "$ACCESS_MANAGER_ADDRESS" \
         "grantRole(uint64,address,uint32)" \
         "$OPERATOR_ROLE_ID" \
         "$TEST_ACCOUNT" \
@@ -601,7 +620,7 @@ grant_operator_role() {
     
     # Also grant CANCELER_ROLE (role ID 2) for fraud testing
     local CANCELER_ROLE_ID=2
-    cast send "$ACCESS_MANAGER" \
+    cast send "$ACCESS_MANAGER_ADDRESS" \
         "grantRole(uint64,address,uint32)" \
         "$CANCELER_ROLE_ID" \
         "$TEST_ACCOUNT" \
@@ -617,12 +636,16 @@ grant_operator_role() {
 register_terra_chain_key() {
     log_step "Registering Terra chain key on ChainRegistry..."
     
-    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    if [ -z "$CHAIN_REGISTRY_ADDRESS" ]; then
+        log_error "CHAIN_REGISTRY_ADDRESS not set. Run deploy_evm_contracts first."
+        return 1
+    fi
+    
     local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     
     # Add Terra (COSMW) chain key using addCOSMWChainKey("localterra")
     log_info "Adding Terra chain key (COSMW/localterra)..."
-    local ADD_CHAIN_TX=$(cast send "$CHAIN_REGISTRY" \
+    local ADD_CHAIN_TX=$(cast send "$CHAIN_REGISTRY_ADDRESS" \
         "addCOSMWChainKey(string)" \
         "localterra" \
         --rpc-url http://localhost:8545 \
@@ -636,7 +659,7 @@ register_terra_chain_key() {
     fi
     
     # Verify chain key was registered by getting the computed key
-    TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY" \
+    TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY_ADDRESS" \
         "getChainKeyCOSMW(string)(bytes32)" \
         "localterra" \
         --rpc-url http://localhost:8545 2>/dev/null || echo "")
@@ -657,12 +680,15 @@ register_test_tokens() {
         return 0
     fi
     
-    local TOKEN_REGISTRY="${TOKEN_REGISTRY_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}"
-    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
+    if [ -z "$TOKEN_REGISTRY_ADDRESS_ADDRESS" ] || [ -z "$CHAIN_REGISTRY_ADDRESS" ]; then
+        log_error "TOKEN_REGISTRY_ADDRESS or CHAIN_REGISTRY_ADDRESS not set. Run deploy_evm_contracts first."
+        return 1
+    fi
+    
     local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     
     # Get Terra chain key from ChainRegistry (computed correctly)
-    local TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY" \
+    local TERRA_CHAIN_KEY=$(cast call "$CHAIN_REGISTRY_ADDRESS" \
         "getChainKeyCOSMW(string)(bytes32)" \
         "localterra" \
         --rpc-url http://localhost:8545 2>/dev/null || echo "")
@@ -690,7 +716,7 @@ register_test_tokens() {
     # Step 1: Add token with bridge type (LockUnlock = 1)
     # BridgeTypeLocal: MintBurn = 0, LockUnlock = 1
     log_info "Adding token to TokenRegistry..."
-    local ADD_TOKEN_TX=$(cast send "$TOKEN_REGISTRY" \
+    local ADD_TOKEN_TX=$(cast send "$TOKEN_REGISTRY_ADDRESS" \
         "addToken(address,uint8)" \
         "$TEST_TOKEN_ADDRESS" \
         "1" \
@@ -707,7 +733,7 @@ register_test_tokens() {
     # Step 2: Add destination chain key for the token
     # addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destChainTokenAddress, uint256 decimals)
     log_info "Adding token destination chain key..."
-    local ADD_DEST_TX=$(cast send "$TOKEN_REGISTRY" \
+    local ADD_DEST_TX=$(cast send "$TOKEN_REGISTRY_ADDRESS" \
         "addTokenDestChainKey(address,bytes32,bytes32,uint256)" \
         "$TEST_TOKEN_ADDRESS" \
         "$TERRA_CHAIN_KEY" \
@@ -725,7 +751,7 @@ register_test_tokens() {
     fi
     
     # Verify token is properly registered
-    local IS_REGISTERED=$(cast call "$TOKEN_REGISTRY" \
+    local IS_REGISTERED=$(cast call "$TOKEN_REGISTRY_ADDRESS" \
         "isTokenDestChainKeyRegistered(address,bytes32)(bool)" \
         "$TEST_TOKEN_ADDRESS" \
         "$TERRA_CHAIN_KEY" \
@@ -744,9 +770,14 @@ register_test_tokens() {
 export_env_file() {
     log_step "Exporting E2E environment variables..."
     
+    # Validate required addresses are set (should be extracted from broadcast file)
+    if [ -z "$EVM_BRIDGE_ADDRESS" ] || [ -z "$EVM_ROUTER_ADDRESS" ] || [ -z "$ACCESS_MANAGER_ADDRESS" ]; then
+        log_error "Contract addresses not set. Run deploy_evm_contracts first."
+        return 1
+    fi
+    
     # Get Terra chain key from ChainRegistry
-    local CHAIN_REGISTRY="${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}"
-    local TERRA_CHAIN_KEY_VALUE=$(cast call "$CHAIN_REGISTRY" \
+    local TERRA_CHAIN_KEY_VALUE=$(cast call "$CHAIN_REGISTRY_ADDRESS" \
         "getChainKeyCOSMW(string)(bytes32)" \
         "localterra" \
         --rpc-url http://localhost:8545 2>/dev/null || echo "")
@@ -758,13 +789,13 @@ export_env_file() {
 # EVM Configuration
 EVM_RPC_URL=http://localhost:8545
 EVM_CHAIN_ID=31337
-EVM_BRIDGE_ADDRESS=${EVM_BRIDGE_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
-EVM_ROUTER_ADDRESS=${EVM_BRIDGE_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
-ACCESS_MANAGER_ADDRESS=${ACCESS_MANAGER_ADDRESS:-0x5FbDB2315678afecb367f032d93F642f64180aa3}
-CHAIN_REGISTRY_ADDRESS=${CHAIN_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
-TOKEN_REGISTRY_ADDRESS=${TOKEN_REGISTRY_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}
-LOCK_UNLOCK_ADDRESS=${LOCK_UNLOCK_ADDRESS:-0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9}
-MINT_BURN_ADDRESS=${MINT_BURN_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
+EVM_BRIDGE_ADDRESS=${EVM_BRIDGE_ADDRESS}
+EVM_ROUTER_ADDRESS=${EVM_ROUTER_ADDRESS}
+ACCESS_MANAGER_ADDRESS=${ACCESS_MANAGER_ADDRESS}
+CHAIN_REGISTRY_ADDRESS=${CHAIN_REGISTRY_ADDRESS}
+TOKEN_REGISTRY_ADDRESS=${TOKEN_REGISTRY_ADDRESS}
+LOCK_UNLOCK_ADDRESS=${LOCK_UNLOCK_ADDRESS}
+MINT_BURN_ADDRESS=${MINT_BURN_ADDRESS}
 EVM_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
 # Chain Keys (computed from ChainRegistry)

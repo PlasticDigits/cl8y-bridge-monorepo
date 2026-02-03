@@ -22,6 +22,7 @@ fi
 : "${EVM_RPC_URL:?EVM_RPC_URL is required}"
 : "${EVM_ROUTER_ADDRESS:?EVM_ROUTER_ADDRESS is required}"
 : "${EVM_PRIVATE_KEY:?EVM_PRIVATE_KEY is required}"
+: "${LOCK_UNLOCK_ADDRESS:?LOCK_UNLOCK_ADDRESS is required}"
 
 log_step "Performing EVM deposit..."
 log_info "Token: $TOKEN"
@@ -29,10 +30,11 @@ log_info "Amount: $AMOUNT"
 log_info "Dest Chain Key: $DEST_CHAIN_KEY"
 log_info "Dest Account: $DEST_ACCOUNT"
 
-# First approve the router to spend tokens
-log_info "Approving router to spend tokens..."
+# First approve the LockUnlock contract to spend tokens
+# Note: Users must approve the downstream contract (MintBurn or LockUnlock), not the router
+log_info "Approving LockUnlock to spend tokens..."
 APPROVE_TX=$(cast send "$TOKEN" "approve(address,uint256)" \
-    "$EVM_ROUTER_ADDRESS" \
+    "$LOCK_UNLOCK_ADDRESS" \
     "$AMOUNT" \
     --rpc-url "$EVM_RPC_URL" \
     --private-key "$EVM_PRIVATE_KEY" \

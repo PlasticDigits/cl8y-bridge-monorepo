@@ -744,16 +744,15 @@ test_evm_to_terra_transfer() {
     fi
     log_info "Token approval successful"
     
-    log_info "Step 3: Executing deposit on bridge..."
-    # CL8YBridge.deposit(payer, destChainKey, destAccount, token, amount)
-    # Note: bridge.deposit is restricted, requires OPERATOR_ROLE (deployer has this role)
-    DEPOSIT_TX=$(cast send "$EVM_BRIDGE_ADDRESS" \
-        "deposit(address,bytes32,bytes32,address,uint256)" \
-        "$EVM_TEST_ADDRESS" \
-        "$TERRA_CHAIN_KEY" \
-        "$TERRA_DEST_ACCOUNT" \
+    log_info "Step 3: Executing deposit via router..."
+    # BridgeRouter.deposit(token, amount, destChainKey, destAccount)
+    # The router is the user-facing entry point and has OPERATOR_ROLE to call bridge.deposit()
+    DEPOSIT_TX=$(cast send "$EVM_ROUTER_ADDRESS" \
+        "deposit(address,uint256,bytes32,bytes32)" \
         "$TEST_TOKEN" \
         "$TRANSFER_AMOUNT" \
+        "$TERRA_CHAIN_KEY" \
+        "$TERRA_DEST_ACCOUNT" \
         --rpc-url "$EVM_RPC_URL" \
         --private-key "$EVM_PRIVATE_KEY" \
         --json 2>&1)

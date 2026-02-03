@@ -8,9 +8,14 @@ import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {MintBurn} from "../src/MintBurn.sol";
 import {LockUnlock} from "../src/LockUnlock.sol";
+import {BridgeRouter} from "../src/BridgeRouter.sol";
+import {GuardBridge} from "../src/GuardBridge.sol";
+import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
+import {IWETH} from "../src/interfaces/IWETH.sol";
+import {MockWETH} from "../test/mocks/MockWETH.sol";
 
-/// @title DeployLocal - Minimal deployment for local testing
-/// @notice Deploys core bridge contracts to Anvil without WETH dependency
+/// @title DeployLocal - Deployment for local testing including BridgeRouter
+/// @notice Deploys core bridge contracts to Anvil with MockWETH for router testing
 contract DeployLocal is Script {
     // Roles
     uint64 internal constant OPERATOR_ROLE_BRIDGE = 1;
@@ -48,23 +53,48 @@ contract DeployLocal is Script {
         Cl8YBridge bridge = new Cl8YBridge(address(accessManager), tokenRegistry, mintBurn, lockUnlock);
         console.log("Cl8YBridge:", address(bridge));
 
+        // Deploy MockWETH for local testing
+        MockWETH weth = new MockWETH();
+        console.log("MockWETH:", address(weth));
+
+        // Deploy DatastoreSetAddress for GuardBridge
+        DatastoreSetAddress datastore = new DatastoreSetAddress();
+        console.log("DatastoreSetAddress:", address(datastore));
+
+        // Deploy GuardBridge
+        GuardBridge guard = new GuardBridge(address(accessManager), datastore);
+        console.log("GuardBridge:", address(guard));
+
+        // Deploy BridgeRouter
+        BridgeRouter router = new BridgeRouter(
+            address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(address(weth)), guard
+        );
+        console.log("BridgeRouter:", address(router));
+
         // Grant roles
         accessManager.grantRole(OPERATOR_ROLE_BRIDGE, address(bridge), 0);
         accessManager.grantRole(OPERATOR_ROLE_BRIDGE, address(mintBurn), 0);
         accessManager.grantRole(OPERATOR_ROLE_BRIDGE, address(lockUnlock), 0);
+        accessManager.grantRole(OPERATOR_ROLE_BRIDGE, address(router), 0);
         // Grant operator role to deployer for testing
         accessManager.grantRole(OPERATOR_ROLE_BRIDGE, msg.sender, 0);
 
-        // Configure function roles
-        bytes4[] memory sel = new bytes4[](7);
-        sel[0] = bridge.deposit.selector;
-        sel[1] = bridge.withdraw.selector;
-        sel[2] = bridge.pause.selector;
-        sel[3] = bridge.unpause.selector;
-        sel[4] = bridge.approveWithdraw.selector;
-        sel[5] = bridge.cancelWithdrawApproval.selector;
-        sel[6] = bridge.reenableWithdrawApproval.selector;
-        accessManager.setTargetFunctionRole(address(bridge), sel, OPERATOR_ROLE_BRIDGE);
+        // Configure function roles for bridge
+        bytes4[] memory bridgeSel = new bytes4[](7);
+        bridgeSel[0] = bridge.deposit.selector;
+        bridgeSel[1] = bridge.withdraw.selector;
+        bridgeSel[2] = bridge.pause.selector;
+        bridgeSel[3] = bridge.unpause.selector;
+        bridgeSel[4] = bridge.approveWithdraw.selector;
+        bridgeSel[5] = bridge.cancelWithdrawApproval.selector;
+        bridgeSel[6] = bridge.reenableWithdrawApproval.selector;
+        accessManager.setTargetFunctionRole(address(bridge), bridgeSel, OPERATOR_ROLE_BRIDGE);
+
+        // Configure function roles for router
+        bytes4[] memory routerSel = new bytes4[](2);
+        routerSel[0] = router.pause.selector;
+        routerSel[1] = router.unpause.selector;
+        accessManager.setTargetFunctionRole(address(router), routerSel, OPERATOR_ROLE_BRIDGE);
 
         vm.stopBroadcast();
 
@@ -76,5 +106,7 @@ contract DeployLocal is Script {
         console.log("MINT_BURN=%s", address(mintBurn));
         console.log("LOCK_UNLOCK=%s", address(lockUnlock));
         console.log("EVM_BRIDGE_ADDRESS=%s", address(bridge));
+        console.log("EVM_ROUTER_ADDRESS=%s", address(router));
+        console.log("WETH_ADDRESS=%s", address(weth));
     }
 }
