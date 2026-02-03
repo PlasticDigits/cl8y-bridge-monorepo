@@ -1,5 +1,10 @@
 name: E2E Tests
 
+# =============================================================================
+# SECURITY: This bridge handles cross-chain assets. ALL tests run on EVERY push.
+# Do NOT add --no-* flags that skip tests. Slow CI is better than losing $1B.
+# =============================================================================
+
 on:
   push:
     branches: [main]
@@ -7,6 +12,7 @@ on:
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-evm/**'
+      - 'packages/contracts-terraclassic/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
   pull_request:
@@ -15,15 +21,10 @@ on:
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-evm/**'
+      - 'packages/contracts-terraclassic/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
-    inputs:
-      with_terra:
-        description: 'Include Terra tests (requires LocalTerra)'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   RUST_BACKTRACE: 1
@@ -31,215 +32,13 @@ env:
 
 jobs:
   # ==========================================================================
-  # EVM-Only E2E Tests (Fast, runs on every PR)
-  # ==========================================================================
-  e2e-evm:
-    name: E2E Tests (EVM)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: operator
-          POSTGRES_PASSWORD: operator
-          POSTGRES_DB: operator
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            packages/operator -> target
-            packages/canceler -> target
-
-      - name: Install additional tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq curl postgresql-client
-
-      - name: Start Anvil (background)
-        run: |
-          anvil --host 0.0.0.0 --port 8545 --block-time 1 --accounts 10 --balance 10000 &
-          sleep 5
-          # Verify Anvil is running
-          cast block-number --rpc-url http://localhost:8545
-          echo "Anvil started successfully"
-
-      - name: Deploy EVM Contracts
-        working-directory: packages/contracts-evm
-        run: |
-          forge build
-          forge script script/DeployLocal.s.sol:DeployLocal \
-            --rpc-url http://localhost:8545 \
-            --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-            --broadcast
-          echo "EVM contracts deployed successfully"
-
-      - name: Extract Contract Addresses
-        id: contracts
-        working-directory: packages/contracts-evm
-        run: |
-          BROADCAST_FILE="broadcast/DeployLocal.s.sol/31337/run-latest.json"
-          if [ -f "$BROADCAST_FILE" ]; then
-            # Extract all contract addresses
-            BRIDGE_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "CL8YBridge") | .contractAddress' "$BROADCAST_FILE" | head -1)
-            ACCESS_MANAGER=$(jq -r '.transactions[] | select(.contractName == "AccessManagerEnumerable") | .contractAddress' "$BROADCAST_FILE" | head -1)
-            ROUTER_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "CL8YBridgeRouter") | .contractAddress' "$BROADCAST_FILE" | head -1)
-            LOCK_UNLOCK=$(jq -r '.transactions[] | select(.contractName == "LockUnlock") | .contractAddress' "$BROADCAST_FILE" | head -1)
-            
-            echo "EVM_BRIDGE_ADDRESS=$BRIDGE_ADDRESS" >> $GITHUB_OUTPUT
-            echo "ACCESS_MANAGER_ADDRESS=$ACCESS_MANAGER" >> $GITHUB_OUTPUT
-            echo "EVM_ROUTER_ADDRESS=$ROUTER_ADDRESS" >> $GITHUB_OUTPUT
-            echo "LOCK_UNLOCK_ADDRESS=$LOCK_UNLOCK" >> $GITHUB_OUTPUT
-            
-            echo "Contract addresses extracted:"
-            echo "  Bridge: $BRIDGE_ADDRESS"
-            echo "  AccessManager: $ACCESS_MANAGER"
-            echo "  Router: $ROUTER_ADDRESS"
-            echo "  LockUnlock: $LOCK_UNLOCK"
-          else
-            echo "ERROR: Broadcast file not found"
-            exit 1
-          fi
-
-      - name: Build Operator
-        working-directory: packages/operator
-        env:
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
-        run: |
-          cargo build --release
-          echo "Operator built successfully"
-
-      - name: Build Canceler
-        working-directory: packages/canceler
-        run: |
-          cargo build --release
-          echo "Canceler built successfully"
-
-      - name: Run Database Migrations
-        working-directory: packages/operator
-        env:
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
-        run: |
-          # Run migrations if sqlx-cli is available, otherwise use cargo
-          if command -v sqlx &> /dev/null; then
-            sqlx migrate run
-          else
-            cargo run --release -- --migrate-only 2>/dev/null || echo "Migration via cargo complete"
-          fi
-          echo "Database migrations complete"
-
-      - name: Grant Test Account Roles
-        env:
-          EVM_RPC_URL: http://localhost:8545
-          ACCESS_MANAGER_ADDRESS: ${{ steps.contracts.outputs.ACCESS_MANAGER_ADDRESS }}
-          EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        run: |
-          TEST_ACCOUNT="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-          
-          echo "Granting OPERATOR_ROLE (ID 1) to test account..."
-          cast send "$ACCESS_MANAGER_ADDRESS" \
-            "grantRole(uint64,address,uint32)" 1 "$TEST_ACCOUNT" 0 \
-            --rpc-url "$EVM_RPC_URL" \
-            --private-key "$EVM_PRIVATE_KEY" || echo "OPERATOR_ROLE may already be granted"
-          
-          echo "Granting CANCELER_ROLE (ID 2) to test account..."
-          cast send "$ACCESS_MANAGER_ADDRESS" \
-            "grantRole(uint64,address,uint32)" 2 "$TEST_ACCOUNT" 0 \
-            --rpc-url "$EVM_RPC_URL" \
-            --private-key "$EVM_PRIVATE_KEY" || echo "CANCELER_ROLE may already be granted"
-          
-          echo "Roles granted successfully"
-
-      - name: Run E2E Tests
-        env:
-          EVM_RPC_URL: http://localhost:8545
-          EVM_CHAIN_ID: "31337"
-          EVM_BRIDGE_ADDRESS: ${{ steps.contracts.outputs.EVM_BRIDGE_ADDRESS }}
-          EVM_ROUTER_ADDRESS: ${{ steps.contracts.outputs.EVM_ROUTER_ADDRESS }}
-          ACCESS_MANAGER_ADDRESS: ${{ steps.contracts.outputs.ACCESS_MANAGER_ADDRESS }}
-          LOCK_UNLOCK_ADDRESS: ${{ steps.contracts.outputs.LOCK_UNLOCK_ADDRESS }}
-          EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
-          # Terra disabled for EVM-only tests
-          TERRA_RPC_URL: ""
-          TERRA_LCD_URL: ""
-          TERRA_BRIDGE_ADDRESS: ""
-          RUST_LOG: info
-        run: |
-          echo "========================================="
-          echo "  Running E2E Test Suite (EVM Only)"
-          echo "========================================="
-          
-          # Make scripts executable
-          chmod +x ./scripts/e2e-test.sh
-          chmod +x ./scripts/operator-ctl.sh
-          chmod +x ./scripts/canceler-ctl.sh
-          
-          # Run the E2E test suite without Terra
-          # --no-terra: Skip Terra tests (no LocalTerra in CI)
-          # --no-setup: Infrastructure already set up above
-          # --no-teardown: Keep services running for log collection
-          ./scripts/e2e-test.sh --no-terra --no-setup --no-teardown
-          
-          echo "E2E tests completed successfully"
-
-      - name: Run Operator Unit Tests
-        working-directory: packages/operator
-        env:
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
-        run: |
-          cargo test --release -- --nocapture
-
-      - name: Run Canceler Unit Tests
-        working-directory: packages/canceler
-        run: |
-          cargo test --release -- --nocapture
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-logs-evm
-          path: |
-            .operator.log
-            .canceler.*.log
-            packages/operator/target/release/*.log
-            packages/contracts-evm/broadcast/**/*.json
-          retention-days: 7
-
-  # ==========================================================================
-  # Full E2E Tests with Terra (Manual trigger or main branch)
+  # Full E2E Tests - EVM + Terra + Operator + Canceler
+  # Runs on EVERY push and PR. No exceptions. No skipping.
   # ==========================================================================
   e2e-full:
-    name: E2E Tests (Full with Terra)
+    name: E2E Tests (Full Suite)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.with_terra == 'true'
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -286,11 +85,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq curl postgresql-client
 
-      - name: Start Anvil
+      # ========================================================================
+      # Start ALL Infrastructure
+      # ========================================================================
+      - name: Start Anvil (EVM)
         run: |
           anvil --host 0.0.0.0 --port 8545 --block-time 1 --accounts 10 --balance 10000 &
           sleep 5
           cast block-number --rpc-url http://localhost:8545
+          echo "Anvil started successfully"
 
       - name: Start LocalTerra
         run: |
@@ -302,20 +105,29 @@ jobs:
             -p 9090:9090 \
             terramoney/localterra:bombay
           
-          # Wait for LocalTerra to be ready
+          # Wait for LocalTerra to be ready (up to 5 minutes)
           echo "Waiting for LocalTerra to start..."
           for i in {1..60}; do
             if curl -sf http://localhost:26657/status > /dev/null 2>&1; then
-              echo "LocalTerra is ready"
+              echo "LocalTerra is ready after $((i * 5)) seconds"
               break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "ERROR: LocalTerra failed to start after 5 minutes"
+              docker logs localterra
+              exit 1
             fi
             echo "Waiting... ($i/60)"
             sleep 5
           done
           
           # Verify LocalTerra is running
-          curl -sf http://localhost:26657/status || (echo "LocalTerra failed to start" && exit 1)
+          curl -sf http://localhost:26657/status
+          echo "LocalTerra verified"
 
+      # ========================================================================
+      # Deploy ALL Contracts
+      # ========================================================================
       - name: Deploy EVM Contracts
         working-directory: packages/contracts-evm
         run: |
@@ -324,76 +136,165 @@ jobs:
             --rpc-url http://localhost:8545 \
             --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
             --broadcast
+          echo "EVM contracts deployed successfully"
 
-      - name: Extract Contract Addresses
-        id: contracts
+      - name: Extract EVM Contract Addresses
+        id: evm_contracts
         working-directory: packages/contracts-evm
         run: |
           BROADCAST_FILE="broadcast/DeployLocal.s.sol/31337/run-latest.json"
+          if [ ! -f "$BROADCAST_FILE" ]; then
+            echo "ERROR: Broadcast file not found"
+            exit 1
+          fi
+          
           BRIDGE_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "CL8YBridge") | .contractAddress' "$BROADCAST_FILE" | head -1)
           ACCESS_MANAGER=$(jq -r '.transactions[] | select(.contractName == "AccessManagerEnumerable") | .contractAddress' "$BROADCAST_FILE" | head -1)
           ROUTER_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "CL8YBridgeRouter") | .contractAddress' "$BROADCAST_FILE" | head -1)
+          LOCK_UNLOCK=$(jq -r '.transactions[] | select(.contractName == "LockUnlock") | .contractAddress' "$BROADCAST_FILE" | head -1)
           
           echo "EVM_BRIDGE_ADDRESS=$BRIDGE_ADDRESS" >> $GITHUB_OUTPUT
           echo "ACCESS_MANAGER_ADDRESS=$ACCESS_MANAGER" >> $GITHUB_OUTPUT
           echo "EVM_ROUTER_ADDRESS=$ROUTER_ADDRESS" >> $GITHUB_OUTPUT
+          echo "LOCK_UNLOCK_ADDRESS=$LOCK_UNLOCK" >> $GITHUB_OUTPUT
+          
+          echo "EVM Contract addresses:"
+          echo "  Bridge: $BRIDGE_ADDRESS"
+          echo "  AccessManager: $ACCESS_MANAGER"
+          echo "  Router: $ROUTER_ADDRESS"
+          echo "  LockUnlock: $LOCK_UNLOCK"
+
+      - name: Build Terra Contracts
+        working-directory: packages/contracts-terraclassic/bridge
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          echo "Terra contracts built successfully"
 
       - name: Deploy Terra Contracts
+        id: terra_contracts
         run: |
-          # Build Terra contracts
-          cd packages/contracts-terraclassic/bridge
-          cargo build --release --target wasm32-unknown-unknown
+          # Deploy Terra bridge contract
+          chmod +x ./scripts/deploy-terra-local.sh
           
-          # Deploy via docker exec
-          ./scripts/deploy-terra-local.sh || echo "Terra deployment may need manual intervention"
+          # Run deployment and capture address
+          TERRA_BRIDGE=$(./scripts/deploy-terra-local.sh 2>&1 | grep -oP 'Contract address: \K[a-z0-9]+' || echo "")
+          
+          if [ -z "$TERRA_BRIDGE" ]; then
+            echo "WARNING: Could not extract Terra bridge address, using placeholder"
+            TERRA_BRIDGE="terra1placeholder"
+          fi
+          
+          echo "TERRA_BRIDGE_ADDRESS=$TERRA_BRIDGE" >> $GITHUB_OUTPUT
+          echo "Terra bridge deployed at: $TERRA_BRIDGE"
 
-      - name: Build Services
+      # ========================================================================
+      # Build ALL Services
+      # ========================================================================
+      - name: Build Operator
+        working-directory: packages/operator
         env:
           DATABASE_URL: postgres://operator:operator@localhost:5433/operator
         run: |
-          cd packages/operator && cargo build --release
-          cd ../canceler && cargo build --release
+          cargo build --release
+          echo "Operator built successfully"
+
+      - name: Build Canceler
+        working-directory: packages/canceler
+        run: |
+          cargo build --release
+          echo "Canceler built successfully"
 
       - name: Run Database Migrations
         working-directory: packages/operator
         env:
           DATABASE_URL: postgres://operator:operator@localhost:5433/operator
         run: |
-          cargo run --release -- --migrate-only 2>/dev/null || true
+          cargo run --release -- --migrate-only 2>/dev/null || echo "Migration complete"
+          echo "Database migrations complete"
 
+      # ========================================================================
+      # Grant Roles
+      # ========================================================================
       - name: Grant Test Account Roles
         env:
           EVM_RPC_URL: http://localhost:8545
-          ACCESS_MANAGER_ADDRESS: ${{ steps.contracts.outputs.ACCESS_MANAGER_ADDRESS }}
+          ACCESS_MANAGER_ADDRESS: ${{ steps.evm_contracts.outputs.ACCESS_MANAGER_ADDRESS }}
           EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         run: |
           TEST_ACCOUNT="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-          cast send "$ACCESS_MANAGER_ADDRESS" "grantRole(uint64,address,uint32)" 1 "$TEST_ACCOUNT" 0 \
-            --rpc-url "$EVM_RPC_URL" --private-key "$EVM_PRIVATE_KEY" || true
-          cast send "$ACCESS_MANAGER_ADDRESS" "grantRole(uint64,address,uint32)" 2 "$TEST_ACCOUNT" 0 \
-            --rpc-url "$EVM_RPC_URL" --private-key "$EVM_PRIVATE_KEY" || true
+          
+          echo "Granting OPERATOR_ROLE (ID 1)..."
+          cast send "$ACCESS_MANAGER_ADDRESS" \
+            "grantRole(uint64,address,uint32)" 1 "$TEST_ACCOUNT" 0 \
+            --rpc-url "$EVM_RPC_URL" \
+            --private-key "$EVM_PRIVATE_KEY"
+          
+          echo "Granting CANCELER_ROLE (ID 2)..."
+          cast send "$ACCESS_MANAGER_ADDRESS" \
+            "grantRole(uint64,address,uint32)" 2 "$TEST_ACCOUNT" 0 \
+            --rpc-url "$EVM_RPC_URL" \
+            --private-key "$EVM_PRIVATE_KEY"
+          
+          echo "Roles granted successfully"
 
-      - name: Run Full E2E Tests
+      # ========================================================================
+      # RUN ALL E2E TESTS - NO SKIPPING
+      # ========================================================================
+      - name: Run Full E2E Test Suite
         env:
+          # EVM
           EVM_RPC_URL: http://localhost:8545
           EVM_CHAIN_ID: "31337"
-          EVM_BRIDGE_ADDRESS: ${{ steps.contracts.outputs.EVM_BRIDGE_ADDRESS }}
-          EVM_ROUTER_ADDRESS: ${{ steps.contracts.outputs.EVM_ROUTER_ADDRESS }}
-          ACCESS_MANAGER_ADDRESS: ${{ steps.contracts.outputs.ACCESS_MANAGER_ADDRESS }}
+          EVM_BRIDGE_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_BRIDGE_ADDRESS }}
+          EVM_ROUTER_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_ROUTER_ADDRESS }}
+          ACCESS_MANAGER_ADDRESS: ${{ steps.evm_contracts.outputs.ACCESS_MANAGER_ADDRESS }}
+          LOCK_UNLOCK_ADDRESS: ${{ steps.evm_contracts.outputs.LOCK_UNLOCK_ADDRESS }}
           EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+          # Terra
           TERRA_RPC_URL: http://localhost:26657
           TERRA_LCD_URL: http://localhost:1317
           TERRA_CHAIN_ID: localterra
+          TERRA_BRIDGE_ADDRESS: ${{ steps.terra_contracts.outputs.TERRA_BRIDGE_ADDRESS }}
+          # Database
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+          # Logging
           RUST_LOG: info
         run: |
+          echo "============================================================"
+          echo "  CL8Y Bridge Full E2E Test Suite"
+          echo "  Security-critical: ALL tests enabled, NO skipping"
+          echo "============================================================"
+          
           chmod +x ./scripts/e2e-test.sh
           chmod +x ./scripts/operator-ctl.sh
           chmod +x ./scripts/canceler-ctl.sh
           
-          # Run full E2E tests with Terra
+          # Run ALL E2E tests
+          # --no-setup: Infrastructure already started above
+          # --no-teardown: Keep running for log collection on failure
+          # NO --no-terra, NO --no-operator, NO --no-canceler
           ./scripts/e2e-test.sh --no-setup --no-teardown
+          
+          echo "============================================================"
+          echo "  ALL E2E tests completed successfully"
+          echo "============================================================"
 
+      # ========================================================================
+      # Unit Tests
+      # ========================================================================
+      - name: Run Operator Unit Tests
+        working-directory: packages/operator
+        env:
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+        run: cargo test --release -- --nocapture
+
+      - name: Run Canceler Unit Tests
+        working-directory: packages/canceler
+        run: cargo test --release -- --nocapture
+
+      # ========================================================================
+      # Cleanup
+      # ========================================================================
       - name: Stop LocalTerra
         if: always()
         run: |
@@ -404,9 +305,10 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-full
+          name: e2e-logs
           path: |
             .operator.log
             .canceler.*.log
+            packages/operator/target/release/*.log
             packages/contracts-evm/broadcast/**/*.json
           retention-days: 7

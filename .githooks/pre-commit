@@ -1,14 +1,18 @@
 #!/bin/bash
-# Pre-commit hook for:
-#   1. Formatting checks (Rust + Solidity)
-#   2. Clippy linting (Rust)
+# =============================================================================
+# CL8Y Bridge Pre-commit Hook
+# =============================================================================
+# SECURITY: This bridge handles cross-chain assets.
+# ALL checks run on EVERY commit. No exceptions. No skipping.
+#
+# Checks:
+#   1. Formatting (Rust + Solidity) - ALL packages
+#   2. Clippy linting (Rust) - ALL packages  
 #   3. Secret detection (gitleaks)
 #
 # Install: git config core.hooksPath .githooks
-# Skip: git commit --no-verify (not recommended)
-#
-# Environment variables:
-#   SKIP_CLIPPY=1 - Skip clippy checks (faster commits, but CI may still fail)
+# Skip: git commit --no-verify (NOT RECOMMENDED - security risk)
+# =============================================================================
 
 set -e
 
@@ -18,100 +22,99 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 # Track overall success
 CHECKS_PASSED=true
 
-# Get list of staged files
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+echo "============================================================"
+echo "  CL8Y Bridge Pre-commit Security Checks"
+echo "  ALL checks run on EVERY commit. No skipping."
+echo "============================================================"
 
 # ==============================================================================
-# FORMATTING CHECKS
+# FORMATTING CHECKS - ALL PACKAGES, ALWAYS
 # ==============================================================================
 
-echo "🔧 Checking code formatting..."
+echo ""
+echo "🔧 Checking code formatting (ALL packages)..."
 
-# Check if any Rust files in operator are staged
-if echo "$STAGED_FILES" | grep -q "^packages/operator/"; then
-    if command -v cargo &> /dev/null; then
-        echo "  → Checking operator (Rust fmt)..."
-        if ! (cd "$REPO_ROOT/packages/operator" && cargo fmt --check 2>/dev/null); then
-            echo "❌ Operator has formatting issues. Run: cd packages/operator && cargo fmt"
-            CHECKS_PASSED=false
-        fi
+# Operator
+if command -v cargo &> /dev/null; then
+    echo "  → Checking operator (Rust fmt)..."
+    if ! (cd "$REPO_ROOT/packages/operator" && cargo fmt --check 2>/dev/null); then
+        echo "❌ Operator has formatting issues. Run: cd packages/operator && cargo fmt"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ operator formatted"
     fi
 fi
 
-# Check if any Rust files in canceler are staged
-if echo "$STAGED_FILES" | grep -q "^packages/canceler/"; then
-    if command -v cargo &> /dev/null; then
-        echo "  → Checking canceler (Rust fmt)..."
-        if ! (cd "$REPO_ROOT/packages/canceler" && cargo fmt --check 2>/dev/null); then
-            echo "❌ Canceler has formatting issues. Run: cd packages/canceler && cargo fmt"
-            CHECKS_PASSED=false
-        fi
+# Canceler
+if command -v cargo &> /dev/null; then
+    echo "  → Checking canceler (Rust fmt)..."
+    if ! (cd "$REPO_ROOT/packages/canceler" && cargo fmt --check 2>/dev/null); then
+        echo "❌ Canceler has formatting issues. Run: cd packages/canceler && cargo fmt"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ canceler formatted"
     fi
 fi
 
-# Check if any Rust files in terra contracts are staged (check workspace and bridge/)
-if echo "$STAGED_FILES" | grep -q "^packages/contracts-terraclassic/"; then
-    if command -v cargo &> /dev/null; then
-        echo "  → Checking Terra contracts (Rust fmt)..."
-        if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo fmt --check 2>/dev/null); then
-            echo "❌ Terra contracts have formatting issues. Run: cd packages/contracts-terraclassic/bridge && cargo fmt"
-            CHECKS_PASSED=false
-        fi
+# Terra contracts
+if command -v cargo &> /dev/null; then
+    echo "  → Checking Terra contracts (Rust fmt)..."
+    if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo fmt --check 2>/dev/null); then
+        echo "❌ Terra contracts have formatting issues. Run: cd packages/contracts-terraclassic/bridge && cargo fmt"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ terra contracts formatted"
     fi
 fi
 
-# Check if any Solidity files in EVM contracts are staged
-if echo "$STAGED_FILES" | grep -q "^packages/contracts-evm/"; then
-    if command -v forge &> /dev/null; then
-        echo "  → Checking EVM contracts (Solidity fmt)..."
-        # Only check src/, script/, test/ - not lib/
-        if ! (cd "$REPO_ROOT/packages/contracts-evm" && forge fmt --check src/ script/ test/ 2>/dev/null); then
-            echo "❌ EVM contracts have formatting issues. Run: cd packages/contracts-evm && forge fmt"
-            CHECKS_PASSED=false
-        fi
+# EVM contracts
+if command -v forge &> /dev/null; then
+    echo "  → Checking EVM contracts (Solidity fmt)..."
+    if ! (cd "$REPO_ROOT/packages/contracts-evm" && forge fmt --check src/ script/ test/ 2>/dev/null); then
+        echo "❌ EVM contracts have formatting issues. Run: cd packages/contracts-evm && forge fmt"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ evm contracts formatted"
     fi
 fi
 
 # ==============================================================================
-# CLIPPY CHECKS (Rust linting - matches CI)
+# CLIPPY CHECKS - ALL PACKAGES, ALWAYS
 # ==============================================================================
 
-if [ "$SKIP_CLIPPY" = "1" ]; then
-    echo "⚠️  Skipping clippy checks (SKIP_CLIPPY=1)"
-else
-    echo "🔍 Running clippy (Rust linting)..."
-    
-    # Check operator
-    if echo "$STAGED_FILES" | grep -q "^packages/operator/"; then
-        if command -v cargo &> /dev/null; then
-            echo "  → Checking operator (clippy)..."
-            if ! (cd "$REPO_ROOT/packages/operator" && cargo clippy -- -D warnings 2>&1 | tail -5); then
-                echo "❌ Operator has clippy warnings. Run: cd packages/operator && cargo clippy -- -D warnings"
-                CHECKS_PASSED=false
-            fi
-        fi
+echo ""
+echo "🔍 Running clippy (ALL Rust packages)..."
+
+# Operator
+if command -v cargo &> /dev/null; then
+    echo "  → Checking operator (clippy)..."
+    if ! (cd "$REPO_ROOT/packages/operator" && cargo clippy --quiet -- -D warnings 2>&1); then
+        echo "❌ Operator has clippy warnings. Run: cd packages/operator && cargo clippy -- -D warnings"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ operator clippy clean"
     fi
-    
-    # Check canceler
-    if echo "$STAGED_FILES" | grep -q "^packages/canceler/"; then
-        if command -v cargo &> /dev/null; then
-            echo "  → Checking canceler (clippy)..."
-            if ! (cd "$REPO_ROOT/packages/canceler" && cargo clippy -- -D warnings 2>&1 | tail -5); then
-                echo "❌ Canceler has clippy warnings. Run: cd packages/canceler && cargo clippy -- -D warnings"
-                CHECKS_PASSED=false
-            fi
-        fi
+fi
+
+# Canceler
+if command -v cargo &> /dev/null; then
+    echo "  → Checking canceler (clippy)..."
+    if ! (cd "$REPO_ROOT/packages/canceler" && cargo clippy --quiet -- -D warnings 2>&1); then
+        echo "❌ Canceler has clippy warnings. Run: cd packages/canceler && cargo clippy -- -D warnings"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ canceler clippy clean"
     fi
-    
-    # Check terra contracts (check workspace and bridge/)
-    if echo "$STAGED_FILES" | grep -q "^packages/contracts-terraclassic/"; then
-        if command -v cargo &> /dev/null; then
-            echo "  → Checking Terra contracts (clippy)..."
-            if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo clippy -- -D warnings 2>&1 | tail -5); then
-                echo "❌ Terra contracts have clippy warnings. Run: cd packages/contracts-terraclassic/bridge && cargo clippy -- -D warnings"
-                CHECKS_PASSED=false
-            fi
-        fi
+fi
+
+# Terra contracts
+if command -v cargo &> /dev/null; then
+    echo "  → Checking Terra contracts (clippy)..."
+    if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo clippy --quiet -- -D warnings 2>&1); then
+        echo "❌ Terra contracts have clippy warnings. Run: cd packages/contracts-terraclassic/bridge && cargo clippy -- -D warnings"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ terra contracts clippy clean"
     fi
 fi
 
@@ -119,28 +122,19 @@ fi
 # SECRET DETECTION
 # ==============================================================================
 
+echo ""
 echo "🔍 Checking for secrets..."
 
-# Check if gitleaks is installed
 if ! command -v gitleaks &> /dev/null; then
     echo "⚠️  gitleaks is not installed. Skipping secret detection."
-    echo ""
-    echo "Install gitleaks using one of these methods:"
-    echo "  brew install gitleaks              # macOS"
-    echo "  sudo apt install gitleaks          # Debian/Ubuntu"
-    echo "  cargo install gitleaks             # via Cargo"
-    echo "  go install github.com/gitleaks/gitleaks/v8@latest  # via Go"
-    echo ""
+    echo "   Install: brew install gitleaks (macOS) or sudo apt install gitleaks"
 else
-    # Run gitleaks on staged changes only
     if ! gitleaks protect --staged --config .gitleaks.toml --verbose; then
         echo ""
         echo "❌ Gitleaks found potential secrets in your staged changes!"
-        echo ""
-        echo "Please review the findings above and either:"
-        echo "  1. Remove the secret from the code"
-        echo "  2. Add a legitimate exception to .gitleaks.toml if it's a false positive"
         CHECKS_PASSED=false
+    else
+        echo "    ✓ no secrets detected"
     fi
 fi
 
@@ -148,13 +142,17 @@ fi
 # FINAL RESULT
 # ==============================================================================
 
+echo ""
+echo "============================================================"
+
 if [ "$CHECKS_PASSED" = false ]; then
-    echo ""
-    echo "❌ Pre-commit checks failed!"
+    echo "❌ PRE-COMMIT CHECKS FAILED"
     echo ""
     echo "Fix the issues above, then stage your changes and try again."
-    echo "To skip checks (not recommended): git commit --no-verify"
+    echo "To skip checks (NOT RECOMMENDED - security risk): git commit --no-verify"
+    echo "============================================================"
     exit 1
 fi
 
-echo "✅ All pre-commit checks passed!"
+echo "✅ ALL PRE-COMMIT CHECKS PASSED"
+echo "============================================================"

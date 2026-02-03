@@ -287,7 +287,7 @@ pub fn query_withdraw_approval(
         Some(a) => {
             let delay = WITHDRAW_DELAY.load(deps.storage)?;
             let elapsed = env.block.time.seconds() - a.approved_at.seconds();
-            let remaining = if elapsed >= delay { 0 } else { delay - elapsed };
+            let remaining = delay.saturating_sub(elapsed);
 
             Ok(WithdrawApprovalResponse {
                 exists: true,
