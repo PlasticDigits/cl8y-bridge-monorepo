@@ -1,0 +1,53 @@
+[package]
+name = "cl8y-e2e"
+version = "0.1.0"
+edition = "2021"
+description = "E2E test suite for CL8Y Bridge"
+
+[[bin]]
+name = "cl8y-e2e"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# EVM interactions (replaces cast/forge)
+alloy = { version = "0.8", features = ["full", "provider-http", "signer-local"] }
+
+# Terra/Cosmos interactions
+cosmrs = "0.19"
+tendermint-rpc = { version = "0.39", features = ["http-client"] }
+
+# Docker management
+bollard = "0.18"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling & logging
+eyre = "0.6"
+color-eyre = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utilities
+url = "2"
+hex = "0.4"
+chrono = "0.4"
+base64 = "0.22"
+dotenvy = "0.15"
+
+# Platform-specific
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio-test = "0.4"

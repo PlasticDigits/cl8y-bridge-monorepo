@@ -12,7 +12,7 @@
 #   4. Full E2E tests (starts infra, runs tests, tears down)
 #
 # Install: git config core.hooksPath .githooks
-# Skip: git commit --no-verify (NOT RECOMMENDED - security risk)
+# Skip: git commit --no-verify (USE THIS, GET FIRED. CRITICAL security risk)
 #
 # NOTE: This hook runs FULL E2E tests. Commits will take 10-30+ minutes.
 # =============================================================================
@@ -67,6 +67,17 @@ if command -v cargo &> /dev/null; then
         CHECKS_PASSED=false
     else
         echo "    ✓ terra contracts formatted"
+    fi
+fi
+
+# E2E package
+if command -v cargo &> /dev/null; then
+    echo "  → Checking E2E package (Rust fmt)..."
+    if ! (cd "$REPO_ROOT/packages/e2e" && cargo fmt --check 2>/dev/null); then
+        echo "❌ E2E package has formatting issues. Run: cd packages/e2e && cargo fmt"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ e2e package formatted"
     fi
 fi
 
@@ -142,17 +153,18 @@ else
 fi
 
 # ==============================================================================
-# E2E TESTS - FULL SUITE WITH SETUP AND TEARDOWN
+# E2E TESTS - FULL SUITE WITH SETUP AND TEARDOWN (RUST)
 # ==============================================================================
 
 echo ""
-echo "🧪 Running FULL E2E test suite..."
+echo "🧪 Running FULL E2E test suite (Rust)..."
 echo "   This includes: infrastructure setup, all tests, teardown"
-echo "   Expected time: 10-30 minutes"
+echo "   Teardown runs ALWAYS, even on failure"
+echo "   Expected time: 5-15 minutes"
 echo ""
 
 cd "$REPO_ROOT"
-if ! make e2e-test; then
+if ! make e2e-full-rust; then
     echo ""
     echo "❌ E2E tests failed!"
     CHECKS_PASSED=false
@@ -171,7 +183,7 @@ if [ "$CHECKS_PASSED" = false ]; then
     echo "❌ PRE-COMMIT CHECKS FAILED"
     echo ""
     echo "Fix the issues above, then stage your changes and try again."
-    echo "To skip checks (NOT RECOMMENDED - security risk): git commit --no-verify"
+    echo "To skip checks (USE THIS, GET FIRED. CRITICAL security risk): git commit --no-verify"
     echo "============================================================"
     exit 1
 fi

@@ -1,0 +1,73 @@
+[
+  {
+    "id": "e2e_002_config",
+    "status": "pass",
+    "created_at": "2026-02-03T08:44:21.279599736Z",
+    "updated_at": "2026-02-03T08:53:28.831681384Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_003_types",
+    "status": "fail",
+    "created_at": "2026-02-03T08:44:21.279601710Z",
+    "updated_at": "2026-02-03T08:54:43.526345681Z",
+    "error": "Build failed for cargo check:\nBuild failed after 2 auto-fix attempts:\n\nFiles:\nsrc/lib.rs\n\nFinal error:\n    Checking cl8y-e2e v0.1.0 (/home/answorld/repos/cl8y-bridge-monorepo/packages/e2e)\nerror: expected item, found `~`\n  --> src/config.rs:64:1\n   |\n64 | ~~~\n   | ^ expected item\n   |\n   = note: for a full list of items that can appear in modules, see <https://doc.rust-lang.org/reference/items.html>\n\nerror: could not compile `cl8y-e2e` (lib) due to 1 previous error\n",
+    "ran": false
+  },
+  {
+    "id": "e2e_004_docker",
+    "status": "pass",
+    "created_at": "2026-02-03T08:58:28.864288716Z",
+    "updated_at": "2026-02-03T08:59:27.189963100Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_005_utils",
+    "status": "pass",
+    "created_at": "2026-02-03T08:58:28.864291341Z",
+    "updated_at": "2026-02-03T09:00:12.734202831Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_006_evm",
+    "status": "pass",
+    "created_at": "2026-02-03T08:58:28.864293946Z",
+    "updated_at": "2026-02-03T09:00:54.565288424Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_007_tests_connectivity",
+    "status": "pass",
+    "created_at": "2026-02-03T08:58:28.864295940Z",
+    "updated_at": "2026-02-03T09:01:37.309324746Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_008_terra",
+    "status": "pass",
+    "created_at": "2026-02-03T09:52:05.354597158Z",
+    "updated_at": "2026-02-03T09:53:09.849513028Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_009_setup",
+    "status": "pass",
+    "created_at": "2026-02-03T09:52:05.354599652Z",
+    "updated_at": "2026-02-03T09:54:03.744977106Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_010_teardown",
+    "status": "pass",
+    "created_at": "2026-02-03T09:52:05.354602257Z",
+    "updated_at": "2026-02-03T09:54:50.464578811Z",
+    "ran": true
+  },
+  {
+    "id": "e2e_011_deploy",
+    "status": "pass",
+    "created_at": "2026-02-03T09:52:05.354605373Z",
+    "updated_at": "2026-02-03T09:55:34.952086179Z",
+    "ran": true
+  }
+]

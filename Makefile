@@ -35,15 +35,21 @@ help:
 	@echo "  make test-frontend  - Run frontend unit tests"
 	@echo "  make test           - Run all unit tests"
 	@echo ""
-	@echo "E2E Testing:"
-	@echo "  make e2e-test           - MASTER TEST: Run ALL E2E tests"
-	@echo "                            (operator, canceler, real transfers, fraud detection)"
-	@echo "  make e2e-test-quick     - Quick connectivity tests only (no services)"
-	@echo "  make e2e-test-transfers - Transfer tests with operator only"
-	@echo "  make e2e-test-canceler  - Canceler fraud detection tests"
-	@echo "  make e2e-evm-to-terra   - Test EVM → Terra transfer only"
-	@echo "  make e2e-terra-to-evm   - Test Terra → EVM transfer only"
-	@echo "  make e2e-connectivity   - Infrastructure connectivity tests only"
+	@echo "E2E Testing (Bash - Legacy):"
+	@echo "  make e2e-test           - MASTER TEST: Run ALL E2E tests (bash)"
+	@echo "  make e2e-test-quick     - Quick connectivity tests only (bash)"
+	@echo "  make e2e-test-transfers - Transfer tests with operator only (bash)"
+	@echo "  make e2e-test-canceler  - Canceler fraud detection tests (bash)"
+	@echo ""
+	@echo "E2E Testing (Rust - Recommended):"
+	@echo "  make e2e-full-rust      - RECOMMENDED: Full atomic cycle (setup->test->teardown)"
+	@echo "  make e2e-full-quick     - Quick connectivity tests in full cycle"
+	@echo "  make e2e-setup-rust     - Start infrastructure only"
+	@echo "  make e2e-test-rust      - Run all E2E tests"
+	@echo "  make e2e-quick-rust     - Quick connectivity tests only"
+	@echo "  make e2e-teardown-rust  - Teardown infrastructure only"
+	@echo "  make e2e-status         - Show infrastructure status"
+	@echo "  make e2e-single TEST=x  - Run single test by name"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy             - Deploy all contracts locally"
@@ -295,6 +301,60 @@ e2e-terra-to-evm:
 # E2E without any services (connectivity tests only)
 e2e-connectivity:
 	./scripts/e2e-test.sh --quick --no-operator
+
+# =============================================================================
+# Rust E2E Package (replaces bash scripts)
+# =============================================================================
+
+# Build the Rust E2E test binary
+e2e-build:
+	cd packages/e2e && cargo build --release
+
+# Full E2E setup using Rust package
+e2e-setup-rust:
+	cd packages/e2e && cargo run --release -- setup
+
+# Run all E2E tests using Rust package
+e2e-test-rust:
+	cd packages/e2e && cargo run --release -- run
+
+# Quick connectivity tests using Rust package
+e2e-quick-rust:
+	cd packages/e2e && cargo run --release -- run --quick
+
+# Run E2E tests without Terra
+e2e-test-no-terra:
+	cd packages/e2e && cargo run --release -- run --no-terra
+
+# Run a single E2E test
+e2e-single:
+	@echo "Usage: make e2e-single TEST=<test_name>"
+	@echo "Example: make e2e-single TEST=evm_connectivity"
+	@test -n "$(TEST)" && cd packages/e2e && cargo run --release -- run --test $(TEST) || true
+
+# Teardown E2E infrastructure using Rust package
+e2e-teardown-rust:
+	cd packages/e2e && cargo run --release -- teardown
+
+# Teardown but keep volumes for faster restart
+e2e-teardown-keep:
+	cd packages/e2e && cargo run --release -- teardown --keep-volumes
+
+# Show E2E infrastructure status
+e2e-status:
+	cd packages/e2e && cargo run --release -- status
+
+# Full E2E cycle: setup -> test -> teardown (atomic, teardown always runs)
+e2e-full-rust:
+	cd packages/e2e && cargo run --release -- full
+
+# Full E2E cycle with quick tests only (for faster CI)
+e2e-full-quick:
+	cd packages/e2e && cargo run --release -- full --quick
+
+# Full E2E cycle keeping volumes (faster restart)
+e2e-full-keep:
+	cd packages/e2e && cargo run --release -- full --keep-volumes
 
 # Integration tests
 test-integration:
