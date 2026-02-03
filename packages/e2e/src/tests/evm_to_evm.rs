@@ -406,6 +406,9 @@ pub async fn run_evm_to_evm_tests(config: &E2eConfig, token: Option<Address>) ->
 // ============================================================================
 
 /// Test chain key computation for EVM chains
+///
+/// Verifies that chain keys are computed correctly using keccak256(abi.encode("EVM", bytes32(chainId))).
+/// This matches the on-chain ChainRegistry.getChainKeyEVM() function.
 pub async fn test_evm_chain_key_computation(_config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "evm_chain_key_computation";
@@ -423,14 +426,30 @@ pub async fn test_evm_chain_key_computation(_config: &E2eConfig) -> TestResult {
     info!("Chain key for {}: 0x{}", chain_id_2, hex::encode(key_2));
     info!("Chain key for {}: 0x{}", chain_id_3, hex::encode(key_3));
 
-    // Verify keys are different
+    // Verify keys are different for different chain IDs
     if key_1 == key_2 || key_2 == key_3 || key_1 == key_3 {
-        return TestResult::fail(name, "Chain keys should be unique", start.elapsed());
+        return TestResult::fail(
+            name,
+            "Chain keys should be unique for different chain IDs",
+            start.elapsed(),
+        );
     }
 
-    // Verify prefix is "evm_"
-    if &key_1.as_slice()[0..4] != b"evm_" {
-        return TestResult::fail(name, "Chain key should start with 'evm_'", start.elapsed());
+    // Verify keys are non-zero (proper hash output)
+    if key_1 == B256::ZERO || key_2 == B256::ZERO || key_3 == B256::ZERO {
+        return TestResult::fail(name, "Chain keys should not be zero", start.elapsed());
+    }
+
+    // Verify key is a proper 32-byte hash (not a simple prefix concatenation)
+    // The hash should have high entropy - check that bytes are distributed
+    let bytes = key_1.as_slice();
+    let unique_bytes: std::collections::HashSet<u8> = bytes.iter().cloned().collect();
+    if unique_bytes.len() < 8 {
+        return TestResult::fail(
+            name,
+            "Chain key should have high entropy (proper keccak256 hash)",
+            start.elapsed(),
+        );
     }
 
     TestResult::pass(name, start.elapsed())

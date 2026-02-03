@@ -14,7 +14,8 @@ pub(crate) async fn query_withdraw_delay(config: &E2eConfig) -> eyre::Result<u64
     let client = reqwest::Client::new();
 
     // Encode withdrawDelay() function call
-    let call_data = "0xe7a48f3c"; // keccak256("withdrawDelay()")[0:4]
+    // Verified with: cast sig "withdrawDelay()"
+    let call_data = "0x0288a39c";
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -130,9 +131,9 @@ pub(crate) async fn query_evm_chain_key(
     let client = reqwest::Client::new();
 
     // Encode getChainKeyEVM(uint256) function call
-    // selector: keccak256("getChainKeyEVM(uint256)")[0:4] = 0x8e499bcf
+    // Verified with: cast sig "getChainKeyEVM(uint256)" = 0x5411d37f
     let chain_id_hex = format!("{:064x}", chain_id);
-    let call_data = format!("0x8e499bcf{}", chain_id_hex);
+    let call_data = format!("0x5411d37f{}", chain_id_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -177,11 +178,11 @@ pub(crate) async fn query_has_role(
     let client = reqwest::Client::new();
 
     // Encode hasRole(uint64,address) function call
-    // selector: keccak256("hasRole(uint64,address)")[0:4] = 0x91d14854
+    // Verified with: cast sig "hasRole(uint64,address)" = 0xd1f856ee
     // ABI encode: padded role_id (32 bytes) + padded address (32 bytes)
     let role_padded = format!("{:064x}", role_id);
     let addr_padded = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!("0x91d14854{}{}", role_padded, addr_padded);
+    let call_data = format!("0xd1f856ee{}{}", role_padded, addr_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -303,7 +304,8 @@ pub(crate) async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 32]> 
     let chain_id = &config.terra.chain_id;
 
     // ABI encode: function selector + offset + length + data
-    let selector = "0x3e5d5166"; // getChainKeyCOSMW(string)
+    // Verified with: cast sig "getChainKeyCOSMW(string)" = 0x1b69b176
+    let selector = "0x1b69b176";
     let offset = format!("{:064x}", 32); // offset to string data
     let length = format!("{:064x}", chain_id.len());
     let data_padded = format!("{:0<64}", hex::encode(chain_id.as_bytes()));

@@ -1,4 +1,4 @@
-use alloy::primitives::B256;
+use alloy::primitives::{keccak256, B256};
 use std::fmt;
 use std::time::Duration;
 
@@ -256,36 +256,68 @@ impl ChainKey {
     }
 
     /// Compute chain key for a COSMW chain (matches ChainRegistry.getChainKeyCOSMW)
+    ///
+    /// Computes: keccak256(abi.encode("COSMW", keccak256(abi.encode(chainId))))
     pub fn cosmw(chain_id: &str) -> Self {
-        let mut bytes = [0u8; 32];
-        bytes[0] = b'c';
-        bytes[1] = b'o';
-        bytes[2] = b's';
-        bytes[3] = b'm';
-        bytes[4] = b'w';
-        bytes[5] = b'_';
-
+        // Step 1: Compute inner hash of abi.encode(string)
+        // abi.encode(string) layout:
+        // - Word 0: offset to string data (0x20 = 32)
+        // - Word 1: string length
+        // - Word 2+: string data padded to 32 bytes
         let chain_id_bytes = chain_id.as_bytes();
-        for (i, &byte) in chain_id_bytes.iter().enumerate() {
-            bytes[6 + i] = byte;
-        }
+        let padded_len = ((chain_id_bytes.len() + 31) / 32) * 32;
+        let total_len = 64 + padded_len.max(32); // offset + length + data
 
-        Self::from_bytes(bytes)
+        let mut inner_data = vec![0u8; total_len];
+        // Offset to string data (0x20 = 32)
+        inner_data[31] = 0x20;
+        // String length
+        inner_data[63] = chain_id_bytes.len() as u8;
+        // String data
+        inner_data[64..64 + chain_id_bytes.len()].copy_from_slice(chain_id_bytes);
+
+        let inner_hash = keccak256(&inner_data);
+
+        // Step 2: Compute outer hash with chain type "COSMW"
+        // abi.encode("COSMW", bytes32(innerHash))
+        // - Word 0: offset to string data (0x40 = 64)
+        // - Word 1: bytes32 inner hash
+        // - Word 2: string length (5 for "COSMW")
+        // - Word 3: string data "COSMW" padded to 32 bytes
+        let mut outer_data = [0u8; 128];
+        outer_data[31] = 0x40; // Offset
+        outer_data[32..64].copy_from_slice(inner_hash.as_slice()); // Inner hash
+        outer_data[64 + 31] = 5; // String length "COSMW"
+        outer_data[96..101].copy_from_slice(b"COSMW"); // String data
+
+        Self::from_bytes(keccak256(&outer_data).into())
     }
 
     /// Compute chain key for an EVM chain (matches ChainRegistry.getChainKeyEVM)
+    ///
+    /// Computes: keccak256(abi.encode("EVM", bytes32(chainId)))
     pub fn evm(chain_id: u64) -> Self {
-        let mut bytes = [0u8; 32];
-        bytes[0] = b'e';
-        bytes[1] = b'v';
-        bytes[2] = b'm';
-        bytes[3] = b'_';
+        // abi.encode("EVM", bytes32(chainId))
+        // - Word 0: offset to string data (0x40 = 64)
+        // - Word 1: chainId as bytes32 (big-endian u64 in last 8 bytes)
+        // - Word 2: string length (3 for "EVM")
+        // - Word 3: string data "EVM" padded to 32 bytes
+        let mut data = [0u8; 128];
 
-        for (i, byte) in chain_id.to_be_bytes().iter().enumerate() {
-            bytes[4 + i] = *byte;
-        }
+        // Offset to string data
+        data[31] = 0x40;
 
-        Self::from_bytes(bytes)
+        // chainId as bytes32 (big-endian, right-aligned)
+        let chain_id_bytes = chain_id.to_be_bytes();
+        data[32 + 24..64].copy_from_slice(&chain_id_bytes);
+
+        // String length (3)
+        data[64 + 31] = 3;
+
+        // String data "EVM"
+        data[96..99].copy_from_slice(b"EVM");
+
+        Self::from_bytes(keccak256(&data).into())
     }
 }
 

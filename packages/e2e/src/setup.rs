@@ -163,6 +163,68 @@ impl E2eSetup {
         Ok(())
     }
 
+    /// Run database migrations
+    ///
+    /// Executes all SQL migration files from packages/operator/migrations/
+    /// in order to create the required database schema for e2e tests.
+    pub async fn run_migrations(&self) -> Result<()> {
+        info!("Running database migrations");
+
+        let database_url = &self.config.operator.database_url;
+        let migrations_dir = self.project_root.join("packages/operator/migrations");
+
+        if !migrations_dir.exists() {
+            return Err(eyre!(
+                "Migrations directory not found: {:?}",
+                migrations_dir
+            ));
+        }
+
+        // Connect to the database
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect(database_url)
+            .await
+            .map_err(|e| eyre!("Failed to connect to database: {}", e))?;
+
+        // Get all migration files sorted by name
+        let mut migration_files: Vec<_> = std::fs::read_dir(&migrations_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .map(|ext| ext == "sql")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        migration_files.sort_by_key(|entry| entry.file_name());
+
+        // Execute each migration
+        for entry in migration_files {
+            let path = entry.path();
+            let file_name = path.file_name().unwrap().to_string_lossy();
+            info!("Running migration: {}", file_name);
+
+            let sql = std::fs::read_to_string(&path)
+                .map_err(|e| eyre!("Failed to read migration {}: {}", file_name, e))?;
+
+            // Execute the migration SQL
+            sqlx::raw_sql(&sql)
+                .execute(&pool)
+                .await
+                .map_err(|e| eyre!("Failed to run migration {}: {}", file_name, e))?;
+
+            info!("Completed migration: {}", file_name);
+        }
+
+        pool.close().await;
+        info!("All migrations completed successfully");
+        Ok(())
+    }
+
     /// Deploy EVM contracts using forge script
     /// Returns deployed addresses
     pub async fn deploy_evm_contracts(&self) -> Result<DeployedContracts> {
@@ -174,6 +236,7 @@ impl E2eSetup {
 
         // Run forge script from contracts-evm directory
         let output = std::process::Command::new("forge")
+            .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
             .args([
                 "script",
                 "script/DeployLocal.s.sol:DeployLocal",
@@ -730,6 +793,11 @@ impl E2eSetup {
         self.wait_for_services(Duration::from_secs(60)).await?;
         on_step(SetupStep::WaitForServices, true);
 
+        // Run Database Migrations
+        on_step(SetupStep::RunMigrations, true);
+        self.run_migrations().await?;
+        on_step(SetupStep::RunMigrations, true);
+
         // Deploy EVM Contracts
         on_step(SetupStep::DeployEvmContracts, true);
         let mut deployed = self.deploy_evm_contracts().await?;
@@ -816,6 +884,7 @@ pub enum SetupStep {
     CleanupExisting,
     StartServices,
     WaitForServices,
+    RunMigrations,
     DeployEvmContracts,
     DeployTerraContracts,
     DeployCw20Token,
@@ -833,6 +902,7 @@ impl SetupStep {
             Self::CleanupExisting => "Cleanup Existing",
             Self::StartServices => "Start Services",
             Self::WaitForServices => "Wait for Services",
+            Self::RunMigrations => "Run Migrations",
             Self::DeployEvmContracts => "Deploy EVM Contracts",
             Self::DeployTerraContracts => "Deploy Terra Contracts",
             Self::DeployCw20Token => "Deploy CW20 Token",

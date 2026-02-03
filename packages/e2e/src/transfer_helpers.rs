@@ -67,6 +67,7 @@ pub async fn deploy_erc20_token(
 
     // Use forge create to deploy the token
     let output = tokio::process::Command::new("forge")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "create",
             "--rpc-url",
@@ -138,6 +139,7 @@ pub async fn mint_erc20_tokens(
 
     // Call mint(address,uint256) on the token
     let output = tokio::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",

@@ -74,6 +74,7 @@ pub async fn run_forge_script(
     info!("Running forge script: {}", script_path);
 
     let output = std::process::Command::new("forge")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .current_dir(project_dir)
         .arg("script")
         .arg(script_path)
@@ -476,6 +477,7 @@ pub async fn deploy_test_token_simple(
     // Use forge create with OpenZeppelin ERC20
     // This requires the contracts-evm package to be available
     let output = std::process::Command::new("forge")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "create",
             "--rpc-url",
@@ -525,6 +527,7 @@ pub async fn mint_test_tokens(
 
     // Get the deployer address from private key
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args(["wallet", "address", private_key])
         .output()?;
 
@@ -536,6 +539,7 @@ pub async fn mint_test_tokens(
 
     // Call mint function
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -561,6 +565,7 @@ pub async fn mint_test_tokens(
 /// Get ERC20 balance using cast
 pub async fn get_token_balance(rpc_url: &str, token: Address, account: Address) -> Result<u128> {
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",

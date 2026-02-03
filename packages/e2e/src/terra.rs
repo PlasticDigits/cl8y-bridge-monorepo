@@ -53,7 +53,6 @@ pub struct TerraClient {
     lcd_url: Url,
     #[allow(dead_code)]
     rpc_url: Url,
-    #[allow(dead_code)]
     chain_id: String,
     container_name: String,
     key_name: String,
@@ -82,26 +81,69 @@ impl TerraClient {
         }
     }
 
-    /// Check if Terra is responding (LCD status endpoint)
+    /// Check if Terra is responding (LCD node_info endpoint)
+    ///
+    /// Uses the standard Cosmos SDK LCD endpoint for node info.
+    /// Note: LCD (port 1317) uses different endpoints than RPC (port 26657).
+    /// LCD: /cosmos/base/tendermint/v1beta1/node_info or /node_info
+    /// RPC: /status
     pub async fn is_healthy(&self) -> Result<bool> {
         let client = Client::new();
-        let url = self.lcd_url.join("status")?;
+
+        // Try the Cosmos SDK v1beta1 endpoint first (most common)
+        let url = self
+            .lcd_url
+            .join("cosmos/base/tendermint/v1beta1/node_info")?;
+
+        match tokio::time::timeout(Duration::from_secs(5), client.get(url.clone()).send()).await {
+            Ok(Ok(response)) => {
+                if response.status().is_success() {
+                    debug!("Terra LCD is healthy (v1beta1 endpoint)");
+                    return Ok(true);
+                }
+                // If 404/501, try legacy endpoint
+                if response.status().as_u16() == 404 || response.status().as_u16() == 501 {
+                    return self.is_healthy_legacy().await;
+                }
+                warn!("Terra LCD returned non-OK status: {}", response.status());
+                Ok(false)
+            }
+            Ok(Err(e)) => {
+                warn!("Terra LCD request failed: {}", e);
+                // Try legacy endpoint as fallback
+                self.is_healthy_legacy().await
+            }
+            Err(_) => {
+                warn!("Terra LCD request timeout");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Fallback health check using legacy /node_info endpoint
+    async fn is_healthy_legacy(&self) -> Result<bool> {
+        let client = Client::new();
+        let url = self.lcd_url.join("node_info")?;
 
         match tokio::time::timeout(Duration::from_secs(5), client.get(url).send()).await {
             Ok(Ok(response)) => {
                 if response.status().is_success() {
+                    debug!("Terra LCD is healthy (legacy endpoint)");
                     Ok(true)
                 } else {
-                    warn!("Terra LCD returned non-OK status: {}", response.status());
+                    warn!(
+                        "Terra LCD legacy endpoint returned non-OK status: {}",
+                        response.status()
+                    );
                     Ok(false)
                 }
             }
             Ok(Err(e)) => {
-                warn!("Terra LCD request failed: {}", e);
+                warn!("Terra LCD legacy request failed: {}", e);
                 Ok(false)
             }
             Err(_) => {
-                warn!("Terra LCD request timeout");
+                warn!("Terra LCD legacy request timeout");
                 Ok(false)
             }
         }
@@ -301,30 +343,149 @@ impl TerraClient {
 
     /// Store a WASM contract code
     /// Returns code_id
+    ///
+    /// Uses broadcast-mode sync and queries list-code to get the code ID
+    /// since JSON output from tx commands only returns tx hash, not code_id directly.
     pub async fn store_code(&self, wasm_path: &str) -> Result<u64> {
         info!("Storing WASM contract from: {}", wasm_path);
 
-        let output = self.exec_terrad(&["wasm", "store", wasm_path]).await?;
+        // Submit transaction with broadcast-mode sync
+        // Use --fees instead of --gas-prices for Terra Classic compatibility
+        let tx_output = self
+            .exec_terrad(&[
+                "tx",
+                "wasm",
+                "store",
+                wasm_path,
+                "--from",
+                &self.key_name,
+                "--keyring-backend",
+                "test",
+                "--chain-id",
+                &self.chain_id,
+                "--gas",
+                "auto",
+                "--gas-adjustment",
+                "1.5",
+                "--fees",
+                "150000000uluna",
+                "--broadcast-mode",
+                "sync",
+                "-y",
+                "-o",
+                "json",
+            ])
+            .await?;
 
-        let output = output.trim();
-        let lines: Vec<&str> = output.lines().collect();
+        debug!("Store code tx response: {}", tx_output.trim());
 
-        let code_id_line = lines
-            .iter()
-            .find(|line| line.starts_with("Code ID:"))
-            .ok_or_else(|| eyre!("Failed to parse code ID from output"))?;
+        // Wait for transaction to be included in a block
+        // Terra Classic blocks are ~6 seconds, so wait longer for WASM store
+        tokio::time::sleep(Duration::from_secs(12)).await;
 
-        let code_id: u64 = code_id_line
-            .split(':')
-            .nth(1)
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| eyre!("Invalid code ID format"))?;
+        // Query list-code to get the latest code ID
+        let code_id = self.get_latest_code_id().await?;
+        info!("WASM code stored with code_id: {}", code_id);
 
         Ok(code_id)
     }
 
+    /// Get the latest code ID from list-code query
+    /// Retries up to 5 times with 5 second delays if empty
+    async fn get_latest_code_id(&self) -> Result<u64> {
+        // Retry up to 5 times in case the transaction hasn't been indexed yet
+        for attempt in 0..5 {
+            let output = self
+                .exec_terrad(&["query", "wasm", "list-code", "-o", "json"])
+                .await?;
+
+            debug!(
+                "list-code response (attempt {}): {}",
+                attempt + 1,
+                output.trim()
+            );
+
+            let json: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|e| eyre!("Failed to parse list-code response: {}", e))?;
+
+            // Try string code_id first, then numeric
+            if let Some(code_id) = json["code_infos"]
+                .as_array()
+                .and_then(|arr| arr.last())
+                .and_then(|info| {
+                    info["code_id"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .or_else(|| info["code_id"].as_u64())
+                })
+            {
+                return Ok(code_id);
+            }
+
+            // If empty, wait and retry
+            if attempt < 4 {
+                debug!("list-code returned empty, retrying in 5s...");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+
+        Err(eyre!(
+            "No code_id found in list-code response after 5 attempts"
+        ))
+    }
+
+    /// Get contract address by code ID from list-contract-by-code query
+    /// Retries up to 5 times with 5 second delays if empty
+    async fn get_contract_by_code_id(&self, code_id: u64) -> Result<String> {
+        // Retry up to 5 times in case the transaction hasn't been indexed yet
+        for attempt in 0..5 {
+            let output = self
+                .exec_terrad(&[
+                    "query",
+                    "wasm",
+                    "list-contract-by-code",
+                    &code_id.to_string(),
+                    "-o",
+                    "json",
+                ])
+                .await?;
+
+            debug!(
+                "list-contract-by-code response (attempt {}): {}",
+                attempt + 1,
+                output
+            );
+
+            let json: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|e| eyre!("Failed to parse list-contract-by-code response: {}", e))?;
+
+            if let Some(address) = json["contracts"]
+                .as_array()
+                .and_then(|arr| arr.last())
+                .and_then(|addr| addr.as_str())
+                .map(|s| s.to_string())
+            {
+                return Ok(address);
+            }
+
+            // If empty, wait and retry
+            if attempt < 4 {
+                debug!("list-contract-by-code returned empty, retrying in 5s...");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+
+        Err(eyre!(
+            "No contract found for code_id {} after 5 attempts",
+            code_id
+        ))
+    }
+
     /// Instantiate a contract
     /// Returns contract address
+    ///
+    /// Uses broadcast-mode sync and queries list-contract-by-code to get the address
+    /// since JSON output from tx commands only returns tx hash, not contract address directly.
     pub async fn instantiate_contract(
         &self,
         code_id: u64,
@@ -337,35 +498,63 @@ impl TerraClient {
             code_id, label, admin
         );
 
-        let output = self
-            .exec_terrad(&[
-                "wasm",
-                "instantiate",
-                &code_id.to_string(),
-                &serde_json::to_string(init_msg)?,
-                "--label",
-                label,
-            ])
-            .await?;
+        let msg_str = serde_json::to_string(init_msg)?;
+        let code_id_str = code_id.to_string();
 
-        let output = output.trim();
-        let lines: Vec<&str> = output.lines().collect();
+        // Build args with optional admin
+        // Use --fees instead of --gas-prices for Terra Classic compatibility
+        let mut args = vec![
+            "tx",
+            "wasm",
+            "instantiate",
+            &code_id_str,
+            &msg_str,
+            "--label",
+            label,
+            "--from",
+            &self.key_name,
+            "--keyring-backend",
+            "test",
+            "--chain-id",
+            &self.chain_id,
+            "--gas",
+            "auto",
+            "--gas-adjustment",
+            "1.5",
+            "--fees",
+            "10000000uluna",
+            "--broadcast-mode",
+            "sync",
+            "-y",
+            "-o",
+            "json",
+        ];
 
-        let address_line = lines
-            .iter()
-            .find(|line| line.starts_with("Contract"))
-            .ok_or_else(|| eyre!("Failed to parse contract address from output"))?;
+        // Add admin if specified
+        let admin_str;
+        if let Some(admin_addr) = admin {
+            admin_str = admin_addr.to_string();
+            args.push("--admin");
+            args.push(&admin_str);
+        } else {
+            args.push("--no-admin");
+        }
 
-        let address: &str = address_line
-            .split(':')
-            .nth(1)
-            .map(|s| s.trim())
-            .ok_or_else(|| eyre!("Invalid contract address format"))?;
+        let _output = self.exec_terrad(&args).await?;
 
-        Ok(address.to_string())
+        // Wait for transaction to be included in a block
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        // Query list-contract-by-code to get the contract address
+        let contract_address = self.get_contract_by_code_id(code_id).await?;
+        info!("Contract instantiated at: {}", contract_address);
+
+        Ok(contract_address)
     }
 
     /// Execute a contract message
+    ///
+    /// Returns the transaction hash. Uses broadcast-mode sync for reliable execution.
     pub async fn execute_contract(
         &self,
         contract_address: &str,
@@ -375,31 +564,49 @@ impl TerraClient {
         info!("Executing contract message on: {}", contract_address);
 
         let msg_str = serde_json::to_string(msg)?;
-        let mut args = vec!["tx", "wasm", "execute", contract_address, &msg_str];
+        // Use --fees instead of --gas-prices for Terra Classic compatibility
+        let mut args = vec![
+            "tx",
+            "wasm",
+            "execute",
+            contract_address,
+            &msg_str,
+            "--from",
+            &self.key_name,
+            "--keyring-backend",
+            "test",
+            "--chain-id",
+            &self.chain_id,
+            "--gas",
+            "auto",
+            "--gas-adjustment",
+            "1.5",
+            "--fees",
+            "10000000uluna",
+            "--broadcast-mode",
+            "sync",
+            "-y",
+            "-o",
+            "json",
+        ];
 
         if let Some(funds) = funds {
-            args.extend(["--from", &self.key_name, "--amount", funds]);
-        } else {
-            args.extend(["--from", &self.key_name]);
+            args.extend(["--amount", funds]);
         }
 
         let output = self.exec_terrad(&args).await?;
 
-        let output = output.trim();
-        let lines: Vec<&str> = output.lines().collect();
+        // Parse JSON response to extract txhash
+        let json: serde_json::Value = serde_json::from_str(output.trim())
+            .map_err(|e| eyre!("Failed to parse execute response as JSON: {}", e))?;
 
-        let tx_hash_line = lines
-            .iter()
-            .find(|line| line.starts_with("TxHash:"))
-            .ok_or_else(|| eyre!("Failed to parse tx hash from output"))?;
+        let tx_hash = json["txhash"]
+            .as_str()
+            .ok_or_else(|| eyre!("No txhash found in execute response"))?
+            .to_string();
 
-        let tx_hash: &str = tx_hash_line
-            .split(':')
-            .nth(1)
-            .map(|s| s.trim())
-            .ok_or_else(|| eyre!("Invalid tx hash format"))?;
-
-        Ok(tx_hash.to_string())
+        debug!("Transaction submitted with hash: {}", tx_hash);
+        Ok(tx_hash)
     }
 
     /// Wait for transaction confirmation

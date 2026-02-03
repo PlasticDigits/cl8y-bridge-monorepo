@@ -65,7 +65,9 @@ pub async fn grant_operator_role(
     }
 
     // Grant role: grantRole(uint64 roleId, address account, uint32 delay)
+    // Set FOUNDRY_DISABLE_NIGHTLY_WARNING to suppress nightly warnings
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -82,9 +84,15 @@ pub async fn grant_operator_role(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         // Check if it's just "already granted" error
-        if stderr.contains("already") {
+        if stderr.contains("already") || stdout.contains("already") {
             info!("OPERATOR_ROLE already granted to {}", account);
+            return Ok(());
+        }
+        // Ignore warnings that don't indicate actual failure
+        if stderr.contains("nightly") && stdout.contains("transactionHash") {
+            info!("OPERATOR_ROLE granted (ignoring nightly warning)");
             return Ok(());
         }
         return Err(eyre!("Failed to grant OPERATOR_ROLE: {}", stderr));
@@ -116,7 +124,9 @@ pub async fn grant_canceler_role(
     }
 
     // Grant role: grantRole(uint64 roleId, address account, uint32 delay)
+    // Set FOUNDRY_DISABLE_NIGHTLY_WARNING to suppress nightly warnings
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -133,8 +143,14 @@ pub async fn grant_canceler_role(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("already") {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("already") || stdout.contains("already") {
             info!("CANCELER_ROLE already granted to {}", account);
+            return Ok(());
+        }
+        // Ignore warnings that don't indicate actual failure
+        if stderr.contains("nightly") && stdout.contains("transactionHash") {
+            info!("CANCELER_ROLE granted (ignoring nightly warning)");
             return Ok(());
         }
         return Err(eyre!("Failed to grant CANCELER_ROLE: {}", stderr));
@@ -159,6 +175,7 @@ pub async fn has_role(
 ) -> Result<bool> {
     // hasRole(uint64,address) returns (bool,uint32)
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",
@@ -233,6 +250,7 @@ pub async fn register_cosmw_chain_key(
 
     // Register chain key: addCOSMWChainKey(string)
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -285,6 +303,7 @@ pub async fn get_cosmw_chain_key(
     rpc_url: &str,
 ) -> Result<B256> {
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",
@@ -358,6 +377,7 @@ pub async fn register_token(
 
     // addToken(address token, uint8 bridgeType)
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -392,6 +412,7 @@ async fn is_token_registered(
 ) -> Result<bool> {
     // Try querying getTokenBridgeType - returns 0 for unregistered
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",
@@ -451,6 +472,7 @@ pub async fn add_token_dest_chain_key(
 
     // addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destTokenAddress, uint8 decimals)
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "send",
             "--rpc-url",
@@ -487,6 +509,7 @@ async fn is_token_dest_chain_registered(
     rpc_url: &str,
 ) -> Result<bool> {
     let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",
