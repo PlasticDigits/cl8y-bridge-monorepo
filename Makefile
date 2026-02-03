@@ -27,11 +27,17 @@ help:
 	@echo "  make test-terra     - Run Terra contract tests"
 	@echo "  make test-operator  - Run operator tests"
 	@echo "  make test-frontend  - Run frontend unit tests"
-	@echo "  make test           - Run all tests"
-	@echo "  make e2e-test       - Run E2E connectivity tests"
-	@echo "  make e2e-test-full  - Run full E2E with transfers and services"
-	@echo "  make e2e-test-transfers - Run full E2E with operator"
-	@echo "  make e2e-test-canceler  - Run full E2E with canceler"
+	@echo "  make test           - Run all unit tests"
+	@echo ""
+	@echo "E2E Testing:"
+	@echo "  make e2e-test           - MASTER TEST: Run ALL E2E tests"
+	@echo "                            (operator, canceler, real transfers, fraud detection)"
+	@echo "  make e2e-test-quick     - Quick connectivity tests only (no services)"
+	@echo "  make e2e-test-transfers - Transfer tests with operator only"
+	@echo "  make e2e-test-canceler  - Canceler fraud detection tests"
+	@echo "  make e2e-evm-to-terra   - Test EVM → Terra transfer only"
+	@echo "  make e2e-terra-to-evm   - Test Terra → EVM transfer only"
+	@echo "  make e2e-connectivity   - Infrastructure connectivity tests only"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy             - Deploy all contracts locally"
@@ -210,21 +216,50 @@ canceler-status:
 test-transfer:
 	./scripts/test-transfer.sh
 
-# E2E automated test
+# E2E automated test - MASTER TEST (runs everything)
 e2e-test:
-	./scripts/e2e-test.sh
-
-e2e-test-quick:
-	./scripts/e2e-test.sh --quick
-
-e2e-test-full:
+	@echo "========================================"
+	@echo "  CL8Y Bridge Master E2E Test Suite"
+	@echo "========================================"
+	@echo ""
+	@echo "This runs ALL E2E tests including:"
+	@echo "  - Infrastructure connectivity"
+	@echo "  - Operator (started automatically)"
+	@echo "  - Canceler (started automatically)"
+	@echo "  - Real token transfers with balance verification"
+	@echo "  - EVM → Terra transfers"
+	@echo "  - Terra → EVM transfers"
+	@echo "  - Fraud detection tests"
+	@echo ""
 	./scripts/e2e-test.sh --with-all --full
 
-e2e-test-transfers:
-	./scripts/e2e-test.sh --full --with-operator
+# Quick connectivity tests only (no operator, no transfers)
+e2e-test-quick:
+	./scripts/e2e-test.sh --quick --no-operator
 
+# Alias for master test
+e2e-test-full: e2e-test
+
+# Run only transfer tests (operator on, no canceler)
+e2e-test-transfers:
+	./scripts/e2e-test.sh --full
+
+# Run only canceler fraud detection tests
 e2e-test-canceler:
 	./scripts/e2e-test.sh --full --with-canceler
+
+# Individual real token transfer tests
+e2e-evm-to-terra:
+	@echo "Testing EVM → Terra transfer..."
+	./scripts/e2e-helpers/real-transfer-test.sh evm-to-terra
+
+e2e-terra-to-evm:
+	@echo "Testing Terra → EVM transfer..."
+	./scripts/e2e-helpers/real-transfer-test.sh terra-to-evm
+
+# E2E without any services (connectivity tests only)
+e2e-connectivity:
+	./scripts/e2e-test.sh --quick --no-operator
 
 # Integration tests
 test-integration:

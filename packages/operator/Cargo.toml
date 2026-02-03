@@ -16,10 +16,11 @@ alloy = { version = "0.1", features = ["full"] }
 alloy-primitives = "0.7"
 
 # Cosmos/Terra interactions
-cosmrs = { version = "0.16", features = ["cosmwasm"] }
+# Compatible with LocalTerra CometBFT v0.37.18, terrad v3.6.2, wasmvm v1.5.9
+cosmrs = { version = "0.17", features = ["cosmwasm"] }
 cosmwasm-std = "1.5"
-tendermint = "0.35"
-tendermint-rpc = { version = "0.35", features = ["http-client"] }
+tendermint = "0.37"
+tendermint-rpc = { version = "0.37", features = ["http-client"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }

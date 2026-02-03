@@ -17,7 +17,8 @@ tokio = { version = "1", features = ["full"] }
 alloy = { version = "0.8", features = ["full", "rpc-types-mev"] }
 
 # Cosmos/Terra interactions
-cosmrs = { version = "0.16", features = ["cosmwasm"] }
+# Compatible with LocalTerra CometBFT v0.37.18, terrad v3.6.2, wasmvm v1.5.9
+cosmrs = { version = "0.17", features = ["cosmwasm"] }
 bip39 = "2.0"
 
 # HTTP/API
