@@ -377,10 +377,11 @@ impl TerraClient {
     }
 
     /// Execute contract using raw HTTP (fallback if cosmrs has issues)
+    #[allow(dead_code)]
     pub async fn execute_contract_raw_http(
         &self,
-        contract_address: &str,
-        msg: &impl Serialize,
+        _contract_address: &str,
+        _msg: &impl Serialize,
         _funds: Vec<(String, u128)>,
     ) -> Result<String> {
         // This is a fallback implementation using the LCD's amino/JSON signing

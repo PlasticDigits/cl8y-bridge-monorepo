@@ -8,7 +8,7 @@ pub mod retry;
 pub mod terra;
 
 pub use evm::EvmWriter;
-pub use retry::{classify_error, with_retry, RetryConfig, RetryContext};
+pub use retry::{classify_error, RetryConfig};
 pub use terra::TerraWriter;
 
 /// Circuit breaker configuration for writer managers
@@ -144,6 +144,7 @@ impl WriterManager {
     }
 
     /// Get health status
+    #[allow(dead_code)]
     pub fn health_status(&self) -> HealthStatus {
         HealthStatus {
             evm_healthy: self.consecutive_evm_failures < self.circuit_breaker.threshold,
@@ -155,6 +156,7 @@ impl WriterManager {
 }
 
 /// Writer health status
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HealthStatus {
     pub evm_healthy: bool,

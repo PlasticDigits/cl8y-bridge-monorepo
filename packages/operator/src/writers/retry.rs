@@ -2,6 +2,8 @@
 //!
 //! Provides exponential backoff, gas bumping, and dead letter queue functionality.
 
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use eyre::{eyre, Result};
 use std::time::Duration;

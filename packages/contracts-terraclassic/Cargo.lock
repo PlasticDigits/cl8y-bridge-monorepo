@@ -319,24 +319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw20-mintable"
-version = "0.1.0"
-dependencies = [
- "base64ct",
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-multi-test",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "cw20",
- "schemars",
- "semver",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"

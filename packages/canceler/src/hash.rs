@@ -56,11 +56,13 @@ pub fn cosmos_chain_key(chain_id: &str) -> [u8; 32] {
 }
 
 /// Terra Classic mainnet chain key (columbus-5)
+#[allow(dead_code)]
 pub fn terra_chain_key() -> [u8; 32] {
     cosmos_chain_key("columbus-5")
 }
 
 /// LocalTerra chain key (for testing)
+#[allow(dead_code)]
 pub fn localterra_chain_key() -> [u8; 32] {
     cosmos_chain_key("localterra")
 }
@@ -68,7 +70,7 @@ pub fn localterra_chain_key() -> [u8; 32] {
 fn abi_encode_string_hash(s: &str) -> [u8; 32] {
     let str_bytes = s.as_bytes();
     let len = str_bytes.len();
-    let padded_len = ((len + 31) / 32) * 32;
+    let padded_len = len.div_ceil(32) * 32;
 
     let total_size = 32 + 32 + padded_len;
     let mut data = vec![0u8; total_size];
@@ -83,7 +85,7 @@ fn abi_encode_string_hash(s: &str) -> [u8; 32] {
 fn abi_encode_chain_key(chain_type: &str, raw_key: &[u8; 32]) -> [u8; 32] {
     let type_bytes = chain_type.as_bytes();
     let type_len = type_bytes.len();
-    let padded_type_len = ((type_len + 31) / 32) * 32;
+    let padded_type_len = type_len.div_ceil(32) * 32;
 
     let total_size = 64 + 32 + padded_type_len;
     let mut data = vec![0u8; total_size];

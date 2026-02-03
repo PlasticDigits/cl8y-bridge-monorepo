@@ -101,7 +101,7 @@ impl EvmConfirmation {
 
         // 5. Calculate confirmations
         let tx_block = u64::from_str_radix(
-            &receipt
+            receipt
                 .block_number
                 .unwrap_or_default()
                 .trim_start_matches("0x"),

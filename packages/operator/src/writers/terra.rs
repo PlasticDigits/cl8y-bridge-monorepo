@@ -24,6 +24,7 @@ use crate::terra_client::TerraClient;
 use crate::types::ChainKey;
 
 /// Pending approval tracking for auto-execution
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PendingExecution {
     /// The withdraw hash
@@ -38,9 +39,11 @@ struct PendingExecution {
 
 /// Terra transaction writer for submitting approvals and executions
 pub struct TerraWriter {
+    #[allow(dead_code)]
     lcd_url: String,
     chain_id: String,
     contract_address: String,
+    #[allow(dead_code)]
     client: Client,
     terra_client: TerraClient,
     db: PgPool,
@@ -356,11 +359,13 @@ impl TerraWriter {
     }
 
     /// Get count of pending executions
+    #[allow(dead_code)]
     pub fn pending_execution_count(&self) -> usize {
         self.pending_executions.len()
     }
 
     /// Get the operator's Terra address
+    #[allow(dead_code)]
     pub fn operator_address(&self) -> String {
         self.terra_client.address.to_string()
     }

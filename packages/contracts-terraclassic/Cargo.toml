@@ -4,8 +4,10 @@ resolver = "2"
 members = [
     "bridge",
     "packages/common",
-    "external/cw20-mintable",
 ]
+
+# Note: external/cw20-mintable is gitignored and used only for local reference.
+# Clone it manually if needed: git clone <cw20-mintable-repo> external/cw20-mintable
 
 [workspace.package]
 version = "0.1.0"

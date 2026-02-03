@@ -339,10 +339,10 @@ impl ApprovalVerifier {
         // Query Terra contract for deposit verification
         let query = serde_json::json!({
             "verify_deposit": {
-                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(&approval.withdraw_hash),
-                "dest_chain_key": base64::engine::general_purpose::STANDARD.encode(&approval.dest_chain_key),
-                "dest_token_address": base64::engine::general_purpose::STANDARD.encode(&approval.dest_token_address),
-                "dest_account": base64::engine::general_purpose::STANDARD.encode(&approval.dest_account),
+                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(approval.withdraw_hash),
+                "dest_chain_key": base64::engine::general_purpose::STANDARD.encode(approval.dest_chain_key),
+                "dest_token_address": base64::engine::general_purpose::STANDARD.encode(approval.dest_token_address),
+                "dest_account": base64::engine::general_purpose::STANDARD.encode(approval.dest_account),
                 "amount": approval.amount.to_string(),
                 "nonce": approval.nonce
             }

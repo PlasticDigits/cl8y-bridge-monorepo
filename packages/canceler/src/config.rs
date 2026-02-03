@@ -17,7 +17,8 @@ pub struct Config {
 
     /// Terra LCD URL
     pub terra_lcd_url: String,
-    /// Terra RPC URL
+    /// Terra RPC URL (reserved for future WebSocket support)
+    #[allow(dead_code)]
     pub terra_rpc_url: String,
     /// Terra chain ID
     pub terra_chain_id: String,

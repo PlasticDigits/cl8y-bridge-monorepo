@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint
 
 # Default target
 help:
@@ -22,9 +22,11 @@ help:
 	@echo "  make build-operator - Build operator"
 	@echo "  make build          - Build all packages"
 	@echo ""
-	@echo "Formatting:"
+	@echo "Formatting & Linting:"
 	@echo "  make fmt            - Format all packages (Rust + Solidity)"
 	@echo "  make fmt-check      - Check formatting without modifying files"
+	@echo "  make lint           - Run clippy on all Rust packages"
+	@echo "  make ci-check       - Run all CI checks (fmt + clippy)"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test-evm       - Run EVM contract tests"
@@ -103,6 +105,16 @@ fmt-check:
 	(cd packages/contracts-evm && forge fmt --check) || FAILED=1; \
 	if [ $$FAILED -eq 1 ]; then echo "❌ Formatting issues found. Run 'make fmt' to fix."; exit 1; fi
 	@echo "✅ All formatting checks passed"
+
+lint:
+	@echo "Running clippy on all Rust packages..."
+	cd packages/operator && cargo clippy -- -D warnings
+	cd packages/canceler && cargo clippy -- -D warnings
+	cd packages/contracts-terraclassic/bridge && cargo clippy -- -D warnings
+	@echo "✅ All clippy checks passed"
+
+ci-check: fmt-check lint
+	@echo "✅ All CI checks passed (formatting + clippy)"
 
 # Building
 build-evm:
