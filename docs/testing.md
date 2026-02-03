@@ -61,9 +61,9 @@ INTEGRATION_TEST=1 cargo test -- --ignored
 
 > **Note:** E2E tests can now automatically manage operator and canceler lifecycle.
 
-### E2E Test Suite (Sprint 10)
+### E2E Test Suite (Sprint 11)
 
-The full E2E test suite (`./scripts/e2e-test.sh --full`) includes:
+The full E2E test suite (`./scripts/e2e-test.sh --full --with-all`) includes:
 
 | Test | Description |
 |------|-------------|
@@ -77,11 +77,50 @@ The full E2E test suite (`./scripts/e2e-test.sh --full`) includes:
 | EVM Approve→Execute | Test watchtower approve/execute flow |
 | EVM Cancel Flow | Test watchtower cancel mechanism |
 | Hash Parity | Verify chain key computation |
-| EVM → Terra Transfer | Test deposit on EVM |
-| Terra → EVM Transfer | Test lock on Terra |
+| EVM → Terra Transfer | Full deposit with operator processing |
+| Terra → EVM Transfer | Full lock with operator processing |
 | Canceler Compilation | Verify canceler builds |
-| Canceler Fraud Detection | Test fraud detection workflow |
-| Canceler Cancel Flow | Test cancel transaction submission |
+| Canceler Fraud Detection | Fraudulent approval detection |
+| Canceler Cancel Flow | Cancel transaction submission |
+
+### Sprint 11: Real Transfer Tests
+
+Sprint 11 added proper token setup and real transfer testing:
+
+```bash
+# Full E2E setup with test tokens
+make e2e-setup-full
+
+# Run transfers with operator
+make e2e-test-transfers
+
+# Run canceler fraud detection tests
+make e2e-test-canceler
+
+# Run everything
+make e2e-test-full
+```
+
+**Token Setup Commands:**
+```bash
+# Deploy ERC20 on Anvil
+make deploy-test-token
+
+# Deploy CW20 on LocalTerra
+./scripts/deploy-terra-local.sh --cw20
+
+# Register tokens on both bridges
+./scripts/register-test-tokens.sh
+```
+
+**Fraudulent Approval Testing:**
+```bash
+# Grant operator role to test account (required for approval tests)
+./scripts/e2e-helpers/grant-operator-role.sh
+
+# Create fraudulent approval for canceler testing
+./scripts/e2e-helpers/fraudulent-approval.sh evm
+```
 
 ## Test Types Overview
 
@@ -478,3 +517,5 @@ curl -s http://localhost:1317/cosmos/bank/v1beta1/balances/terra1x46rqay4d3cssq8
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Operator](./operator.md) - Operator configuration and operation
 - [Canceler Network](./canceler-network.md) - Running canceler nodes
+- [Canceler Runbook](./runbook-cancelers.md) - Operational procedures for cancelers
+- [Terra Upgrade Guide](./deployment-terraclassic-upgrade.md) - Watchtower upgrade deployment

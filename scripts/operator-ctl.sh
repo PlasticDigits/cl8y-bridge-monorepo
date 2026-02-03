@@ -68,8 +68,8 @@ start_operator() {
 
     log_info "Starting operator..."
 
-    # Check if binary exists
-    local binary="$OPERATOR_DIR/target/release/cl8y-operator"
+    # Check if binary exists (binary is named cl8y-relayer)
+    local binary="$OPERATOR_DIR/target/release/cl8y-relayer"
     if [ ! -f "$binary" ]; then
         log_warn "Binary not found, building..."
         build_operator
@@ -77,7 +77,7 @@ start_operator() {
 
     # Check if debug binary exists instead
     if [ ! -f "$binary" ]; then
-        binary="$OPERATOR_DIR/target/debug/cl8y-operator"
+        binary="$OPERATOR_DIR/target/debug/cl8y-relayer"
     fi
 
     if [ ! -f "$binary" ]; then

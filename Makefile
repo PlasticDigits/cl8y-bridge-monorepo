@@ -29,11 +29,18 @@ help:
 	@echo "  make test-frontend  - Run frontend unit tests"
 	@echo "  make test           - Run all tests"
 	@echo "  make e2e-test       - Run E2E connectivity tests"
-	@echo "  make e2e-test-full  - Run full E2E with transfers"
+	@echo "  make e2e-test-full  - Run full E2E with transfers and services"
+	@echo "  make e2e-test-transfers - Run full E2E with operator"
+	@echo "  make e2e-test-canceler  - Run full E2E with canceler"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy         - Deploy all contracts locally"
-	@echo "  make deploy-test-token - Deploy test ERC20 for integration tests"
+	@echo "  make deploy             - Deploy all contracts locally"
+	@echo "  make deploy-test-token  - Deploy test ERC20 for integration tests"
+	@echo "  make deploy-terra-cw20  - Deploy Terra bridge and CW20 token"
+	@echo "  make deploy-tokens      - Deploy test tokens on both chains"
+	@echo "  make register-tokens    - Register tokens on bridges"
+	@echo "  make e2e-setup          - Full E2E infrastructure setup"
+	@echo "  make e2e-setup-full     - E2E setup with tokens registered"
 	@echo ""
 	@echo "Security:"
 	@echo "  make setup-hooks    - Configure git hooks for pre-commit checks"
@@ -128,9 +135,27 @@ deploy-terra:
 deploy-terra-local: deploy-terra
 	@echo "Terra local deployment complete"
 
+deploy-terra-cw20:
+	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."
+	./scripts/deploy-terra-local.sh --cw20
+
+deploy-tokens: deploy-test-token deploy-terra-cw20
+	@echo "Test tokens deployed on both chains"
+
+register-tokens:
+	@echo "Registering test tokens on bridges..."
+	./scripts/register-test-tokens.sh
+
 setup-bridge:
 	@echo "Configuring bridge connections..."
 	./scripts/setup-bridge.sh
+
+# Full E2E setup (infrastructure + contracts + tokens)
+e2e-setup:
+	./scripts/e2e-setup.sh
+
+e2e-setup-full: e2e-setup deploy-tokens register-tokens
+	@echo "Full E2E setup complete with tokens"
 
 # Deployment - Testnet
 deploy-evm-bsc-testnet:
@@ -194,6 +219,12 @@ e2e-test-quick:
 
 e2e-test-full:
 	./scripts/e2e-test.sh --with-all --full
+
+e2e-test-transfers:
+	./scripts/e2e-test.sh --full --with-operator
+
+e2e-test-canceler:
+	./scripts/e2e-test.sh --full --with-canceler
 
 # Integration tests
 test-integration:

@@ -15,6 +15,8 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Testing Guide](./docs/testing.md) | Unit, integration, and E2E tests |
 | [Deployment Guide](./docs/deployment.md) | Production deployment |
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
+| [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
+| [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
 
 ## Packages
 
@@ -307,6 +309,8 @@ Development progress is tracked in sprint documents:
 - [SPRINT8.md](./SPRINT8.md) - Integration Validation & Production Hardening (COMPLETE)
 - [SPRINT9.md](./SPRINT9.md) - Terra Classic Watchtower Implementation (COMPLETE)
 - [SPRINT10.md](./SPRINT10.md) - Full E2E Integration with LocalTerra (COMPLETE)
+- [SPRINT11.md](./SPRINT11.md) - Operator Integration & Real Transfer Tests (COMPLETE)
+- [SPRINT12.md](./SPRINT12.md) - Production Readiness & Real Token Transfers (CURRENT)
 
 See also: [PLAN_FIX_WATCHTOWER_GAP.md](./PLAN_FIX_WATCHTOWER_GAP.md) - Multi-week plan for Terra Classic security upgrade
 

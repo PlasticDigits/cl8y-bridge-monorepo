@@ -20,6 +20,8 @@
 #   ./scripts/e2e-test.sh --with-operator   # Start/stop operator automatically
 #   ./scripts/e2e-test.sh --with-canceler   # Start/stop canceler automatically
 #   ./scripts/e2e-test.sh --with-all        # Start/stop both operator and canceler
+#   ./scripts/e2e-test.sh --no-setup        # Skip automatic infrastructure setup
+#   ./scripts/e2e-test.sh --no-teardown     # Keep infrastructure running after tests
 
 set -e
 
@@ -78,6 +80,9 @@ WITH_OPERATOR=false
 WITH_CANCELER=false
 STARTED_OPERATOR=false
 STARTED_CANCELER=false
+AUTO_SETUP=true
+AUTO_TEARDOWN=true
+STARTED_INFRA=false
 
 for arg in "$@"; do
     case $arg in
@@ -87,12 +92,70 @@ for arg in "$@"; do
         --with-operator) WITH_OPERATOR=true ;;
         --with-canceler) WITH_CANCELER=true ;;
         --with-all) WITH_OPERATOR=true; WITH_CANCELER=true ;;
+        --no-setup) AUTO_SETUP=false ;;
+        --no-teardown) AUTO_TEARDOWN=false ;;
     esac
 done
 
 # Track test results
 TESTS_PASSED=0
 TESTS_FAILED=0
+
+# ============================================================================
+# Infrastructure Setup/Teardown
+# ============================================================================
+
+# Check if infrastructure is running
+check_infra_running() {
+    # Check EVM (Anvil)
+    if ! cast block-number --rpc-url "$EVM_RPC_URL" > /dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+# Setup infrastructure if not running
+setup_infrastructure() {
+    if [ "$AUTO_SETUP" != true ]; then
+        return 0
+    fi
+    
+    if check_infra_running; then
+        log_info "Infrastructure already running"
+        return 0
+    fi
+    
+    log_step "Starting infrastructure automatically..."
+    
+    if [ -f "$SCRIPT_DIR/e2e-setup.sh" ]; then
+        "$SCRIPT_DIR/e2e-setup.sh"
+        STARTED_INFRA=true
+        
+        # Source the generated environment
+        if [ -f "$PROJECT_ROOT/.env.e2e" ]; then
+            set -a
+            source "$PROJECT_ROOT/.env.e2e"
+            set +a
+            log_info "Loaded environment from .env.e2e"
+        fi
+    else
+        log_error "e2e-setup.sh not found"
+        return 1
+    fi
+}
+
+# Teardown infrastructure if we started it
+teardown_infrastructure() {
+    if [ "$STARTED_INFRA" = true ] && [ "$AUTO_TEARDOWN" = true ]; then
+        log_step "Tearing down infrastructure..."
+        if [ -f "$SCRIPT_DIR/e2e-teardown.sh" ]; then
+            "$SCRIPT_DIR/e2e-teardown.sh" || true
+        else
+            cd "$PROJECT_ROOT"
+            docker compose --profile e2e down -v 2>/dev/null || true
+        fi
+    fi
+}
 
 # Record test result
 record_result() {
@@ -113,19 +176,23 @@ record_result() {
 # ============================================================================
 
 start_operator_if_needed() {
-    if [ "$WITH_OPERATOR" = true ]; then
-        log_step "Starting operator..."
-        if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
-            log_info "Operator already running"
-        else
-            "$SCRIPT_DIR/operator-ctl.sh" start
+    # Always start operator for E2E tests (not just with --with-operator)
+    log_step "Starting operator..."
+    if "$SCRIPT_DIR/operator-ctl.sh" status > /dev/null 2>&1; then
+        log_info "Operator already running"
+    else
+        if "$SCRIPT_DIR/operator-ctl.sh" start 2>/dev/null; then
             STARTED_OPERATOR=true
             sleep 3  # Give it time to initialize
+        else
+            log_warn "Operator failed to start (may have Terra connectivity issues)"
+            log_warn "Some transfer tests may be skipped - see .operator.log for details"
         fi
     fi
 }
 
 stop_operator_if_started() {
+    # Always stop operator if we started it
     if [ "$STARTED_OPERATOR" = true ]; then
         log_step "Stopping operator..."
         "$SCRIPT_DIR/operator-ctl.sh" stop || true
@@ -157,6 +224,7 @@ cleanup() {
     log_info "Cleaning up..."
     stop_operator_if_started
     stop_canceler_if_started
+    teardown_infrastructure
 }
 
 # ============================================================================
@@ -905,6 +973,9 @@ main() {
     
     # Set up cleanup trap
     trap cleanup EXIT
+    
+    # Setup infrastructure if not running
+    setup_infrastructure
     
     check_prereqs
     

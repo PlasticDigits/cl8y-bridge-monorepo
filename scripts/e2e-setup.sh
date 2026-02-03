@@ -211,7 +211,7 @@ deploy_evm_contracts() {
 
 # Run database migrations
 run_database_migrations() {
-    log_step "Running database migrations..."
+    log_step "Preparing database..."
     
     cd "$PROJECT_ROOT"
     
@@ -223,22 +223,9 @@ run_database_migrations() {
     
     log_info "Using postgres port: $PG_PORT"
     
-    # Prefer docker exec as it's most reliable
-    if docker ps --format '{{.Names}}' | grep -q "cl8y-bridge-monorepo-postgres-1"; then
-        run_migrations_docker
-    elif command -v sqlx &> /dev/null; then
-        sqlx migrate run --source packages/operator/migrations \
-            --database-url "postgres://operator:operator@localhost:$PG_PORT/operator" 2>&1 || {
-            log_warn "sqlx migrate failed, trying psql..."
-            run_migrations_psql "$PG_PORT"
-        }
-    elif command -v psql &> /dev/null; then
-        run_migrations_psql "$PG_PORT"
-    else
-        log_warn "No postgres client available, skipping migrations"
-    fi
-    
-    log_info "Database migrations complete"
+    # Skip manual migrations - the operator will run them via sqlx when it starts
+    # This avoids conflicts between manual psql runs and sqlx migration tracking
+    log_info "Database ready (migrations will be run by operator)"
 }
 
 # Run migrations using psql directly
@@ -424,6 +411,179 @@ configure_terra_bridge() {
     fi
 }
 
+# Deploy test tokens (ERC20 on Anvil, CW20 on LocalTerra)
+deploy_test_tokens() {
+    if [ "${E2E_SKIP_DEPLOY:-0}" = "1" ]; then
+        log_warn "Skipping token deployment (E2E_SKIP_DEPLOY=1)"
+        return 0
+    fi
+    
+    log_step "Deploying test tokens..."
+    
+    # Deploy ERC20 on Anvil
+    log_info "Deploying test ERC20 to Anvil..."
+    cd "$PROJECT_ROOT/packages/contracts-evm"
+    
+    local TOKEN_OUTPUT=$(forge script script/DeployTestToken.s.sol:DeployTestToken \
+        --rpc-url http://localhost:8545 \
+        --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
+        --broadcast 2>&1) || {
+        log_warn "Test token deployment failed, may already exist"
+    }
+    
+    # Extract token address from broadcast file
+    local TOKEN_BROADCAST="$PROJECT_ROOT/packages/contracts-evm/broadcast/DeployTestToken.s.sol/31337/run-latest.json"
+    if [ -f "$TOKEN_BROADCAST" ]; then
+        TEST_TOKEN_ADDRESS=$(jq -r '.transactions[0].contractAddress // empty' "$TOKEN_BROADCAST" 2>/dev/null || echo "")
+        if [ -n "$TEST_TOKEN_ADDRESS" ]; then
+            log_info "Test ERC20 deployed at: $TEST_TOKEN_ADDRESS"
+        fi
+    fi
+    
+    # Deploy CW20 on LocalTerra
+    local CONTAINER_NAME="cl8y-bridge-monorepo-localterra-1"
+    local CW20_WASM="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm"
+    
+    if [ -f "$CW20_WASM" ] && docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
+        log_info "Deploying test CW20 to LocalTerra..."
+        
+        # Copy WASM
+        docker exec "$CONTAINER_NAME" mkdir -p /tmp/wasm
+        docker cp "$CW20_WASM" "$CONTAINER_NAME:/tmp/wasm/cw20_mintable.wasm"
+        
+        # Store CW20 code
+        local STORE_TX=$(docker exec "$CONTAINER_NAME" terrad tx wasm store /tmp/wasm/cw20_mintable.wasm \
+            --from test1 \
+            --chain-id localterra \
+            --gas auto --gas-adjustment 1.5 \
+            --fees 200000000uluna \
+            --broadcast-mode sync \
+            -y -o json --keyring-backend test 2>&1)
+        
+        sleep 8
+        
+        # Get CW20 code ID
+        local CW20_CODE_ID=$(docker exec "$CONTAINER_NAME" terrad query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+        
+        if [ -n "$CW20_CODE_ID" ] && [ "$CW20_CODE_ID" != "null" ]; then
+            log_info "CW20 code stored with ID: $CW20_CODE_ID"
+            
+            # Instantiate CW20
+            local CW20_INIT='{"name":"Test Bridge Token","symbol":"TBT","decimals":6,"initial_balances":[{"address":"terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v","amount":"1000000000000"}],"mint":{"minter":"terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v"}}'
+            
+            docker exec "$CONTAINER_NAME" terrad tx wasm instantiate "$CW20_CODE_ID" "$CW20_INIT" \
+                --label "test-bridge-token" \
+                --admin "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v" \
+                --from test1 \
+                --chain-id localterra \
+                --gas auto --gas-adjustment 1.5 \
+                --fees 50000000uluna \
+                --broadcast-mode sync \
+                -y --keyring-backend test 2>&1 > /dev/null || true
+            
+            sleep 6
+            
+            # Get CW20 address
+            TERRA_CW20_ADDRESS=$(docker exec "$CONTAINER_NAME" terrad query wasm list-contract-by-code "$CW20_CODE_ID" -o json | jq -r '.contracts[-1]')
+            
+            if [ -n "$TERRA_CW20_ADDRESS" ] && [ "$TERRA_CW20_ADDRESS" != "null" ]; then
+                log_info "Test CW20 deployed at: $TERRA_CW20_ADDRESS"
+            fi
+        fi
+    else
+        log_warn "CW20 WASM not found or LocalTerra not running, skipping CW20 deployment"
+    fi
+    
+    cd "$PROJECT_ROOT"
+    log_info "Test tokens deployed"
+}
+
+# Grant OPERATOR_ROLE to test account for E2E testing
+grant_operator_role() {
+    log_step "Granting OPERATOR_ROLE to test account..."
+    
+    local ACCESS_MANAGER="${ACCESS_MANAGER_ADDRESS:-0x5FbDB2315678afecb367f032d93F642f64180aa3}"
+    local TEST_ACCOUNT="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    local OPERATOR_ROLE_ID=1
+    
+    # Grant OPERATOR_ROLE (role ID 1)
+    local GRANT_TX=$(cast send "$ACCESS_MANAGER" \
+        "grantRole(uint64,address,uint32)" \
+        "$OPERATOR_ROLE_ID" \
+        "$TEST_ACCOUNT" \
+        "0" \
+        --rpc-url http://localhost:8545 \
+        --private-key "$ADMIN_KEY" \
+        --json 2>&1) || true
+    
+    if echo "$GRANT_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_info "OPERATOR_ROLE granted to $TEST_ACCOUNT"
+    else
+        log_warn "OPERATOR_ROLE grant may have failed (could already be granted)"
+    fi
+    
+    # Also grant CANCELER_ROLE (role ID 2) for fraud testing
+    local CANCELER_ROLE_ID=2
+    cast send "$ACCESS_MANAGER" \
+        "grantRole(uint64,address,uint32)" \
+        "$CANCELER_ROLE_ID" \
+        "$TEST_ACCOUNT" \
+        "0" \
+        --rpc-url http://localhost:8545 \
+        --private-key "$ADMIN_KEY" \
+        --json 2>&1 > /dev/null || true
+    
+    log_info "Roles granted for E2E testing"
+}
+
+# Register test tokens on both bridges
+register_test_tokens() {
+    log_step "Registering test tokens on bridges..."
+    
+    if [ -z "$TEST_TOKEN_ADDRESS" ]; then
+        log_warn "No TEST_TOKEN_ADDRESS, skipping token registration"
+        return 0
+    fi
+    
+    local TOKEN_REGISTRY="${TOKEN_REGISTRY_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}"
+    local ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    
+    # Compute Terra chain key
+    local TERRA_CHAIN_KEY=$(cast keccak256 "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')")
+    
+    # Encode destination token (CW20 address as bytes32)
+    local DEST_TOKEN
+    if [ -n "$TERRA_CW20_ADDRESS" ]; then
+        DEST_TOKEN=$(printf '%s' "$TERRA_CW20_ADDRESS" | xxd -p | tr -d '\n')
+        DEST_TOKEN="0x$(printf '%-64s' "$DEST_TOKEN" | tr ' ' '0')"
+    else
+        # Use uluna as fallback
+        DEST_TOKEN=$(printf '%s' "uluna" | xxd -p | tr -d '\n')
+        DEST_TOKEN="0x$(printf '%-64s' "$DEST_TOKEN" | tr ' ' '0')"
+    fi
+    
+    # Register on EVM TokenRegistry
+    # TokenType.LockUnlock = 0
+    local REG_TX=$(cast send "$TOKEN_REGISTRY" \
+        "registerToken(address,bytes32,bytes32,uint8)" \
+        "$TEST_TOKEN_ADDRESS" \
+        "$TERRA_CHAIN_KEY" \
+        "$DEST_TOKEN" \
+        "0" \
+        --rpc-url http://localhost:8545 \
+        --private-key "$ADMIN_KEY" \
+        --json 2>&1) || true
+    
+    if echo "$REG_TX" | jq -e '.status == "0x1"' > /dev/null 2>&1; then
+        log_info "Token registered on EVM TokenRegistry"
+    else
+        log_warn "Token registration may have failed (could already be registered)"
+    fi
+    
+    log_info "Token registration complete"
+}
+
 # Export environment variables for E2E tests
 export_env_file() {
     log_step "Exporting E2E environment variables..."
@@ -444,14 +604,27 @@ LOCK_UNLOCK_ADDRESS=${LOCK_UNLOCK_ADDRESS:-0xDc64a140Aa3E981100a9becA4E685f962f0
 MINT_BURN_ADDRESS=${MINT_BURN_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
 EVM_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
+# Test Token Addresses
+TEST_TOKEN_ADDRESS=${TEST_TOKEN_ADDRESS:-}
+TERRA_CW20_ADDRESS=${TERRA_CW20_ADDRESS:-}
+
 # Terra Configuration
 TERRA_RPC_URL=http://localhost:$E2E_TERRA_RPC_PORT
 TERRA_LCD_URL=http://localhost:$E2E_TERRA_LCD_PORT
 TERRA_CHAIN_ID=localterra
 TERRA_BRIDGE_ADDRESS=${TERRA_BRIDGE_ADDRESS:-}
+TERRA_MNEMONIC="notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius"
 
 # Database Configuration
 DATABASE_URL=postgres://operator:operator@localhost:${E2E_POSTGRES_PORT:-5433}/operator
+
+# Operator Configuration
+FINALITY_BLOCKS=1
+POLL_INTERVAL_MS=1000
+RETRY_ATTEMPTS=5
+RETRY_DELAY_MS=5000
+DEFAULT_FEE_BPS=30
+FEE_RECIPIENT=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
 
 # API Configuration
 API_PORT=$E2E_API_PORT
@@ -508,14 +681,11 @@ verify_setup() {
         failed=1
     fi
     
-    # Check database tables via docker exec
-    local TABLE_COUNT=$(docker exec cl8y-bridge-monorepo-postgres-1 psql -U operator -d operator -t -c \
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | tr -d ' ' || echo "0")
-    # Handle empty or non-numeric
-    if [[ "$TABLE_COUNT" =~ ^[0-9]+$ ]] && [ "$TABLE_COUNT" -gt 0 ]; then
-        log_info "Database tables: $TABLE_COUNT tables"
+    # Check database - tables will be created when operator starts
+    if docker exec cl8y-bridge-monorepo-postgres-1 pg_isready -U operator -d operator &>/dev/null; then
+        log_info "Database: Ready (migrations run when operator starts)"
     else
-        log_warn "Database tables: 0 (migrations may have failed)"
+        log_warn "Database: May not be ready"
     fi
     
     # Check EVM bridge
@@ -609,6 +779,9 @@ main() {
     run_database_migrations
     deploy_evm_contracts
     deploy_terra_contracts
+    deploy_test_tokens
+    grant_operator_role
+    register_test_tokens
     export_env_file
     fund_test_accounts
     verify_setup
