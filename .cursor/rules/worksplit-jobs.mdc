@@ -9,7 +9,7 @@ alwaysApply: true
 
 Before creating ANY WorkSplit job, you MUST:
 
-1. **Read manager instructions**: `jobs/_manager_instruction.md`
+1. **Read manager instructions**: `jobs/_managerinstruction.md`
 2. **Read README guidance**: The "Success Rate by Job Type" section
 
 ## Mode Selection Decision Tree

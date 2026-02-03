@@ -12,8 +12,7 @@ tokio = { version = "1.36", features = ["full", "signal"] }
 async-trait = "0.1"
 
 # EVM interactions
-alloy = { version = "0.1", features = ["full"] }
-alloy-primitives = "0.7"
+alloy = { version = "0.8", features = ["full"] }
 
 # Cosmos/Terra interactions
 # Compatible with LocalTerra CometBFT v0.37.18, terrad v3.6.2, wasmvm v1.5.9

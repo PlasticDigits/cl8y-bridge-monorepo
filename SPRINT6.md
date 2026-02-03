@@ -196,7 +196,7 @@ ls jobs/
 
 1. **Read the manager instructions first:**
 ```bash
-cat jobs/_manager_instruction.md
+cat jobs/_managerinstruction.md
 ```
 
 2. **Create jobs for each component:**
@@ -413,7 +413,7 @@ make e2e-test
 - [SPRINT5.md](./SPRINT5.md) - Previous sprint (completed)
 - [docs/architecture.md](./docs/architecture.md) - System design
 - [docs/crosschain-flows.md](./docs/crosschain-flows.md) - Transfer sequences
-- [jobs/_manager_instruction.md](./jobs/_manager_instruction.md) - WorkSplit guide
+- [jobs/_managerinstruction.md](./jobs/_managerinstruction.md) - WorkSplit guide
 - [README.md in jobs/](./jobs/README.md) - Job success rates and best practices
 
 ---

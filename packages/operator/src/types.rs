@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use alloy_primitives::keccak256;
+use alloy::primitives::keccak256;
 use eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;

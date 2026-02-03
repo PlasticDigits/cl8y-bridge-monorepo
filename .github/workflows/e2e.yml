@@ -11,6 +11,7 @@ on:
     paths:
       - 'packages/operator/**'
       - 'packages/canceler/**'
+      - 'packages/e2e/**'
       - 'packages/contracts-evm/**'
       - 'packages/contracts-terraclassic/**'
       - 'scripts/**'
@@ -20,6 +21,7 @@ on:
     paths:
       - 'packages/operator/**'
       - 'packages/canceler/**'
+      - 'packages/e2e/**'
       - 'packages/contracts-evm/**'
       - 'packages/contracts-terraclassic/**'
       - 'scripts/**'
@@ -78,6 +80,7 @@ jobs:
           workspaces: |
             packages/operator -> target
             packages/canceler -> target
+            packages/e2e -> target
             packages/contracts-terraclassic/bridge -> target
 
       - name: Install additional tools
@@ -238,9 +241,16 @@ jobs:
           echo "Roles granted successfully"
 
       # ========================================================================
+      # Build Rust E2E Package
+      # ========================================================================
+      - name: Build E2E Test Package
+        working-directory: packages/e2e
+        run: cargo build --release
+
+      # ========================================================================
       # RUN ALL E2E TESTS - NO SKIPPING
       # ========================================================================
-      - name: Run Full E2E Test Suite
+      - name: Run Rust E2E Test Suite
         env:
           # EVM
           EVM_RPC_URL: http://localhost:8545
@@ -261,7 +271,38 @@ jobs:
           RUST_LOG: info
         run: |
           echo "============================================================"
-          echo "  CL8Y Bridge Full E2E Test Suite"
+          echo "  CL8Y Bridge Rust E2E Test Suite"
+          echo "============================================================"
+          
+          # Run Rust E2E tests
+          cargo run -p cl8y-e2e --release -- run
+          
+          echo "============================================================"
+          echo "  Rust E2E tests completed successfully"
+          echo "============================================================"
+
+      - name: Run Full E2E Test Suite (Bash)
+        env:
+          # EVM
+          EVM_RPC_URL: http://localhost:8545
+          EVM_CHAIN_ID: "31337"
+          EVM_BRIDGE_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_BRIDGE_ADDRESS }}
+          EVM_ROUTER_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_ROUTER_ADDRESS }}
+          ACCESS_MANAGER_ADDRESS: ${{ steps.evm_contracts.outputs.ACCESS_MANAGER_ADDRESS }}
+          LOCK_UNLOCK_ADDRESS: ${{ steps.evm_contracts.outputs.LOCK_UNLOCK_ADDRESS }}
+          EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+          # Terra
+          TERRA_RPC_URL: http://localhost:26657
+          TERRA_LCD_URL: http://localhost:1317
+          TERRA_CHAIN_ID: localterra
+          TERRA_BRIDGE_ADDRESS: ${{ steps.terra_contracts.outputs.TERRA_BRIDGE_ADDRESS }}
+          # Database
+          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
+          # Logging
+          RUST_LOG: info
+        run: |
+          echo "============================================================"
+          echo "  CL8Y Bridge Full E2E Test Suite (Bash)"
           echo "  Security-critical: ALL tests enabled, NO skipping"
           echo "============================================================"
           
