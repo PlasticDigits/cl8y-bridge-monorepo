@@ -51,7 +51,9 @@ pub struct PendingApproval {
 /// Terra chain client for E2E testing
 pub struct TerraClient {
     lcd_url: Url,
+    #[allow(dead_code)]
     rpc_url: Url,
+    #[allow(dead_code)]
     chain_id: String,
     container_name: String,
     key_name: String,

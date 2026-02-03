@@ -74,6 +74,7 @@ pub const CANCELER_ROLE: u64 = 2;
 pub struct EvmBridgeClient<P> {
     provider: P,
     bridge_address: Address,
+    #[allow(dead_code)]
     router_address: Address,
 }
 

@@ -4,7 +4,6 @@
 //! parsing broadcast files, and registering chain keys and tokens.
 
 use alloy::primitives::{Address, B256};
-use alloy::providers::Provider;
 use alloy::sol;
 use eyre::{eyre, Result};
 use serde::Deserialize;
@@ -286,7 +285,7 @@ pub async fn grant_operator_role(
     }
 
     // Grant role with default delay
-    am.grantRole(OPERATOR_ROLE_ID, account, 0).send().await?;
+    let _ = am.grantRole(OPERATOR_ROLE_ID, account, 0).send().await?;
 
     Ok(())
 }
@@ -313,7 +312,7 @@ pub async fn grant_canceler_role(
     }
 
     // Grant role with default delay
-    am.grantRole(CANCELER_ROLE_ID, account, 0).send().await?;
+    let _ = am.grantRole(CANCELER_ROLE_ID, account, 0).send().await?;
 
     Ok(())
 }
@@ -323,7 +322,7 @@ pub async fn register_cosmw_chain(
     chain_registry: Address,
     chain_id: &str,
     rpc_url: &str,
-    private_key: B256,
+    _private_key: B256,
 ) -> Result<B256> {
     info!("Registering COSMW chain: {}", chain_id);
 
@@ -339,7 +338,7 @@ pub async fn register_cosmw_chain(
     }
 
     // Register chain key
-    let result = cr.addCOSMWChainKey(chain_id.to_string()).send().await?;
+    let _result = cr.addCOSMWChainKey(chain_id.to_string()).send().await?;
 
     // Wait for transaction confirmation
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -373,7 +372,7 @@ pub async fn register_token(
     token: Address,
     bridge_type: BridgeType,
     rpc_url: &str,
-    private_key: B256,
+    _private_key: B256,
 ) -> Result<()> {
     info!(
         "Registering token: 0x{} with bridge type: {:?}",
@@ -395,7 +394,7 @@ pub async fn register_token(
         return Ok(());
     }
 
-    tr.addToken(token, bridge_type as u8).send().await?;
+    let _ = tr.addToken(token, bridge_type as u8).send().await?;
 
     Ok(())
 }
@@ -408,7 +407,7 @@ pub async fn add_token_dest_chain(
     dest_token_address: B256,
     decimals: u8,
     rpc_url: &str,
-    private_key: B256,
+    _private_key: B256,
 ) -> Result<()> {
     info!("Adding destination chain for token: 0x{}", token);
 
@@ -416,7 +415,8 @@ pub async fn add_token_dest_chain(
 
     let tr = ITokenRegistry::new(token_registry, &provider);
 
-    tr.addTokenDestChainKey(token, dest_chain_key, dest_token_address, decimals)
+    let _ = tr
+        .addTokenDestChainKey(token, dest_chain_key, dest_token_address, decimals)
         .send()
         .await?;
 

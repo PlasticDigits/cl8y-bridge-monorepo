@@ -749,21 +749,6 @@ async fn query_has_role(config: &E2eConfig, role_id: u64, account: Address) -> e
 
     // Encode hasRole(uint64,address) function call
     // selector: keccak256("hasRole(uint64,address)")[0:4] = 0x91d14854
-    let role_id_hex = format!("{:016x}", role_id);
-    let account_hex = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!(
-        "0x91d14854{}{}",
-        role_id_hex
-            .as_str()
-            .chars()
-            .rev()
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>(),
-        account_hex
-    );
-
     // Actually, let's use a simpler encoding:
     // hasRole(uint64 roleId, address account) returns (bool isMember, uint32 delay)
     // ABI encode: padded role_id (32 bytes) + padded address (32 bytes)
@@ -1431,7 +1416,6 @@ async fn approve_erc20(
     // Send transaction
     // Note: In Anvil's unlocked account mode, we don't need to sign
     // For production, we'd use the private key to sign transactions
-    let _private_key = format!("{}", config.test_accounts.evm_private_key);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -1659,7 +1643,6 @@ async fn is_approval_cancelled(config: &E2eConfig, nonce: u64) -> Result<bool> {
 
     // For testing, we'll use a simplified approach - query with a computed hash
     // In a real implementation, we'd track the withdrawHash from approval creation
-    let nonce_padded = format!("{:064x}", nonce);
 
     // Create a pseudo-hash from the nonce for querying
     // This is a simplification - real implementation would use actual withdrawHash
@@ -1751,6 +1734,7 @@ async fn verify_tx_success(config: &E2eConfig, tx_hash: B256) -> Result<bool> {
 
 /// Compute the withdrawHash for a given set of parameters
 /// This matches the Solidity: keccak256(abi.encode(srcChainKey, token, to, destAccount, amount, nonce))
+#[allow(dead_code)]
 fn compute_withdraw_hash(
     src_chain_key: B256,
     token: Address,

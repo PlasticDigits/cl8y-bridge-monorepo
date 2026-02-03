@@ -314,6 +314,7 @@ impl DockerCompose {
 }
 
 /// Wait for a service to be healthy
+#[allow(dead_code)]
 async fn wait_for_service<F, Fut>(
     name: &str,
     check_fn: F,

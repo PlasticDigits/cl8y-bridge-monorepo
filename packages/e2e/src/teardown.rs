@@ -159,7 +159,7 @@ impl E2eTeardown {
         let mut orphans = Vec::new();
 
         // Find processes using E2E ports
-        for (port, service) in E2E_PORTS {
+        for (port, _service) in E2E_PORTS {
             match self.find_process_on_port(*port) {
                 Ok(Some(pid)) => {
                     let process_info = self.get_process_info(pid).await;
@@ -296,7 +296,7 @@ impl E2eTeardown {
         let start = std::time::Instant::now();
 
         // Stop relayer processes
-        let relayers_stopped = self.stop_relayer_processes().await.is_ok();
+        let _relayers_stopped = self.stop_relayer_processes().await.is_ok();
 
         // Stop Docker services
         let services_stopped = self.stop_docker_services(&options).await.is_ok();
@@ -310,7 +310,8 @@ impl E2eTeardown {
 
         // Wait for ports to be free
         let ports_freed = if options.kill_orphans {
-            self.wait_for_ports_free(Duration::from_secs(30))
+            let _ = self
+                .wait_for_ports_free(Duration::from_secs(30))
                 .await
                 .is_ok();
             self.check_ports()
