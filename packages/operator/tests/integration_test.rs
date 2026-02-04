@@ -8,7 +8,7 @@
 //! - Contracts deployed and configured
 //! - DATABASE_URL set
 
-use alloy_primitives::keccak256;
+use alloy::primitives::keccak256;
 
 mod helpers {
     use std::time::Duration;

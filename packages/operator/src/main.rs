@@ -45,9 +45,13 @@ async fn async_main() -> eyre::Result<()> {
     let db = db::create_pool(&config.database.url).await?;
     tracing::info!("Database connected");
 
-    // Run migrations
-    db::run_migrations(&db).await?;
-    tracing::info!("Database migrations complete");
+    // Run migrations (can be skipped via SKIP_MIGRATIONS env var)
+    if std::env::var("SKIP_MIGRATIONS").is_ok_and(|v| v == "1" || v.to_lowercase() == "true") {
+        tracing::info!("Skipping database migrations (SKIP_MIGRATIONS=true)");
+    } else {
+        db::run_migrations(&db).await?;
+        tracing::info!("Database migrations complete");
+    }
 
     // Create shutdown channels
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);

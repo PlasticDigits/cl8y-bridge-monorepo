@@ -175,6 +175,11 @@ pub async fn approve_erc20(
     let amount_padded = format!("{:064x}", amount);
     let call_data = format!("0x095ea7b3{}{}", spender_padded, amount_padded);
 
+    debug!(
+        "Approving token {} for spender {} amount {}",
+        token, spender, amount
+    );
+
     let response = client
         .post(config.evm.rpc_url.as_str())
         .json(&serde_json::json!({
@@ -205,6 +210,24 @@ pub async fn approve_erc20(
 
     // Wait for confirmation
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify transaction succeeded
+    match verify_tx_receipt(config, tx_hash).await {
+        Ok(true) => {
+            debug!("Token approval confirmed successfully");
+        }
+        Ok(false) => {
+            return Err(eyre::eyre!(
+                "Token approval reverted on-chain (tx=0x{}). \
+                 Check that the token address is valid and the test account has sufficient balance.",
+                hex::encode(&tx_hash.as_slice()[..8])
+            ));
+        }
+        Err(e) => {
+            warn!("Could not verify approval receipt: {}", e);
+            // Continue anyway - may still have succeeded
+        }
+    }
 
     Ok(tx_hash)
 }
@@ -275,10 +298,61 @@ pub async fn execute_deposit(
     let tx_hash = B256::from_slice(&hex::decode(tx_hash_hex.trim_start_matches("0x"))?);
     info!("Deposit transaction submitted: 0x{}", hex::encode(tx_hash));
 
-    // Wait for confirmation
+    // Wait for confirmation and verify transaction succeeded
     tokio::time::sleep(Duration::from_secs(2)).await;
 
+    // Verify transaction receipt status - critical to detect on-chain reverts
+    match verify_tx_receipt(config, tx_hash).await {
+        Ok(true) => {
+            debug!("Deposit transaction confirmed successfully");
+        }
+        Ok(false) => {
+            return Err(eyre::eyre!(
+                "Deposit transaction reverted on-chain (tx=0x{}). \
+                 Common causes: token not registered in TokenRegistry for destination chain, \
+                 guard check failed, or access control denied. \
+                 Check contract state and token registration.",
+                hex::encode(&tx_hash.as_slice()[..8])
+            ));
+        }
+        Err(e) => {
+            warn!("Could not verify transaction receipt: {}", e);
+            // Continue anyway - may still have succeeded
+        }
+    }
+
     Ok(tx_hash)
+}
+
+/// Verify a transaction succeeded by checking its receipt status
+///
+/// Returns Ok(true) if status is 0x1 (success), Ok(false) if status is 0x0 (reverted),
+/// or Err if the receipt is not yet available.
+async fn verify_tx_receipt(config: &E2eConfig, tx_hash: B256) -> Result<bool> {
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [format!("0x{}", hex::encode(tx_hash))],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+
+    if body["result"].is_null() {
+        return Err(eyre::eyre!(
+            "Transaction receipt not found (tx may still be pending)"
+        ));
+    }
+
+    let status = body["result"]["status"].as_str().unwrap_or("0x0");
+
+    Ok(status == "0x1")
 }
 
 // ============================================================================
@@ -674,9 +748,7 @@ pub async fn is_approval_timed_out(
         .await?;
 
     let block_body: serde_json::Value = block_response.json().await?;
-    let timestamp_hex = block_body["result"]["timestamp"]
-        .as_str()
-        .unwrap_or("0x0");
+    let timestamp_hex = block_body["result"]["timestamp"].as_str().unwrap_or("0x0");
     let current_time = u64::from_str_radix(timestamp_hex.trim_start_matches("0x"), 16)?;
 
     Ok(current_time > approved_at + deadline_seconds)
@@ -718,6 +790,101 @@ pub fn generate_unique_nonce() -> u64 {
             % 1_000_000)
 }
 
+// ============================================================================
+// Token Registration Diagnostics
+// ============================================================================
+
+/// Check if a token is registered for a destination chain key
+///
+/// Queries TokenRegistry.isTokenDestChainKeyRegistered(token, destChainKey)
+/// This helps diagnose deposit failures due to missing token registration.
+pub async fn is_token_registered_for_chain(
+    config: &E2eConfig,
+    token: Address,
+    dest_chain_key: [u8; 32],
+) -> Result<bool> {
+    let client = reqwest::Client::new();
+
+    // isTokenDestChainKeyRegistered(address,bytes32) selector: 0x8f7c6a4d
+    // Computed via: cast sig "isTokenDestChainKeyRegistered(address,bytes32)"
+    let selector = "8f7c6a4d";
+    let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
+    let chain_key_hex = hex::encode(dest_chain_key);
+    let call_data = format!("0x{}{}{}", selector, token_padded, chain_key_hex);
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.token_registry),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+
+    if let Some(error) = body.get("error") {
+        return Err(eyre::eyre!("Token registration check failed: {}", error));
+    }
+
+    let hex_result = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+
+    // Result is a bool encoded as bytes32 - check if last byte is 1
+    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
+    let is_registered = bytes.last().copied().unwrap_or(0) == 1;
+
+    debug!(
+        "Token {} registration for chain 0x{}: {}",
+        token,
+        hex::encode(&dest_chain_key[..8]),
+        is_registered
+    );
+
+    Ok(is_registered)
+}
+
+/// Verify token is properly set up for deposits before attempting transfer
+///
+/// Checks:
+/// 1. Token is registered on TokenRegistry
+/// 2. Token has destination chain key configured
+/// 3. Logs diagnostic information if not properly configured
+pub async fn verify_token_setup(
+    config: &E2eConfig,
+    token: Address,
+    dest_chain_key: [u8; 32],
+) -> Result<()> {
+    let is_registered = is_token_registered_for_chain(config, token, dest_chain_key).await?;
+
+    if !is_registered {
+        warn!(
+            "Token {} is NOT registered for destination chain 0x{}! \
+             Deposit transactions will revert. Run setup to register the token first.",
+            token,
+            hex::encode(&dest_chain_key[..8])
+        );
+        return Err(eyre::eyre!(
+            "Token {} not registered for destination chain. \
+             Ensure TokenRegistry.addToken() and TokenRegistry.addTokenDestChainKey() were called during setup.",
+            token
+        ));
+    }
+
+    info!(
+        "Token {} verified: registered for destination chain 0x{}",
+        token,
+        hex::encode(&dest_chain_key[..8])
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,7 +893,8 @@ mod tests {
     fn test_encode_terra_address() {
         let address = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
         let encoded = encode_terra_address(address);
-        assert_eq!(&encoded[..address.len()], address.as_bytes());
+        // The function truncates to 32 bytes, so only first 32 chars are stored
+        assert_eq!(&encoded[..32], &address.as_bytes()[..32]);
     }
 
     #[test]
@@ -740,6 +908,9 @@ mod tests {
     #[test]
     fn test_evm_chain_key_computation() {
         let key = compute_evm_chain_key(31337);
-        assert!(!key.iter().all(|&b| b == 0), "Chain key should not be all zeros");
+        assert!(
+            !key.iter().all(|&b| b == 0),
+            "Chain key should not be all zeros"
+        );
     }
 }

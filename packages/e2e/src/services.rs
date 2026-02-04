@@ -323,13 +323,12 @@ impl ServiceManager {
                 .ok_or_else(|| eyre!("Failed to parse canceler PID"))?
         };
 
+        info!("Canceler spawned with PID {}", pid);
+
         // Create a dummy child handle (we track via PID file)
         let child = Command::new("true")
             .spawn()
             .map_err(|e| eyre!("Failed to create dummy child: {}", e))?;
-
-        let pid = child.id();
-        info!("Canceler spawned with PID {}", pid);
 
         // Write PID file
         self.write_pid_file(CANCELER_PID_FILE, pid)?;
@@ -393,8 +392,29 @@ impl ServiceManager {
     }
 
     /// Build environment variables for operator
+    ///
+    /// NOTE: Uses test_accounts.evm_private_key for the operator's EVM key,
+    /// which is the Anvil test account that has OPERATOR_ROLE granted.
     fn build_operator_env(&self, config: &E2eConfig) -> Vec<(String, String)> {
-        vec![
+        // Use the test account's private key for the operator
+        // This ensures the operator has OPERATOR_ROLE (granted during setup)
+        let operator_private_key = if config.evm.private_key == B256::ZERO {
+            debug!("Using test account private key for operator (evm.private_key is ZERO)");
+            config.test_accounts.evm_private_key
+        } else {
+            debug!("Using evm.private_key for operator");
+            config.evm.private_key
+        };
+
+        info!(
+            bridge_address = %config.evm.contracts.bridge,
+            router_address = %config.evm.contracts.router,
+            terra_bridge_address = config.terra.bridge_address.as_deref().unwrap_or("NOT SET"),
+            chain_id = config.evm.chain_id,
+            "Building operator environment"
+        );
+
+        let mut env = vec![
             (
                 "DATABASE_URL".to_string(),
                 config.operator.database_url.clone(),
@@ -404,10 +424,22 @@ impl ServiceManager {
                 "EVM_BRIDGE_ADDRESS".to_string(),
                 format!("{}", config.evm.contracts.bridge),
             ),
+            (
+                "EVM_ROUTER_ADDRESS".to_string(),
+                format!("{}", config.evm.contracts.router),
+            ),
+            (
+                "EVM_PRIVATE_KEY".to_string(),
+                format!("0x{}", hex::encode(operator_private_key.as_slice())),
+            ),
             ("EVM_CHAIN_ID".to_string(), config.evm.chain_id.to_string()),
             (
                 "TERRA_LCD_URL".to_string(),
                 config.terra.lcd_url.to_string(),
+            ),
+            (
+                "TERRA_RPC_URL".to_string(),
+                config.terra.rpc_url.to_string(),
             ),
             ("TERRA_CHAIN_ID".to_string(), config.terra.chain_id.clone()),
             (
@@ -422,11 +454,31 @@ impl ServiceManager {
                 "POLL_INTERVAL_MS".to_string(),
                 config.operator.poll_interval_ms.to_string(),
             ),
+            // Fee configuration - use the test account address as fee recipient
+            (
+                "FEE_RECIPIENT".to_string(),
+                format!("{}", config.test_accounts.evm_address),
+            ),
             (
                 "RUST_LOG".to_string(),
                 "info,cl8y_operator=debug".to_string(),
             ),
-        ]
+            // Skip migrations since e2e setup already ran them
+            ("SKIP_MIGRATIONS".to_string(), "true".to_string()),
+        ];
+
+        // Add Terra mnemonic if available
+        if let Some(mnemonic) = &config.terra.mnemonic {
+            env.push(("TERRA_MNEMONIC".to_string(), mnemonic.clone()));
+        } else {
+            // Default test mnemonic for localterra
+            env.push((
+                "TERRA_MNEMONIC".to_string(),
+                "notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius".to_string(),
+            ));
+        }
+
+        env
     }
 
     /// Build environment variables for canceler

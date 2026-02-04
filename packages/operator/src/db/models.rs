@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 // Note: We use String for amount fields to avoid BigDecimal/sqlx version conflicts.
-// The database stores amounts as TEXT/VARCHAR and we convert to BigDecimal when needed.
+// The database stores amounts as NUMERIC(78,0). When inserting, we cast text to NUMERIC
+// in the SQL query (e.g., $1::NUMERIC). When reading, sqlx converts NUMERIC to String.
 
 /// Represents a deposit from an EVM chain
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

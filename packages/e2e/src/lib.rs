@@ -13,6 +13,7 @@ pub mod setup;
 pub mod teardown;
 pub mod terra;
 pub mod tests;
+pub mod tokens;
 pub mod transfer_helpers;
 pub mod utils;
 
@@ -30,7 +31,7 @@ pub use deploy::{
 pub use docker::DockerCompose;
 pub use evm::AnvilTimeClient;
 pub use services::ServiceManager;
-pub use setup::{E2eSetup, SetupResult, SetupStep};
+pub use setup::{DeployedContracts, E2eSetup, SetupResult, SetupStep};
 pub use teardown::{E2eTeardown, TeardownOptions, TeardownResult};
 pub use terra::TerraClient;
 pub use tests::evm_to_evm::{
@@ -43,6 +44,10 @@ pub use tests::{
     test_evm_to_terra_with_verification, test_fraud_detection_full, test_full_transfer_cycle,
     test_real_evm_to_terra_transfer, test_real_terra_to_evm_transfer,
     test_terra_to_evm_with_verification, IntegrationTestOptions,
+};
+pub use tokens::{
+    BatchDeployOptions, BatchDeployResult, DeployedToken, TokenAddress, TokenChain, TokenConfig,
+    TokenFactory, TokenType,
 };
 pub use transfer_helpers::{
     deploy_erc20_token, mint_erc20_tokens, poll_for_approval, poll_for_withdrawal_ready,

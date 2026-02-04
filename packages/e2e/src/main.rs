@@ -293,7 +293,8 @@ async fn main() -> Result<()> {
             }
             .await;
 
-            match setup_result {
+            // Capture deployed contracts for test phase
+            let deployed_contracts = match &setup_result {
                 Ok(result) => {
                     tracing::info!("Setup complete in {:?}", result.duration);
                     if !result.verification.all_ok() {
@@ -302,12 +303,15 @@ async fn main() -> Result<()> {
                             tracing::warn!("  - Anvil not responding");
                         }
                     }
+                    // Capture the deployed contracts for use in tests
+                    Some(result.contracts.clone())
                 }
                 Err(e) => {
                     tracing::error!("Setup failed: {}", e);
                     setup_failed = true;
+                    None
                 }
-            }
+            };
 
             // =====================================================================
             // PHASE 2: RUN TESTS (only if setup succeeded)
@@ -326,7 +330,33 @@ async fn main() -> Result<()> {
                 }
 
                 // Reload config after setup (picks up deployed contract addresses)
-                let fresh_config = E2eConfig::from_env().unwrap_or_default();
+                let mut fresh_config = E2eConfig::from_env().unwrap_or_default();
+
+                // CRITICAL: Directly propagate deployed addresses from setup result
+                // This ensures test token address is available even if env loading fails
+                if let Some(ref contracts) = deployed_contracts {
+                    fresh_config.evm.contracts.access_manager = contracts.access_manager;
+                    fresh_config.evm.contracts.chain_registry = contracts.chain_registry;
+                    fresh_config.evm.contracts.token_registry = contracts.token_registry;
+                    fresh_config.evm.contracts.mint_burn = contracts.mint_burn;
+                    fresh_config.evm.contracts.lock_unlock = contracts.lock_unlock;
+                    fresh_config.evm.contracts.bridge = contracts.bridge;
+                    fresh_config.evm.contracts.router = contracts.router;
+
+                    // Propagate test token address - this is the critical fix
+                    if let Some(test_token) = contracts.test_token {
+                        fresh_config.evm.contracts.test_token = test_token;
+                        tracing::info!("Test token address propagated: {}", test_token);
+                    }
+
+                    // Propagate Terra addresses
+                    if let Some(ref terra_bridge) = contracts.terra_bridge {
+                        fresh_config.terra.bridge_address = Some(terra_bridge.clone());
+                    }
+                    if let Some(ref cw20) = contracts.cw20_token {
+                        fresh_config.terra.cw20_address = Some(cw20.clone());
+                    }
+                }
 
                 let results = if quick {
                     tracing::info!("Quick mode: connectivity tests only");

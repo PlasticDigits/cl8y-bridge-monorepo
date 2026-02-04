@@ -28,11 +28,12 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 /// Insert a new EVM deposit
 pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Result<i64> {
+    // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
     let row = sqlx::query(
         r#"
         INSERT INTO evm_deposits (chain_id, tx_hash, log_index, nonce, dest_chain_key, 
             dest_token_address, dest_account, token, amount, block_number, block_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11)
         RETURNING id
         "#,
     )
@@ -99,10 +100,11 @@ pub async fn evm_deposit_exists(
 
 /// Insert a new Terra deposit
 pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> Result<i64> {
+    // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
     let row = sqlx::query(
         r#"
         INSERT INTO terra_deposits (tx_hash, nonce, sender, recipient, token, amount, dest_chain_id, block_height)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7, $8)
         RETURNING id
         "#,
     )
@@ -161,11 +163,12 @@ pub async fn terra_deposit_exists(pool: &PgPool, tx_hash: &str, nonce: i64) -> R
 
 /// Insert a new approval
 pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i64> {
+    // Note: amount and fee are stored as NUMERIC(78,0) in the database, so we cast the text values
     let row = sqlx::query(
         r#"
         INSERT INTO approvals (src_chain_key, nonce, dest_chain_id, withdraw_hash, token, recipient, 
             amount, fee, fee_recipient, deduct_from_amount)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::NUMERIC, $8::NUMERIC, $9, $10)
         RETURNING id
         "#,
     )
@@ -260,10 +263,11 @@ pub async fn approval_exists(
 
 /// Insert a new release
 pub async fn insert_release(pool: &PgPool, release: &NewRelease) -> Result<i64> {
+    // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
     let row = sqlx::query(
         r#"
         INSERT INTO releases (src_chain_key, nonce, sender, recipient, token, amount, source_chain_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7)
         RETURNING id
         "#,
     )

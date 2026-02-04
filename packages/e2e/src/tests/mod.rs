@@ -29,6 +29,7 @@ pub mod helpers;
 mod integration;
 mod operator;
 mod operator_execution;
+mod operator_execution_advanced;
 pub mod operator_helpers;
 mod transfer;
 mod watchtower;
@@ -45,6 +46,7 @@ pub use fraud::*;
 pub use integration::*;
 pub use operator::*;
 pub use operator_execution::*;
+pub use operator_execution_advanced::*;
 pub use transfer::*;
 pub use watchtower::*;
 
@@ -160,10 +162,9 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(canceler_execution::test_canceler_evm_source_fraud_detection(config).await);
     results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
 
-    // Live Operator Execution Tests (3) - IMPLEMENTED in operator_execution.rs
-    // Operator is NOT started by default E2E setup, so these will skip unless
-    // the operator is manually started. They verify deposit detection and
-    // withdrawal execution with balance verification.
+    // Live Operator Execution Tests - IMPLEMENTED in operator_execution.rs
+    // Operator is started by E2E setup (same as canceler). These tests verify
+    // deposit detection and withdrawal execution with balance verification.
     // Note: These require a test token address which may not be available
     let test_token = config.evm.contracts.test_token;
     let token_address = if test_token != Address::ZERO {
@@ -171,6 +172,8 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     } else {
         None
     };
+
+    // Core operator tests (3)
     results.push(
         operator_execution::test_operator_live_deposit_detection(config, token_address).await,
     );
@@ -179,6 +182,27 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     );
     results.push(
         operator_execution::test_operator_sequential_deposit_processing(config, token_address, 3)
+            .await,
+    );
+
+    // Advanced operator tests (5)
+    results.push(
+        operator_execution_advanced::test_operator_live_fee_collection(config, token_address).await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_batch_deposit_processing(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_evm_to_evm_withdrawal(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_terra_to_evm_withdrawal(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_approval_timeout_handling(config, token_address)
             .await,
     );
 
@@ -202,7 +226,7 @@ pub async fn run_live_execution_tests(
 
     tracing::info!("Running live operator/canceler execution tests");
 
-    // Live Operator Execution Tests (3)
+    // Core Operator Execution Tests (3)
     results.push(
         operator_execution::test_operator_live_deposit_detection(config, token_address).await,
     );
@@ -211,6 +235,27 @@ pub async fn run_live_execution_tests(
     );
     results.push(
         operator_execution::test_operator_sequential_deposit_processing(config, token_address, 3)
+            .await,
+    );
+
+    // Advanced Operator Execution Tests (5)
+    results.push(
+        operator_execution_advanced::test_operator_live_fee_collection(config, token_address).await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_batch_deposit_processing(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_evm_to_evm_withdrawal(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_terra_to_evm_withdrawal(config, token_address)
+            .await,
+    );
+    results.push(
+        operator_execution_advanced::test_operator_approval_timeout_handling(config, token_address)
             .await,
     );
 

@@ -1,5 +1,5 @@
 use eyre::{eyre, Result, WrapErr};
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 use sqlx::PgPool;
 use std::time::Duration;
 use tendermint_rpc::{Client, HttpClient, Url};
@@ -10,12 +10,14 @@ use crate::db::{get_last_terra_block, update_last_terra_block};
 /// Response types for LCD API calls
 #[derive(Debug, Deserialize)]
 struct TxSearchResponse {
+    #[serde(default)]
     tx_responses: Vec<TxResponse>,
 }
 
 #[derive(Debug, Deserialize)]
 struct TxResponse {
     txhash: String,
+    #[serde(deserialize_with = "deserialize_string_to_i64")]
     height: i64,
     events: Vec<Event>,
 }
@@ -214,4 +216,164 @@ fn extract_u64(attrs: &[Attribute], key: &str) -> Result<u64> {
     extract_string(attrs, key)?
         .parse()
         .wrap_err_with(|| format!("Invalid u64 for {}", key))
+}
+
+/// Custom deserializer for Cosmos API responses that return numbers as strings.
+/// Handles both string "123" and numeric 123 formats.
+fn deserialize_string_to_i64<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrI64Visitor;
+
+    impl de::Visitor<'_> for StringOrI64Visitor {
+        type Value = i64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or integer")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> std::result::Result<i64, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> std::result::Result<i64, E>
+        where
+            E: de::Error,
+        {
+            i64::try_from(value)
+                .map_err(|_| E::custom(format!("u64 {} out of range for i64", value)))
+        }
+
+        fn visit_str<E>(self, value: &str) -> std::result::Result<i64, E>
+        where
+            E: de::Error,
+        {
+            value.parse().map_err(E::custom)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrI64Visitor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_tx_response_with_string_height() {
+        let json = r#"{
+            "txhash": "ABC123",
+            "height": "208",
+            "events": []
+        }"#;
+
+        let response: TxResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.height, 208);
+        assert_eq!(response.txhash, "ABC123");
+    }
+
+    #[test]
+    fn test_deserialize_tx_response_with_numeric_height() {
+        let json = r#"{
+            "txhash": "DEF456",
+            "height": 12345,
+            "events": []
+        }"#;
+
+        let response: TxResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.height, 12345);
+    }
+
+    #[test]
+    fn test_deserialize_tx_search_response_empty() {
+        let json = r#"{}"#;
+        let response: TxSearchResponse = serde_json::from_str(json).unwrap();
+        assert!(response.tx_responses.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_tx_search_response_with_transactions() {
+        let json = r#"{
+            "tx_responses": [
+                {
+                    "txhash": "TX1",
+                    "height": "100",
+                    "events": [
+                        {
+                            "type": "wasm",
+                            "attributes": [
+                                {"key": "method", "value": "lock"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }"#;
+
+        let response: TxSearchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.tx_responses.len(), 1);
+        assert_eq!(response.tx_responses[0].height, 100);
+        assert_eq!(response.tx_responses[0].events.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_string() {
+        let attrs = vec![
+            Attribute {
+                key: "sender".to_string(),
+                value: "terra1abc".to_string(),
+            },
+            Attribute {
+                key: "amount".to_string(),
+                value: "1000000".to_string(),
+            },
+        ];
+
+        assert_eq!(extract_string(&attrs, "sender").unwrap(), "terra1abc");
+        assert_eq!(extract_string(&attrs, "amount").unwrap(), "1000000");
+        assert!(extract_string(&attrs, "missing").is_err());
+    }
+
+    #[test]
+    fn test_extract_u64() {
+        let attrs = vec![
+            Attribute {
+                key: "nonce".to_string(),
+                value: "42".to_string(),
+            },
+            Attribute {
+                key: "dest_chain_id".to_string(),
+                value: "31337".to_string(),
+            },
+        ];
+
+        assert_eq!(extract_u64(&attrs, "nonce").unwrap(), 42);
+        assert_eq!(extract_u64(&attrs, "dest_chain_id").unwrap(), 31337);
+    }
+
+    #[test]
+    fn test_extract_u64_invalid() {
+        let attrs = vec![Attribute {
+            key: "invalid".to_string(),
+            value: "not_a_number".to_string(),
+        }];
+
+        assert!(extract_u64(&attrs, "invalid").is_err());
+    }
+
+    #[test]
+    fn test_deserialize_large_string_height() {
+        let json = r#"{
+            "txhash": "LARGE",
+            "height": "9223372036854775807",
+            "events": []
+        }"#;
+
+        let response: TxResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.height, i64::MAX);
+    }
 }
