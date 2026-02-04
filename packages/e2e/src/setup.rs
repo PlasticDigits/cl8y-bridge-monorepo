@@ -884,7 +884,13 @@ impl E2eSetup {
         self.services.stop_canceler().await
     }
 
-    /// Stop all managed services (canceler, etc.)
+    /// Stop the operator service
+    pub async fn stop_operator(&mut self) -> Result<()> {
+        info!("Stopping operator service");
+        self.services.stop_operator().await
+    }
+
+    /// Stop all managed services (canceler, operator, etc.)
     pub async fn stop_services(&mut self) -> Result<()> {
         info!("Stopping all managed services");
         self.services.stop_all().await
@@ -893,6 +899,11 @@ impl E2eSetup {
     /// Check if canceler service is running
     pub fn is_canceler_running(&self) -> bool {
         self.services.is_canceler_running()
+    }
+
+    /// Check if operator service is running
+    pub fn is_operator_running(&self) -> bool {
+        self.services.is_operator_running()
     }
 
     /// Run complete setup with progress callback
@@ -935,6 +946,19 @@ impl E2eSetup {
         // Deploy EVM Contracts
         on_step(SetupStep::DeployEvmContracts, true);
         let mut deployed = self.deploy_evm_contracts().await?;
+        // IMPORTANT: Update the config with deployed contract addresses
+        // so that other components (like the canceler) use the correct addresses
+        self.config.evm.contracts.access_manager = deployed.access_manager;
+        self.config.evm.contracts.chain_registry = deployed.chain_registry;
+        self.config.evm.contracts.token_registry = deployed.token_registry;
+        self.config.evm.contracts.mint_burn = deployed.mint_burn;
+        self.config.evm.contracts.lock_unlock = deployed.lock_unlock;
+        self.config.evm.contracts.bridge = deployed.bridge;
+        self.config.evm.contracts.router = deployed.router;
+        info!(
+            "Updated config with deployed contract addresses: bridge={}",
+            deployed.bridge
+        );
         on_step(SetupStep::DeployEvmContracts, true);
 
         // Deploy Test ERC20 Token for cross-chain transfers
@@ -942,6 +966,7 @@ impl E2eSetup {
         match self.deploy_test_token().await {
             Ok(Some(token_address)) => {
                 deployed.test_token = Some(token_address);
+                self.config.evm.contracts.test_token = token_address;
                 info!("Test token deployed: {}", token_address);
             }
             Ok(None) => {
@@ -1071,6 +1096,21 @@ impl E2eSetup {
             self.services.is_canceler_running(),
         );
 
+        // Start Operator Service (for deposit detection and withdrawal execution)
+        on_step(SetupStep::StartOperator, true);
+        match self.services.start_operator(&self.config).await {
+            Ok(pid) => {
+                info!("Operator service started with PID {}", pid);
+            }
+            Err(e) => {
+                warn!("Failed to start operator service: {} (tests may skip)", e);
+            }
+        }
+        on_step(
+            SetupStep::StartOperator,
+            self.services.is_operator_running(),
+        );
+
         // Export Environment
         on_step(SetupStep::ExportEnvironment, true);
         let env_file = self.export_environment(&deployed).await?;
@@ -1110,6 +1150,7 @@ pub enum SetupStep {
     RegisterChainKeys,
     RegisterTokens,
     StartCanceler,
+    StartOperator,
     ExportEnvironment,
     VerifySetup,
 }
@@ -1130,6 +1171,7 @@ impl SetupStep {
             Self::RegisterChainKeys => "Register Chain Keys",
             Self::RegisterTokens => "Register Tokens",
             Self::StartCanceler => "Start Canceler Service",
+            Self::StartOperator => "Start Operator Service",
             Self::ExportEnvironment => "Export Environment",
             Self::VerifySetup => "Verify Setup",
         }

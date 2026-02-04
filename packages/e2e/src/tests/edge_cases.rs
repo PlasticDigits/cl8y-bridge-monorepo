@@ -242,7 +242,7 @@ pub async fn test_metrics_endpoint(_config: &E2eConfig) -> TestResult {
     let canceler_health_port: u16 = std::env::var("CANCELER_HEALTH_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8081);
+        .unwrap_or(9099);
     let metrics_urls = vec![
         format!("http://localhost:{}/metrics", operator_metrics_port),
         format!("http://localhost:{}/metrics", canceler_health_port),

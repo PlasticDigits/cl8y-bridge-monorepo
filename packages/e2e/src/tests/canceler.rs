@@ -121,11 +121,11 @@ pub async fn test_canceler_autonomous_detection(config: &E2eConfig) -> TestResul
     }
 
     // Verify we can query approval cancellation status
-    // Query nonce 0 which likely doesn't exist but tests the infrastructure
-    match super::helpers::is_approval_cancelled(config, 0).await {
+    // Query zero hash which likely doesn't exist but tests the infrastructure
+    match super::helpers::is_approval_cancelled(config, alloy::primitives::B256::ZERO).await {
         Ok(cancelled) => {
             tracing::debug!(
-                "Approval 0 cancelled: {} (infrastructure check passed)",
+                "Approval (zero hash) cancelled: {} (infrastructure check passed)",
                 cancelled
             );
         }
@@ -170,12 +170,12 @@ pub async fn test_canceler_health_endpoint(_config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "canceler_health_endpoint";
 
-    // Canceler health endpoint is typically on port 8081
+    // Canceler health endpoint is typically on port 9099
     // Get port from environment or use default
     let health_port: u16 = std::env::var("CANCELER_HEALTH_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8081);
+        .unwrap_or(9099);
     let health_url = format!("http://localhost:{}/health", health_port);
 
     let client = reqwest::Client::builder()
@@ -292,10 +292,13 @@ pub async fn test_concurrent_approvals(config: &E2eConfig) -> TestResult {
     let mut handles = Vec::new();
     for i in 0..5 {
         let config_clone = config.clone();
-        let handle =
-            tokio::spawn(
-                async move { super::helpers::is_approval_cancelled(&config_clone, i).await },
-            );
+        // Generate unique test hashes (these won't exist but test the query infrastructure)
+        let mut test_hash_bytes = [0u8; 32];
+        test_hash_bytes[0] = i as u8;
+        let test_hash = alloy::primitives::B256::from(test_hash_bytes);
+        let handle = tokio::spawn(async move {
+            super::helpers::is_approval_cancelled(&config_clone, test_hash).await
+        });
         handles.push(handle);
     }
 

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub mod chain_config;
 pub mod config;
+pub mod cw20_deploy;
 pub mod deploy;
 pub mod docker;
 pub mod evm;
@@ -17,7 +18,7 @@ pub mod utils;
 
 pub use chain_config::{
     configure_chains, deploy_cw20_token, deploy_test_cw20, grant_canceler_role,
-    grant_operator_role, grant_test_account_roles, register_cosmw_chain_key,
+    grant_operator_role, grant_test_account_roles, is_localterra_running, register_cosmw_chain_key,
     register_terra_chain_key, register_test_tokens, register_token, BridgeType, ChainConfigResult,
     Cw20DeployResult, CANCELER_ROLE_ID, OPERATOR_ROLE_ID,
 };
@@ -37,7 +38,8 @@ pub use tests::evm_to_evm::{
     SecondaryEvmConfig,
 };
 pub use tests::{
-    run_all_tests, run_extended_integration_tests, run_integration_tests, run_quick_tests,
+    run_all_tests, run_all_tests_with_live_execution, run_extended_integration_tests,
+    run_integration_tests, run_live_execution_tests, run_quick_tests,
     test_evm_to_terra_with_verification, test_fraud_detection_full, test_full_transfer_cycle,
     test_real_evm_to_terra_transfer, test_real_terra_to_evm_transfer,
     test_terra_to_evm_with_verification, IntegrationTestOptions,

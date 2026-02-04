@@ -8,12 +8,19 @@
 //! - **fraud**: Verify fraud detection infrastructure
 //! - **integration**: Real token transfer tests with balance verification
 //! - **canceler**: Canceler security tests (fee collection, fraud detection, health)
+//! - **canceler_execution**: Live canceler fraud detection and cancel transaction tests
+//! - **operator**: Operator infrastructure tests (hash computation, startup, detection)
+//! - **operator_execution**: Live operator deposit/withdrawal execution tests
 //! - **edge_cases**: Edge cases and observability tests (restart recovery, validation, metrics, double spend)
 //! - **watchtower**: Watchtower pattern tests (EVM time skip, delay mechanism, delay enforcement)
+//! - **cw20**: CW20 cross-chain transfer tests (deployment, balance, mint/burn, lock/unlock)
 
 mod canceler;
+mod canceler_execution;
+mod canceler_helpers;
 mod configuration;
 mod connectivity;
+mod cw20;
 mod database;
 mod edge_cases;
 pub mod evm_to_evm;
@@ -21,22 +28,28 @@ mod fraud;
 pub mod helpers;
 mod integration;
 mod operator;
+mod operator_execution;
+pub mod operator_helpers;
 mod transfer;
 mod watchtower;
 
 // Re-export all public tests
 pub use canceler::*;
+pub use canceler_execution::*;
 pub use configuration::*;
 pub use connectivity::*;
+pub use cw20::*;
 pub use database::*;
 pub use edge_cases::*;
 pub use fraud::*;
 pub use integration::*;
 pub use operator::*;
+pub use operator_execution::*;
 pub use transfer::*;
 pub use watchtower::*;
 
 use crate::{E2eConfig, TestResult};
+use alloy::primitives::Address;
 
 /// Run quick connectivity tests only
 ///
@@ -123,13 +136,106 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(evm_to_evm::test_mock_chain_registration(config).await);
     // Note: test_evm_to_evm_deposit and test_evm_to_evm_full_cycle require token address
 
-    // CW20 Cross-Chain Transfer Tests (4) - IMPLEMENTED in integration.rs
+    // CW20 Cross-Chain Transfer Tests (4) - IMPLEMENTED in cw20.rs
     // These tests use the CW20 address from config (set during setup)
     let cw20_address = config.terra.cw20_address.as_deref();
-    results.push(integration::test_cw20_deployment(config, cw20_address).await);
-    results.push(integration::test_cw20_balance_query(config, cw20_address).await);
-    results.push(integration::test_cw20_mint_burn_pattern(config, cw20_address).await);
-    results.push(integration::test_cw20_lock_unlock_pattern(config, cw20_address).await);
+    results.push(cw20::test_cw20_deployment(config, cw20_address).await);
+    results.push(cw20::test_cw20_balance_query(config, cw20_address).await);
+    results.push(cw20::test_cw20_mint_burn_pattern(config, cw20_address).await);
+    results.push(cw20::test_cw20_lock_unlock_pattern(config, cw20_address).await);
 
+    // ========================================
+    // Live Operator/Canceler Execution Tests
+    // ========================================
+    // These tests verify on-chain results with actual transaction execution.
+    // They will skip gracefully if the required services are not running.
+
+    // Live Canceler Execution Tests (6) - IMPLEMENTED in canceler_execution.rs
+    // Canceler is started by E2E setup, so these should run
+    results.push(canceler_execution::test_canceler_live_fraud_detection(config).await);
+    results.push(canceler_execution::test_cancelled_approval_blocks_withdrawal(config).await);
+    results.push(canceler_execution::test_canceler_concurrent_fraud_handling(config).await);
+    results.push(canceler_execution::test_canceler_restart_fraud_detection(config).await);
+    // EVM→EVM and Terra→EVM fraud detection tests
+    results.push(canceler_execution::test_canceler_evm_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
+
+    // Live Operator Execution Tests (3) - IMPLEMENTED in operator_execution.rs
+    // Operator is NOT started by default E2E setup, so these will skip unless
+    // the operator is manually started. They verify deposit detection and
+    // withdrawal execution with balance verification.
+    // Note: These require a test token address which may not be available
+    let test_token = config.evm.contracts.test_token;
+    let token_address = if test_token != Address::ZERO {
+        Some(test_token)
+    } else {
+        None
+    };
+    results.push(
+        operator_execution::test_operator_live_deposit_detection(config, token_address).await,
+    );
+    results.push(
+        operator_execution::test_operator_live_withdrawal_execution(config, token_address).await,
+    );
+    results.push(
+        operator_execution::test_operator_sequential_deposit_processing(config, token_address, 3)
+            .await,
+    );
+
+    results
+}
+
+/// Run live operator/canceler execution tests
+///
+/// These tests verify on-chain results with actual transaction execution:
+/// - Operator deposit detection with Terra approval creation
+/// - Operator withdrawal execution after delay with balance verification
+/// - Canceler fraud detection and cancel transaction submission
+/// - Cancelled approvals blocking withdrawal execution
+///
+/// Requires running operator and canceler services, and a test token address.
+pub async fn run_live_execution_tests(
+    config: &E2eConfig,
+    token_address: Option<Address>,
+) -> Vec<TestResult> {
+    let mut results = Vec::new();
+
+    tracing::info!("Running live operator/canceler execution tests");
+
+    // Live Operator Execution Tests (3)
+    results.push(
+        operator_execution::test_operator_live_deposit_detection(config, token_address).await,
+    );
+    results.push(
+        operator_execution::test_operator_live_withdrawal_execution(config, token_address).await,
+    );
+    results.push(
+        operator_execution::test_operator_sequential_deposit_processing(config, token_address, 3)
+            .await,
+    );
+
+    // Live Canceler Execution Tests (6)
+    results.push(canceler_execution::test_canceler_live_fraud_detection(config).await);
+    results.push(canceler_execution::test_cancelled_approval_blocks_withdrawal(config).await);
+    results.push(canceler_execution::test_canceler_concurrent_fraud_handling(config).await);
+    results.push(canceler_execution::test_canceler_restart_fraud_detection(config).await);
+    // EVM→EVM and Terra→EVM fraud detection tests
+    results.push(canceler_execution::test_canceler_evm_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
+
+    results
+}
+
+/// Run all tests including live execution tests
+///
+/// Executes the complete test suite including live on-chain execution tests.
+/// Requires all services running and a funded test token.
+pub async fn run_all_tests_with_live_execution(
+    config: &E2eConfig,
+    skip_terra: bool,
+    token_address: Option<Address>,
+) -> Vec<TestResult> {
+    let mut results = run_all_tests(config, skip_terra).await;
+    results.extend(run_live_execution_tests(config, token_address).await);
     results
 }

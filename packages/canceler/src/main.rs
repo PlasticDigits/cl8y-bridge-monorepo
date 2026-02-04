@@ -37,10 +37,11 @@ mod watcher;
 
 use std::sync::Arc;
 
+use alloy::signers::local::PrivateKeySigner;
 use config::Config;
 use server::{CancelerStats, Metrics, SharedMetrics, SharedStats};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 use watcher::CancelerWatcher;
 
 fn main() -> eyre::Result<()> {
@@ -58,12 +59,18 @@ async fn async_main() -> eyre::Result<()> {
     info!("Starting CL8Y Bridge Canceler Node");
 
     let config = Config::load()?;
+
+    // Derive and log the EVM address from the private key
+    // This helps verify the address matches the one granted CANCELER_ROLE
+    let evm_address = derive_evm_address(&config.evm_private_key);
     info!(
         canceler_id = %config.canceler_id,
+        evm_canceler_address = %evm_address,
         evm_rpc = %config.evm_rpc_url,
+        evm_bridge = %config.evm_bridge_address,
         terra_lcd = %config.terra_lcd_url,
         health_port = %config.health_port,
-        "Configuration loaded"
+        "Configuration loaded - ENSURE this address has CANCELER_ROLE on the bridge"
     );
 
     // Create shared stats for health endpoint
@@ -140,6 +147,17 @@ async fn wait_for_shutdown_signal() {
         }
         _ = terminate => {
             info!("Received SIGTERM, initiating shutdown");
+        }
+    }
+}
+
+/// Derive EVM address from private key for logging
+fn derive_evm_address(private_key: &str) -> String {
+    match private_key.parse::<PrivateKeySigner>() {
+        Ok(signer) => format!("{}", signer.address()),
+        Err(e) => {
+            warn!(error = %e, "Failed to parse EVM private key");
+            "INVALID_KEY".to_string()
         }
     }
 }

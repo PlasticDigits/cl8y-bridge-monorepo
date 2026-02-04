@@ -1,6 +1,19 @@
 //! EVM Client for canceler transactions
 //!
 //! Handles signing and submitting CancelWithdrawApproval transactions to EVM chains.
+//!
+//! # Transaction Building
+//!
+//! Uses Alloy's `ProviderBuilder::with_recommended_fillers()` to automatically
+//! populate transaction fields (nonce, gas_limit, max_fee_per_gas, max_priority_fee_per_gas).
+//! Without this, transactions will fail with missing property errors.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let client = EvmClient::new(config).await?;
+//! client.cancel_withdraw_approval(withdraw_hash).await?;
+//! ```
 
 #![allow(dead_code)]
 
@@ -67,9 +80,11 @@ impl EvmClient {
 
     /// Cancel a withdraw approval on EVM
     pub async fn cancel_withdraw_approval(&self, withdraw_hash: [u8; 32]) -> Result<String> {
-        // Build provider with signer
+        // Build provider with signer and gas filler
+        // Use with_recommended_fillers() to automatically fill nonce, gas, and fees
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
@@ -131,6 +146,7 @@ impl EvmClient {
     pub async fn can_cancel(&self, withdraw_hash: [u8; 32]) -> Result<bool> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 

@@ -521,10 +521,21 @@ pub(crate) async fn execute_deposit(
     }
 }
 
+/// Result of creating a fraudulent approval
+#[derive(Debug, Clone)]
+pub struct FraudulentApprovalResult {
+    /// The transaction hash
+    pub tx_hash: B256,
+    /// The computed withdraw hash (for querying approval status)
+    pub withdraw_hash: B256,
+}
+
 /// Create a fraudulent approval on the bridge
 ///
 /// Function signature: approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)
 /// This creates an approval that has no matching deposit (fraud scenario)
+///
+/// Returns both the transaction hash and the computed withdraw hash for querying approval status.
 pub(crate) async fn create_fraudulent_approval(
     config: &E2eConfig,
     src_chain_key: B256,
@@ -532,18 +543,31 @@ pub(crate) async fn create_fraudulent_approval(
     recipient: Address,
     amount: &str,
     nonce: u64,
-) -> Result<B256> {
+) -> Result<FraudulentApprovalResult> {
     let client = reqwest::Client::new();
 
     // Function selector for approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)
-    // keccak256 first 4 bytes
-    let selector = "c6a1d878"; // Computed selector
+    // Verified with: cast sig "approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)"
+    let selector = "7f86a1a8";
 
-    // Create a fake destAccount (the recipient's address as bytes32)
+    // Create destAccount (the recipient's address as bytes32, left-padded)
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(recipient.as_slice());
+    let dest_account_b256 = B256::from(dest_account_bytes);
     let dest_account = format!("{:0>64}", hex::encode(recipient.as_slice()));
 
     // Parse amount to u256
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
+
+    // Compute the withdraw hash for later querying
+    let withdraw_hash = compute_withdraw_hash(
+        src_chain_key,
+        config.evm.chain_id,
+        token,
+        dest_account_b256,
+        U256::from(amount_u256),
+        nonce,
+    );
 
     // ABI encode all parameters
     let src_chain_key_hex = hex::encode(src_chain_key.as_slice());
@@ -570,12 +594,13 @@ pub(crate) async fn create_fraudulent_approval(
     );
 
     debug!(
-        "Creating fraudulent approval: srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}",
+        "Creating fraudulent approval: srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}, withdrawHash=0x{}",
         hex::encode(&src_chain_key.as_slice()[..8]),
         token,
         recipient,
         amount,
-        nonce
+        nonce,
+        hex::encode(&withdraw_hash.as_slice()[..8])
     );
 
     let response = client
@@ -606,32 +631,46 @@ pub(crate) async fn create_fraudulent_approval(
 
     let tx_hash = B256::from_slice(&hex::decode(tx_hash_hex.trim_start_matches("0x"))?);
     info!(
-        "Fraudulent approval transaction: 0x{}",
-        hex::encode(tx_hash)
+        "Fraudulent approval transaction: 0x{}, withdrawHash: 0x{}",
+        hex::encode(tx_hash),
+        hex::encode(withdraw_hash)
     );
 
     // Wait for confirmation
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    Ok(tx_hash)
+    Ok(FraudulentApprovalResult {
+        tx_hash,
+        withdraw_hash,
+    })
 }
 
 /// Check if an approval was cancelled by querying getWithdrawApproval
 ///
 /// Function signature: getWithdrawApproval(bytes32) returns (WithdrawApproval)
-/// WithdrawApproval struct has `cancelled` field at offset 160 (5th field after fee, feeRecipient, approvedAt, isApproved, deductFromAmount)
-pub(crate) async fn is_approval_cancelled(config: &E2eConfig, nonce: u64) -> Result<bool> {
+///
+/// WithdrawApproval struct layout (each field is 32 bytes in ABI encoding):
+/// - offset 0: fee (uint256)
+/// - offset 32: feeRecipient (address, left-padded)
+/// - offset 64: approvedAt (uint64, left-padded)
+/// - offset 96: isApproved (bool)
+/// - offset 128: deductFromAmount (bool)
+/// - offset 160: cancelled (bool)
+/// - offset 192: executed (bool)
+pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
     let client = reqwest::Client::new();
 
     // Function selector for getWithdrawApproval(bytes32)
-    let selector = "8f601f66"; // Computed selector
+    // Verified with: cast sig "getWithdrawApproval(bytes32)"
+    let selector = "9211345c";
 
-    // Create a pseudo-hash from the nonce for querying
-    let pseudo_hash = format!("{:0>64}", format!("{:x}", nonce));
+    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
+    let call_data = format!("0x{}{}", selector, withdraw_hash_hex);
 
-    let call_data = format!("0x{}{}", selector, pseudo_hash);
-
-    debug!("Checking approval status for nonce {}", nonce);
+    debug!(
+        "Checking approval status for withdrawHash=0x{}",
+        hex::encode(&withdraw_hash.as_slice()[..8])
+    );
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -661,18 +700,29 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, nonce: u64) -> Res
     // Parse the WithdrawApproval struct response
     let bytes = hex::decode(result_hex.trim_start_matches("0x")).unwrap_or_default();
 
-    if bytes.len() < 192 {
-        debug!("Response too short, approval may not exist");
+    if bytes.len() < 224 {
+        debug!(
+            "Response too short ({}), approval may not exist",
+            bytes.len()
+        );
         return Ok(false);
     }
 
-    // Check the cancelled field (6th 32-byte slot, offset 160)
-    let cancelled_byte = bytes.get(160 + 31).copied().unwrap_or(0);
-    let is_cancelled = cancelled_byte != 0;
+    // First check if isApproved is true (offset 96, last byte at 127)
+    let is_approved = bytes.get(96 + 31).copied().unwrap_or(0) != 0;
+    if !is_approved {
+        debug!("Approval does not exist (isApproved=false)");
+        return Ok(false);
+    }
+
+    // Check the cancelled field (offset 160, last byte at 191)
+    let is_cancelled = bytes.get(160 + 31).copied().unwrap_or(0) != 0;
 
     debug!(
-        "Approval status for nonce {}: cancelled={}",
-        nonce, is_cancelled
+        "Approval status for withdrawHash=0x{}: isApproved={}, cancelled={}",
+        hex::encode(&withdraw_hash.as_slice()[..8]),
+        is_approved,
+        is_cancelled
     );
 
     Ok(is_cancelled)
@@ -704,24 +754,75 @@ pub(crate) async fn verify_tx_success(config: &E2eConfig, tx_hash: B256) -> Resu
     Ok(status == "0x1")
 }
 
+/// Compute the destination chain key for an EVM chain
+///
+/// This matches the Solidity: keccak256(abi.encode("EVM", bytes32(block.chainid)))
+pub(crate) fn compute_dest_chain_key(chain_id: u64) -> B256 {
+    // ABI encode: "EVM" as string (offset + length + data) + bytes32(chainId)
+    // Simplified: use same encoding as contract
+    // keccak256(abi.encode("EVM", bytes32(chainId)))
+
+    let mut data = Vec::with_capacity(96);
+
+    // "EVM" as bytes32 (right-padded with zeros, then abi.encode pads to 32 bytes)
+    // Actually in Solidity: abi.encode("EVM", bytes32(chainId)) encodes string as dynamic type
+    // String encoding: offset (32) + length (32) + data (padded to 32)
+    // But "EVM" is 3 bytes, so: offset=0x40, then bytes32(chainId), then length=3, then "EVM" padded
+
+    // Let's match exactly what Solidity does:
+    // abi.encode("EVM", bytes32(chainId)) for string "EVM" and bytes32:
+    // [0x00-0x1f]: offset to string data = 0x40 (64)
+    // [0x20-0x3f]: bytes32(chainId)
+    // [0x40-0x5f]: string length = 3
+    // [0x60-0x7f]: "EVM" + padding
+
+    // Offset to string data (64 = 0x40)
+    data.extend_from_slice(&U256::from(64).to_be_bytes::<32>());
+
+    // bytes32(chainId) - left-padded
+    data.extend_from_slice(&U256::from(chain_id).to_be_bytes::<32>());
+
+    // String length (3)
+    data.extend_from_slice(&U256::from(3).to_be_bytes::<32>());
+
+    // "EVM" padded to 32 bytes
+    let mut evm_padded = [0u8; 32];
+    evm_padded[0..3].copy_from_slice(b"EVM");
+    data.extend_from_slice(&evm_padded);
+
+    keccak256(&data)
+}
+
 /// Compute the withdrawHash for a given set of parameters
-/// This matches the Solidity: keccak256(abi.encode(srcChainKey, token, to, destAccount, amount, nonce))
-#[allow(dead_code)]
+///
+/// This matches the Solidity:
+/// ```solidity
+/// function getWithdrawHash(Withdraw memory w) public view returns (bytes32) {
+///     bytes32 destChainKey = _thisChainKey();
+///     bytes32 destTokenAddress = bytes32(uint256(uint160(w.token)));
+///     return keccak256(abi.encode(w.srcChainKey, destChainKey, destTokenAddress, w.destAccount, w.amount, w.nonce));
+/// }
+/// ```
 pub(crate) fn compute_withdraw_hash(
     src_chain_key: B256,
+    dest_chain_id: u64,
     token: Address,
-    to: Address,
     dest_account: B256,
     amount: U256,
     nonce: u64,
 ) -> B256 {
-    // ABI encode the parameters
+    // Compute destination chain key
+    let dest_chain_key = compute_dest_chain_key(dest_chain_id);
+
+    // Convert token address to bytes32 (left-padded with zeros)
+    let mut dest_token_address = [0u8; 32];
+    dest_token_address[12..32].copy_from_slice(token.as_slice());
+
+    // ABI encode: keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))
     let mut data = Vec::with_capacity(192);
     data.extend_from_slice(src_chain_key.as_slice());
-    data.extend_from_slice(&[0u8; 12]); // padding for address
-    data.extend_from_slice(token.as_slice());
-    data.extend_from_slice(&[0u8; 12]); // padding for address
-    data.extend_from_slice(to.as_slice());
+    data.extend_from_slice(dest_chain_key.as_slice());
+    data.extend_from_slice(&dest_token_address);
     data.extend_from_slice(dest_account.as_slice());
     data.extend_from_slice(&amount.to_be_bytes::<32>());
     data.extend_from_slice(&U256::from(nonce).to_be_bytes::<32>());

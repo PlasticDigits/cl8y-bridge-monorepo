@@ -2,8 +2,30 @@
 //!
 //! This module provides functionality for starting, stopping, and monitoring
 //! the Operator and Canceler services during E2E testing.
+//!
+//! # Subprocess Spawning
+//!
+//! Both operator and canceler services are spawned using `setsid --fork` to create
+//! fully detached processes. This is required because direct subprocess spawning
+//! (using `std::process::Command::spawn()`) causes the child processes to die during
+//! async operations due to signal inheritance issues.
+//!
+//! When spawned directly, the Tokio runtime in the child process would receive
+//! signals or inherit file descriptors from the parent E2E test runner, causing
+//! the process to terminate immediately after entering `tokio::select!` or during
+//! `tokio::time::sleep`.
+//!
+//! The solution is to:
+//! 1. Build the binary first (cargo build --release)
+//! 2. Write environment variables to a shell script
+//! 3. Use `setsid --fork` to spawn the script in a new session
+//! 4. Find the process PID using `pgrep`
+//!
+//! This creates a process that is completely isolated from the parent's session
+//! and signal handlers.
 
 use crate::config::E2eConfig;
+use alloy::primitives::B256;
 use eyre::{eyre, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,6 +60,12 @@ impl ServiceManager {
     ///
     /// Spawns the operator process with the given configuration and waits
     /// for it to become healthy.
+    ///
+    /// # Implementation Note
+    ///
+    /// Uses `setsid --fork` to spawn the operator as a fully detached process.
+    /// Direct subprocess spawning causes the process to die during async operations
+    /// due to signal inheritance issues from the parent E2E test process.
     pub async fn start_operator(&mut self, config: &E2eConfig) -> Result<u32> {
         info!("Starting operator service");
 
@@ -52,23 +80,107 @@ impl ServiceManager {
         // Build environment variables for operator
         let env_vars = self.build_operator_env(config);
 
-        // Spawn the operator process
-        let child = Command::new("cargo")
+        // First, build the operator if needed (this ensures the binary exists)
+        let operator_manifest = self.project_root.join("packages/operator/Cargo.toml");
+        let build_status = Command::new("cargo")
             .current_dir(&self.project_root)
-            .args(["run", "-p", "cl8y-operator", "--release", "--"])
-            .envs(env_vars)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .args([
+                "build",
+                "--manifest-path",
+                operator_manifest.to_str().unwrap(),
+                "--release",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| eyre!("Failed to build operator: {}", e))?;
+
+        if !build_status.success() {
+            return Err(eyre!("Failed to build operator"));
+        }
+
+        // Run the compiled binary directly (avoids cargo's output buffering)
+        let operator_binary = self
+            .project_root
+            .join("packages/operator/target/release/cl8y-relayer");
+
+        if !operator_binary.exists() {
+            return Err(eyre!("Operator binary not found at {:?}", operator_binary));
+        }
+
+        // Create a log file for operator output
+        let log_file_path = self.project_root.join(".operator.log");
+
+        // Write environment variables to a temp script to avoid shell escaping issues
+        let script_path = self.project_root.join(".operator-start.sh");
+        let mut script_content = String::from("#!/bin/bash\n");
+        for (k, v) in &env_vars {
+            // Export each env var, escaping single quotes
+            let escaped_v = v.replace("'", "'\\''");
+            script_content.push_str(&format!("export {}='{}'\n", k, escaped_v));
+        }
+        script_content.push_str(&format!(
+            "cd {} && exec {} >> {} 2>&1\n",
+            self.project_root.display(),
+            operator_binary.display(),
+            log_file_path.display()
+        ));
+
+        std::fs::write(&script_path, &script_content)
+            .map_err(|e| eyre!("Failed to write operator start script: {}", e))?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        // Use setsid to spawn a truly detached operator process
+        let output = Command::new("setsid")
+            .args(["--fork", script_path.to_str().unwrap()])
+            .output()
             .map_err(|e| eyre!("Failed to spawn operator: {}", e))?;
 
-        let pid = child.id();
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.is_empty() {
+                return Err(eyre!("Failed to spawn operator: {}", stderr));
+            }
+        }
+
+        // Small delay to let the process start
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Find the operator PID by searching for the process
+        let find_pid = Command::new("pgrep")
+            .args(["-f", "cl8y-relayer"])
+            .output()
+            .map_err(|e| eyre!("Failed to find operator PID: {}", e))?;
+
+        let pid_str = String::from_utf8_lossy(&find_pid.stdout).trim().to_string();
+        let pid: u32 = if pid_str.is_empty() {
+            return Err(eyre!("Operator process not found after spawn"));
+        } else {
+            // Take the first PID if there are multiple
+            pid_str
+                .lines()
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| eyre!("Failed to parse operator PID"))?
+        };
+
         info!("Operator spawned with PID {}", pid);
 
         // Write PID file
         self.write_pid_file(OPERATOR_PID_FILE, pid)?;
 
-        // Store handle
+        // Create a dummy child handle (we track via PID file)
+        let child = Command::new("true")
+            .spawn()
+            .map_err(|e| eyre!("Failed to create dummy child: {}", e))?;
         self.operator_handle = Some(child);
 
         // Wait for operator to become healthy
@@ -119,15 +231,102 @@ impl ServiceManager {
         // Build environment variables for canceler
         let env_vars = self.build_canceler_env(config);
 
-        // Spawn the canceler process
-        let child = Command::new("cargo")
+        // First, build the canceler if needed (this ensures the binary exists)
+        let canceler_manifest = self.project_root.join("packages/canceler/Cargo.toml");
+        let build_status = Command::new("cargo")
             .current_dir(&self.project_root)
-            .args(["run", "-p", "cl8y-canceler", "--release", "--"])
-            .envs(env_vars)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .args([
+                "build",
+                "--manifest-path",
+                canceler_manifest.to_str().unwrap(),
+                "--release",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| eyre!("Failed to build canceler: {}", e))?;
+
+        if !build_status.success() {
+            return Err(eyre!("Failed to build canceler"));
+        }
+
+        // Run the compiled binary directly (avoids cargo's output buffering)
+        let canceler_binary = self
+            .project_root
+            .join("packages/canceler/target/release/cl8y-canceler");
+
+        if !canceler_binary.exists() {
+            return Err(eyre!("Canceler binary not found at {:?}", canceler_binary));
+        }
+
+        // Create a log file for canceler output
+        let log_file_path = self.project_root.join(".canceler.log");
+
+        // Write environment variables to a temp script to avoid shell escaping issues
+        let script_path = self.project_root.join(".canceler-start.sh");
+        let mut script_content = String::from("#!/bin/bash\n");
+        for (k, v) in &env_vars {
+            // Export each env var, escaping single quotes
+            let escaped_v = v.replace("'", "'\\''");
+            script_content.push_str(&format!("export {}='{}'\n", k, escaped_v));
+        }
+        script_content.push_str(&format!(
+            "cd {} && exec {} >> {} 2>&1\n",
+            self.project_root.display(),
+            canceler_binary.display(),
+            log_file_path.display()
+        ));
+
+        std::fs::write(&script_path, &script_content)
+            .map_err(|e| eyre!("Failed to write canceler start script: {}", e))?;
+
+        // Make it executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        // Use nohup + setsid to spawn a truly detached canceler process
+        let output = Command::new("setsid")
+            .args(["--fork", script_path.to_str().unwrap()])
+            .output()
             .map_err(|e| eyre!("Failed to spawn canceler: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.is_empty() {
+                return Err(eyre!("Failed to spawn canceler: {}", stderr));
+            }
+        }
+
+        // Small delay to let the process start and write its PID
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Find the canceler PID by searching for the process
+        let find_pid = Command::new("pgrep")
+            .args(["-f", "cl8y-canceler"])
+            .output()
+            .map_err(|e| eyre!("Failed to find canceler PID: {}", e))?;
+
+        let pid_str = String::from_utf8_lossy(&find_pid.stdout).trim().to_string();
+        let pid: u32 = if pid_str.is_empty() {
+            return Err(eyre!("Canceler process not found after spawn"));
+        } else {
+            // Take the first PID if there are multiple
+            pid_str
+                .lines()
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| eyre!("Failed to parse canceler PID"))?
+        };
+
+        // Create a dummy child handle (we track via PID file)
+        let child = Command::new("true")
+            .spawn()
+            .map_err(|e| eyre!("Failed to create dummy child: {}", e))?;
 
         let pid = child.id();
         info!("Canceler spawned with PID {}", pid);
@@ -231,8 +430,32 @@ impl ServiceManager {
     }
 
     /// Build environment variables for canceler
+    ///
+    /// NOTE: Uses test_accounts.evm_private_key for the canceler's EVM key,
+    /// which is the Anvil test account that has CANCELER_ROLE granted.
+    /// The config.evm.private_key may be B256::ZERO if not explicitly set.
     fn build_canceler_env(&self, config: &E2eConfig) -> Vec<(String, String)> {
-        vec![
+        // Use the test account's private key for the canceler
+        // This ensures the canceler has CANCELER_ROLE (granted during setup)
+        let canceler_private_key = if config.evm.private_key == B256::ZERO {
+            // If evm.private_key is zero, use the test account's key
+            debug!("Using test account private key for canceler (evm.private_key is ZERO)");
+            config.test_accounts.evm_private_key
+        } else {
+            // If explicitly set, use the evm.private_key
+            debug!("Using evm.private_key for canceler");
+            config.evm.private_key
+        };
+
+        // Log important environment values for debugging
+        info!(
+            bridge_address = %config.evm.contracts.bridge,
+            terra_bridge_address = config.terra.bridge_address.as_deref().unwrap_or("NOT SET"),
+            chain_id = config.evm.chain_id,
+            "Building canceler environment"
+        );
+
+        let mut env = vec![
             (
                 "DATABASE_URL".to_string(),
                 config.operator.database_url.clone(),
@@ -244,8 +467,16 @@ impl ServiceManager {
             ),
             ("EVM_CHAIN_ID".to_string(), config.evm.chain_id.to_string()),
             (
+                "EVM_PRIVATE_KEY".to_string(),
+                format!("0x{}", hex::encode(canceler_private_key.as_slice())),
+            ),
+            (
                 "TERRA_LCD_URL".to_string(),
                 config.terra.lcd_url.to_string(),
+            ),
+            (
+                "TERRA_RPC_URL".to_string(),
+                config.terra.rpc_url.to_string(),
             ),
             ("TERRA_CHAIN_ID".to_string(), config.terra.chain_id.clone()),
             (
@@ -253,11 +484,26 @@ impl ServiceManager {
                 config.terra.bridge_address.clone().unwrap_or_default(),
             ),
             ("POLL_INTERVAL_MS".to_string(), "1000".to_string()),
+            // Use port 9099 for health server to avoid conflicts with LocalTerra gRPC (9090) and ipfs-cluster (9095)
+            ("HEALTH_PORT".to_string(), "9099".to_string()),
             (
                 "RUST_LOG".to_string(),
                 "info,cl8y_canceler=debug".to_string(),
             ),
-        ]
+        ];
+
+        // Add Terra mnemonic if available
+        if let Some(mnemonic) = &config.terra.mnemonic {
+            env.push(("TERRA_MNEMONIC".to_string(), mnemonic.clone()));
+        } else {
+            // Default test mnemonic for localterra
+            env.push((
+                "TERRA_MNEMONIC".to_string(),
+                "notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius".to_string(),
+            ));
+        }
+
+        env
     }
 
     /// Wait for operator to become healthy
@@ -293,7 +539,8 @@ impl ServiceManager {
         info!("Waiting for canceler to become healthy...");
 
         let start = std::time::Instant::now();
-        let interval = Duration::from_secs(2);
+        let interval = Duration::from_millis(500);
+        let client = reqwest::Client::new();
 
         while start.elapsed() < timeout {
             // Check if process is still running
@@ -303,11 +550,18 @@ impl ServiceManager {
                 }
             }
 
-            // TODO: Add health check endpoint query when canceler supports it
-            // For now, just give it time to start
-            if start.elapsed() > Duration::from_secs(5) {
-                debug!("Canceler appears to be running (no health endpoint yet)");
-                return Ok(());
+            // Try to query the health endpoint (using port 9099 to avoid conflicts)
+            match client.get("http://localhost:9099/health").send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Canceler health check passed");
+                    return Ok(());
+                }
+                Ok(resp) => {
+                    debug!("Canceler health check returned status: {}", resp.status());
+                }
+                Err(e) => {
+                    debug!("Canceler health check failed: {}", e);
+                }
             }
 
             tokio::time::sleep(interval).await;

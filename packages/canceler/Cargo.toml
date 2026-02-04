@@ -50,3 +50,4 @@ hex = "0.4"
 base64 = "0.22"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 hostname = "0.4"
+libc = "0.2"

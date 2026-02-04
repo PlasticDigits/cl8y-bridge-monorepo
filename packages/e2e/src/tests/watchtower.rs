@@ -274,15 +274,15 @@ pub async fn test_approval_cancellation_blocks_withdraw(config: &E2eConfig) -> T
     }
 
     // Verify we can query approval status (the function exists)
-    // We use nonce 0 which likely doesn't exist, but the query should work
-    match super::helpers::is_approval_cancelled(config, 0).await {
+    // We use ZERO hash which likely doesn't exist, but the query should work
+    match super::helpers::is_approval_cancelled(config, alloy::primitives::B256::ZERO).await {
         Ok(_) => {
             // Query succeeded - approval cancellation system is functional
         }
         Err(e) => {
             // Query failed - this is expected for non-existent approvals
             tracing::debug!(
-                "Approval query for nonce 0: {} (expected for non-existent)",
+                "Approval query for zero hash: {} (expected for non-existent)",
                 e
             );
         }

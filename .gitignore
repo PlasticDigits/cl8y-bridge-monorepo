@@ -60,3 +60,8 @@ packages/contracts-terraclassic/external/
 # ===================
 .canceler*
 .operator*
+
+# ===================
+# E2E Logs
+# ===================
+.e2e*

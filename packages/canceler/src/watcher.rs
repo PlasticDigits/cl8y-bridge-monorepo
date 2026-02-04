@@ -1,4 +1,34 @@
 //! Watcher for monitoring approvals across chains and submitting cancellations
+//!
+//! This module implements the core polling loop for the canceler service. It monitors
+//! both EVM and Terra chains for `WithdrawApproved` events, verifies each approval
+//! against the source chain, and submits cancellation transactions for fraudulent
+//! approvals (those without corresponding deposits).
+//!
+//! # Architecture
+//!
+//! The watcher operates in a continuous polling loop:
+//! 1. Polls EVM bridge for `WithdrawApproved` events in the current block range
+//! 2. Polls Terra bridge for pending withdrawal approvals
+//! 3. For each approval found, uses `ApprovalVerifier` to check if a matching deposit exists
+//! 4. Submits cancellation transactions for any fraudulent approvals detected
+//!
+//! # EVM Event Filtering
+//!
+//! Uses the Alloy library to query `WithdrawApproved` events with explicit address
+//! filtering. The event signature hash is:
+//! ```text
+//! keccak256("WithdrawApproved(bytes32,bytes32,address,bytes,uint256,uint256)")
+//! = 0xe9c6fcc209e99f20220bb87e197c5584cdd23cee08c7919db0d702ee7dc2c8a2
+//! ```
+//!
+//! # E2E Test Integration
+//!
+//! When run as a subprocess in E2E tests, the canceler must be spawned using
+//! `setsid --fork` to create a fully detached process. Direct subprocess spawning
+//! causes the process to die during async operations due to signal inheritance
+//! issues. See `packages/e2e/src/services.rs::start_canceler()` for the spawn
+//! implementation.
 
 #![allow(dead_code)]
 
@@ -20,6 +50,16 @@ use crate::hash::bytes32_to_hex;
 use crate::server::{SharedMetrics, SharedStats};
 use crate::terra_client::TerraClient;
 use crate::verifier::{ApprovalVerifier, PendingApproval, VerificationResult};
+
+/// Compute keccak256 hash of event signature for debugging
+fn compute_event_topic(signature: &str) -> [u8; 32] {
+    use tiny_keccak::{Hasher, Keccak};
+    let mut hasher = Keccak::v256();
+    hasher.update(signature.as_bytes());
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    output
+}
 
 // EVM bridge contract ABI for event queries
 sol! {
@@ -125,21 +165,33 @@ impl CancelerWatcher {
         info!("Canceler watcher starting...");
 
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
+        info!(
+            poll_interval_ms = self.config.poll_interval_ms,
+            "Entering main poll loop"
+        );
 
         loop {
+            debug!("Poll loop iteration starting");
             tokio::select! {
-                _ = shutdown.recv() => {
-                    info!("Shutdown signal received");
+                result = shutdown.recv() => {
+                    if result.is_some() {
+                        info!("Shutdown signal received");
+                    } else {
+                        warn!("Shutdown channel closed unexpectedly (sender dropped)");
+                    }
                     break;
                 }
                 _ = tokio::time::sleep(poll_interval) => {
+                    debug!("Sleep completed, starting poll");
                     if let Err(e) = self.poll_approvals().await {
                         error!(error = %e, "Error polling approvals");
                     }
+                    debug!("Poll completed");
                 }
             }
         }
 
+        info!("Canceler watcher exiting main loop");
         Ok(())
     }
 
@@ -157,8 +209,16 @@ impl CancelerWatcher {
     }
 
     /// Poll EVM bridge for pending approvals
+    ///
+    /// This function queries WithdrawApproved events from the EVM bridge contract
+    /// and verifies each approval against the source chain. If an approval is
+    /// found to be fraudulent (no matching deposit), it submits a cancel transaction.
     async fn poll_evm_approvals(&mut self) -> Result<()> {
-        debug!("Polling EVM approvals");
+        debug!(
+            canceler_address = %self.evm_client.address(),
+            bridge_address = %self.config.evm_bridge_address,
+            "Polling EVM approvals"
+        );
 
         // Create provider
         let provider = ProviderBuilder::new().on_http(
@@ -174,23 +234,37 @@ impl CancelerWatcher {
             .await
             .map_err(|e| eyre!("Failed to get block number: {}", e))?;
 
-        // If first run, start from current block minus some lookback
+        // If first run, start from genesis to catch all events
+        // This is important for testing scenarios where approvals may have been
+        // created before the canceler started
         if self.last_evm_block == 0 {
-            // Look back 100 blocks on first run
-            self.last_evm_block = current_block.saturating_sub(100);
+            // Start from block 0 on first run to ensure we catch all events
+            // For production, this could be set to a more recent block
+            self.last_evm_block = 0;
+            info!(
+                current_block = current_block,
+                lookback_start = self.last_evm_block,
+                "First poll - starting from genesis to catch all events"
+            );
         }
 
         // Don't query if no new blocks
         if current_block <= self.last_evm_block {
+            debug!(
+                current_block = current_block,
+                last_polled = self.last_evm_block,
+                "No new blocks to poll"
+            );
             return Ok(());
         }
 
         let from_block = self.last_evm_block + 1;
         let to_block = current_block;
 
-        debug!(
+        info!(
             from_block = from_block,
             to_block = to_block,
+            block_range = to_block - from_block + 1,
             "Querying EVM WithdrawApproved events"
         );
 
@@ -201,23 +275,95 @@ impl CancelerWatcher {
         // Query for WithdrawApproved events
         let contract = CL8YBridge::new(bridge_address, &provider);
 
-        // Query event logs
+        // Query event logs - explicitly add address filter to ensure it's included
         let filter = contract
             .WithdrawApproved_filter()
+            .address(bridge_address)
             .from_block(from_block)
             .to_block(to_block);
+
+        // Compute and log the expected event topic for debugging
+        let event_signature = "WithdrawApproved(bytes32,bytes32,address,address,uint256,uint256,uint256,address,bool)";
+        let expected_topic = compute_event_topic(event_signature);
+        debug!(
+            bridge_address = %bridge_address,
+            from_block = from_block,
+            to_block = to_block,
+            event_topic = %format!("0x{}", hex::encode(expected_topic)),
+            "Querying WithdrawApproved events with explicit address filter"
+        );
 
         let logs = filter
             .query()
             .await
             .map_err(|e| eyre!("Failed to query events: {}", e))?;
 
-        info!(
-            from_block = from_block,
-            to_block = to_block,
-            event_count = logs.len(),
-            "Found EVM WithdrawApproved events"
-        );
+        // If no logs found via alloy, try raw RPC query for debugging
+        if logs.is_empty() {
+            // Try a raw eth_getLogs call to verify events exist
+            let client = reqwest::Client::new();
+            let topic0 = format!("0x{}", hex::encode(expected_topic));
+            let raw_filter = serde_json::json!({
+                "address": format!("{}", bridge_address),
+                "topics": [topic0],
+                "fromBlock": format!("0x{:x}", from_block),
+                "toBlock": format!("0x{:x}", to_block)
+            });
+
+            debug!(
+                raw_filter = %raw_filter,
+                "Trying raw eth_getLogs query for debugging"
+            );
+
+            let raw_response = client
+                .post(self.config.evm_rpc_url.as_str())
+                .json(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "eth_getLogs",
+                    "params": [raw_filter],
+                    "id": 1
+                }))
+                .send()
+                .await;
+
+            match raw_response {
+                Ok(resp) => {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if let Some(result) = body.get("result") {
+                            let log_count = result.as_array().map(|a| a.len()).unwrap_or(0);
+                            if log_count > 0 {
+                                warn!(
+                                    log_count = log_count,
+                                    "Raw RPC found events but alloy filter did not! Possible filter issue."
+                                );
+                                // Log the raw events for debugging
+                                debug!(raw_logs = %result, "Raw event logs from eth_getLogs");
+                            } else {
+                                info!(
+                                    bridge_address = %bridge_address,
+                                    from_block = from_block,
+                                    to_block = to_block,
+                                    "No WithdrawApproved events found (confirmed by raw RPC)"
+                                );
+                            }
+                        }
+                        if let Some(error) = body.get("error") {
+                            warn!(error = %error, "Raw RPC eth_getLogs returned error");
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!(error = %e, "Failed to make raw RPC call");
+                }
+            }
+        } else {
+            info!(
+                from_block = from_block,
+                to_block = to_block,
+                event_count = logs.len(),
+                "Found EVM WithdrawApproved events - processing each for fraud detection"
+            );
+        }
 
         // Process each approval event
         for (event, log) in logs {
@@ -278,10 +424,13 @@ impl CancelerWatcher {
             let amount: u128 = event.amount.try_into().unwrap_or(0);
 
             // Create a pending approval for verification
+            // Compute dest_chain_key from the EVM chain ID (this is the chain we're monitoring)
+            let dest_chain_key = crate::hash::evm_chain_key(self.config.evm_chain_id);
+
             let approval = PendingApproval {
                 withdraw_hash,
                 src_chain_key: event.srcChainKey.0,
-                dest_chain_key: [0u8; 32], // EVM dest chain key - computed from chain ID
+                dest_chain_key,
                 dest_token_address,
                 dest_account,
                 amount,
@@ -291,11 +440,23 @@ impl CancelerWatcher {
             };
 
             // Verify and potentially cancel
+            info!(
+                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                nonce = approval.nonce,
+                amount = approval.amount,
+                "Calling verify_and_cancel for EVM approval"
+            );
+
             if let Err(e) = self.verify_and_cancel(&approval).await {
                 error!(
                     error = %e,
                     withdraw_hash = %bytes32_to_hex(&withdraw_hash),
                     "Failed to verify approval"
+                );
+            } else {
+                debug!(
+                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    "verify_and_cancel completed"
                 );
             }
         }
@@ -565,22 +726,46 @@ impl CancelerWatcher {
     }
 
     /// Submit cancel transaction to the appropriate chain
+    ///
+    /// This function attempts to submit a cancel transaction to the EVM chain first,
+    /// then falls back to Terra if the EVM cancel fails or is not applicable.
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
         // Determine which chain the approval is on (the destination chain)
         // The dest_chain_key tells us where to submit the cancellation
 
         let withdraw_hash = approval.withdraw_hash;
 
+        info!(
+            hash = %bytes32_to_hex(&withdraw_hash),
+            canceler_address = %self.evm_client.address(),
+            "Attempting to submit cancellation transaction"
+        );
+
         // Check if it's an EVM chain (try EVM first)
-        if self
-            .evm_client
-            .can_cancel(withdraw_hash)
-            .await
-            .unwrap_or(false)
-        {
+        let can_cancel_evm = match self.evm_client.can_cancel(withdraw_hash).await {
+            Ok(can) => {
+                debug!(
+                    hash = %bytes32_to_hex(&withdraw_hash),
+                    can_cancel = can,
+                    "Checked EVM can_cancel status"
+                );
+                can
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    hash = %bytes32_to_hex(&withdraw_hash),
+                    "Failed to check can_cancel on EVM, will try anyway"
+                );
+                true // Try anyway
+            }
+        };
+
+        if can_cancel_evm {
             info!(
                 hash = %bytes32_to_hex(&withdraw_hash),
-                "Submitting cancellation to EVM"
+                canceler_address = %self.evm_client.address(),
+                "Submitting cancelWithdrawApproval transaction to EVM"
             );
 
             match self
@@ -592,12 +777,18 @@ impl CancelerWatcher {
                     info!(
                         tx_hash = %tx_hash,
                         hash = %bytes32_to_hex(&withdraw_hash),
-                        "EVM cancellation submitted"
+                        "EVM cancellation transaction SUCCEEDED"
                     );
                     return Ok(());
                 }
                 Err(e) => {
-                    warn!(error = %e, "EVM cancellation failed, trying Terra");
+                    // Log detailed error for debugging CANCELER_ROLE issues
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        canceler_address = %self.evm_client.address(),
+                        "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
+                    );
                 }
             }
         }

@@ -100,6 +100,8 @@ pub struct EvmContracts {
     pub lock_unlock: Address,
     pub bridge: Address,
     pub router: Address,
+    /// Test ERC20 token address for E2E transfer tests
+    pub test_token: Address,
 }
 
 impl EvmContracts {
@@ -112,6 +114,7 @@ impl EvmContracts {
             lock_unlock: parse_address_env("EVM_LOCK_UNLOCK_ADDRESS")?,
             bridge: parse_address_env("EVM_BRIDGE_ADDRESS")?,
             router: parse_address_env("EVM_ROUTER_ADDRESS")?,
+            test_token: parse_address_env("TEST_TOKEN_ADDRESS").unwrap_or(Address::ZERO),
         })
     }
 
@@ -124,6 +127,8 @@ impl EvmContracts {
             lock_unlock: broadcast.find_contract("LockUnlock")?,
             bridge: broadcast.find_contract("Cl8YBridge")?,
             router: broadcast.find_contract("BridgeRouter")?,
+            // Test token is deployed separately, not in the main broadcast
+            test_token: Address::ZERO,
         })
     }
 }

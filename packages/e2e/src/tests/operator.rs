@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 
 /// Verify that Rust's compute_withdraw_hash function produces correct results
 /// by computing a hash and verifying the parameters are ABI-encoded correctly.
+///
+/// The hash is computed as: keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))
+/// where destChainKey = keccak256(abi.encode("EVM", bytes32(chainId)))
 pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "withdraw_hash_computation";
@@ -17,8 +20,8 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
 
     // Create test parameters
     let src_chain_key = B256::from([1u8; 32]);
+    let dest_chain_id = config.evm.chain_id; // Use the configured chain ID
     let token = config.evm.contracts.bridge; // Use any known address
-    let to = config.test_accounts.evm_address;
     let dest_account = B256::from([2u8; 32]);
     let amount = U256::from(1000000000000000000u64); // 1e18
     let nonce = 1u64;
@@ -26,8 +29,8 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     // Compute hash using helper
     let hash1 = super::helpers::compute_withdraw_hash(
         src_chain_key,
+        dest_chain_id,
         token,
-        to,
         dest_account,
         amount,
         nonce,
@@ -41,8 +44,8 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     // Verify hash changes with different nonce (determinism)
     let hash2 = super::helpers::compute_withdraw_hash(
         src_chain_key,
+        dest_chain_id,
         token,
-        to,
         dest_account,
         amount,
         nonce + 1,
@@ -59,8 +62,8 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     // Verify hash is stable (same params = same hash)
     let hash3 = super::helpers::compute_withdraw_hash(
         src_chain_key,
+        dest_chain_id,
         token,
-        to,
         dest_account,
         amount,
         nonce,

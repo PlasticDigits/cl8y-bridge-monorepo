@@ -174,12 +174,20 @@ impl ApprovalVerifier {
             return self.verify_terra_deposit(approval).await;
         }
 
-        // Unknown source chain - cannot verify
+        // Unknown source chain - this is fraudulent!
+        // An approval claiming to come from an unregistered/unknown chain
+        // cannot have a valid deposit, so we should cancel it.
         warn!(
             src_chain_key = %bytes32_to_hex(&approval.src_chain_key),
-            "Unknown source chain key - cannot verify"
+            withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+            "Unknown source chain key - marking as invalid (no deposit can exist)"
         );
-        Ok(VerificationResult::Pending)
+        Ok(VerificationResult::Invalid {
+            reason: format!(
+                "Unknown source chain key {} - cannot verify deposit",
+                bytes32_to_hex(&approval.src_chain_key)
+            ),
+        })
     }
 
     /// Verify a deposit exists on EVM source chain

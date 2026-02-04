@@ -1237,6 +1237,7 @@ dependencies = [
  "eyre",
  "hex",
  "hostname",
+ "libc",
  "prometheus",
  "reqwest",
  "serde",
