@@ -1,3 +1,4 @@
+pub mod address_codec;
 mod api;
 mod config;
 mod confirmation;

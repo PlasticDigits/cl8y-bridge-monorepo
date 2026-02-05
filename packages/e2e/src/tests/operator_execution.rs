@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 use super::operator_helpers::{
     approve_erc20, encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
     poll_terra_for_approval, query_deposit_nonce, query_withdraw_delay, verify_token_setup,
-    DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT,
+    DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT, WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
 // ============================================================================
@@ -434,9 +434,11 @@ pub async fn test_operator_live_withdrawal_execution(
 
     // Step 6: Wait for operator to execute withdrawal
     info!("Waiting for operator to execute withdrawal...");
-    let withdrawal_timeout = Duration::from_secs(60);
+    let withdrawal_timeout = WITHDRAWAL_EXECUTION_TIMEOUT;
     let poll_start = Instant::now();
     let mut withdrawal_executed = false;
+    let mut poll_interval = Duration::from_millis(500);
+    let max_poll_interval = Duration::from_secs(5);
 
     while poll_start.elapsed() < withdrawal_timeout {
         match verify_withdrawal_executed(config, approval.withdraw_hash).await {
@@ -455,7 +457,9 @@ pub async fn test_operator_live_withdrawal_execution(
                 debug!("Error checking withdrawal: {}", e);
             }
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(poll_interval).await;
+        // Exponential backoff with cap
+        poll_interval = std::cmp::min(poll_interval * 2, max_poll_interval);
     }
 
     // Step 7: Verify balance increased on destination
@@ -662,7 +666,7 @@ pub async fn test_operator_sequential_deposit_processing(
     // Verify approvals were created (spot check first and last)
     let mut approvals_found = 0;
     for &nonce in &[initial_nonce + 1, final_nonce] {
-        if let Ok(_) = poll_for_approval(config, nonce, Duration::from_secs(15)).await {
+        if (poll_for_approval(config, nonce, Duration::from_secs(15)).await).is_ok() {
             approvals_found += 1;
             info!("Found approval for nonce {}", nonce);
         }

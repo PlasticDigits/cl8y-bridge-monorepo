@@ -235,7 +235,10 @@ pub async fn test_real_terra_to_evm_transfer(
     };
 
     let terra_client = TerraClient::new(&config.terra);
-    let evm_recipient = format!("{}", config.test_accounts.evm_address);
+    // Terra bridge expects 64-char hex (32 bytes) for recipient
+    // EVM address is 20 bytes, left-pad with zeros to make 32 bytes
+    let evm_addr_hex = hex::encode(config.test_accounts.evm_address.as_slice());
+    let evm_recipient = format!("{:0>64}", evm_addr_hex);
 
     info!(
         "Testing Terra → EVM transfer: {} {} to {}",
@@ -401,7 +404,7 @@ pub async fn test_fraud_detection_full(
         + (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as u64
+            .as_secs()
             % 1000);
     let fraud_amount = "1234567890123456789";
 

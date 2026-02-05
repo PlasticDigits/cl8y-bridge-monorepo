@@ -1264,6 +1264,7 @@ dependencies = [
  "alloy",
  "async-trait",
  "base64 0.22.1",
+ "bech32",
  "bigdecimal 0.4.10",
  "bip39",
  "chrono",
@@ -1276,6 +1277,7 @@ dependencies = [
  "futures",
  "hex",
  "lazy_static",
+ "multichain-rs",
  "prometheus",
  "reqwest 0.12.28",
  "serde",
@@ -2976,6 +2978,30 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "multichain-rs"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "base64 0.22.1",
+ "bech32",
+ "bip39",
+ "cosmrs",
+ "cosmwasm-std",
+ "eyre",
+ "hex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tendermint",
+ "tendermint-rpc",
+ "thiserror 1.0.69",
+ "tiny-keccak",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

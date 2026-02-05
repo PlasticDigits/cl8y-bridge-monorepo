@@ -255,7 +255,7 @@ pub async fn test_hash_parity(config: &E2eConfig) -> TestResult {
                     format!(
                         "Chain key mismatch: local=0x{} vs onchain=0x{}",
                         hex::encode(local_chain_key.as_bytes()),
-                        hex::encode(&onchain_key)
+                        hex::encode(onchain_key)
                     ),
                     start.elapsed(),
                 )

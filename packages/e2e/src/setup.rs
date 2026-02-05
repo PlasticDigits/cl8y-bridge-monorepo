@@ -19,7 +19,7 @@ use crate::docker::DockerCompose;
 use crate::services::ServiceManager;
 use alloy::primitives::{Address, B256};
 use eyre::{eyre, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -51,8 +51,8 @@ impl E2eSetup {
     }
 
     /// Find the monorepo root by looking for docker-compose.yml
-    fn find_monorepo_root(start: &PathBuf) -> Result<PathBuf> {
-        let mut current = start.clone();
+    fn find_monorepo_root(start: &Path) -> Result<PathBuf> {
+        let mut current = start.to_path_buf();
         for _ in 0..5 {
             // Check for docker-compose.yml (monorepo root indicator)
             if current.join("docker-compose.yml").exists() {
@@ -66,7 +66,7 @@ impl E2eSetup {
             }
         }
         // Fall back to original
-        Ok(start.clone())
+        Ok(start.to_path_buf())
     }
 
     /// Check all prerequisites are met
@@ -592,8 +592,8 @@ impl E2eSetup {
 
     /// Register test tokens on TokenRegistry with destination chain mappings
     ///
-    /// This registers the test ERC20 token with Terra as the destination chain,
-    /// enabling cross-chain transfers in E2E tests.
+    /// This registers the test ERC20 token with both Terra and EVM as destination chains,
+    /// enabling cross-chain transfers (EVM→Terra and EVM→EVM) in E2E tests.
     ///
     /// # Arguments
     /// * `deployed` - Deployed contract addresses
@@ -628,12 +628,15 @@ impl E2eSetup {
         )
         .await?;
 
+        // ================================================================
+        // Register for Terra destination chain
+        // ================================================================
         // Encode destination token (CW20 or uluna)
         let dest_token = cw20_address.unwrap_or("uluna");
         let dest_token_encoded = chain_config::encode_terra_token_address(dest_token);
 
-        // Add destination chain key (Terra decimals are 6)
-        chain_config::add_token_dest_chain_key(
+        // Add destination chain key for Terra (decimals are 6)
+        match chain_config::add_token_dest_chain_key(
             deployed.token_registry,
             token,
             terra_chain_key,
@@ -642,9 +645,70 @@ impl E2eSetup {
             rpc_url,
             &private_key,
         )
-        .await?;
+        .await
+        {
+            Ok(()) => info!(
+                "Test token registered for Terra destination (chain_key={})",
+                terra_chain_key
+            ),
+            Err(e) => warn!("Failed to register token for Terra destination: {}", e),
+        }
 
-        info!("Test token registered successfully");
+        // ================================================================
+        // Register for EVM destination chain (for EVM-to-EVM transfers)
+        // ================================================================
+        // First, register the EVM chain key if not already registered
+        let evm_chain_id = self.config.evm.chain_id;
+        info!(
+            "Registering EVM chain key for chain ID {} (for EVM-to-EVM transfers)",
+            evm_chain_id
+        );
+
+        match chain_config::register_evm_chain_key(
+            deployed.chain_registry,
+            evm_chain_id,
+            rpc_url,
+            &private_key,
+        )
+        .await
+        {
+            Ok(evm_chain_key) => {
+                info!("EVM chain key registered: {}", evm_chain_key);
+
+                // For EVM-to-EVM, the destination token is the same token address
+                // Encode as bytes32 (left-padded with zeros)
+                let mut dest_token_evm = [0u8; 32];
+                dest_token_evm[12..32].copy_from_slice(token.as_slice());
+                let dest_token_evm_b256 = B256::from_slice(&dest_token_evm);
+
+                // Add destination chain key for EVM (decimals are 18 for ERC20)
+                match chain_config::add_token_dest_chain_key(
+                    deployed.token_registry,
+                    token,
+                    evm_chain_key,
+                    dest_token_evm_b256,
+                    18,
+                    rpc_url,
+                    &private_key,
+                )
+                .await
+                {
+                    Ok(()) => info!(
+                        "Test token registered for EVM destination (chain_key={}, chain_id={})",
+                        evm_chain_key, evm_chain_id
+                    ),
+                    Err(e) => warn!("Failed to register token for EVM destination: {}", e),
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to register EVM chain key for chain {}: {}",
+                    evm_chain_id, e
+                );
+            }
+        }
+
+        info!("Test token registration complete");
         Ok(())
     }
 
@@ -804,7 +868,7 @@ impl E2eSetup {
         // Check Anvil
         let anvil_ok = self
             .docker
-            .check_anvil(&self.config.evm.rpc_url.to_string())
+            .check_anvil(self.config.evm.rpc_url.as_str())
             .await?;
 
         // Check PostgreSQL
@@ -813,7 +877,7 @@ impl E2eSetup {
         // Check LocalTerra
         let terra_ok = self
             .docker
-            .check_terra(&self.config.terra.rpc_url.to_string())
+            .check_terra(self.config.terra.rpc_url.as_str())
             .await?;
 
         // Check EVM bridge
@@ -986,6 +1050,44 @@ impl E2eSetup {
         if let Some(ref addr) = terra_bridge {
             self.config.terra.bridge_address = Some(addr.clone());
             info!("Terra bridge address set in config: {}", addr);
+
+            // Register uluna as a native token on Terra bridge for cross-chain transfers
+            let terra = crate::terra::TerraClient::new(&self.config.terra);
+
+            // Wait for bridge deployment to confirm
+            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+            // Add uluna (native Luna) to Terra bridge
+            // For native tokens, we use the denom as the token identifier
+            // The EVM token address should be the mapped ERC20 on the EVM side
+            // Using a placeholder address that should match the test token or a dedicated Luna wrapper
+            let evm_token = deployed
+                .test_token
+                .map(|t| format!("{:0>64}", hex::encode(t.as_slice())))
+                .unwrap_or_else(|| "0".repeat(64));
+
+            let add_uluna_msg = serde_json::json!({
+                "add_token": {
+                    "token": "uluna",
+                    "is_native": true,
+                    "evm_token_address": evm_token,
+                    "terra_decimals": 6,
+                    "evm_decimals": 18
+                }
+            });
+
+            match terra.execute_contract(addr, &add_uluna_msg, None).await {
+                Ok(tx_hash) => {
+                    info!("uluna registered on Terra bridge, tx: {}", tx_hash);
+                }
+                Err(e) => {
+                    warn!("Failed to register uluna on Terra bridge: {}", e);
+                    // Continue anyway - other tokens may work
+                }
+            }
+
+            // Wait for tx to confirm before proceeding
+            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
         }
         on_step(SetupStep::DeployTerraContracts, true);
 

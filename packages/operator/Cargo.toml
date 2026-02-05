@@ -7,6 +7,9 @@ description = "Bridge operator for submit/approve CL8Y cross-chain transfers"
 license = "AGPL-3.0-only"
 
 [dependencies]
+# Shared multichain library
+multichain-rs = { path = "../multichain-rs", features = ["full"] }
+
 # Async runtime
 tokio = { version = "1.36", features = ["full", "signal"] }
 async-trait = "0.1"
@@ -51,6 +54,7 @@ hex = "0.4"
 futures = "0.3"
 base64 = "0.22"
 bip39 = "2.0"
+bech32 = "0.9"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 # Metrics

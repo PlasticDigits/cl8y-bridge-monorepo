@@ -33,8 +33,8 @@ impl E2eTeardown {
     }
 
     /// Find the monorepo root by looking for docker-compose.yml
-    fn find_monorepo_root(start: &PathBuf) -> Result<PathBuf> {
-        let mut current = start.clone();
+    fn find_monorepo_root(start: &Path) -> Result<PathBuf> {
+        let mut current = start.to_path_buf();
         for _ in 0..5 {
             // Check for docker-compose.yml (monorepo root indicator)
             if current.join("docker-compose.yml").exists() {
@@ -48,7 +48,7 @@ impl E2eTeardown {
             }
         }
         // Fall back to original
-        Ok(start.clone())
+        Ok(start.to_path_buf())
     }
 
     /// Stop running operator/relayer/canceler processes
@@ -63,13 +63,12 @@ impl E2eTeardown {
         let orphans = self.find_orphans().await?;
         let mut count = 0;
         for p in orphans {
-            if p.name.contains("operator")
+            if (p.name.contains("operator")
                 || p.name.contains("relayer")
-                || p.name.contains("canceler")
+                || p.name.contains("canceler"))
+                && self.kill_process(p.pid).await
             {
-                if self.kill_process(p.pid).await {
-                    count += 1;
-                }
+                count += 1;
             }
         }
 
@@ -403,7 +402,7 @@ impl E2eTeardown {
 
         Ok(ProcessInfo {
             pid,
-            name: parts.get(0).unwrap_or(&"unknown").to_string(),
+            name: parts.first().unwrap_or(&"unknown").to_string(),
             cmdline: parts.get(1).unwrap_or(&"").to_string(),
         })
     }
@@ -475,6 +474,7 @@ impl E2eTeardown {
     }
 
     /// Remove a path recursively
+    #[allow(clippy::only_used_in_recursion)]
     fn remove_path_recursive(&self, path: &Path) -> Result<()> {
         if path.is_dir() {
             for entry in std::fs::read_dir(path)? {

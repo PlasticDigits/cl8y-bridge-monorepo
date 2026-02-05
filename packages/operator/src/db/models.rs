@@ -8,6 +8,11 @@ use sqlx::FromRow;
 // The database stores amounts as NUMERIC(78,0). When inserting, we cast text to NUMERIC
 // in the SQL query (e.g., $1::NUMERIC). When reading, sqlx converts NUMERIC to String.
 
+// V2 Compatibility Notes:
+// - `dest_chain_key` stores 4-byte V2 chain IDs left-padded to 32 bytes for DB compatibility
+// - `dest_account` stores 32-byte universal addresses (chain_type + raw_address + reserved)
+// - `dest_chain_type` distinguishes 'evm' (0x00000001) vs 'cosmos' (0x00000002) destinations
+
 /// Represents a deposit from an EVM chain
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct EvmDeposit {
@@ -26,6 +31,10 @@ pub struct EvmDeposit {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Destination chain ID for EVM-to-EVM transfers (added in migration 003)
+    pub dest_chain_id: Option<i64>,
+    /// Destination chain type: 'evm' or 'cosmos' (added in migration 003, defaults to 'cosmos')
+    pub dest_chain_type: Option<String>,
 }
 
 /// For inserting new EVM deposits
@@ -42,6 +51,8 @@ pub struct NewEvmDeposit {
     pub amount: String,
     pub block_number: i64,
     pub block_hash: String,
+    /// Destination chain type: 'evm' or 'cosmos'
+    pub dest_chain_type: String,
 }
 
 /// Represents a deposit (lock) from Terra Classic
@@ -59,6 +70,8 @@ pub struct TerraDeposit {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// EVM token address corresponding to this Terra token
+    pub evm_token_address: Option<String>,
 }
 
 /// For inserting new Terra deposits
@@ -72,6 +85,8 @@ pub struct NewTerraDeposit {
     pub amount: String,
     pub dest_chain_id: i64,
     pub block_height: i64,
+    /// EVM token address (optional, queried from Terra bridge)
+    pub evm_token_address: Option<String>,
 }
 
 /// Represents a withdrawal approval submitted to an EVM chain

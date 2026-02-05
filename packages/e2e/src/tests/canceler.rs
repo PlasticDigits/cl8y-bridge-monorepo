@@ -198,13 +198,13 @@ pub async fn test_canceler_health_endpoint(_config: &E2eConfig) -> TestResult {
                             || body.contains("ok")
                             || body.contains("\"status\"");
 
-                        if is_healthy || body.len() > 0 {
+                        if is_healthy || !body.is_empty() {
                             tracing::info!("Canceler health endpoint responsive: {}", health_url);
                             TestResult::pass(name, start.elapsed())
                         } else {
                             TestResult::fail(
                                 name,
-                                format!("Health endpoint returned empty response"),
+                                "Health endpoint returned empty response".to_string(),
                                 start.elapsed(),
                             )
                         }

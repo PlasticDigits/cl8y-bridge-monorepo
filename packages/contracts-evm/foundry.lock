@@ -5,6 +5,12 @@
   "lib/openzeppelin-contracts": {
     "rev": "9904c19522c6c77a010641c2576c95ce9d419635"
   },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "tag": {
+      "name": "v5.5.0",
+      "rev": "aa677e9d28ed78fc427ec47ba2baef2030c58e7c"
+    }
+  },
   "lib/solady": {
     "tag": {
       "name": "v0.1.24",

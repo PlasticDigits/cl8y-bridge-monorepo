@@ -49,6 +49,12 @@ pub enum ContractError {
     #[error("Token not supported: {token}")]
     TokenNotSupported { token: String },
 
+    #[error("Invalid token type: expected {expected}, got {actual}")]
+    InvalidTokenType { expected: String, actual: String },
+
+    #[error("Fee exceeds maximum: {fee_bps} bps (max 100)")]
+    FeeExceedsMax { fee_bps: u64 },
+
     // ========================================================================
     // Nonce Errors
     // ========================================================================

@@ -635,7 +635,7 @@ impl BatchDeployResult {
     }
 }
 
-impl<'a> TokenFactory<'a> {
+impl TokenFactory<'_> {
     /// Deploy multiple tokens in batch
     ///
     /// Useful for throughput testing and parallel transfer tests.

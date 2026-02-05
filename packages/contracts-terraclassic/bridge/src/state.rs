@@ -52,6 +52,26 @@ pub struct ChainConfig {
     pub enabled: bool,
 }
 
+/// Token type for bridge operations
+#[cw_serde]
+#[derive(Default)]
+pub enum TokenType {
+    /// Lock tokens in bridge on deposit, unlock on withdraw (for existing tokens)
+    #[default]
+    LockUnlock,
+    /// Burn tokens on deposit, mint on withdraw (for bridge-native wrapped tokens)
+    MintBurn,
+}
+
+impl TokenType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TokenType::LockUnlock => "lock_unlock",
+            TokenType::MintBurn => "mint_burn",
+        }
+    }
+}
+
 /// Supported token configuration
 #[cw_serde]
 pub struct TokenConfig {
@@ -59,6 +79,8 @@ pub struct TokenConfig {
     pub token: String,
     /// Whether this is a native token
     pub is_native: bool,
+    /// Token type (LockUnlock or MintBurn)
+    pub token_type: TokenType,
     /// Corresponding token address on EVM chain (as hex string)
     pub evm_token_address: String,
     /// Decimals on TerraClassic
@@ -67,6 +89,15 @@ pub struct TokenConfig {
     pub evm_decimals: u8,
     /// Whether this token is currently enabled for bridging
     pub enabled: bool,
+}
+
+/// Destination chain token mapping
+#[cw_serde]
+pub struct TokenDestMapping {
+    /// Token address on destination chain (32 bytes)
+    pub dest_token: [u8; 32],
+    /// Token decimals on destination chain
+    pub dest_decimals: u8,
 }
 
 /// Bridge transaction record
@@ -280,3 +311,8 @@ pub const RATE_LIMITS: Map<&str, RateLimitConfig> = Map::new("rate_limits");
 /// Per-token rate limit window tracking
 /// Key: token identifier, Value: RateLimitWindow
 pub const RATE_WINDOWS: Map<&str, RateLimitWindow> = Map::new("rate_windows");
+
+/// Token destination chain mappings
+/// Key: (token_identifier, dest_chain_id as string), Value: TokenDestMapping
+pub const TOKEN_DEST_MAPPINGS: Map<(&str, &str), TokenDestMapping> =
+    Map::new("token_dest_mappings");

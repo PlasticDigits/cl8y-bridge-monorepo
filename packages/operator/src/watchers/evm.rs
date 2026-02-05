@@ -9,14 +9,32 @@ use std::time::Duration;
 
 use crate::db::models::NewEvmDeposit;
 use crate::db::{get_last_evm_block, update_last_evm_block};
+use crate::types::ChainId;
 
-/// EVM event watcher for DepositRequest events
+/// EVM event watcher for Deposit events (V2)
+///
+/// V2 uses the new Deposit event format with 4-byte chain IDs:
+/// ```solidity
+/// event Deposit(
+///     bytes4 indexed destChain,
+///     bytes32 indexed destAccount,
+///     address token,
+///     uint256 amount,
+///     uint64 nonce,
+///     uint256 fee
+/// );
+/// ```
 pub struct EvmWatcher {
     provider: RootProvider<Http<Client>>,
     bridge_address: Address,
     chain_id: u64,
+    /// This chain's 4-byte chain ID (V2)
+    #[allow(dead_code)]
+    this_chain_id: ChainId,
     finality_blocks: u64,
     db: PgPool,
+    /// Use V2 event format (Deposit instead of DepositRequest)
+    use_v2_events: bool,
 }
 
 impl EvmWatcher {
@@ -28,12 +46,27 @@ impl EvmWatcher {
         let bridge_address =
             Address::from_str(&config.bridge_address).wrap_err("Invalid bridge address")?;
 
+        // Default to V2 events
+        let use_v2_events = config.use_v2_events.unwrap_or(true);
+
+        // Query this chain's ID from the contract if available, otherwise derive from chain_id
+        let this_chain_id = ChainId::from_u32(config.this_chain_id.unwrap_or(1));
+
+        tracing::info!(
+            chain_id = config.chain_id,
+            this_chain_id = %this_chain_id,
+            use_v2_events = use_v2_events,
+            "EVM watcher initialized"
+        );
+
         Ok(Self {
             provider,
             bridge_address,
             chain_id: config.chain_id,
+            this_chain_id,
             finality_blocks: config.finality_blocks,
             db,
+            use_v2_events,
         })
     }
 
@@ -89,10 +122,15 @@ impl EvmWatcher {
             .await
             .wrap_err("Failed to get logs")?;
 
-        let deposit_signature = Self::deposit_request_signature();
+        // Get the appropriate event signature based on V1 or V2
+        let deposit_signature = if self.use_v2_events {
+            Self::deposit_v2_signature()
+        } else {
+            Self::deposit_request_signature()
+        };
 
         for log in logs {
-            // Check if this is a DepositRequest event
+            // Check if this is a Deposit/DepositRequest event
             let topics = log.topics();
             if topics.is_empty() {
                 continue;
@@ -102,8 +140,14 @@ impl EvmWatcher {
                 continue;
             }
 
-            // Parse the deposit log
-            match self.parse_deposit_log(&log) {
+            // Parse the deposit log based on version
+            let parse_result = if self.use_v2_events {
+                self.parse_deposit_log_v2(&log)
+            } else {
+                self.parse_deposit_log(&log)
+            };
+
+            match parse_result {
                 Ok(deposit) => {
                     // Check if deposit already exists
                     let exists = crate::db::evm_deposit_exists(
@@ -129,9 +173,10 @@ impl EvmWatcher {
                             chain_id = self.chain_id,
                             tx_hash = %deposit.tx_hash,
                             log_index = deposit.log_index,
-                            dest_chain_key = %hex::encode(&deposit.dest_chain_key),
+                            dest_chain = %hex::encode(&deposit.dest_chain_key),
                             token = %deposit.token,
                             amount = %deposit.amount,
+                            nonce = deposit.nonce,
                             "New EVM deposit detected"
                         );
                     }
@@ -150,9 +195,9 @@ impl EvmWatcher {
         Ok(())
     }
 
-    /// Parse a DepositRequest log
+    /// Parse a DepositRequest log (V1 format)
     fn parse_deposit_log(&self, log: &Log) -> Result<NewEvmDeposit> {
-        // Indexed topics:
+        // Indexed topics (V1):
         // topics[0] = event signature
         // topics[1] = destChainKey (bytes32)
         // topics[2] = destTokenAddress (bytes32)
@@ -168,12 +213,11 @@ impl EvmWatcher {
         let dest_token_address = topics[2].as_slice().to_vec();
         let dest_account = topics[3].as_slice().to_vec();
 
+        // Determine destination chain type based on dest_account format
+        let dest_chain_type = Self::classify_dest_chain_type(&dest_account);
+
         // Decode non-indexed data
         let data = log.data().data.as_ref();
-        // First 32 bytes: token address (right-aligned in 32 bytes)
-        // Next 32 bytes: amount
-        // Next 32 bytes: nonce
-
         let token = Address::from_slice(&data[12..32]);
         let amount = U256::from_be_slice(&data[32..64]);
         let nonce = U256::from_be_slice(&data[64..96]);
@@ -203,7 +247,184 @@ impl EvmWatcher {
             amount: amount.to_string(),
             block_number: block_number as i64,
             block_hash: format!("{:?}", block_hash),
+            dest_chain_type,
         })
+    }
+
+    /// Parse a Deposit log (V2 format)
+    ///
+    /// V2 event format:
+    /// ```solidity
+    /// event Deposit(
+    ///     bytes4 indexed destChain,
+    ///     bytes32 indexed destAccount,
+    ///     address token,
+    ///     uint256 amount,
+    ///     uint64 nonce,
+    ///     uint256 fee
+    /// );
+    /// ```
+    fn parse_deposit_log_v2(&self, log: &Log) -> Result<NewEvmDeposit> {
+        // Indexed topics (V2):
+        // topics[0] = event signature
+        // topics[1] = destChain (bytes4, left-padded to 32 bytes)
+        // topics[2] = destAccount (bytes32)
+
+        // Non-indexed data (abi encoded):
+        // token (address, 32 bytes with left padding)
+        // amount (uint256)
+        // nonce (uint64, left-padded to 32 bytes)
+        // fee (uint256)
+
+        let topics = log.topics();
+        if topics.len() < 3 {
+            return Err(eyre::eyre!("Not enough topics for V2 Deposit event"));
+        }
+
+        // Extract destChain (4 bytes from the last 4 bytes of the 32-byte topic)
+        // In Solidity, bytes4 indexed is right-padded with zeros when stored in topic
+        let dest_chain_bytes = &topics[1].as_slice()[0..4];
+        let dest_chain_id = ChainId::from_bytes([
+            dest_chain_bytes[0],
+            dest_chain_bytes[1],
+            dest_chain_bytes[2],
+            dest_chain_bytes[3],
+        ]);
+
+        // Store as 32-byte key for compatibility (pad the 4-byte chain ID)
+        let mut dest_chain_key = [0u8; 32];
+        dest_chain_key[0..4].copy_from_slice(&dest_chain_id.0);
+
+        let dest_account = topics[2].as_slice().to_vec();
+
+        // Determine destination chain type based on dest_account format
+        let dest_chain_type = Self::classify_dest_chain_type_v2(&dest_account);
+
+        // Decode non-indexed data
+        let data = log.data().data.as_ref();
+        if data.len() < 128 {
+            return Err(eyre::eyre!("Not enough data in V2 Deposit event"));
+        }
+
+        // token: address (right-aligned in 32 bytes)
+        let token = Address::from_slice(&data[12..32]);
+
+        // amount: uint256
+        let amount = U256::from_be_slice(&data[32..64]);
+
+        // nonce: uint64 (right-aligned in 32 bytes)
+        let nonce = u64::from_be_bytes([
+            data[64 + 24],
+            data[64 + 25],
+            data[64 + 26],
+            data[64 + 27],
+            data[64 + 28],
+            data[64 + 29],
+            data[64 + 30],
+            data[64 + 31],
+        ]);
+
+        // fee: uint256 (for informational purposes)
+        let _fee = U256::from_be_slice(&data[96..128]);
+
+        // Get dest token from token registry (would need contract query)
+        // For now, encode the source token address as dest token
+        let mut dest_token_address = [0u8; 32];
+        dest_token_address[12..32].copy_from_slice(token.as_slice());
+
+        let tx_hash = log
+            .transaction_hash
+            .ok_or_else(|| eyre::eyre!("Missing transaction hash"))?;
+        let block_hash = log
+            .block_hash
+            .ok_or_else(|| eyre::eyre!("Missing block hash"))?;
+        let block_number = log
+            .block_number
+            .ok_or_else(|| eyre::eyre!("Missing block number"))?;
+        let log_index = log
+            .log_index
+            .ok_or_else(|| eyre::eyre!("Missing log index"))?;
+
+        Ok(NewEvmDeposit {
+            chain_id: self.chain_id as i64,
+            tx_hash: format!("{:?}", tx_hash),
+            log_index: log_index as i32,
+            nonce: nonce as i64,
+            dest_chain_key: dest_chain_key.to_vec(),
+            dest_token_address: dest_token_address.to_vec(),
+            dest_account,
+            token: format!("{:?}", token),
+            amount: amount.to_string(),
+            block_number: block_number as i64,
+            block_hash: format!("{:?}", block_hash),
+            dest_chain_type,
+        })
+    }
+
+    /// Classify the destination chain type based on the dest_account format (V1)
+    /// Returns "cosmos" for Terra/Cosmos addresses, "evm" for EVM addresses
+    fn classify_dest_chain_type(dest_account: &[u8]) -> String {
+        // Try to interpret dest_account as UTF-8 string
+        // Cosmos/Terra addresses are stored as ASCII bytes of "terra1..." bech32 addresses
+        // with zero padding on the right
+        if let Ok(s) = String::from_utf8(dest_account.to_vec()) {
+            let trimmed = s.trim_end_matches('\0');
+            // Check if it looks like a Cosmos bech32 address
+            if trimmed.starts_with("terra")
+                || trimmed.starts_with("cosmos")
+                || trimmed.starts_with("osmo")
+                || trimmed.starts_with("juno")
+            {
+                return "cosmos".to_string();
+            }
+        }
+
+        // Check for EVM address pattern: first 12 bytes are zeros, last 20 are the address
+        if dest_account.len() == 32 && dest_account[..12].iter().all(|&b| b == 0) {
+            return "evm".to_string();
+        }
+
+        // Default to cosmos for backwards compatibility
+        // (older deposits without classification were assumed to be cosmos)
+        "cosmos".to_string()
+    }
+
+    /// Classify the destination chain type for V2 format
+    ///
+    /// V2 uses UniversalAddress encoding:
+    /// | Chain Type (4 bytes) | Raw Address (20 bytes) | Reserved (8 bytes) |
+    ///
+    /// Chain type codes:
+    /// - 1: EVM
+    /// - 2: Cosmos/Terra
+    fn classify_dest_chain_type_v2(dest_account: &[u8]) -> String {
+        if dest_account.len() < 4 {
+            return "unknown".to_string();
+        }
+
+        // Extract chain type from first 4 bytes
+        let chain_type = u32::from_be_bytes([
+            dest_account[0],
+            dest_account[1],
+            dest_account[2],
+            dest_account[3],
+        ]);
+
+        match chain_type {
+            1 => "evm".to_string(),
+            2 => "cosmos".to_string(),
+            3 => "solana".to_string(),
+            4 => "bitcoin".to_string(),
+            0 => {
+                // Legacy format: first 12 bytes are zeros, address in last 20
+                if dest_account.len() == 32 && dest_account[..12].iter().all(|&b| b == 0) {
+                    "evm".to_string()
+                } else {
+                    "cosmos".to_string()
+                }
+            }
+            _ => "unknown".to_string(),
+        }
     }
 
     /// Get the current finalized block number
@@ -219,11 +440,17 @@ impl EvmWatcher {
         Ok(finality)
     }
 
-    /// Compute the event signature hash
+    /// Compute the V1 DepositRequest event signature hash
     fn deposit_request_signature() -> B256 {
         // keccak256("DepositRequest(bytes32,bytes32,bytes32,address,uint256,uint256)")
         alloy::primitives::keccak256(
             b"DepositRequest(bytes32,bytes32,bytes32,address,uint256,uint256)",
         )
+    }
+
+    /// Compute the V2 Deposit event signature hash
+    fn deposit_v2_signature() -> B256 {
+        // keccak256("Deposit(bytes4,bytes32,address,uint256,uint64,uint256)")
+        alloy::primitives::keccak256(b"Deposit(bytes4,bytes32,address,uint256,uint64,uint256)")
     }
 }

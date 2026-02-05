@@ -232,6 +232,15 @@ impl TestSuite {
                 }
             }
         }
+
+        if skipped > 0 {
+            println!("\nSkipped tests:");
+            for result in &self.results {
+                if let TestResult::Skip { name, reason } = result {
+                    println!("  \x1b[33mSKIP\x1b[0m: {} - {}", name, reason);
+                }
+            }
+        }
     }
 }
 
@@ -297,7 +306,7 @@ impl ChainKey {
         outer_data[64 + 31] = 5; // String length "COSMW"
         outer_data[96..101].copy_from_slice(b"COSMW"); // String data
 
-        Self::from_bytes(keccak256(&outer_data).into())
+        Self::from_bytes(keccak256(outer_data).into())
     }
 
     /// Compute chain key for an EVM chain (matches ChainRegistry.getChainKeyEVM)
@@ -324,7 +333,7 @@ impl ChainKey {
         // String data "EVM"
         data[96..99].copy_from_slice(b"EVM");
 
-        Self::from_bytes(keccak256(&data).into())
+        Self::from_bytes(keccak256(data).into())
     }
 }
 

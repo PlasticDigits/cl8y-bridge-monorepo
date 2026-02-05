@@ -3,6 +3,7 @@
 use eyre::{Result, WrapErr};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
+use tracing::error;
 
 pub mod models;
 
@@ -32,8 +33,8 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
     let row = sqlx::query(
         r#"
         INSERT INTO evm_deposits (chain_id, tx_hash, log_index, nonce, dest_chain_key, 
-            dest_token_address, dest_account, token, amount, block_number, block_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11)
+            dest_token_address, dest_account, token, amount, block_number, block_hash, dest_chain_type)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11, $12)
         RETURNING id
         "#,
     )
@@ -48,6 +49,7 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
     .bind(&deposit.amount)
     .bind(deposit.block_number)
     .bind(&deposit.block_hash)
+    .bind(&deposit.dest_chain_type)
     .fetch_one(pool)
     .await
     .wrap_err("Failed to insert EVM deposit")?;
@@ -57,11 +59,60 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
 
 /// Get pending EVM deposits (for creating releases on Terra)
 pub async fn get_pending_evm_deposits(pool: &PgPool) -> Result<Vec<EvmDeposit>> {
-    let rows =
-        sqlx::query_as::<_, EvmDeposit>(r#"SELECT * FROM evm_deposits WHERE status = 'pending'"#)
-            .fetch_all(pool)
-            .await
-            .wrap_err("Failed to get pending EVM deposits")?;
+    // Cast amount to TEXT since sqlx can't automatically convert NUMERIC to String
+    let rows = sqlx::query_as::<_, EvmDeposit>(
+        r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
+                  dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
+                  created_at, updated_at, dest_chain_id, dest_chain_type 
+           FROM evm_deposits WHERE status = 'pending'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        error!("SQL error getting pending EVM deposits: {:?}", e);
+        e
+    })
+    .wrap_err("Failed to get pending EVM deposits")?;
+
+    Ok(rows)
+}
+
+/// Get pending EVM deposits destined for Cosmos/Terra chains
+pub async fn get_pending_evm_deposits_for_cosmos(pool: &PgPool) -> Result<Vec<EvmDeposit>> {
+    // Filter by dest_chain_type = 'cosmos' to only get deposits going to Terra
+    let rows = sqlx::query_as::<_, EvmDeposit>(
+        r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
+                  dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
+                  created_at, updated_at, dest_chain_id, dest_chain_type 
+           FROM evm_deposits WHERE status = 'pending' AND dest_chain_type = 'cosmos'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        error!("SQL error getting pending EVM deposits for Cosmos: {:?}", e);
+        e
+    })
+    .wrap_err("Failed to get pending EVM deposits for Cosmos")?;
+
+    Ok(rows)
+}
+
+/// Get pending EVM deposits destined for EVM chains
+pub async fn get_pending_evm_deposits_for_evm(pool: &PgPool) -> Result<Vec<EvmDeposit>> {
+    // Filter by dest_chain_type = 'evm' to only get deposits going to EVM chains
+    let rows = sqlx::query_as::<_, EvmDeposit>(
+        r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
+                  dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
+                  created_at, updated_at, dest_chain_id, dest_chain_type 
+           FROM evm_deposits WHERE status = 'pending' AND dest_chain_type = 'evm'"#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        error!("SQL error getting pending EVM deposits for EVM: {:?}", e);
+        e
+    })
+    .wrap_err("Failed to get pending EVM deposits for EVM")?;
 
     Ok(rows)
 }
@@ -103,8 +154,8 @@ pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> R
     // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
     let row = sqlx::query(
         r#"
-        INSERT INTO terra_deposits (tx_hash, nonce, sender, recipient, token, amount, dest_chain_id, block_height)
-        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7, $8)
+        INSERT INTO terra_deposits (tx_hash, nonce, sender, recipient, token, amount, dest_chain_id, block_height, evm_token_address)
+        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7, $8, $9)
         RETURNING id
         "#,
     )
@@ -116,6 +167,7 @@ pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> R
     .bind(&deposit.amount)
     .bind(deposit.dest_chain_id)
     .bind(deposit.block_height)
+    .bind(&deposit.evm_token_address)
     .fetch_one(pool)
     .await
     .wrap_err("Failed to insert Terra deposit")?;
@@ -125,11 +177,18 @@ pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> R
 
 /// Get pending Terra deposits (for creating approvals on EVM)
 pub async fn get_pending_terra_deposits(pool: &PgPool) -> Result<Vec<TerraDeposit>> {
+    // Cast amount to TEXT since sqlx can't automatically convert NUMERIC to String
     let rows = sqlx::query_as::<_, TerraDeposit>(
-        r#"SELECT * FROM terra_deposits WHERE status = 'pending'"#,
+        r#"SELECT id, tx_hash, nonce, sender, recipient, token, amount::TEXT as amount, 
+                  dest_chain_id, block_height, status, created_at, updated_at, evm_token_address 
+           FROM terra_deposits WHERE status = 'pending'"#,
     )
     .fetch_all(pool)
     .await
+    .map_err(|e| {
+        error!("SQL error getting pending Terra deposits: {:?}", e);
+        e
+    })
     .wrap_err("Failed to get pending Terra deposits")?;
 
     Ok(rows)
@@ -189,15 +248,27 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
     Ok(row.get("id"))
 }
 
+/// SQL SELECT columns for Approval table (casting NUMERIC to TEXT)
+const APPROVAL_SELECT: &str = r#"id, src_chain_key, nonce, dest_chain_id, withdraw_hash, token, 
+    recipient, amount::TEXT as amount, fee::TEXT as fee, fee_recipient, deduct_from_amount, 
+    tx_hash, status, attempts, last_attempt_at, error_message, created_at, updated_at"#;
+
+/// SQL SELECT columns for Release table (casting NUMERIC to TEXT)
+const RELEASE_SELECT: &str = r#"id, src_chain_key, nonce, sender, recipient, token, 
+    amount::TEXT as amount, source_chain_id, tx_hash, status, attempts, last_attempt_at, 
+    error_message, created_at, updated_at"#;
+
 /// Get pending approvals for submission
 pub async fn get_pending_approvals(pool: &PgPool, dest_chain_id: i64) -> Result<Vec<Approval>> {
-    let rows = sqlx::query_as::<_, Approval>(
-        r#"SELECT * FROM approvals WHERE status = 'pending' AND dest_chain_id = $1"#,
-    )
-    .bind(dest_chain_id)
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get pending approvals")?;
+    let query = format!(
+        "SELECT {} FROM approvals WHERE status = 'pending' AND dest_chain_id = $1",
+        APPROVAL_SELECT
+    );
+    let rows = sqlx::query_as::<_, Approval>(&query)
+        .bind(dest_chain_id)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get pending approvals")?;
 
     Ok(rows)
 }
@@ -287,7 +358,11 @@ pub async fn insert_release(pool: &PgPool, release: &NewRelease) -> Result<i64> 
 
 /// Get pending releases for submission
 pub async fn get_pending_releases(pool: &PgPool) -> Result<Vec<Release>> {
-    let rows = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE status = 'pending'"#)
+    let query = format!(
+        "SELECT {} FROM releases WHERE status = 'pending'",
+        RELEASE_SELECT
+    );
+    let rows = sqlx::query_as::<_, Release>(&query)
         .fetch_all(pool)
         .await
         .wrap_err("Failed to get pending releases")?;
@@ -416,18 +491,27 @@ pub async fn update_last_terra_block(
 
 /// Get submitted approvals for confirmation checking
 pub async fn get_submitted_approvals(pool: &PgPool) -> Result<Vec<Approval>> {
-    let rows =
-        sqlx::query_as::<_, Approval>(r#"SELECT * FROM approvals WHERE status = 'submitted'"#)
+    let rows = {
+        let query = format!(
+            "SELECT {} FROM approvals WHERE status = 'submitted'",
+            APPROVAL_SELECT
+        );
+        sqlx::query_as::<_, Approval>(&query)
             .fetch_all(pool)
             .await
-            .wrap_err("Failed to get submitted approvals")?;
+            .wrap_err("Failed to get submitted approvals")?
+    };
 
     Ok(rows)
 }
 
 /// Get submitted releases for confirmation checking
 pub async fn get_submitted_releases(pool: &PgPool) -> Result<Vec<Release>> {
-    let rows = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE status = 'submitted'"#)
+    let query = format!(
+        "SELECT {} FROM releases WHERE status = 'submitted'",
+        RELEASE_SELECT
+    );
+    let rows = sqlx::query_as::<_, Release>(&query)
         .fetch_all(pool)
         .await
         .wrap_err("Failed to get submitted releases")?;
@@ -465,22 +549,22 @@ pub async fn get_failed_approvals_for_retry(
     dest_chain_id: i64,
     max_attempts: i32,
 ) -> Result<Vec<Approval>> {
-    let rows = sqlx::query_as::<_, Approval>(
-        r#"
-        SELECT * FROM approvals 
-        WHERE status = 'failed' 
-          AND dest_chain_id = $1
-          AND attempts < $2
-          AND (retry_after IS NULL OR retry_after <= NOW())
-        ORDER BY created_at ASC
-        LIMIT 10
-        "#,
-    )
-    .bind(dest_chain_id)
-    .bind(max_attempts)
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get failed approvals for retry")?;
+    let query = format!(
+        "SELECT {} FROM approvals 
+         WHERE status = 'failed' 
+           AND dest_chain_id = $1
+           AND attempts < $2
+           AND (retry_after IS NULL OR retry_after <= NOW())
+         ORDER BY created_at ASC
+         LIMIT 10",
+        APPROVAL_SELECT
+    );
+    let rows = sqlx::query_as::<_, Approval>(&query)
+        .bind(dest_chain_id)
+        .bind(max_attempts)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get failed approvals for retry")?;
 
     Ok(rows)
 }
@@ -490,20 +574,20 @@ pub async fn get_failed_releases_for_retry(
     pool: &PgPool,
     max_attempts: i32,
 ) -> Result<Vec<Release>> {
-    let rows = sqlx::query_as::<_, Release>(
-        r#"
-        SELECT * FROM releases 
-        WHERE status = 'failed' 
-          AND attempts < $1
-          AND (retry_after IS NULL OR retry_after <= NOW())
-        ORDER BY created_at ASC
-        LIMIT 10
-        "#,
-    )
-    .bind(max_attempts)
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get failed releases for retry")?;
+    let query = format!(
+        "SELECT {} FROM releases 
+         WHERE status = 'failed' 
+           AND attempts < $1
+           AND (retry_after IS NULL OR retry_after <= NOW())
+         ORDER BY created_at ASC
+         LIMIT 10",
+        RELEASE_SELECT
+    );
+    let rows = sqlx::query_as::<_, Release>(&query)
+        .bind(max_attempts)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get failed releases for retry")?;
 
     Ok(rows)
 }
@@ -602,19 +686,19 @@ pub async fn get_pending_and_submitted_approvals(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Approval>> {
-    let rows = sqlx::query_as::<_, Approval>(
-        r#"
-        SELECT * FROM approvals 
-        WHERE status IN ('pending', 'submitted')
-        ORDER BY created_at DESC
-        LIMIT $1 OFFSET $2
-        "#,
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get pending/submitted approvals")?;
+    let query = format!(
+        "SELECT {} FROM approvals 
+         WHERE status IN ('pending', 'submitted')
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2",
+        APPROVAL_SELECT
+    );
+    let rows = sqlx::query_as::<_, Approval>(&query)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get pending/submitted approvals")?;
 
     Ok(rows)
 }
@@ -625,26 +709,30 @@ pub async fn get_pending_and_submitted_releases(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Release>> {
-    let rows = sqlx::query_as::<_, Release>(
-        r#"
-        SELECT * FROM releases 
-        WHERE status IN ('pending', 'submitted')
-        ORDER BY created_at DESC
-        LIMIT $1 OFFSET $2
-        "#,
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .wrap_err("Failed to get pending/submitted releases")?;
+    let query = format!(
+        "SELECT {} FROM releases 
+         WHERE status IN ('pending', 'submitted')
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2",
+        RELEASE_SELECT
+    );
+    let rows = sqlx::query_as::<_, Release>(&query)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .wrap_err("Failed to get pending/submitted releases")?;
 
     Ok(rows)
 }
 
 /// Get approval by transaction hash
 pub async fn get_approval_by_tx_hash(pool: &PgPool, tx_hash: &str) -> Result<Option<Approval>> {
-    let row = sqlx::query_as::<_, Approval>(r#"SELECT * FROM approvals WHERE tx_hash = $1"#)
+    let query = format!(
+        "SELECT {} FROM approvals WHERE tx_hash = $1",
+        APPROVAL_SELECT
+    );
+    let row = sqlx::query_as::<_, Approval>(&query)
         .bind(tx_hash)
         .fetch_optional(pool)
         .await
@@ -655,7 +743,8 @@ pub async fn get_approval_by_tx_hash(pool: &PgPool, tx_hash: &str) -> Result<Opt
 
 /// Get release by transaction hash
 pub async fn get_release_by_tx_hash(pool: &PgPool, tx_hash: &str) -> Result<Option<Release>> {
-    let row = sqlx::query_as::<_, Release>(r#"SELECT * FROM releases WHERE tx_hash = $1"#)
+    let query = format!("SELECT {} FROM releases WHERE tx_hash = $1", RELEASE_SELECT);
+    let row = sqlx::query_as::<_, Release>(&query)
         .bind(tx_hash)
         .fetch_optional(pool)
         .await

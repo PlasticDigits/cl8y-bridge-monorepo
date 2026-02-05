@@ -276,7 +276,7 @@ pub async fn test_metrics_endpoint(_config: &E2eConfig) -> TestResult {
                                 tracing::info!("Found Prometheus metrics at {}", metrics_url);
                                 found_metrics = true;
                                 break;
-                            } else if body.len() > 0 {
+                            } else if !body.is_empty() {
                                 tracing::debug!(
                                     "Metrics endpoint at {} returned non-Prometheus format",
                                     metrics_url

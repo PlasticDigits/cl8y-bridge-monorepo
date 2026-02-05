@@ -164,6 +164,12 @@ pub(crate) async fn query_evm_chain_key(
 
     // Parse hex to bytes32
     let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
+    if bytes.len() < 32 {
+        return Err(eyre::eyre!(
+            "Invalid chain key response: expected 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
     let mut chain_key = [0u8; 32];
     chain_key.copy_from_slice(&bytes[..32]);
     Ok(chain_key)
@@ -444,7 +450,7 @@ pub(crate) async fn approve_erc20(
 /// Execute deposit on BridgeRouter
 ///
 /// Function signature: deposit(address,uint256,bytes32,bytes32)
-/// Selector: 0x0efe6a8b (keccak256 first 4 bytes)
+/// Selector: 0x7dcc9f07 (keccak256 first 4 bytes)
 pub(crate) async fn execute_deposit(
     config: &E2eConfig,
     router: Address,
@@ -456,8 +462,8 @@ pub(crate) async fn execute_deposit(
     let client = reqwest::Client::new();
 
     // Function selector for deposit(address,uint256,bytes32,bytes32)
-    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x0efe6a8b
-    let selector = "0efe6a8b";
+    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x7dcc9f07
+    let selector = "7dcc9f07";
 
     // ABI encode parameters (each 32 bytes, left-padded for addresses/ints, raw for bytes32)
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));

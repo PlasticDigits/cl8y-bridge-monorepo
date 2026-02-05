@@ -31,6 +31,7 @@ mod operator;
 mod operator_execution;
 mod operator_execution_advanced;
 pub mod operator_helpers;
+pub mod token_diagnostics;
 mod transfer;
 mod watchtower;
 
@@ -204,6 +205,41 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(
         operator_execution_advanced::test_operator_approval_timeout_handling(config, token_address)
             .await,
+    );
+
+    // ========================================
+    // Full User Flow Integration Tests
+    // ========================================
+    // These tests verify the complete user experience:
+    // 1. User deposits tokens on source chain
+    // 2. Operator detects deposit event
+    // 3. Operator creates approval on destination chain
+    // 4. User withdraws tokens after delay
+
+    // Full cycle tests (3) - Complete deposit → approval → withdrawal flows
+    let default_transfer_amount = 1_000_000u128; // 1 token (6 decimals)
+    results.push(
+        integration::test_real_evm_to_terra_transfer(
+            config,
+            token_address,
+            default_transfer_amount,
+        )
+        .await,
+    );
+    if !skip_terra {
+        // Terra → EVM uses native Terra token (uluna)
+        let terra_denom = "uluna";
+        results.push(
+            integration::test_real_terra_to_evm_transfer(
+                config,
+                default_transfer_amount,
+                terra_denom,
+            )
+            .await,
+        );
+    }
+    results.push(
+        integration::test_full_transfer_cycle(config, token_address, default_transfer_amount).await,
     );
 
     results

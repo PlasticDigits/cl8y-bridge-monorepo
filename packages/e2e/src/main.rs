@@ -7,7 +7,7 @@
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
@@ -82,8 +82,8 @@ enum Commands {
 }
 
 /// Find the monorepo root by looking for docker-compose.yml
-fn find_monorepo_root(start: &PathBuf) -> PathBuf {
-    let mut current = start.clone();
+fn find_monorepo_root(start: &Path) -> PathBuf {
+    let mut current = start.to_path_buf();
     for _ in 0..5 {
         if current.join("docker-compose.yml").exists() {
             return current;
@@ -94,7 +94,7 @@ fn find_monorepo_root(start: &PathBuf) -> PathBuf {
             break;
         }
     }
-    start.clone()
+    start.to_path_buf()
 }
 
 #[tokio::main]
@@ -111,7 +111,18 @@ async fn main() -> Result<()> {
     };
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    // Load configuration
+    // Load .env.e2e file first (created by setup) before loading config
+    // This ensures deployed contract addresses are available for tests
+    let project_root = std::env::current_dir()?;
+    let monorepo_root = find_monorepo_root(&project_root);
+    let env_file = monorepo_root.join(".env.e2e");
+    if env_file.exists() {
+        if let Err(e) = dotenvy::from_path(&env_file) {
+            tracing::warn!("Failed to load .env.e2e: {}", e);
+        }
+    }
+
+    // Load configuration (will pick up values from .env.e2e)
     let config = E2eConfig::from_env().unwrap_or_default();
 
     match cli.command {

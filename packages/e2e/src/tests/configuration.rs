@@ -190,11 +190,11 @@ pub async fn test_chain_registry(config: &E2eConfig) -> TestResult {
                     }
                     Err(e) => {
                         // SECURITY HARDENED: Convert WARN to FAIL
-                        return TestResult::fail(
+                        TestResult::fail(
                             name,
                             format!("Chain key query failed (security-critical): {}", e),
                             start.elapsed(),
-                        );
+                        )
                     }
                 }
             } else {
@@ -249,11 +249,11 @@ pub async fn test_access_manager(config: &E2eConfig) -> TestResult {
                     }
                     Err(e) => {
                         // SECURITY HARDENED: Convert WARN to FAIL
-                        return TestResult::fail(
+                        TestResult::fail(
                             name,
                             format!("Role query failed (security-critical): {}", e),
                             start.elapsed(),
-                        );
+                        )
                     }
                 }
             } else {

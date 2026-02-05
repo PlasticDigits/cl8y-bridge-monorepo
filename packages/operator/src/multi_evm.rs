@@ -7,15 +7,17 @@
 use eyre::{eyre, Result};
 use std::collections::HashMap;
 
-use crate::types::ChainKey;
+use crate::types::ChainId;
 
 /// Configuration for a single EVM chain
 #[derive(Debug, Clone)]
 pub struct EvmChainConfig {
     /// Human-readable name (e.g., "ethereum", "bsc")
     pub name: String,
-    /// Chain ID
+    /// Chain ID (native EVM chain ID)
     pub chain_id: u64,
+    /// 4-byte chain ID (V2 format)
+    pub this_chain_id: ChainId,
     /// RPC endpoint
     pub rpc_url: String,
     /// Bridge contract address
@@ -33,6 +35,7 @@ impl Default for EvmChainConfig {
         Self {
             name: "unknown".to_string(),
             chain_id: 0,
+            this_chain_id: ChainId::from_u32(0),
             rpc_url: String::new(),
             bridge_address: String::new(),
             router_address: None,
@@ -46,23 +49,22 @@ impl Default for EvmChainConfig {
 #[derive(Debug, Clone)]
 pub struct MultiEvmConfig {
     chains: Vec<EvmChainConfig>,
-    chain_key_map: HashMap<[u8; 32], usize>,
+    chain_id_map: HashMap<[u8; 4], usize>,
     private_key: String,
 }
 
 impl MultiEvmConfig {
     /// Create a new multi-EVM config
     pub fn new(chains: Vec<EvmChainConfig>, private_key: String) -> Result<Self> {
-        let mut chain_key_map = HashMap::new();
+        let mut chain_id_map = HashMap::new();
 
         for (idx, chain) in chains.iter().enumerate() {
-            let key = ChainKey::evm(chain.chain_id);
-            chain_key_map.insert(key.0, idx);
+            chain_id_map.insert(chain.this_chain_id.0, idx);
         }
 
         let config = Self {
             chains,
-            chain_key_map,
+            chain_id_map,
             private_key,
         };
 
@@ -70,7 +72,7 @@ impl MultiEvmConfig {
         Ok(config)
     }
 
-    /// Get chain config by chain ID
+    /// Get chain config by native EVM chain ID
     pub fn get_chain(&self, chain_id: u64) -> Option<&EvmChainConfig> {
         self.chains.iter().find(|c| c.chain_id == chain_id)
     }
@@ -80,9 +82,9 @@ impl MultiEvmConfig {
         self.chains.iter().find(|c| c.name == name)
     }
 
-    /// Get chain config by chain key
-    pub fn get_chain_by_key(&self, key: &ChainKey) -> Option<&EvmChainConfig> {
-        self.chain_key_map.get(&key.0).map(|&idx| &self.chains[idx])
+    /// Get chain config by 4-byte chain ID (V2)
+    pub fn get_chain_by_id(&self, id: &ChainId) -> Option<&EvmChainConfig> {
+        self.chain_id_map.get(&id.0).map(|&idx| &self.chains[idx])
     }
 
     /// Get all enabled chains
@@ -158,6 +160,12 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             .parse()
             .map_err(|_| eyre!("Invalid {}_CHAIN_ID", prefix))?;
 
+        // 4-byte chain ID (V2) - defaults to native chain ID as u32
+        let this_chain_id: u32 = std::env::var(format!("{}_THIS_CHAIN_ID", prefix))
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(chain_id as u32);
+
         let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
             .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;
 
@@ -179,6 +187,7 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
         chains.push(EvmChainConfig {
             name,
             chain_id,
+            this_chain_id: ChainId::from_u32(this_chain_id),
             rpc_url,
             bridge_address,
             router_address,

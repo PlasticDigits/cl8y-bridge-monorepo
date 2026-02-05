@@ -17,19 +17,22 @@ use crate::execute::{
     execute_add_token, execute_approve_withdraw, execute_cancel_admin_proposal,
     execute_cancel_withdraw_approval, execute_execute_withdraw, execute_lock_native, execute_pause,
     execute_propose_admin, execute_receive, execute_recover_asset,
-    execute_reenable_withdraw_approval, execute_remove_canceler, execute_remove_operator,
-    execute_set_rate_limit, execute_set_withdraw_delay, execute_unpause, execute_update_chain,
-    execute_update_fees, execute_update_limits, execute_update_min_signatures,
-    execute_update_token,
+    execute_reenable_withdraw_approval, execute_remove_canceler, execute_remove_custom_account_fee,
+    execute_remove_operator, execute_set_custom_account_fee, execute_set_fee_params,
+    execute_set_rate_limit, execute_set_token_destination, execute_set_withdraw_delay,
+    execute_unpause, execute_update_chain, execute_update_fees, execute_update_limits,
+    execute_update_min_signatures, execute_update_token,
 };
+use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{
-    query_cancelers, query_chain, query_chains, query_compute_withdraw_hash, query_config,
-    query_current_nonce, query_deposit_by_nonce, query_deposit_hash, query_is_canceler,
+    query_account_fee, query_calculate_fee, query_cancelers, query_chain, query_chains,
+    query_compute_withdraw_hash, query_config, query_current_nonce, query_deposit_by_nonce,
+    query_deposit_hash, query_fee_config, query_has_custom_fee, query_is_canceler,
     query_locked_balance, query_nonce_used, query_operators, query_pending_admin,
     query_period_usage, query_rate_limit, query_simulate_bridge, query_stats, query_status,
-    query_token, query_tokens, query_transaction, query_verify_deposit, query_withdraw_approval,
-    query_withdraw_delay,
+    query_token, query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
+    query_verify_deposit, query_withdraw_approval, query_withdraw_delay,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -101,6 +104,10 @@ pub fn instantiate(
 
     // Initialize withdraw delay (watchtower pattern)
     WITHDRAW_DELAY.save(deps.storage, &DEFAULT_WITHDRAW_DELAY)?;
+
+    // Initialize V2 fee config
+    let fee_config = FeeConfig::default_with_recipient(config.fee_collector.clone());
+    FEE_CONFIG.save(deps.storage, &fee_config)?;
 
     Ok(Response::new()
         .add_attribute("method", "instantiate")
@@ -193,6 +200,7 @@ pub fn execute(
         ExecuteMsg::AddToken {
             token,
             is_native,
+            token_type,
             evm_token_address,
             terra_decimals,
             evm_decimals,
@@ -201,6 +209,7 @@ pub fn execute(
             info,
             token,
             is_native,
+            token_type,
             evm_token_address,
             terra_decimals,
             evm_decimals,
@@ -209,7 +218,21 @@ pub fn execute(
             token,
             evm_token_address,
             enabled,
-        } => execute_update_token(deps, info, token, evm_token_address, enabled),
+            token_type,
+        } => execute_update_token(deps, info, token, evm_token_address, enabled, token_type),
+        ExecuteMsg::SetTokenDestination {
+            token,
+            dest_chain_id,
+            dest_token,
+            dest_decimals,
+        } => execute_set_token_destination(
+            deps,
+            info,
+            token,
+            dest_chain_id,
+            dest_token,
+            dest_decimals,
+        ),
 
         // Operator management
         ExecuteMsg::AddOperator { operator } => execute_add_operator(deps, info, operator),
@@ -227,6 +250,27 @@ pub fn execute(
             fee_bps,
             fee_collector,
         } => execute_update_fees(deps, info, fee_bps, fee_collector),
+        ExecuteMsg::SetFeeParams {
+            standard_fee_bps,
+            discounted_fee_bps,
+            cl8y_threshold,
+            cl8y_token,
+            fee_recipient,
+        } => execute_set_fee_params(
+            deps,
+            info,
+            standard_fee_bps,
+            discounted_fee_bps,
+            cl8y_threshold,
+            cl8y_token,
+            fee_recipient,
+        ),
+        ExecuteMsg::SetCustomAccountFee { account, fee_bps } => {
+            execute_set_custom_account_fee(deps, info, account, fee_bps)
+        }
+        ExecuteMsg::RemoveCustomAccountFee { account } => {
+            execute_remove_custom_account_fee(deps, info, account)
+        }
 
         // Admin operations
         ExecuteMsg::Pause {} => execute_pause(deps, info),
@@ -321,6 +365,21 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::WithdrawDelay {} => to_json_binary(&query_withdraw_delay(deps)?),
         QueryMsg::RateLimit { token } => to_json_binary(&query_rate_limit(deps, token)?),
         QueryMsg::PeriodUsage { token } => to_json_binary(&query_period_usage(deps, env, token)?),
+
+        // Fee queries (V2)
+        QueryMsg::FeeConfig {} => to_json_binary(&query_fee_config(deps)?),
+        QueryMsg::AccountFee { account } => to_json_binary(&query_account_fee(deps, account)?),
+        QueryMsg::HasCustomFee { account } => to_json_binary(&query_has_custom_fee(deps, account)?),
+        QueryMsg::CalculateFee { depositor, amount } => {
+            to_json_binary(&query_calculate_fee(deps, depositor, amount)?)
+        }
+
+        // Token registry queries (V2)
+        QueryMsg::TokenType { token } => to_json_binary(&query_token_type(deps, token)?),
+        QueryMsg::TokenDestMapping {
+            token,
+            dest_chain_id,
+        } => to_json_binary(&query_token_dest_mapping(deps, token, dest_chain_id)?),
     }
 }
 
@@ -337,8 +396,15 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
         WITHDRAW_DELAY.save(deps.storage, &DEFAULT_WITHDRAW_DELAY)?;
     }
 
+    // Initialize V2 fee config if not set
+    if FEE_CONFIG.may_load(deps.storage)?.is_none() {
+        let config = CONFIG.load(deps.storage)?;
+        let fee_config = FeeConfig::default_with_recipient(config.fee_collector.clone());
+        FEE_CONFIG.save(deps.storage, &fee_config)?;
+    }
+
     Ok(Response::new()
-        .add_attribute("method", "migrate")
+        .add_attribute("action", "migrate")
         .add_attribute("version", CONTRACT_VERSION)
         .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string()))
 }

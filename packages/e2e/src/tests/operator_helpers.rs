@@ -19,17 +19,32 @@ use tracing::{debug, info, warn};
 /// Default transfer amount for tests (1 token with 6 decimals)
 pub const DEFAULT_TRANSFER_AMOUNT: u128 = 1_000_000;
 
-/// Extended timeout for operator approval creation (90 seconds)
-pub const OPERATOR_APPROVAL_TIMEOUT: Duration = Duration::from_secs(90);
+/// Extended timeout for operator approval creation (120 seconds)
+/// Increased to account for:
+/// - Operator polling interval (5s)
+/// - Transaction broadcast time
+/// - Block confirmation time (~1s LocalTerra, ~6s mainnet)
+/// - Transaction indexing delay
+pub const OPERATOR_APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Poll interval for checking Terra approvals
-pub const TERRA_POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// Initial poll interval for checking Terra approvals (fast at start)
+pub const TERRA_POLL_INITIAL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Maximum time to wait for Terra approval
-pub const TERRA_APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Maximum poll interval for checking Terra approvals
+pub const TERRA_POLL_MAX_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Default withdrawal execution timeout
-pub const WITHDRAWAL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Maximum time to wait for Terra approval (180 seconds)
+/// Increased to handle:
+/// - Operator detection delay
+/// - Transaction confirmation waiting
+/// - Block propagation time
+pub const TERRA_APPROVAL_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Default withdrawal execution timeout (90 seconds)
+pub const WITHDRAWAL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Legacy alias for backwards compatibility
+pub const TERRA_POLL_INTERVAL: Duration = TERRA_POLL_INITIAL_INTERVAL;
 
 // ============================================================================
 // Operator Service Helpers
@@ -235,7 +250,7 @@ pub async fn approve_erc20(
 /// Execute deposit on BridgeRouter
 ///
 /// Function signature: deposit(address,uint256,bytes32,bytes32)
-/// Selector: 0x0efe6a8b (keccak256 first 4 bytes)
+/// Selector: 0x7dcc9f07 (keccak256 first 4 bytes)
 pub async fn execute_deposit(
     config: &E2eConfig,
     router: Address,
@@ -247,8 +262,8 @@ pub async fn execute_deposit(
     let client = reqwest::Client::new();
 
     // Function selector for deposit(address,uint256,bytes32,bytes32)
-    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x0efe6a8b
-    let selector = "0efe6a8b";
+    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x7dcc9f07
+    let selector = "7dcc9f07";
 
     // ABI encode parameters (each 32 bytes, left-padded for addresses/ints, raw for bytes32)
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
@@ -379,6 +394,7 @@ pub struct TerraApprovalInfo {
 /// Poll Terra bridge for approval creation
 ///
 /// Queries the Terra bridge contract for pending approvals matching the given nonce.
+/// Uses exponential backoff starting with fast polling and slowing down over time.
 pub async fn poll_terra_for_approval(
     terra_client: &TerraClient,
     bridge_address: &str,
@@ -386,8 +402,18 @@ pub async fn poll_terra_for_approval(
     timeout: Duration,
 ) -> Result<TerraApprovalInfo> {
     let start = Instant::now();
+    let mut poll_interval = TERRA_POLL_INITIAL_INTERVAL;
+    let mut attempt = 0;
+
+    info!(
+        nonce = nonce,
+        timeout_secs = timeout.as_secs(),
+        "Polling Terra for approval creation"
+    );
 
     while start.elapsed() < timeout {
+        attempt += 1;
+
         // Query pending approvals from Terra bridge
         let query = serde_json::json!({
             "pending_approvals": {
@@ -413,6 +439,13 @@ pub async fn poll_terra_for_approval(
                                 .unwrap_or("0");
                             let amount = U256::from_str_radix(amount_str, 10).unwrap_or(U256::ZERO);
 
+                            info!(
+                                nonce = nonce,
+                                attempt = attempt,
+                                elapsed_secs = start.elapsed().as_secs(),
+                                "Found Terra approval"
+                            );
+
                             return Ok(TerraApprovalInfo {
                                 nonce,
                                 token: approval
@@ -437,20 +470,40 @@ pub async fn poll_terra_for_approval(
                             });
                         }
                     }
+
+                    // Log progress periodically
+                    if attempt % 10 == 0 {
+                        debug!(
+                            nonce = nonce,
+                            attempt = attempt,
+                            elapsed_secs = start.elapsed().as_secs(),
+                            approvals_count = approvals.len(),
+                            "Still waiting for Terra approval"
+                        );
+                    }
                 }
             }
             Err(e) => {
-                debug!("Terra query error: {}", e);
+                debug!(
+                    nonce = nonce,
+                    attempt = attempt,
+                    error = %e,
+                    "Terra query error (will retry)"
+                );
             }
         }
 
-        tokio::time::sleep(TERRA_POLL_INTERVAL).await;
+        tokio::time::sleep(poll_interval).await;
+
+        // Exponential backoff with cap
+        poll_interval = std::cmp::min(poll_interval * 2, TERRA_POLL_MAX_INTERVAL);
     }
 
     Err(eyre::eyre!(
-        "Approval for nonce {} not found within {:?}",
+        "Approval for nonce {} not found within {:?} ({} attempts)",
         nonce,
-        timeout
+        timeout,
+        attempt
     ))
 }
 
@@ -755,142 +808,13 @@ pub async fn is_approval_timed_out(
 }
 
 // ============================================================================
-// EVM Chain Key Computation
+// Re-exports from token_diagnostics module
 // ============================================================================
 
-/// Compute EVM chain key (matches ChainRegistry.getChainKeyEVM)
-pub fn compute_evm_chain_key(chain_id: u64) -> [u8; 32] {
-    use alloy::primitives::keccak256;
-
-    let mut data = [0u8; 128];
-
-    // Offset to string data (64)
-    data[31] = 0x40;
-
-    // chainId as bytes32 (big-endian, right-aligned)
-    let chain_id_bytes = chain_id.to_be_bytes();
-    data[32 + 24..64].copy_from_slice(&chain_id_bytes);
-
-    // String length (3)
-    data[64 + 31] = 3;
-
-    // String data "EVM"
-    data[96..99].copy_from_slice(b"EVM");
-
-    keccak256(&data).into()
-}
-
-/// Generate a unique nonce based on current timestamp
-pub fn generate_unique_nonce() -> u64 {
-    999_000_000
-        + (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
-            % 1_000_000)
-}
-
-// ============================================================================
-// Token Registration Diagnostics
-// ============================================================================
-
-/// Check if a token is registered for a destination chain key
-///
-/// Queries TokenRegistry.isTokenDestChainKeyRegistered(token, destChainKey)
-/// This helps diagnose deposit failures due to missing token registration.
-pub async fn is_token_registered_for_chain(
-    config: &E2eConfig,
-    token: Address,
-    dest_chain_key: [u8; 32],
-) -> Result<bool> {
-    // Check for zero addresses which indicate contracts not deployed
-    if config.evm.contracts.token_registry == Address::ZERO {
-        return Err(eyre::eyre!(
-            "TokenRegistry address is zero - contracts not deployed. Run 'cl8y-e2e setup' first."
-        ));
-    }
-
-    let client = reqwest::Client::new();
-
-    // isTokenDestChainKeyRegistered(address,bytes32) selector: 0xb2072f30
-    // Verified via: cast sig "isTokenDestChainKeyRegistered(address,bytes32)"
-    let selector = "b2072f30";
-    let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
-    let chain_key_hex = hex::encode(dest_chain_key);
-    let call_data = format!("0x{}{}{}", selector, token_padded, chain_key_hex);
-
-    let response = client
-        .post(config.evm.rpc_url.as_str())
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "eth_call",
-            "params": [{
-                "to": format!("{}", config.evm.contracts.token_registry),
-                "data": call_data
-            }, "latest"],
-            "id": 1
-        }))
-        .send()
-        .await?;
-
-    let body: serde_json::Value = response.json().await?;
-
-    if let Some(error) = body.get("error") {
-        return Err(eyre::eyre!("Token registration check failed: {}", error));
-    }
-
-    let hex_result = body["result"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("No result in response"))?;
-
-    // Result is a bool encoded as bytes32 - check if last byte is 1
-    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    let is_registered = bytes.last().copied().unwrap_or(0) == 1;
-
-    debug!(
-        "Token {} registration for chain 0x{}: {}",
-        token,
-        hex::encode(&dest_chain_key[..8]),
-        is_registered
-    );
-
-    Ok(is_registered)
-}
-
-/// Verify token is properly set up for deposits before attempting transfer
-///
-/// Checks:
-/// 1. Token is registered on TokenRegistry
-/// 2. Token has destination chain key configured
-/// 3. Logs diagnostic information if not properly configured
-pub async fn verify_token_setup(
-    config: &E2eConfig,
-    token: Address,
-    dest_chain_key: [u8; 32],
-) -> Result<()> {
-    let is_registered = is_token_registered_for_chain(config, token, dest_chain_key).await?;
-
-    if !is_registered {
-        warn!(
-            "Token {} is NOT registered for destination chain 0x{}! \
-             Deposit transactions will revert. Run setup to register the token first.",
-            token,
-            hex::encode(&dest_chain_key[..8])
-        );
-        return Err(eyre::eyre!(
-            "Token {} not registered for destination chain. \
-             Ensure TokenRegistry.addToken() and TokenRegistry.addTokenDestChainKey() were called during setup.",
-            token
-        ));
-    }
-
-    info!(
-        "Token {} verified: registered for destination chain 0x{}",
-        token,
-        hex::encode(&dest_chain_key[..8])
-    );
-    Ok(())
-}
+// Re-export token diagnostics functions for backwards compatibility
+pub use super::token_diagnostics::{
+    compute_evm_chain_key, generate_unique_nonce, is_token_registered_for_chain, verify_token_setup,
+};
 
 #[cfg(test)]
 mod tests {
@@ -910,14 +834,5 @@ mod tests {
         assert_eq!(calculate_fee(1_000_000, 30), 3_000);
         // 100 bps = 1%
         assert_eq!(calculate_fee(1_000_000, 100), 10_000);
-    }
-
-    #[test]
-    fn test_evm_chain_key_computation() {
-        let key = compute_evm_chain_key(31337);
-        assert!(
-            !key.iter().all(|&b| b == 0),
-            "Chain key should not be all zeros"
-        );
     }
 }

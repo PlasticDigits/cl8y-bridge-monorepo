@@ -1,34 +1,21 @@
-//! Watcher for monitoring approvals across chains and submitting cancellations
+//! Watcher for monitoring approvals across chains and submitting cancellations (V2)
 //!
 //! This module implements the core polling loop for the canceler service. It monitors
-//! both EVM and Terra chains for `WithdrawApproved` events, verifies each approval
+//! both EVM and Terra chains for withdrawal approval events, verifies each approval
 //! against the source chain, and submits cancellation transactions for fraudulent
 //! approvals (those without corresponding deposits).
 //!
-//! # Architecture
+//! # V2 Architecture
 //!
 //! The watcher operates in a continuous polling loop:
-//! 1. Polls EVM bridge for `WithdrawApproved` events in the current block range
+//! 1. Polls EVM bridge for `WithdrawApprove` events in the current block range
 //! 2. Polls Terra bridge for pending withdrawal approvals
 //! 3. For each approval found, uses `ApprovalVerifier` to check if a matching deposit exists
 //! 4. Submits cancellation transactions for any fraudulent approvals detected
 //!
-//! # EVM Event Filtering
+//! # EVM Event Filtering (V2)
 //!
-//! Uses the Alloy library to query `WithdrawApproved` events with explicit address
-//! filtering. The event signature hash is:
-//! ```text
-//! keccak256("WithdrawApproved(bytes32,bytes32,address,bytes,uint256,uint256)")
-//! = 0xe9c6fcc209e99f20220bb87e197c5584cdd23cee08c7919db0d702ee7dc2c8a2
-//! ```
-//!
-//! # E2E Test Integration
-//!
-//! When run as a subprocess in E2E tests, the canceler must be spawned using
-//! `setsid --fork` to create a fully detached process. Direct subprocess spawning
-//! causes the process to die during async operations due to signal inheritance
-//! issues. See `packages/e2e/src/services.rs::start_canceler()` for the spawn
-//! implementation.
+//! Uses the Alloy library to query `WithdrawApprove` events.
 
 #![allow(dead_code)]
 
@@ -61,35 +48,34 @@ fn compute_event_topic(signature: &str) -> [u8; 32] {
     output
 }
 
-// EVM bridge contract ABI for event queries
+// EVM bridge contract ABI for event queries (V2)
 sol! {
     #[sol(rpc)]
-    contract CL8YBridge {
-        event WithdrawApproved(
-            bytes32 indexed withdrawHash,
-            bytes32 indexed srcChainKey,
-            address indexed token,
-            address to,
-            uint256 amount,
-            uint256 nonce,
-            uint256 fee,
-            address feeRecipient,
-            bool deductFromAmount
+    contract Bridge {
+        /// V2 WithdrawApprove event
+        event WithdrawApprove(
+            bytes32 indexed withdrawHash
         );
 
-        function getWithdrawApproval(bytes32 withdrawHash) external view returns (
-            uint256 fee,
-            address feeRecipient,
+        /// Get pending withdrawal info
+        function withdrawals(bytes32 withdrawHash) external view returns (
+            bytes4 srcChain,
+            bytes32 srcAccount,
+            bytes32 token,
+            uint128 amount,
+            uint64 nonce,
+            uint64 submittedAt,
             uint64 approvedAt,
-            bool isApproved,
-            bool deductFromAmount,
             bool cancelled,
             bool executed
         );
+
+        /// Get cancel window
+        function getCancelWindow() external view returns (uint64);
     }
 }
 
-/// Main watcher that monitors all chains for approvals
+/// Main watcher that monitors all chains for approvals (V2)
 pub struct CancelerWatcher {
     config: Config,
     verifier: ApprovalVerifier,
@@ -103,6 +89,8 @@ pub struct CancelerWatcher {
     last_evm_block: u64,
     /// Last polled Terra height
     last_terra_height: u64,
+    /// This chain's 4-byte chain ID
+    this_chain_id: [u8; 4],
     /// Shared stats for health endpoint
     stats: SharedStats,
     /// Prometheus metrics
@@ -133,6 +121,9 @@ impl CancelerWatcher {
             &config.terra_mnemonic,
         )?;
 
+        // Compute this chain's 4-byte ID
+        let this_chain_id = (config.evm_chain_id as u32).to_be_bytes();
+
         // Initialize stats with canceler ID
         {
             let mut s = stats.write().await;
@@ -143,7 +134,8 @@ impl CancelerWatcher {
             canceler_id = %config.canceler_id,
             evm_canceler = %evm_client.address(),
             terra_canceler = %terra_client.address,
-            "Canceler watcher initialized"
+            this_chain_id = %hex::encode(this_chain_id),
+            "Canceler watcher initialized (V2)"
         );
 
         Ok(Self {
@@ -155,6 +147,7 @@ impl CancelerWatcher {
             cancelled_hashes: HashSet::new(),
             last_evm_block: 0,
             last_terra_height: 0,
+            this_chain_id,
             stats,
             metrics,
         })
@@ -208,11 +201,7 @@ impl CancelerWatcher {
         Ok(())
     }
 
-    /// Poll EVM bridge for pending approvals
-    ///
-    /// This function queries WithdrawApproved events from the EVM bridge contract
-    /// and verifies each approval against the source chain. If an approval is
-    /// found to be fraudulent (no matching deposit), it submits a cancel transaction.
+    /// Poll EVM bridge for pending approvals (V2)
     async fn poll_evm_approvals(&mut self) -> Result<()> {
         debug!(
             canceler_address = %self.evm_client.address(),
@@ -235,17 +224,25 @@ impl CancelerWatcher {
             .map_err(|e| eyre!("Failed to get block number: {}", e))?;
 
         // If first run, start from genesis to catch all events
-        // This is important for testing scenarios where approvals may have been
-        // created before the canceler started
         if self.last_evm_block == 0 {
-            // Start from block 0 on first run to ensure we catch all events
-            // For production, this could be set to a more recent block
             self.last_evm_block = 0;
             info!(
                 current_block = current_block,
                 lookback_start = self.last_evm_block,
                 "First poll - starting from genesis to catch all events"
             );
+        }
+
+        // Detect chain reset
+        if current_block < self.last_evm_block {
+            warn!(
+                current_block = current_block,
+                last_polled = self.last_evm_block,
+                "Chain reset detected - resetting polling state to scan from genesis"
+            );
+            self.last_evm_block = 0;
+            self.verified_hashes.clear();
+            self.cancelled_hashes.clear();
         }
 
         // Don't query if no new blocks
@@ -265,32 +262,31 @@ impl CancelerWatcher {
             from_block = from_block,
             to_block = to_block,
             block_range = to_block - from_block + 1,
-            "Querying EVM WithdrawApproved events"
+            "Querying EVM WithdrawApprove events (V2)"
         );
 
         // Parse bridge address
         let bridge_address = Address::from_str(&self.config.evm_bridge_address)
             .wrap_err("Invalid EVM bridge address")?;
 
-        // Query for WithdrawApproved events
-        let contract = CL8YBridge::new(bridge_address, &provider);
+        // Query for WithdrawApprove events (V2)
+        let contract = Bridge::new(bridge_address, &provider);
 
-        // Query event logs - explicitly add address filter to ensure it's included
         let filter = contract
-            .WithdrawApproved_filter()
+            .WithdrawApprove_filter()
             .address(bridge_address)
             .from_block(from_block)
             .to_block(to_block);
 
-        // Compute and log the expected event topic for debugging
-        let event_signature = "WithdrawApproved(bytes32,bytes32,address,address,uint256,uint256,uint256,address,bool)";
+        // Log event topic for debugging
+        let event_signature = "WithdrawApprove(bytes32)";
         let expected_topic = compute_event_topic(event_signature);
         debug!(
             bridge_address = %bridge_address,
             from_block = from_block,
             to_block = to_block,
             event_topic = %format!("0x{}", hex::encode(expected_topic)),
-            "Querying WithdrawApproved events with explicit address filter"
+            "Querying WithdrawApprove events"
         );
 
         let logs = filter
@@ -298,70 +294,12 @@ impl CancelerWatcher {
             .await
             .map_err(|e| eyre!("Failed to query events: {}", e))?;
 
-        // If no logs found via alloy, try raw RPC query for debugging
-        if logs.is_empty() {
-            // Try a raw eth_getLogs call to verify events exist
-            let client = reqwest::Client::new();
-            let topic0 = format!("0x{}", hex::encode(expected_topic));
-            let raw_filter = serde_json::json!({
-                "address": format!("{}", bridge_address),
-                "topics": [topic0],
-                "fromBlock": format!("0x{:x}", from_block),
-                "toBlock": format!("0x{:x}", to_block)
-            });
-
-            debug!(
-                raw_filter = %raw_filter,
-                "Trying raw eth_getLogs query for debugging"
-            );
-
-            let raw_response = client
-                .post(self.config.evm_rpc_url.as_str())
-                .json(&serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "eth_getLogs",
-                    "params": [raw_filter],
-                    "id": 1
-                }))
-                .send()
-                .await;
-
-            match raw_response {
-                Ok(resp) => {
-                    if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        if let Some(result) = body.get("result") {
-                            let log_count = result.as_array().map(|a| a.len()).unwrap_or(0);
-                            if log_count > 0 {
-                                warn!(
-                                    log_count = log_count,
-                                    "Raw RPC found events but alloy filter did not! Possible filter issue."
-                                );
-                                // Log the raw events for debugging
-                                debug!(raw_logs = %result, "Raw event logs from eth_getLogs");
-                            } else {
-                                info!(
-                                    bridge_address = %bridge_address,
-                                    from_block = from_block,
-                                    to_block = to_block,
-                                    "No WithdrawApproved events found (confirmed by raw RPC)"
-                                );
-                            }
-                        }
-                        if let Some(error) = body.get("error") {
-                            warn!(error = %error, "Raw RPC eth_getLogs returned error");
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!(error = %e, "Failed to make raw RPC call");
-                }
-            }
-        } else {
+        if !logs.is_empty() {
             info!(
                 from_block = from_block,
                 to_block = to_block,
                 event_count = logs.len(),
-                "Found EVM WithdrawApproved events - processing each for fraud detection"
+                "Found EVM WithdrawApprove events - processing for fraud detection"
             );
         }
 
@@ -378,22 +316,17 @@ impl CancelerWatcher {
 
             info!(
                 withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                src_chain_key = %bytes32_to_hex(&event.srcChainKey.0),
-                token = %event.token,
-                to = %event.to,
-                amount = %event.amount,
-                nonce = %event.nonce,
                 block = ?log.block_number,
                 "Processing EVM approval event"
             );
 
-            // Query approval details from contract for full info
-            let approval_info = contract
-                .getWithdrawApproval(FixedBytes::from(withdraw_hash))
+            // Query withdrawal details from contract
+            let withdrawal_info = contract
+                .withdrawals(FixedBytes::from(withdraw_hash))
                 .call()
                 .await;
 
-            let (approved_at, delay) = match approval_info {
+            match withdrawal_info {
                 Ok(info) => {
                     // Skip if already cancelled or executed
                     if info.cancelled {
@@ -404,60 +337,45 @@ impl CancelerWatcher {
                         debug!(withdraw_hash = %bytes32_to_hex(&withdraw_hash), "Already executed, skipping");
                         continue;
                     }
-                    (info.approvedAt, 300u64) // Default delay, would query from contract
+
+                    // Get cancel window
+                    let cancel_window = contract.getCancelWindow().call().await
+                        .map(|w| w._0)
+                        .unwrap_or(300);
+
+                    // Create a pending approval for verification
+                    let approval = PendingApproval {
+                        withdraw_hash,
+                        src_chain_id: info.srcChain.0,
+                        dest_chain_id: self.this_chain_id,
+                        dest_token: info.token.0,
+                        dest_account: info.srcAccount.0,
+                        amount: info.amount,
+                        nonce: info.nonce,
+                        approved_at_timestamp: info.approvedAt,
+                        cancel_window,
+                    };
+
+                    // Verify and potentially cancel
+                    info!(
+                        withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                        nonce = approval.nonce,
+                        amount = approval.amount,
+                        "Calling verify_and_cancel for EVM approval"
+                    );
+
+                    if let Err(e) = self.verify_and_cancel(&approval).await {
+                        error!(
+                            error = %e,
+                            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                            "Failed to verify approval"
+                        );
+                    }
                 }
                 Err(e) => {
-                    warn!(error = %e, "Failed to get approval info, skipping");
+                    warn!(error = %e, "Failed to get withdrawal info, skipping");
                     continue;
                 }
-            };
-
-            // Convert token address to bytes32
-            let mut dest_token_address = [0u8; 32];
-            dest_token_address[12..32].copy_from_slice(event.token.as_slice());
-
-            // Convert recipient address to bytes32
-            let mut dest_account = [0u8; 32];
-            dest_account[12..32].copy_from_slice(event.to.as_slice());
-
-            // Get the amount as u128
-            let amount: u128 = event.amount.try_into().unwrap_or(0);
-
-            // Create a pending approval for verification
-            // Compute dest_chain_key from the EVM chain ID (this is the chain we're monitoring)
-            let dest_chain_key = crate::hash::evm_chain_key(self.config.evm_chain_id);
-
-            let approval = PendingApproval {
-                withdraw_hash,
-                src_chain_key: event.srcChainKey.0,
-                dest_chain_key,
-                dest_token_address,
-                dest_account,
-                amount,
-                nonce: event.nonce.try_into().unwrap_or(0),
-                approved_at_timestamp: approved_at,
-                delay_seconds: delay,
-            };
-
-            // Verify and potentially cancel
-            info!(
-                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                nonce = approval.nonce,
-                amount = approval.amount,
-                "Calling verify_and_cancel for EVM approval"
-            );
-
-            if let Err(e) = self.verify_and_cancel(&approval).await {
-                error!(
-                    error = %e,
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                    "Failed to verify approval"
-                );
-            } else {
-                debug!(
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                    "verify_and_cancel completed"
-                );
             }
         }
 
@@ -473,7 +391,7 @@ impl CancelerWatcher {
         Ok(())
     }
 
-    /// Poll Terra bridge for pending approvals
+    /// Poll Terra bridge for pending approvals (V2)
     async fn poll_terra_approvals(&mut self) -> Result<()> {
         debug!("Polling Terra approvals");
 
@@ -501,6 +419,16 @@ impl CancelerWatcher {
             }
         };
 
+        // Detect chain reset
+        if current_height < self.last_terra_height {
+            warn!(
+                current_height = current_height,
+                last_polled = self.last_terra_height,
+                "Terra chain reset detected - resetting polling state"
+            );
+            self.last_terra_height = 0;
+        }
+
         // If first run, start from current height minus some lookback
         if self.last_terra_height == 0 {
             self.last_terra_height = current_height.saturating_sub(100);
@@ -514,12 +442,12 @@ impl CancelerWatcher {
         debug!(
             from_height = self.last_terra_height,
             to_height = current_height,
-            "Querying Terra pending approvals"
+            "Querying Terra pending approvals (V2)"
         );
 
-        // Query the bridge contract for pending approvals
+        // Query the bridge contract for pending withdrawals (V2)
         let query = serde_json::json!({
-            "pending_approvals": {
+            "pending_withdrawals": {
                 "limit": 50
             }
         });
@@ -537,19 +465,19 @@ impl CancelerWatcher {
                 let json: serde_json::Value = resp
                     .json()
                     .await
-                    .map_err(|e| eyre!("Failed to parse approvals: {}", e))?;
+                    .map_err(|e| eyre!("Failed to parse withdrawals: {}", e))?;
 
-                // Parse pending approvals from response
-                if let Some(approvals) = json["data"]["approvals"].as_array() {
+                // Parse pending withdrawals from response
+                if let Some(withdrawals) = json["data"]["withdrawals"].as_array() {
                     info!(
-                        approval_count = approvals.len(),
-                        "Found pending Terra approvals"
+                        count = withdrawals.len(),
+                        "Found pending Terra withdrawals"
                     );
 
-                    for approval_json in approvals {
+                    for withdrawal_json in withdrawals {
                         // Parse withdraw_hash from base64
                         let withdraw_hash_b64 =
-                            approval_json["withdraw_hash"].as_str().unwrap_or("");
+                            withdrawal_json["withdraw_hash"].as_str().unwrap_or("");
 
                         let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
                             .decode(withdraw_hash_b64)
@@ -569,46 +497,42 @@ impl CancelerWatcher {
                             continue;
                         }
 
-                        // Parse other fields
-                        let src_chain_key =
-                            self.parse_bytes32_from_json(&approval_json["src_chain_key"]);
-                        let dest_chain_key =
-                            self.parse_bytes32_from_json(&approval_json["dest_chain_key"]);
-                        let dest_token_address =
-                            self.parse_bytes32_from_json(&approval_json["dest_token_address"]);
-                        let dest_account =
-                            self.parse_bytes32_from_json(&approval_json["dest_account"]);
+                        // Parse other fields (V2 format)
+                        let src_chain_id = self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
+                        let dest_chain_id = self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
+                        let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
+                        let dest_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
 
-                        let amount: u128 = approval_json["amount"]
+                        let amount: u128 = withdrawal_json["amount"]
                             .as_str()
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0);
 
-                        let nonce: u64 = approval_json["nonce"].as_u64().unwrap_or(0);
+                        let nonce: u64 = withdrawal_json["nonce"].as_u64().unwrap_or(0);
 
                         let approved_at_timestamp: u64 =
-                            approval_json["approved_at"].as_u64().unwrap_or(0);
+                            withdrawal_json["approved_at"].as_u64().unwrap_or(0);
 
-                        let delay_seconds: u64 =
-                            approval_json["delay_seconds"].as_u64().unwrap_or(300);
+                        let cancel_window: u64 =
+                            withdrawal_json["cancel_window"].as_u64().unwrap_or(300);
 
                         info!(
                             withdraw_hash = %bytes32_to_hex(&withdraw_hash),
                             nonce = nonce,
                             amount = amount,
-                            "Processing Terra approval"
+                            "Processing Terra withdrawal"
                         );
 
                         let approval = PendingApproval {
                             withdraw_hash,
-                            src_chain_key,
-                            dest_chain_key,
-                            dest_token_address,
+                            src_chain_id,
+                            dest_chain_id,
+                            dest_token,
                             dest_account,
                             amount,
                             nonce,
                             approved_at_timestamp,
-                            delay_seconds,
+                            cancel_window,
                         };
 
                         // Verify and potentially cancel
@@ -616,14 +540,14 @@ impl CancelerWatcher {
                             error!(
                                 error = %e,
                                 withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                                "Failed to verify Terra approval"
+                                "Failed to verify Terra withdrawal"
                             );
                         }
                     }
                 }
             }
             Err(e) => {
-                warn!(error = %e, "Failed to query Terra approvals");
+                warn!(error = %e, "Failed to query Terra withdrawals");
             }
         }
 
@@ -637,6 +561,22 @@ impl CancelerWatcher {
         }
 
         Ok(())
+    }
+
+    /// Helper to parse bytes4 from JSON (base64 encoded)
+    fn parse_bytes4_from_json(&self, value: &serde_json::Value) -> [u8; 4] {
+        let b64 = value.as_str().unwrap_or("");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap_or_default();
+
+        let mut result = [0u8; 4];
+        if bytes.len() >= 4 {
+            result.copy_from_slice(&bytes[..4]);
+        } else if !bytes.is_empty() {
+            result[..bytes.len()].copy_from_slice(&bytes);
+        }
+        result
     }
 
     /// Helper to parse bytes32 from JSON (base64 encoded)
@@ -726,13 +666,7 @@ impl CancelerWatcher {
     }
 
     /// Submit cancel transaction to the appropriate chain
-    ///
-    /// This function attempts to submit a cancel transaction to the EVM chain first,
-    /// then falls back to Terra if the EVM cancel fails or is not applicable.
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
-        // Determine which chain the approval is on (the destination chain)
-        // The dest_chain_key tells us where to submit the cancellation
-
         let withdraw_hash = approval.withdraw_hash;
 
         info!(
@@ -765,7 +699,7 @@ impl CancelerWatcher {
             info!(
                 hash = %bytes32_to_hex(&withdraw_hash),
                 canceler_address = %self.evm_client.address(),
-                "Submitting cancelWithdrawApproval transaction to EVM"
+                "Submitting withdrawCancel transaction to EVM"
             );
 
             match self
@@ -782,7 +716,6 @@ impl CancelerWatcher {
                     return Ok(());
                 }
                 Err(e) => {
-                    // Log detailed error for debugging CANCELER_ROLE issues
                     warn!(
                         error = %e,
                         hash = %bytes32_to_hex(&withdraw_hash),

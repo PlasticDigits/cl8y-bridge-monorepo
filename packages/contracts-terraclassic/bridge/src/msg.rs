@@ -189,6 +189,8 @@ pub enum ExecuteMsg {
     AddToken {
         token: String,
         is_native: bool,
+        /// Token type: "lock_unlock" (default) or "mint_burn"
+        token_type: Option<String>,
         evm_token_address: String,
         terra_decimals: u8,
         evm_decimals: u8,
@@ -199,6 +201,20 @@ pub enum ExecuteMsg {
         token: String,
         evm_token_address: Option<String>,
         enabled: Option<bool>,
+        /// Update token type: "lock_unlock" or "mint_burn"
+        token_type: Option<String>,
+    },
+
+    /// Set destination chain token mapping
+    SetTokenDestination {
+        /// Local token identifier
+        token: String,
+        /// Destination chain ID
+        dest_chain_id: u64,
+        /// Destination token address (32 bytes hex)
+        dest_token: String,
+        /// Destination token decimals
+        dest_decimals: u8,
     },
 
     // ========================================================================
@@ -222,11 +238,26 @@ pub enum ExecuteMsg {
         max_bridge_amount: Option<Uint128>,
     },
 
-    /// Update fee configuration
+    /// Update fee configuration (legacy - for backwards compatibility)
     UpdateFees {
         fee_bps: Option<u32>,
         fee_collector: Option<String>,
     },
+
+    /// Set V2 fee parameters (CL8Y discount support)
+    SetFeeParams {
+        standard_fee_bps: Option<u64>,
+        discounted_fee_bps: Option<u64>,
+        cl8y_threshold: Option<Uint128>,
+        cl8y_token: Option<String>,
+        fee_recipient: Option<String>,
+    },
+
+    /// Set custom account fee (operator only)
+    SetCustomAccountFee { account: String, fee_bps: u64 },
+
+    /// Remove custom account fee (operator only)
+    RemoveCustomAccountFee { account: String },
 
     // ========================================================================
     // Admin Operations
@@ -254,11 +285,16 @@ pub enum ExecuteMsg {
     },
 }
 
-/// CW20 receive hook message (for locking CW20 tokens)
+/// CW20 receive hook message (for locking/burning CW20 tokens)
 #[cw_serde]
 pub enum ReceiveMsg {
-    /// Lock CW20 tokens for bridging
+    /// Lock CW20 tokens for bridging (LockUnlock mode)
     Lock {
+        dest_chain_id: u64,
+        recipient: String,
+    },
+    /// Burn CW20 mintable tokens for bridging (MintBurn mode)
+    Burn {
         dest_chain_id: u64,
         recipient: String,
     },
@@ -403,6 +439,36 @@ pub enum QueryMsg {
     /// Get current period usage for a token
     #[returns(PeriodUsageResponse)]
     PeriodUsage { token: String },
+
+    // ========================================================================
+    // Fee Queries (V2)
+    // ========================================================================
+    /// Get fee configuration
+    #[returns(FeeConfigResponse)]
+    FeeConfig {},
+
+    /// Get account fee info
+    #[returns(AccountFeeResponse)]
+    AccountFee { account: String },
+
+    /// Check if account has custom fee
+    #[returns(HasCustomFeeResponse)]
+    HasCustomFee { account: String },
+
+    /// Calculate fee for a specific depositor and amount
+    #[returns(CalculateFeeResponse)]
+    CalculateFee { depositor: String, amount: Uint128 },
+
+    // ========================================================================
+    // Token Registry Queries (V2)
+    // ========================================================================
+    /// Get token type
+    #[returns(TokenTypeResponse)]
+    TokenType { token: String },
+
+    /// Get token destination mapping
+    #[returns(Option<TokenDestMappingResponse>)]
+    TokenDestMapping { token: String, dest_chain_id: u64 },
 }
 
 // ============================================================================
@@ -621,4 +687,56 @@ pub struct PeriodUsageResponse {
     pub used_amount: Uint128,
     pub remaining_amount: Uint128,
     pub period_ends_at: Timestamp,
+}
+
+// ============================================================================
+// Response Types - Fee (V2)
+// ============================================================================
+
+#[cw_serde]
+pub struct FeeConfigResponse {
+    pub standard_fee_bps: u64,
+    pub discounted_fee_bps: u64,
+    pub cl8y_threshold: Uint128,
+    pub cl8y_token: Option<Addr>,
+    pub fee_recipient: Addr,
+}
+
+#[cw_serde]
+pub struct AccountFeeResponse {
+    pub account: Addr,
+    pub fee_bps: u64,
+    pub fee_type: String,
+}
+
+#[cw_serde]
+pub struct HasCustomFeeResponse {
+    pub has_custom_fee: bool,
+}
+
+#[cw_serde]
+pub struct CalculateFeeResponse {
+    pub depositor: Addr,
+    pub amount: Uint128,
+    pub fee_amount: Uint128,
+    pub fee_bps: u64,
+    pub fee_type: String,
+}
+
+// ============================================================================
+// Response Types - Token Registry (V2)
+// ============================================================================
+
+#[cw_serde]
+pub struct TokenTypeResponse {
+    pub token: String,
+    pub token_type: String,
+}
+
+#[cw_serde]
+pub struct TokenDestMappingResponse {
+    pub token: String,
+    pub dest_chain_id: u64,
+    pub dest_token: Binary,
+    pub dest_decimals: u8,
 }

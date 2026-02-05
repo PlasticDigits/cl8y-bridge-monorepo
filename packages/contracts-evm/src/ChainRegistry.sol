@@ -1,163 +1,208 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Compatible with OpenZeppelin Contracts ^5.0.0
 pragma solidity ^0.8.30;
 
-import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /// @title ChainRegistry
-/// @notice Registry contract for managing supported blockchain chain keys
-/// @dev This contract maintains a registry of supported blockchain chains identified by unique keys
-/// @dev Chain keys are generated using keccak256 hash of chain type and chain identifier
-/// @dev Supports multiple chain types including EVM, Cosmos, Solana, and custom chain types
-contract ChainRegistry is AccessManaged {
-    using EnumerableSet for EnumerableSet.Bytes32Set;
+/// @notice Upgradeable chain registry with 4-byte chain ID system
+/// @dev Uses UUPS proxy pattern for upgradeability
+contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IChainRegistry {
+    // ============================================================================
+    // Constants
+    // ============================================================================
 
-    /// @notice Thrown when a chain key is not registered in the registry
-    /// @param chainKey The unregistered chain key
-    error ChainKeyNotRegistered(bytes32 chainKey);
+    /// @notice Contract version for upgrade tracking
+    uint256 public constant VERSION = 1;
 
-    /// @dev Set of all registered chain keys
-    /// @dev Chain keys are keccak256 hash of chain type and chain ID, allowing support for any chain type
-    EnumerableSet.Bytes32Set private _chainKeys;
+    // ============================================================================
+    // Storage
+    // ============================================================================
 
-    /// @notice Initializes the ChainRegistry contract
-    /// @param initialAuthority The initial authority for access control
-    constructor(address initialAuthority) AccessManaged(initialAuthority) {}
+    /// @notice Mapping from chain ID to identifier hash
+    mapping(bytes4 => bytes32) public chainIdToHash;
 
-    /// @notice Adds an EVM chain to the registry
-    /// @dev Only callable by authorized addresses
-    /// @dev Generates chain key using EVM chain type and raw chain ID
-    /// @param rawChainKey The EVM chain ID (e.g., 1 for Ethereum mainnet)
-    function addEVMChainKey(uint256 rawChainKey) public restricted {
-        _chainKeys.add(getChainKeyEVM(rawChainKey));
-    }
+    /// @notice Mapping from identifier hash to chain ID
+    mapping(bytes32 => bytes4) public hashToChainId;
 
-    /// @notice Adds a Cosmos chain to the registry
-    /// @dev Only callable by authorized addresses
-    /// @dev Generates chain key using COSMW chain type and chain identifier
-    /// @param rawChainKey The Cosmos chain identifier (e.g., "cosmoshub-4")
-    function addCOSMWChainKey(string memory rawChainKey) public restricted {
-        _chainKeys.add(getChainKeyCOSMW(rawChainKey));
-    }
+    /// @notice Mapping of registered chains
+    mapping(bytes4 => bool) public registeredChains;
 
-    /// @notice Adds a Solana chain to the registry
-    /// @dev Only callable by authorized addresses
-    /// @dev Generates chain key using SOL chain type and chain identifier
-    /// @param rawChainKey The Solana chain identifier (e.g., "mainnet-beta")
-    function addSOLChainKey(string memory rawChainKey) public restricted {
-        _chainKeys.add(getChainKeySOL(rawChainKey));
-    }
+    /// @notice Next chain ID to assign
+    bytes4 public nextChainId;
 
-    /// @notice Adds a custom chain type to the registry
-    /// @dev Only callable by authorized addresses
-    /// @dev Generates chain key using provided chain type and raw chain key
-    /// @param chainType The chain type identifier (e.g., "NEAR", "AVAX")
-    /// @param rawChainKey The raw chain key for the specified chain type
-    function addOtherChainType(string memory chainType, bytes32 rawChainKey) public restricted {
-        _chainKeys.add(getChainKeyOther(chainType, rawChainKey));
-    }
+    /// @notice Mapping of operators
+    mapping(address => bool) public operators;
 
-    /// @notice Adds a pre-computed chain key to the registry
-    /// @dev Only callable by authorized addresses
-    /// @dev Use this function when you have a pre-computed chain key
-    /// @param chainKey The pre-computed chain key to add
-    function addChainKey(bytes32 chainKey) public restricted {
-        _chainKeys.add(chainKey);
-    }
+    /// @notice Array of registered chain IDs for enumeration
+    bytes4[] private _chainIds;
 
-    /// @notice Removes a chain key from the registry
-    /// @dev Only callable by authorized addresses
-    /// @param chainKey The chain key to remove
-    function removeChainKey(bytes32 chainKey) public restricted {
-        _chainKeys.remove(chainKey);
-    }
+    /// @notice Reserved storage slots for future upgrades
+    uint256[44] private __gap;
 
-    /// @notice Gets all registered chain keys
-    /// @return Array of all registered chain keys
-    function getChainKeys() public view returns (bytes32[] memory) {
-        return _chainKeys.values();
-    }
+    // ============================================================================
+    // Modifiers
+    // ============================================================================
 
-    /// @notice Gets the total count of registered chain keys
-    /// @return The number of registered chain keys
-    function getChainKeyCount() public view returns (uint256) {
-        return _chainKeys.length();
-    }
-
-    /// @notice Gets a chain key at a specific index
-    /// @param index The index of the chain key
-    /// @return The chain key at the specified index
-    function getChainKeyAt(uint256 index) public view returns (bytes32) {
-        return _chainKeys.at(index);
-    }
-
-    /// @notice Gets a range of chain keys starting from a specific index
-    /// @dev Returns empty array if index is out of bounds
-    /// @dev Automatically adjusts count if it exceeds available items
-    /// @param index The starting index
-    /// @param count The number of items to retrieve
-    /// @return items Array of chain keys
-    function getChainKeysFrom(uint256 index, uint256 count) public view returns (bytes32[] memory items) {
-        uint256 totalLength = _chainKeys.length();
-        if (index >= totalLength) {
-            return new bytes32[](0);
+    /// @notice Only operator can call
+    modifier onlyOperator() {
+        if (!operators[msg.sender] && msg.sender != owner()) {
+            revert Unauthorized();
         }
-        if (index + count > totalLength) {
-            count = totalLength - index;
+        _;
+    }
+
+    /// @notice Validate chain is registered
+    modifier onlyRegisteredChain(bytes4 chainId) {
+        if (!registeredChains[chainId]) {
+            revert ChainNotRegistered(chainId);
         }
-        items = new bytes32[](count);
-        for (uint256 i; i < count; i++) {
-            items[i] = _chainKeys.at(index + i);
+        _;
+    }
+
+    // ============================================================================
+    // Constructor & Initializer
+    // ============================================================================
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initialize the chain registry
+    /// @param admin The admin address (owner)
+    /// @param operator The initial operator address
+    function initialize(address admin, address operator) public initializer {
+        __Ownable_init(admin);
+
+        // Start chain IDs at 1 (0 is reserved/invalid)
+        nextChainId = bytes4(uint32(1));
+
+        // Set initial operator
+        operators[operator] = true;
+    }
+
+    // ============================================================================
+    // Operator Management
+    // ============================================================================
+
+    /// @notice Add an operator
+    /// @param operator The operator address
+    function addOperator(address operator) external onlyOwner {
+        operators[operator] = true;
+    }
+
+    /// @notice Remove an operator
+    /// @param operator The operator address
+    function removeOperator(address operator) external onlyOwner {
+        operators[operator] = false;
+    }
+
+    /// @notice Check if address is an operator
+    /// @param account The address to check
+    /// @return isOp True if address is an operator
+    function isOperator(address account) external view returns (bool isOp) {
+        return operators[account] || account == owner();
+    }
+
+    // ============================================================================
+    // Chain Registration
+    // ============================================================================
+
+    /// @notice Register a new chain
+    /// @dev Only operator can register chains. Chain IDs are assigned incrementally.
+    /// @param identifier The chain identifier (e.g., "evm_1", "terraclassic_columbus-5")
+    /// @return chainId The assigned 4-byte chain ID
+    function registerChain(string calldata identifier) external onlyOperator returns (bytes4 chainId) {
+        bytes32 hash = keccak256(abi.encode(identifier));
+
+        // Check if already registered
+        if (hashToChainId[hash] != bytes4(0)) {
+            revert ChainAlreadyRegistered(identifier);
         }
-        return items;
+
+        // Assign chain ID
+        chainId = nextChainId;
+        nextChainId = bytes4(uint32(nextChainId) + 1);
+
+        // Store mappings
+        chainIdToHash[chainId] = hash;
+        hashToChainId[hash] = chainId;
+        registeredChains[chainId] = true;
+        _chainIds.push(chainId);
+
+        emit ChainRegistered(chainId, identifier, hash);
     }
 
-    /// @notice Checks if a chain key is registered
-    /// @param chainKey The chain key to check
-    /// @return True if the chain key is registered, false otherwise
-    function isChainKeyRegistered(bytes32 chainKey) public view returns (bool) {
-        return _chainKeys.contains(chainKey);
+    // ============================================================================
+    // View Functions
+    // ============================================================================
+
+    /// @notice Get the hash for a chain ID
+    /// @param chainId The 4-byte chain ID
+    /// @return hash The keccak256 hash of the identifier
+    function getChainHash(bytes4 chainId) external view returns (bytes32 hash) {
+        return chainIdToHash[chainId];
     }
 
-    /// @notice Generates a chain key for an EVM chain
-    /// @dev Pure function that creates a standardized chain key for EVM chains
-    /// @param rawChainKey The EVM chain ID (e.g., 1 for Ethereum mainnet)
-    /// @return The generated chain key
-    function getChainKeyEVM(uint256 rawChainKey) public pure returns (bytes32) {
-        return getChainKeyOther("EVM", bytes32(rawChainKey));
+    /// @notice Get the chain ID for a hash
+    /// @param hash The keccak256 hash of the identifier
+    /// @return chainId The 4-byte chain ID
+    function getChainIdFromHash(bytes32 hash) external view returns (bytes4 chainId) {
+        return hashToChainId[hash];
     }
 
-    /// @notice Generates a chain key for a Cosmos chain
-    /// @dev Pure function that creates a standardized chain key for Cosmos chains
-    /// @param rawChainKey The Cosmos chain identifier (e.g., "cosmoshub-4")
-    /// @return The generated chain key
-    function getChainKeyCOSMW(string memory rawChainKey) public pure returns (bytes32) {
-        return getChainKeyOther("COSMW", keccak256(abi.encode(rawChainKey)));
+    /// @notice Check if a chain is registered
+    /// @param chainId The 4-byte chain ID
+    /// @return registered True if the chain is registered
+    function isChainRegistered(bytes4 chainId) external view returns (bool registered) {
+        return registeredChains[chainId];
     }
 
-    /// @notice Generates a chain key for a Solana chain
-    /// @dev Pure function that creates a standardized chain key for Solana chains
-    /// @param rawChainKey The Solana chain identifier (e.g., "mainnet-beta")
-    /// @return The generated chain key
-    function getChainKeySOL(string memory rawChainKey) public pure returns (bytes32) {
-        return getChainKeyOther("SOL", keccak256(abi.encode(rawChainKey)));
+    /// @notice Get all registered chain IDs
+    /// @return chainIds Array of registered chain IDs
+    function getRegisteredChains() external view returns (bytes4[] memory chainIds) {
+        return _chainIds;
     }
 
-    /// @notice Generates a chain key for any chain type
-    /// @dev Pure function that creates a standardized chain key using keccak256 hash
-    /// @dev This is the base function used by other chain key generators
-    /// @param chainType The chain type identifier (e.g., "EVM", "COSMW", "SOL")
-    /// @param rawChainKey The raw chain key for the specified chain type
-    /// @return The generated chain key
-    function getChainKeyOther(string memory chainType, bytes32 rawChainKey) public pure returns (bytes32) {
-        return keccak256(abi.encode(chainType, rawChainKey));
+    /// @notice Get the next chain ID that will be assigned
+    /// @return nextId The next chain ID
+    function getNextChainId() external view returns (bytes4 nextId) {
+        return nextChainId;
     }
 
-    /// @notice Reverts if a chain key is not registered
-    /// @dev Used for validation in other functions
-    /// @param chainKey The chain key to check
-    function revertIfChainKeyNotRegistered(bytes32 chainKey) public view {
-        require(isChainKeyRegistered(chainKey), ChainKeyNotRegistered(chainKey));
+    /// @notice Get the count of registered chains
+    /// @return count The number of registered chains
+    function getChainCount() external view returns (uint256 count) {
+        return _chainIds.length;
     }
+
+    /// @notice Revert if chain is not registered
+    /// @param chainId The chain ID to check
+    function revertIfChainNotRegistered(bytes4 chainId) external view {
+        if (!registeredChains[chainId]) {
+            revert ChainNotRegistered(chainId);
+        }
+    }
+
+    // ============================================================================
+    // Helper Functions
+    // ============================================================================
+
+    /// @notice Compute the identifier hash for a chain identifier
+    /// @param identifier The chain identifier string
+    /// @return hash The keccak256 hash
+    function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash) {
+        return keccak256(abi.encode(identifier));
+    }
+
+    // ============================================================================
+    // Upgrade Authorization
+    // ============================================================================
+
+    /// @notice Authorize upgrade (only owner)
+    /// @param newImplementation The new implementation address
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }

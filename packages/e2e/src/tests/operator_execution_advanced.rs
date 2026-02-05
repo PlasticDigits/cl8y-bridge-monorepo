@@ -747,10 +747,7 @@ pub async fn test_operator_approval_timeout_handling(
     );
 
     // Query withdraw delay (this is the timeout period)
-    let withdraw_delay = match query_withdraw_delay(config).await {
-        Ok(d) => d,
-        Err(_) => 300u64, // Default 5 minutes
-    };
+    let withdraw_delay = (query_withdraw_delay(config).await).unwrap_or(300u64);
 
     // Operator should handle approvals that are past their delay
     // We skip time well past the delay to test timeout handling

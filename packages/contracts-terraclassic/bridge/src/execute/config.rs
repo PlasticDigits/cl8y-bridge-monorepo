@@ -6,15 +6,22 @@
 //! - Rate limit configuration
 //! - Chain management (add/update)
 //! - Token management (add/update)
+//! - Token destination mappings
 //! - Operator management (add/remove/update min signatures)
 //! - Bridge limits and fees
+//! - V2 Fee configuration (CL8Y discount, custom account fees)
 
 use cosmwasm_std::{DepsMut, MessageInfo, Response, Uint128};
 
 use crate::error::ContractError;
+use crate::fee_manager::{
+    remove_custom_account_fee, set_custom_account_fee, validate_custom_fee, FeeConfig, FEE_CONFIG,
+    MAX_FEE_BPS,
+};
+use crate::hash::hex_to_bytes32;
 use crate::state::{
-    ChainConfig, RateLimitConfig, TokenConfig, CANCELERS, CHAINS, CONFIG, OPERATORS,
-    OPERATOR_COUNT, RATE_LIMITS, TOKENS, WITHDRAW_DELAY,
+    ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenType, CANCELERS, CHAINS,
+    CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS, TOKEN_DEST_MAPPINGS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -188,12 +195,21 @@ pub fn execute_update_chain(
 // Token Management
 // ============================================================================
 
+/// Parse token type from string.
+fn parse_token_type(token_type_str: Option<String>) -> TokenType {
+    match token_type_str.as_deref() {
+        Some("mint_burn") => TokenType::MintBurn,
+        _ => TokenType::LockUnlock, // Default
+    }
+}
+
 /// Add a new supported token.
 pub fn execute_add_token(
     deps: DepsMut,
     info: MessageInfo,
     token: String,
     is_native: bool,
+    token_type: Option<String>,
     evm_token_address: String,
     terra_decimals: u8,
     evm_decimals: u8,
@@ -203,9 +219,12 @@ pub fn execute_add_token(
         return Err(ContractError::Unauthorized);
     }
 
+    let token_type_parsed = parse_token_type(token_type);
+
     let token_config = TokenConfig {
         token: token.clone(),
         is_native,
+        token_type: token_type_parsed.clone(),
         evm_token_address,
         terra_decimals,
         evm_decimals,
@@ -214,9 +233,10 @@ pub fn execute_add_token(
     TOKENS.save(deps.storage, token.clone(), &token_config)?;
 
     Ok(Response::new()
-        .add_attribute("method", "add_token")
+        .add_attribute("action", "add_token")
         .add_attribute("token", token)
-        .add_attribute("is_native", is_native.to_string()))
+        .add_attribute("is_native", is_native.to_string())
+        .add_attribute("token_type", token_type_parsed.as_str()))
 }
 
 /// Update an existing token configuration.
@@ -226,6 +246,7 @@ pub fn execute_update_token(
     token: String,
     evm_token_address: Option<String>,
     enabled: Option<bool>,
+    token_type: Option<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -245,12 +266,68 @@ pub fn execute_update_token(
     if let Some(e) = enabled {
         token_config.enabled = e;
     }
+    if let Some(tt) = token_type {
+        token_config.token_type = parse_token_type(Some(tt));
+    }
 
     TOKENS.save(deps.storage, token.clone(), &token_config)?;
 
     Ok(Response::new()
-        .add_attribute("method", "update_token")
-        .add_attribute("token", token))
+        .add_attribute("action", "update_token")
+        .add_attribute("token", token)
+        .add_attribute("token_type", token_config.token_type.as_str()))
+}
+
+/// Set destination chain token mapping.
+pub fn execute_set_token_destination(
+    deps: DepsMut,
+    info: MessageInfo,
+    token: String,
+    dest_chain_id: u64,
+    dest_token: String,
+    dest_decimals: u8,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    // Verify token exists
+    let _token_config =
+        TOKENS
+            .may_load(deps.storage, token.clone())?
+            .ok_or(ContractError::TokenNotSupported {
+                token: token.clone(),
+            })?;
+
+    // Verify destination chain exists
+    let chain_key = dest_chain_id.to_string();
+    let _chain =
+        CHAINS
+            .may_load(deps.storage, chain_key)?
+            .ok_or(ContractError::ChainNotSupported {
+                chain_id: dest_chain_id,
+            })?;
+
+    // Parse destination token address
+    let dest_token_bytes =
+        hex_to_bytes32(&dest_token).map_err(|e| ContractError::InvalidAddress {
+            reason: e.to_string(),
+        })?;
+
+    let mapping = TokenDestMapping {
+        dest_token: dest_token_bytes,
+        dest_decimals,
+    };
+
+    TOKEN_DEST_MAPPINGS.save(deps.storage, (&token, &dest_chain_id.to_string()), &mapping)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_token_destination")
+        .add_attribute("token", token)
+        .add_attribute("dest_chain_id", dest_chain_id.to_string())
+        .add_attribute("dest_token", dest_token)
+        .add_attribute("dest_decimals", dest_decimals.to_string()))
 }
 
 // ============================================================================
@@ -381,7 +458,7 @@ pub fn execute_update_limits(
         .add_attribute("max_bridge_amount", config.max_bridge_amount.to_string()))
 }
 
-/// Update fee configuration.
+/// Update fee configuration (legacy, for backwards compatibility).
 pub fn execute_update_fees(
     deps: DepsMut,
     info: MessageInfo,
@@ -403,7 +480,121 @@ pub fn execute_update_fees(
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new()
-        .add_attribute("method", "update_fees")
+        .add_attribute("action", "update_fees")
         .add_attribute("fee_bps", config.fee_bps.to_string())
         .add_attribute("fee_collector", config.fee_collector.to_string()))
+}
+
+// ============================================================================
+// V2 Fee Configuration
+// ============================================================================
+
+/// Set V2 fee parameters (CL8Y discount support).
+pub fn execute_set_fee_params(
+    deps: DepsMut,
+    info: MessageInfo,
+    standard_fee_bps: Option<u64>,
+    discounted_fee_bps: Option<u64>,
+    cl8y_threshold: Option<Uint128>,
+    cl8y_token: Option<String>,
+    fee_recipient: Option<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let mut fee_config = FEE_CONFIG
+        .may_load(deps.storage)?
+        .unwrap_or_else(|| FeeConfig::default_with_recipient(config.fee_collector.clone()));
+
+    if let Some(bps) = standard_fee_bps {
+        if bps > MAX_FEE_BPS {
+            return Err(ContractError::FeeExceedsMax { fee_bps: bps });
+        }
+        fee_config.standard_fee_bps = bps;
+    }
+
+    if let Some(bps) = discounted_fee_bps {
+        if bps > MAX_FEE_BPS {
+            return Err(ContractError::FeeExceedsMax { fee_bps: bps });
+        }
+        fee_config.discounted_fee_bps = bps;
+    }
+
+    if let Some(threshold) = cl8y_threshold {
+        fee_config.cl8y_threshold = threshold;
+    }
+
+    if let Some(token) = cl8y_token {
+        fee_config.cl8y_token = Some(deps.api.addr_validate(&token)?);
+    }
+
+    if let Some(recipient) = fee_recipient {
+        fee_config.fee_recipient = deps.api.addr_validate(&recipient)?;
+    }
+
+    FEE_CONFIG.save(deps.storage, &fee_config)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_fee_params")
+        .add_attribute("standard_fee_bps", fee_config.standard_fee_bps.to_string())
+        .add_attribute(
+            "discounted_fee_bps",
+            fee_config.discounted_fee_bps.to_string(),
+        )
+        .add_attribute("cl8y_threshold", fee_config.cl8y_threshold.to_string())
+        .add_attribute("fee_recipient", fee_config.fee_recipient.to_string()))
+}
+
+/// Set custom fee for a specific account.
+pub fn execute_set_custom_account_fee(
+    deps: DepsMut,
+    info: MessageInfo,
+    account: String,
+    fee_bps: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    // Allow both admin and operators to set custom fees
+    let is_operator = crate::state::OPERATORS
+        .may_load(deps.storage, &info.sender)?
+        .unwrap_or(false);
+
+    if info.sender != config.admin && !is_operator {
+        return Err(ContractError::Unauthorized);
+    }
+
+    validate_custom_fee(fee_bps)?;
+
+    let account_addr = deps.api.addr_validate(&account)?;
+    set_custom_account_fee(deps.storage, &account_addr, fee_bps)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_custom_account_fee")
+        .add_attribute("account", account)
+        .add_attribute("fee_bps", fee_bps.to_string()))
+}
+
+/// Remove custom fee for a specific account.
+pub fn execute_remove_custom_account_fee(
+    deps: DepsMut,
+    info: MessageInfo,
+    account: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    // Allow both admin and operators to remove custom fees
+    let is_operator = crate::state::OPERATORS
+        .may_load(deps.storage, &info.sender)?
+        .unwrap_or(false);
+
+    if info.sender != config.admin && !is_operator {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let account_addr = deps.api.addr_validate(&account)?;
+    remove_custom_account_fee(deps.storage, &account_addr);
+
+    Ok(Response::new()
+        .add_attribute("action", "remove_custom_account_fee")
+        .add_attribute("account", account))
 }

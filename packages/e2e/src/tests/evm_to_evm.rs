@@ -68,7 +68,8 @@ impl Default for EvmToEvmOptions {
             amount: U256::from(1_000_000u64),
             use_mock_chain: true,
             skip_delay: true,
-            approval_timeout: Duration::from_secs(60),
+            // Increased timeout to account for operator processing and block confirmation
+            approval_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -209,11 +210,8 @@ pub async fn test_evm_to_evm_deposit(config: &E2eConfig, options: &EvmToEvmOptio
     }
 
     // Step 2: Get/register destination chain key
-    let dest_chain_id = if options.use_mock_chain {
-        31338u64
-    } else {
-        31338u64
-    };
+    // Note: Both mock and real chain use 31338 for testing purposes
+    let dest_chain_id = 31338u64;
     let dest_chain_key = match register_mock_evm_chain(config, dest_chain_id).await {
         Ok(key) => key,
         Err(e) => {

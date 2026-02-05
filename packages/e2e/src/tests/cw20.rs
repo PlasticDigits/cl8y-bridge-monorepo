@@ -535,7 +535,7 @@ pub async fn test_cw20_terra_to_evm_cycle(
         .terra
         .bridge_address
         .as_ref()
-        .map_or(true, |a| a.is_empty())
+        .is_none_or(|a| a.is_empty())
     {
         return TestResult::skip(name, "Terra bridge not configured");
     }

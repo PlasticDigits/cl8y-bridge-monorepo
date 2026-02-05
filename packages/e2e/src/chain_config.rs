@@ -368,6 +368,114 @@ pub async fn get_cosmw_chain_key(
     Ok(chain_key)
 }
 
+/// Register an EVM chain key on ChainRegistry via addEVMChainKey()
+///
+/// # Arguments
+/// * `chain_registry` - Address of the ChainRegistry contract
+/// * `chain_id` - The EVM chain ID (e.g., 31337 for Anvil)
+/// * `rpc_url` - EVM RPC URL
+/// * `private_key` - Private key for signing
+///
+/// # Returns
+/// The computed chain key (bytes32)
+pub async fn register_evm_chain_key(
+    chain_registry: Address,
+    chain_id: u64,
+    rpc_url: &str,
+    private_key: &str,
+) -> Result<B256> {
+    info!("Registering EVM chain key for chain ID: {}", chain_id);
+
+    // Compute the chain key first
+    let chain_key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
+
+    // Check if it's actually registered in the contract
+    if is_chain_key_registered(chain_registry, chain_key, rpc_url).await? {
+        info!("EVM chain key already registered: {}", chain_key);
+        return Ok(chain_key);
+    }
+
+    // Register chain key: addEVMChainKey(uint256)
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            &format!("{}", chain_registry),
+            "addEVMChainKey(uint256)",
+            &chain_id.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Check if already registered
+        if stderr.contains("already") || stderr.contains("ChainKeyAlreadyRegistered") {
+            let key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
+            info!("EVM chain key already registered: {}", key);
+            return Ok(key);
+        }
+        return Err(eyre!("Failed to register EVM chain key: {}", stderr));
+    }
+
+    // Wait for the transaction to be mined
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Get the registered chain key
+    let chain_key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
+
+    if chain_key == B256::ZERO {
+        return Err(eyre!(
+            "EVM chain key registration failed - key is zero after registration"
+        ));
+    }
+
+    info!("EVM chain key registered: {}", chain_key);
+    Ok(chain_key)
+}
+
+/// Get EVM chain key from ChainRegistry
+///
+/// # Arguments
+/// * `chain_registry` - Address of the ChainRegistry contract
+/// * `chain_id` - The EVM chain ID
+/// * `rpc_url` - EVM RPC URL
+pub async fn get_evm_chain_key(
+    chain_registry: Address,
+    chain_id: u64,
+    rpc_url: &str,
+) -> Result<B256> {
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "call",
+            "--rpc-url",
+            rpc_url,
+            &format!("{}", chain_registry),
+            "getChainKeyEVM(uint256)(bytes32)",
+            &chain_id.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to get EVM chain key: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hex_str = stdout.trim();
+
+    // Parse the bytes32 value
+    let chain_key: B256 = hex_str
+        .parse()
+        .map_err(|e| eyre!("Failed to parse EVM chain key '{}': {}", hex_str, e))?;
+
+    Ok(chain_key)
+}
+
 /// Check if a chain key is registered in ChainRegistry
 ///
 /// # Arguments
@@ -483,7 +591,8 @@ async fn is_token_registered(
     token: Address,
     rpc_url: &str,
 ) -> Result<bool> {
-    // Try querying getTokenBridgeType - returns 0 for unregistered
+    // Use the explicit isTokenRegistered function instead of getTokenBridgeType
+    // getTokenBridgeType returns 0 for both unregistered tokens and MintBurn type
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -491,7 +600,7 @@ async fn is_token_registered(
             "--rpc-url",
             rpc_url,
             &format!("{}", token_registry),
-            "getTokenBridgeType(address)(uint8)",
+            "isTokenRegistered(address)(bool)",
             &format!("{}", token),
         ])
         .output()?;
@@ -502,12 +611,8 @@ async fn is_token_registered(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // If we got a non-zero bridge type, token is registered
-    let bridge_type: u8 = stdout.trim().parse().unwrap_or(0);
-
-    // BridgeType 0 could be MintBurn which is valid, so we need a different check
-    // Check if there's any destination chain registered
-    Ok(bridge_type <= 1) // 0=MintBurn, 1=LockUnlock, both valid if call succeeded
+    let is_registered = stdout.trim().eq_ignore_ascii_case("true");
+    Ok(is_registered)
 }
 
 /// Add a destination chain key for a token on TokenRegistry

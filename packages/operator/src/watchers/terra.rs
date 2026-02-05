@@ -35,13 +35,38 @@ struct Attribute {
     value: String,
 }
 
-/// Terra Classic transaction watcher for Lock transactions
+/// Response from Terra bridge token query
+#[derive(Debug, Deserialize)]
+struct TokenQueryResponse {
+    data: TokenInfo,
+}
+
+/// Token info from Terra bridge contract
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct TokenInfo {
+    token: String,
+    is_native: bool,
+    evm_token_address: String,
+    terra_decimals: u8,
+    evm_decimals: u8,
+    enabled: bool,
+}
+
+/// Terra Classic transaction watcher for Lock/Deposit transactions
+///
+/// ## Event Versions
+///
+/// - **V1 (Legacy)**: `method=lock`, attributes: `nonce`, `sender`, `recipient`, `token`, `amount`, `dest_chain_id`
+/// - **V2 (New)**: `action=deposit`, attributes: `nonce`, `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `fee`
 pub struct TerraWatcher {
     rpc_client: HttpClient,
     lcd_url: String,
     bridge_address: String,
     chain_id: String,
     db: PgPool,
+    /// Use V2 event format (action=deposit instead of method=lock)
+    use_v2_events: bool,
 }
 
 impl TerraWatcher {
@@ -50,12 +75,23 @@ impl TerraWatcher {
         let url: Url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
         let rpc_client = HttpClient::new(url).wrap_err("Failed to create RPC client")?;
 
+        // Determine if using V2 events (default to false for backward compatibility)
+        let use_v2_events = config.use_v2.unwrap_or(false);
+
+        tracing::info!(
+            chain_id = %config.chain_id,
+            bridge_address = %config.bridge_address,
+            use_v2_events = use_v2_events,
+            "Terra watcher initialized"
+        );
+
         Ok(Self {
             rpc_client,
             lcd_url: config.lcd_url.clone(),
             bridge_address: config.bridge_address.clone(),
             chain_id: config.chain_id.clone(),
             db,
+            use_v2_events,
         })
     }
 
@@ -119,15 +155,20 @@ impl TerraWatcher {
             .wrap_err("Failed to parse transaction response")?;
 
         for tx in response.tx_responses {
-            if let Some(deposit) = self.parse_lock_tx(&tx)? {
+            if let Some(mut deposit) = self.parse_lock_tx(&tx)? {
                 // Check if already exists
                 if !crate::db::terra_deposit_exists(&self.db, &deposit.tx_hash, deposit.nonce)
                     .await?
                 {
+                    // Query the EVM token address for this Terra token
+                    deposit.evm_token_address =
+                        self.query_token_evm_address(&deposit.token).await?;
+
                     crate::db::insert_terra_deposit(&self.db, &deposit).await?;
                     tracing::info!(
                         tx_hash = %deposit.tx_hash,
                         nonce = deposit.nonce,
+                        evm_token = ?deposit.evm_token_address,
                         "Stored Terra lock transaction"
                     );
                 }
@@ -137,8 +178,19 @@ impl TerraWatcher {
         Ok(())
     }
 
-    /// Parse lock attributes from a transaction
+    /// Parse lock/deposit attributes from a transaction (V1 or V2)
     fn parse_lock_tx(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
+        if self.use_v2_events {
+            self.parse_deposit_tx_v2(tx)
+        } else {
+            self.parse_lock_tx_v1(tx)
+        }
+    }
+
+    /// Parse lock attributes from a transaction (V1 - Legacy)
+    ///
+    /// Looks for events with `method=lock` or `method=lock_cw20`
+    fn parse_lock_tx_v1(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
         // Find wasm events for our bridge contract
         for event in &tx.events {
             if event.type_str != "wasm" {
@@ -156,7 +208,7 @@ impl TerraWatcher {
                 continue;
             }
 
-            // Check if this is a lock method
+            // Check if this is a lock method (V1)
             let method = event
                 .attributes
                 .iter()
@@ -167,7 +219,7 @@ impl TerraWatcher {
                 continue;
             }
 
-            // Extract attributes
+            // Extract attributes (V1 format)
             let nonce = extract_u64(&event.attributes, "nonce")?;
             let sender = extract_string(&event.attributes, "sender")?;
             let recipient = extract_string(&event.attributes, "recipient")?;
@@ -184,10 +236,164 @@ impl TerraWatcher {
                 amount,
                 dest_chain_id: dest_chain_id as i64,
                 block_height: tx.height,
+                evm_token_address: None, // Will be populated later
             }));
         }
 
         Ok(None)
+    }
+
+    /// Parse deposit attributes from a transaction (V2)
+    ///
+    /// Looks for events with `action=deposit`
+    /// V2 event attributes: `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `nonce`, `fee`
+    fn parse_deposit_tx_v2(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
+        // Find wasm events for our bridge contract
+        for event in &tx.events {
+            if event.type_str != "wasm" {
+                continue;
+            }
+
+            // Check if this is our bridge contract
+            let contract_addr = event
+                .attributes
+                .iter()
+                .find(|a| a.key == "_contract_address")
+                .map(|a| &a.value);
+
+            if contract_addr != Some(&self.bridge_address) {
+                continue;
+            }
+
+            // Check if this is a deposit action (V2)
+            let action = event
+                .attributes
+                .iter()
+                .find(|a| a.key == "action")
+                .map(|a| a.value.as_str());
+
+            if action != Some("deposit") {
+                continue;
+            }
+
+            // Extract attributes (V2 format)
+            let nonce = extract_u64(&event.attributes, "nonce")?;
+            let sender = extract_string(&event.attributes, "sender")?;
+            let token = extract_string(&event.attributes, "token")?;
+            let amount = extract_string(&event.attributes, "amount")?;
+
+            // V2 uses dest_chain (4-byte chain ID, possibly as base64 or hex)
+            // and dest_account (32-byte universal address as base64)
+            let dest_chain = extract_string(&event.attributes, "dest_chain")?;
+            let dest_account = extract_string(&event.attributes, "dest_account")?;
+
+            // Parse dest_chain - could be base64 or hex representation of 4-byte chain ID
+            let dest_chain_id = self.parse_dest_chain_v2(&dest_chain)?;
+
+            // Fee is logged but we don't store it in the deposit record currently
+            let _fee = extract_string(&event.attributes, "fee").unwrap_or_default();
+
+            return Ok(Some(NewTerraDeposit {
+                tx_hash: tx.txhash.clone(),
+                nonce: nonce as i64,
+                sender,
+                recipient: dest_account, // V2: dest_account is the recipient (as universal address string)
+                token,
+                amount,
+                dest_chain_id: dest_chain_id as i64,
+                block_height: tx.height,
+                evm_token_address: None, // Will be populated later
+            }));
+        }
+
+        Ok(None)
+    }
+
+    /// Parse V2 destination chain ID from event attribute
+    ///
+    /// The dest_chain can be:
+    /// - Base64-encoded 4 bytes (e.g., "AAAAAQ==" for 0x00000001)
+    /// - Hex string (e.g., "00000001")
+    /// - Raw u32 as string (e.g., "1")
+    fn parse_dest_chain_v2(&self, dest_chain: &str) -> Result<u64> {
+        use base64::Engine;
+
+        // Try parsing as raw u32 string first (simplest case)
+        if let Ok(id) = dest_chain.parse::<u64>() {
+            return Ok(id);
+        }
+
+        // Try base64 decoding
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(dest_chain) {
+            if bytes.len() == 4 {
+                let id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                return Ok(id as u64);
+            }
+        }
+
+        // Try hex decoding
+        if let Ok(bytes) = hex::decode(dest_chain) {
+            if bytes.len() == 4 {
+                let id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                return Ok(id as u64);
+            }
+        }
+
+        Err(eyre!(
+            "Unable to parse dest_chain as chain ID: {}",
+            dest_chain
+        ))
+    }
+
+    /// Query the EVM token address for a Terra token from the bridge contract
+    async fn query_token_evm_address(&self, terra_token: &str) -> Result<Option<String>> {
+        use base64::Engine;
+
+        let query = serde_json::json!({
+            "token": {
+                "token": terra_token
+            }
+        });
+
+        let query_b64 =
+            base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&query)?);
+
+        let url = format!(
+            "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+            self.lcd_url, self.bridge_address, query_b64
+        );
+
+        let client = reqwest::Client::new();
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<TokenQueryResponse>().await {
+                    Ok(token_info) => {
+                        tracing::debug!(
+                            terra_token = %terra_token,
+                            evm_token = %token_info.data.evm_token_address,
+                            "Resolved token mapping"
+                        );
+                        Ok(Some(token_info.data.evm_token_address))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse token query response: {}", e);
+                        Ok(None)
+                    }
+                }
+            }
+            Ok(response) => {
+                tracing::warn!(
+                    "Token query failed with status {}: {}",
+                    response.status(),
+                    terra_token
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::warn!("Token query request failed: {}", e);
+                Ok(None)
+            }
+        }
     }
 
     /// Get the current block height

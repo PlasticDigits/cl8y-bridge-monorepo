@@ -31,6 +31,14 @@ pub struct EvmConfig {
     pub private_key: String,
     #[serde(default = "default_finality_blocks")]
     pub finality_blocks: u64,
+    /// This chain's registered chain ID (4-byte V2 format)
+    /// If not set, defaults to 1
+    #[serde(default)]
+    pub this_chain_id: Option<u32>,
+    /// Use V2 event format (Deposit instead of DepositRequest)
+    /// Defaults to true for new deployments
+    #[serde(default)]
+    pub use_v2_events: Option<bool>,
 }
 
 /// Terra configuration
@@ -44,6 +52,14 @@ pub struct TerraConfig {
     /// Optional fee recipient address for Terra withdrawals
     #[serde(default)]
     pub fee_recipient: Option<String>,
+    /// This chain's registered chain ID (4-byte V2 format)
+    /// If not set, will be queried from contract or default to 4 (terraclassic_columbus-5)
+    #[serde(default)]
+    pub this_chain_id: Option<u32>,
+    /// Use V2 message format (user-initiated withdrawals)
+    /// Defaults to false for backward compatibility
+    #[serde(default)]
+    pub use_v2: Option<bool>,
 }
 
 /// Relayer configuration
@@ -126,6 +142,13 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_finality_blocks()),
+            // V2 configuration
+            this_chain_id: env::var("EVM_THIS_CHAIN_ID")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            use_v2_events: env::var("EVM_USE_V2_EVENTS")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         };
 
         let terra = TerraConfig {
@@ -140,6 +163,11 @@ impl Config {
             mnemonic: env::var("TERRA_MNEMONIC")
                 .map_err(|_| eyre!("TERRA_MNEMONIC environment variable is required"))?,
             fee_recipient: env::var("TERRA_FEE_RECIPIENT").ok(),
+            // V2 configuration
+            this_chain_id: env::var("TERRA_THIS_CHAIN_ID")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            use_v2: env::var("TERRA_USE_V2").ok().and_then(|v| v.parse().ok()),
         };
 
         let relayer = RelayerConfig {
@@ -295,6 +323,8 @@ mod tests {
                 router_address: "0x0000000000000000000000000000000000000002".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
                 finality_blocks: 1,
+                this_chain_id: None,
+                use_v2_events: None,
             },
             terra: TerraConfig {
                 rpc_url: "http://localhost:1317".to_string(),
@@ -303,6 +333,8 @@ mod tests {
                 bridge_address: "terra1...".to_string(),
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
                 fee_recipient: None,
+                this_chain_id: None,
+                use_v2: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,
@@ -347,6 +379,8 @@ mod tests {
                 router_address: "0x0000000000000000000000000000000000000002".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
                 finality_blocks: 1,
+                this_chain_id: None,
+                use_v2_events: None,
             },
             terra: TerraConfig {
                 rpc_url: "http://localhost:1317".to_string(),
@@ -355,6 +389,8 @@ mod tests {
                 bridge_address: "terra1...".to_string(),
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
                 fee_recipient: None,
+                this_chain_id: None,
+                use_v2: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,

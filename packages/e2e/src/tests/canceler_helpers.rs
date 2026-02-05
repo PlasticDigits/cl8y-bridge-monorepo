@@ -36,7 +36,7 @@ pub fn compute_evm_chain_key(chain_id: u64) -> [u8; 32] {
     // String data "EVM"
     data[96..99].copy_from_slice(b"EVM");
 
-    keccak256(&data).into()
+    keccak256(data).into()
 }
 
 /// Compute Cosmos/Terra chain key (matches ChainRegistry.getChainKeyCOSMW)
@@ -64,7 +64,7 @@ pub fn compute_cosmos_chain_key(chain_id: &str) -> [u8; 32] {
     outer_data[64 + 31] = 5; // String length "COSMW"
     outer_data[96..101].copy_from_slice(b"COSMW"); // String data
 
-    keccak256(&outer_data).into()
+    keccak256(outer_data).into()
 }
 
 // ============================================================================

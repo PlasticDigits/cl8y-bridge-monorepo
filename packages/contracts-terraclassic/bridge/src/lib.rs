@@ -21,13 +21,17 @@
 //! - Nonce tracking to prevent replay attacks
 //! - Emergency pause functionality
 
+pub mod address_codec;
 pub mod contract;
 pub mod error;
 mod execute;
+pub mod fee_manager;
 pub mod hash;
 pub mod msg;
 mod query;
 pub mod state;
 
+pub use crate::address_codec::UniversalAddress;
 pub use crate::error::ContractError;
+pub use crate::fee_manager::{calculate_fee, FeeConfig};
 pub use crate::hash::{compute_transfer_id, keccak256};

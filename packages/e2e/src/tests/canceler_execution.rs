@@ -328,10 +328,8 @@ pub async fn test_canceler_concurrent_fraud_handling(config: &E2eConfig) -> Test
         count
     };
 
-    if cancelled_count == fraud_results.len() {
-        TestResult::pass(name, start.elapsed())
-    } else if cancelled_count > 0 {
-        TestResult::pass(name, start.elapsed()) // Partial success
+    if cancelled_count > 0 {
+        TestResult::pass(name, start.elapsed()) // Full or partial success
     } else {
         TestResult::fail(
             name,

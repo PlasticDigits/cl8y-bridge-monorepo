@@ -120,10 +120,13 @@ impl TerraClient {
         }
     }
 
-    /// Fallback health check using legacy /node_info endpoint
+    /// Fallback health check using node_info endpoint
     async fn is_healthy_legacy(&self) -> Result<bool> {
         let client = Client::new();
-        let url = self.lcd_url.join("node_info")?;
+        // Use Cosmos SDK v1beta1 gRPC-gateway path
+        let url = self
+            .lcd_url
+            .join("cosmos/base/tendermint/v1beta1/node_info")?;
 
         match tokio::time::timeout(Duration::from_secs(5), client.get(url).send()).await {
             Ok(Ok(response)) => {
@@ -152,7 +155,10 @@ impl TerraClient {
     /// Get current block height
     pub async fn get_block_height(&self) -> Result<u64> {
         let client = Client::new();
-        let url = self.lcd_url.join("blocks/latest")?;
+        // Use Cosmos SDK v1beta1 gRPC-gateway path
+        let url = self
+            .lcd_url
+            .join("cosmos/base/tendermint/v1beta1/blocks/latest")?;
 
         let response = tokio::time::timeout(Duration::from_secs(5), client.get(url).send())
             .await
@@ -173,7 +179,10 @@ impl TerraClient {
     /// Check if chain is syncing
     pub async fn is_syncing(&self) -> Result<bool> {
         let client = Client::new();
-        let url = self.lcd_url.join("syncing")?;
+        // Use Cosmos SDK v1beta1 gRPC-gateway path
+        let url = self
+            .lcd_url
+            .join("cosmos/base/tendermint/v1beta1/syncing")?;
 
         match tokio::time::timeout(Duration::from_secs(5), client.get(url).send()).await {
             Ok(Ok(response)) => {
@@ -312,7 +321,10 @@ impl TerraClient {
     /// Get account balance for a denom
     pub async fn get_balance(&self, address: &str, denom: &str) -> Result<u128> {
         let client = Client::new();
-        let url = self.lcd_url.join(&format!("bank/balances/{}", address))?;
+        // Use Cosmos SDK v1beta1 gRPC-gateway path (legacy /bank/balances is deprecated)
+        let url = self
+            .lcd_url
+            .join(&format!("cosmos/bank/v1beta1/balances/{}", address))?;
 
         let response = tokio::time::timeout(Duration::from_secs(5), client.get(url).send())
             .await
@@ -342,7 +354,10 @@ impl TerraClient {
     /// Get all balances for an address
     pub async fn get_all_balances(&self, address: &str) -> Result<Vec<Coin>> {
         let client = Client::new();
-        let url = self.lcd_url.join(&format!("bank/balances/{}", address))?;
+        // Use Cosmos SDK v1beta1 gRPC-gateway path (legacy /bank/balances is deprecated)
+        let url = self
+            .lcd_url
+            .join(&format!("cosmos/bank/v1beta1/balances/{}", address))?;
 
         let response = tokio::time::timeout(Duration::from_secs(5), client.get(url).send())
             .await
@@ -665,39 +680,36 @@ impl TerraClient {
 
         while start.elapsed() < timeout {
             let client = Client::new();
-            let url = self.lcd_url.join(&format!("txs/{}", tx_hash))?;
+            // Use Cosmos SDK v1beta1 gRPC-gateway path (legacy /txs is deprecated)
+            let url = self
+                .lcd_url
+                .join(&format!("cosmos/tx/v1beta1/txs/{}", tx_hash))?;
 
             match tokio::time::timeout(Duration::from_secs(5), client.get(url).send()).await {
                 Ok(Ok(response)) => {
                     if response.status().is_success() {
-                        let txs: TxSearchResponse = response
-                            .json()
-                            .await
-                            .map_err(|e| eyre!("Failed to parse tx search response: {}", e))?;
+                        // Try to parse the response body
+                        match response.json::<TxV1Response>().await {
+                            Ok(tx_resp) => {
+                                let tx = &tx_resp.tx_response;
+                                // code == 0 means success in Cosmos SDK
+                                let success = tx.code == 0;
 
-                        if let Some(tx) = txs.txs.first() {
-                            let success = tx.logs.as_ref().map_or(false, |logs| {
-                                logs.iter().any(|log| {
-                                    log.events.iter().any(|event| {
-                                        event.type_ == "message"
-                                            && event.attributes.iter().any(|attr| {
-                                                attr.key == "action" && attr.value == "wasm"
-                                            })
-                                    })
-                                })
-                            });
-
-                            return Ok(TxResult {
-                                tx_hash: tx.hash.to_string(),
-                                height: tx.height,
-                                success,
-                                raw_log: tx
-                                    .logs
-                                    .as_ref()
-                                    .map(|logs| format!("{:?}", logs))
-                                    .unwrap_or_default(),
-                            });
+                                return Ok(TxResult {
+                                    tx_hash: tx.txhash.clone(),
+                                    height: tx.height,
+                                    success,
+                                    raw_log: tx.raw_log.clone(),
+                                });
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse tx response (will retry): {}", e);
+                                // Don't fail immediately, retry instead
+                            }
                         }
+                    } else if response.status().as_u16() == 404 {
+                        // Transaction not yet indexed, keep polling
+                        debug!("Transaction {} not yet found, retrying...", tx_hash);
                     }
                 }
                 Ok(Err(e)) => {
@@ -728,12 +740,12 @@ impl TerraClient {
             amount, denom, recipient
         );
 
+        // The Lock message only expects dest_chain_id and recipient.
+        // The tokens to lock are sent as attached funds via --amount flag.
         let msg = serde_json::json!({
             "lock": {
                 "dest_chain_id": dest_chain_id,
-                "recipient": recipient,
-                "amount": amount,
-                "denom": denom
+                "recipient": recipient
             }
         });
 
@@ -799,11 +811,44 @@ struct BankBalancesResponse {
     balances: Vec<Coin>,
 }
 
+/// Legacy tx search response (deprecated)
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct TxSearchResponse {
     txs: Vec<Tx>,
 }
 
+/// Cosmos SDK v1beta1 tx response format
+#[derive(Debug, Clone, serde::Deserialize)]
+struct TxV1Response {
+    tx_response: TxResponse,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct TxResponse {
+    txhash: String,
+    #[serde(deserialize_with = "deserialize_string_to_u64")]
+    height: u64,
+    #[serde(default)]
+    code: u32,
+    #[serde(default)]
+    raw_log: String,
+    #[serde(default)]
+    logs: Option<Vec<Log>>,
+}
+
+/// Deserialize string to u64 (Cosmos SDK returns heights as strings)
+fn deserialize_string_to_u64<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let s: String = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct Tx {
     hash: String,
@@ -811,17 +856,26 @@ struct Tx {
     logs: Option<Vec<Log>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct Log {
+    #[serde(default)]
+    msg_index: u64,
+    #[serde(default)]
+    log: String,
+    #[serde(default)]
     events: Vec<Event>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct Event {
+    #[serde(rename = "type")]
     type_: String,
     attributes: Vec<Attribute>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct Attribute {
     key: String,

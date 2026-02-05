@@ -5,19 +5,24 @@
 use cosmwasm_std::{Addr, Binary, Deps, Env, Order, StdError, StdResult, Uint128};
 use cw_storage_plus::Bound;
 
+use crate::fee_manager::{
+    calculate_fee, get_effective_fee_bps, get_fee_type, has_custom_fee, FeeConfig, FEE_CONFIG,
+};
 use crate::hash::compute_transfer_id;
 use crate::msg::{
-    CancelersResponse, ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse,
-    DepositInfoResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
+    AccountFeeResponse, CalculateFeeResponse, CancelersResponse, ChainResponse, ChainsResponse,
+    ComputeHashResponse, ConfigResponse, DepositInfoResponse, FeeConfigResponse,
+    HasCustomFeeResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
     NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PeriodUsageResponse,
-    RateLimitResponse, SimulationResponse, StatsResponse, StatusResponse, TokenResponse,
-    TokensResponse, TransactionResponse, VerifyDepositResponse, WithdrawApprovalResponse,
-    WithdrawDelayResponse,
+    RateLimitResponse, SimulationResponse, StatsResponse, StatusResponse, TokenDestMappingResponse,
+    TokenResponse, TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
+    WithdrawApprovalResponse, WithdrawDelayResponse,
 };
 use crate::state::{
     CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
     OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS,
-    STATS, TOKENS, TRANSACTIONS, USED_NONCES, WITHDRAW_APPROVALS, WITHDRAW_DELAY,
+    STATS, TOKENS, TOKEN_DEST_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_APPROVALS,
+    WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -530,4 +535,108 @@ pub fn query_period_usage(deps: Deps, env: Env, token: String) -> StdResult<Peri
         remaining_amount: remaining,
         period_ends_at,
     })
+}
+
+// ============================================================================
+// Fee Queries (V2)
+// ============================================================================
+
+/// Query fee configuration.
+pub fn query_fee_config(deps: Deps) -> StdResult<FeeConfigResponse> {
+    let config = CONFIG.load(deps.storage)?;
+    let fee_config = FEE_CONFIG
+        .may_load(deps.storage)?
+        .unwrap_or_else(|| FeeConfig::default_with_recipient(config.fee_collector.clone()));
+
+    Ok(FeeConfigResponse {
+        standard_fee_bps: fee_config.standard_fee_bps,
+        discounted_fee_bps: fee_config.discounted_fee_bps,
+        cl8y_threshold: fee_config.cl8y_threshold,
+        cl8y_token: fee_config.cl8y_token,
+        fee_recipient: fee_config.fee_recipient,
+    })
+}
+
+/// Query account fee info.
+pub fn query_account_fee(deps: Deps, account: String) -> StdResult<AccountFeeResponse> {
+    let account_addr = deps.api.addr_validate(&account)?;
+    let config = CONFIG.load(deps.storage)?;
+    let fee_config = FEE_CONFIG
+        .may_load(deps.storage)?
+        .unwrap_or_else(|| FeeConfig::default_with_recipient(config.fee_collector.clone()));
+
+    let fee_bps = get_effective_fee_bps(deps, &fee_config, &account_addr)?;
+    let fee_type = get_fee_type(deps, &fee_config, &account_addr)?;
+
+    Ok(AccountFeeResponse {
+        account: account_addr,
+        fee_bps,
+        fee_type: fee_type.as_str().to_string(),
+    })
+}
+
+/// Check if account has custom fee.
+pub fn query_has_custom_fee(deps: Deps, account: String) -> StdResult<HasCustomFeeResponse> {
+    let account_addr = deps.api.addr_validate(&account)?;
+    let has_custom = has_custom_fee(deps, &account_addr)?;
+
+    Ok(HasCustomFeeResponse {
+        has_custom_fee: has_custom,
+    })
+}
+
+/// Calculate fee for a specific depositor and amount.
+pub fn query_calculate_fee(
+    deps: Deps,
+    depositor: String,
+    amount: Uint128,
+) -> StdResult<CalculateFeeResponse> {
+    let depositor_addr = deps.api.addr_validate(&depositor)?;
+    let config = CONFIG.load(deps.storage)?;
+    let fee_config = FEE_CONFIG
+        .may_load(deps.storage)?
+        .unwrap_or_else(|| FeeConfig::default_with_recipient(config.fee_collector.clone()));
+
+    let fee_amount = calculate_fee(deps, &fee_config, &depositor_addr, amount)?;
+    let fee_bps = get_effective_fee_bps(deps, &fee_config, &depositor_addr)?;
+    let fee_type = get_fee_type(deps, &fee_config, &depositor_addr)?;
+
+    Ok(CalculateFeeResponse {
+        depositor: depositor_addr,
+        amount,
+        fee_amount,
+        fee_bps,
+        fee_type: fee_type.as_str().to_string(),
+    })
+}
+
+// ============================================================================
+// Token Registry Queries (V2)
+// ============================================================================
+
+/// Query token type.
+pub fn query_token_type(deps: Deps, token: String) -> StdResult<TokenTypeResponse> {
+    let token_config = TOKENS.load(deps.storage, token.clone())?;
+
+    Ok(TokenTypeResponse {
+        token,
+        token_type: token_config.token_type.as_str().to_string(),
+    })
+}
+
+/// Query token destination mapping.
+pub fn query_token_dest_mapping(
+    deps: Deps,
+    token: String,
+    dest_chain_id: u64,
+) -> StdResult<Option<TokenDestMappingResponse>> {
+    let mapping =
+        TOKEN_DEST_MAPPINGS.may_load(deps.storage, (&token, &dest_chain_id.to_string()))?;
+
+    Ok(mapping.map(|m| TokenDestMappingResponse {
+        token,
+        dest_chain_id,
+        dest_token: Binary::from(m.dest_token.to_vec()),
+        dest_decimals: m.dest_decimals,
+    }))
 }

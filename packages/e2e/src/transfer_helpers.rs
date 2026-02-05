@@ -13,11 +13,15 @@ use tracing::{debug, info, warn};
 use crate::evm::AnvilTimeClient;
 use crate::E2eConfig;
 
-/// Default timeout for polling operations (60 seconds)
-pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Default timeout for polling operations (120 seconds)
+/// Increased to account for operator processing and block confirmation
+pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Default interval between poll attempts (2 seconds)
-pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Initial interval between poll attempts (500ms for fast initial polling)
+pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Maximum interval between poll attempts (5 seconds)
+pub const MAX_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Withdrawal delay in seconds (default: 300s for watchtower pattern)
 pub const DEFAULT_WITHDRAW_DELAY: u64 = 300;
@@ -198,45 +202,61 @@ pub async fn poll_for_approval(
     timeout: Duration,
 ) -> Result<ApprovalInfo> {
     info!(
-        "Polling for approval of deposit nonce {} (timeout: {:?})",
-        deposit_nonce, timeout
+        nonce = deposit_nonce,
+        timeout_secs = timeout.as_secs(),
+        "Polling for EVM approval"
     );
 
     let start = Instant::now();
-    let mut interval = Duration::from_millis(500);
-    let max_interval = Duration::from_secs(5);
+    let mut interval = DEFAULT_POLL_INTERVAL;
+    let mut attempt = 0;
 
     while start.elapsed() < timeout {
+        attempt += 1;
+
         match query_approval_by_nonce(config, deposit_nonce).await {
             Ok(Some(approval)) => {
                 info!(
-                    "Found approval for nonce {}: hash=0x{}",
-                    deposit_nonce,
-                    hex::encode(approval.withdraw_hash)
+                    nonce = deposit_nonce,
+                    attempt = attempt,
+                    elapsed_secs = start.elapsed().as_secs(),
+                    hash = hex::encode(&approval.withdraw_hash.as_slice()[..8]),
+                    "Found EVM approval"
                 );
                 return Ok(approval);
             }
             Ok(None) => {
-                debug!(
-                    "No approval yet for nonce {}, waiting {:?}...",
-                    deposit_nonce, interval
-                );
+                // Log progress periodically
+                if attempt % 10 == 0 {
+                    debug!(
+                        nonce = deposit_nonce,
+                        attempt = attempt,
+                        elapsed_secs = start.elapsed().as_secs(),
+                        "Still waiting for EVM approval"
+                    );
+                }
             }
             Err(e) => {
-                warn!("Error querying approval: {}", e);
+                debug!(
+                    nonce = deposit_nonce,
+                    attempt = attempt,
+                    error = %e,
+                    "Error querying EVM approval (will retry)"
+                );
             }
         }
 
         tokio::time::sleep(interval).await;
 
         // Exponential backoff with cap
-        interval = std::cmp::min(interval * 2, max_interval);
+        interval = std::cmp::min(interval * 2, MAX_POLL_INTERVAL);
     }
 
     Err(eyre!(
-        "Timeout waiting for approval of nonce {} after {:?}",
+        "Timeout waiting for approval of nonce {} after {:?} ({} attempts)",
         deposit_nonce,
-        timeout
+        timeout,
+        attempt
     ))
 }
 

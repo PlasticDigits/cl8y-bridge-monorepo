@@ -1,0 +1,53 @@
+[package]
+name = "multichain-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["CL8Y Team"]
+description = "Shared cross-chain library for CL8Y Bridge (operator, canceler, e2e tests)"
+license = "AGPL-3.0-only"
+
+[features]
+default = ["evm", "terra"]
+evm = []
+terra = []
+testing = []
+full = ["evm", "terra", "testing"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full", "signal"] }
+async-trait = "0.1"
+
+# EVM interactions
+alloy = { version = "0.8", features = ["full"] }
+
+# Cosmos/Terra interactions
+# Compatible with LocalTerra CometBFT v0.37.18, terrad v3.6.2, wasmvm v1.5.9
+cosmrs = { version = "0.17", features = ["cosmwasm"] }
+cosmwasm-std = "1.5"
+tendermint = "0.37"
+tendermint-rpc = { version = "0.37", features = ["http-client"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+eyre = "0.6"
+thiserror = "1.0"
+
+# Utilities
+hex = "0.4"
+base64 = "0.22"
+bip39 = "2.0"
+bech32 = "0.9"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
