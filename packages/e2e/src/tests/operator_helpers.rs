@@ -803,11 +803,18 @@ pub async fn is_token_registered_for_chain(
     token: Address,
     dest_chain_key: [u8; 32],
 ) -> Result<bool> {
+    // Check for zero addresses which indicate contracts not deployed
+    if config.evm.contracts.token_registry == Address::ZERO {
+        return Err(eyre::eyre!(
+            "TokenRegistry address is zero - contracts not deployed. Run 'cl8y-e2e setup' first."
+        ));
+    }
+
     let client = reqwest::Client::new();
 
-    // isTokenDestChainKeyRegistered(address,bytes32) selector: 0x8f7c6a4d
-    // Computed via: cast sig "isTokenDestChainKeyRegistered(address,bytes32)"
-    let selector = "8f7c6a4d";
+    // isTokenDestChainKeyRegistered(address,bytes32) selector: 0xb2072f30
+    // Verified via: cast sig "isTokenDestChainKeyRegistered(address,bytes32)"
+    let selector = "b2072f30";
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let chain_key_hex = hex::encode(dest_chain_key);
     let call_data = format!("0x{}{}{}", selector, token_padded, chain_key_hex);
