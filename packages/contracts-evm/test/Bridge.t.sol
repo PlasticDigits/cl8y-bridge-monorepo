@@ -76,10 +76,12 @@ contract BridgeTest is Test {
         ERC1967Proxy chainProxy = new ERC1967Proxy(address(chainImpl), chainInitData);
         chainRegistry = ChainRegistry(address(chainProxy));
 
-        // Register chains
+        // Register chains with predetermined IDs
+        thisChainId = bytes4(uint32(1));
+        destChainId = bytes4(uint32(2));
         vm.startPrank(operator);
-        thisChainId = chainRegistry.registerChain("evm_31337");
-        destChainId = chainRegistry.registerChain("terraclassic_localterra");
+        chainRegistry.registerChain("evm_31337", thisChainId);
+        chainRegistry.registerChain("terraclassic_localterra", destChainId);
         vm.stopPrank();
 
         // Deploy TokenRegistry
@@ -100,10 +102,11 @@ contract BridgeTest is Test {
         ERC1967Proxy mintProxy = new ERC1967Proxy(address(mintImpl), mintInitData);
         mintBurn = MintBurn(address(mintProxy));
 
-        // Deploy Bridge
+        // Deploy Bridge (thisChainId is set during initialization)
         Bridge bridgeImpl = new Bridge();
         bytes memory bridgeInitData = abi.encodeCall(
-            Bridge.initialize, (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn)
+            Bridge.initialize,
+            (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn, thisChainId)
         );
         ERC1967Proxy bridgeProxy = new ERC1967Proxy(address(bridgeImpl), bridgeInitData);
         bridge = Bridge(payable(address(bridgeProxy)));
@@ -113,7 +116,6 @@ contract BridgeTest is Test {
         lockUnlock.addAuthorizedCaller(address(bridge));
         mintBurn.addAuthorizedCaller(address(bridge));
         bridge.addCanceler(canceler);
-        bridge.setThisChainId(thisChainId);
         vm.stopPrank();
 
         // Deploy tokens

@@ -23,7 +23,7 @@ use cosmwasm_std::Binary;
 use crate::hash::{hex_to_bytes32, keccak256};
 use crate::state::{
     ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenType, CANCELERS, CHAINS,
-    CHAIN_BY_IDENTIFIER, CHAIN_COUNTER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
+    CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
     TOKEN_DEST_MAPPINGS, WITHDRAW_DELAY,
 };
 
@@ -130,16 +130,39 @@ pub fn execute_set_rate_limit(
 // Chain Management
 // ============================================================================
 
-/// Add a new supported chain.
-/// Register a new chain with auto-incrementing 4-byte chain ID.
+/// Register a new chain with a predetermined 4-byte chain ID.
 pub fn execute_register_chain(
     deps: DepsMut,
     info: MessageInfo,
     identifier: String,
+    chain_id_bin: cosmwasm_std::Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
+    }
+
+    // Parse and validate chain ID (must be exactly 4 bytes)
+    if chain_id_bin.len() != 4 {
+        return Err(ContractError::InvalidAddress {
+            reason: format!(
+                "chain_id must be exactly 4 bytes, got {}",
+                chain_id_bin.len()
+            ),
+        });
+    }
+    let chain_id: [u8; 4] = [
+        chain_id_bin[0],
+        chain_id_bin[1],
+        chain_id_bin[2],
+        chain_id_bin[3],
+    ];
+
+    // Chain ID 0x00000000 is reserved/invalid
+    if chain_id == [0u8; 4] {
+        return Err(ContractError::InvalidAddress {
+            reason: "chain_id 0x00000000 is reserved/invalid".to_string(),
+        });
     }
 
     // Check identifier not already registered
@@ -152,10 +175,12 @@ pub fn execute_register_chain(
         });
     }
 
-    // Auto-increment chain counter (starts at 1)
-    let counter = CHAIN_COUNTER.may_load(deps.storage)?.unwrap_or(0) + 1;
-    let chain_id: [u8; 4] = counter.to_be_bytes();
-    CHAIN_COUNTER.save(deps.storage, &counter)?;
+    // Check chain ID not already in use
+    if CHAINS.may_load(deps.storage, &chain_id)?.is_some() {
+        return Err(ContractError::InvalidAddress {
+            reason: format!("Chain ID 0x{} already in use", hex::encode(chain_id)),
+        });
+    }
 
     let identifier_hash = keccak256(identifier.as_bytes());
 
@@ -172,6 +197,51 @@ pub fn execute_register_chain(
         .add_attribute("action", "register_chain")
         .add_attribute("chain_id", format!("0x{}", hex::encode(chain_id)))
         .add_attribute("identifier", identifier))
+}
+
+/// Unregister an existing chain by its 4-byte chain ID.
+pub fn execute_unregister_chain(
+    deps: DepsMut,
+    info: MessageInfo,
+    chain_id_bin: cosmwasm_std::Binary,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    // Parse chain ID
+    if chain_id_bin.len() != 4 {
+        return Err(ContractError::InvalidAddress {
+            reason: format!(
+                "chain_id must be exactly 4 bytes, got {}",
+                chain_id_bin.len()
+            ),
+        });
+    }
+    let chain_id: [u8; 4] = [
+        chain_id_bin[0],
+        chain_id_bin[1],
+        chain_id_bin[2],
+        chain_id_bin[3],
+    ];
+
+    // Load existing chain config (must exist)
+    let chain =
+        CHAINS
+            .may_load(deps.storage, &chain_id)?
+            .ok_or_else(|| ContractError::InvalidAddress {
+                reason: format!("Chain ID 0x{} not registered", hex::encode(chain_id)),
+            })?;
+
+    // Remove from both maps
+    CHAINS.remove(deps.storage, &chain_id);
+    CHAIN_BY_IDENTIFIER.remove(deps.storage, &chain.identifier);
+
+    Ok(Response::new()
+        .add_attribute("action", "unregister_chain")
+        .add_attribute("chain_id", format!("0x{}", hex::encode(chain_id)))
+        .add_attribute("identifier", chain.identifier))
 }
 
 /// Update an existing chain configuration (enable/disable).

@@ -64,6 +64,7 @@ fn setup() -> (App, Addr, Addr, Addr) {
                 max_bridge_amount: Uint128::from(1_000_000_000_000u128),
                 fee_bps: 30,
                 fee_collector: admin.to_string(),
+                this_chain_id: Binary::from(vec![0, 0, 0, 1]),
             },
             &[],
             "cl8y-bridge",
@@ -88,6 +89,7 @@ fn setup() -> (App, Addr, Addr, Addr) {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "bsc_56".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -775,7 +777,7 @@ fn test_lock_stores_deposit_hash() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account_bytes.to_vec()),
         },
         &coins(1_000_000, "uluna"),

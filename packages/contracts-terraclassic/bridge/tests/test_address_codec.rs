@@ -51,6 +51,7 @@ fn setup_bridge() -> (App, Addr) {
                 max_bridge_amount: Uint128::from(1_000_000_000_000u128),
                 fee_bps: 30,
                 fee_collector: admin.to_string(),
+                this_chain_id: Binary::from(vec![0, 0, 0, 1]),
             },
             &[],
             "cl8y-bridge",
@@ -64,6 +65,7 @@ fn setup_bridge() -> (App, Addr) {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -335,7 +337,7 @@ fn test_deposit_with_evm_dest_account() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_bytes32.to_vec()),
         },
         &coins(1_000_000, "uluna"),
@@ -375,7 +377,7 @@ fn test_deposit_with_32_byte_dest_account() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account_bytes.to_vec()),
         },
         &coins(1_000_000, "uluna"),
@@ -398,7 +400,7 @@ fn test_deposit_rejects_invalid_dest_account_length() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(vec![0xAB; 20]),
         },
         &coins(1_000_000, "uluna"),

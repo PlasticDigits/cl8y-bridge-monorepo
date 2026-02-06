@@ -2,6 +2,7 @@
 //!
 //! This module contains helper functions for creating fraudulent approvals,
 //! checking cancellation status, and computing chain keys.
+#![allow(dead_code)]
 
 use crate::E2eConfig;
 use alloy::primitives::{keccak256, Address, B256};
@@ -86,6 +87,13 @@ pub struct FraudulentApprovalResult {
 ///
 /// This creates an approval that has no matching deposit (fraud scenario).
 /// Uses the new 2-step withdraw flow.
+///
+/// IMPORTANT: `src_chain_key` must have a registered bytes4 chain ID in the first 4 bytes,
+/// and `token` must be a registered token. The fraud aspect comes from using a nonce
+/// that has no matching deposit on the source chain.
+///
+/// The withdrawHash is extracted from the WithdrawSubmit event log (topics[1])
+/// rather than computed locally, ensuring it always matches the contract.
 pub async fn create_fraudulent_approval(
     config: &E2eConfig,
     src_chain_key: B256,
@@ -94,33 +102,19 @@ pub async fn create_fraudulent_approval(
     amount: &str,
     nonce: u64,
 ) -> eyre::Result<FraudulentApprovalResult> {
-    use super::helpers::compute_withdraw_hash;
-    use alloy::primitives::U256;
-
     let client = reqwest::Client::new();
 
     // Create destAccount (the recipient's address as bytes32, left-padded)
     let mut dest_account_bytes = [0u8; 32];
     dest_account_bytes[12..32].copy_from_slice(recipient.as_slice());
-    let dest_account_b256 = B256::from(dest_account_bytes);
 
     // Create a fake srcAccount
     let mut src_account_bytes = [0u8; 32];
     src_account_bytes[0..8].copy_from_slice(&nonce.to_be_bytes());
     src_account_bytes[8] = 0xff;
 
-    // Parse amount to u256
+    // Parse amount to u128
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
-
-    // Compute the withdraw hash for later querying
-    let withdraw_hash = compute_withdraw_hash(
-        src_chain_key,
-        config.evm.chain_id,
-        token,
-        dest_account_b256,
-        U256::from(amount_u256),
-        nonce,
-    );
 
     // --- Step 1: withdrawSubmit ---
     let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
@@ -144,8 +138,8 @@ pub async fn create_fraudulent_approval(
     );
 
     debug!(
-        "Creating fraudulent withdrawal (submit): srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}",
-        hex::encode(&src_chain_key.as_slice()[..8]),
+        "Creating fraudulent withdrawal (submit): srcChain=0x{}, token={}, recipient={}, amount={}, nonce={}",
+        hex::encode(src_chain_bytes4),
         token,
         recipient,
         amount,
@@ -178,8 +172,60 @@ pub async fn create_fraudulent_approval(
         .as_str()
         .ok_or_else(|| eyre::eyre!("No tx hash in response"))?;
 
-    let _submit_tx = B256::from_slice(&hex::decode(submit_tx_hex.trim_start_matches("0x"))?);
+    let submit_tx = B256::from_slice(&hex::decode(submit_tx_hex.trim_start_matches("0x"))?);
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Extract withdrawHash from WithdrawSubmit event log (indexed topics[1])
+    let receipt_response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [format!("0x{}", hex::encode(submit_tx))],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let receipt_body: serde_json::Value = receipt_response.json().await?;
+    let receipt = receipt_body
+        .get("result")
+        .ok_or_else(|| eyre::eyre!("No receipt for withdrawSubmit tx"))?;
+
+    // Check receipt status
+    let status = receipt
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("0x0");
+    if status != "0x1" {
+        return Err(eyre::eyre!(
+            "withdrawSubmit reverted on-chain. Ensure srcChain (0x{}) is registered in ChainRegistry \
+             and token ({}) is registered in TokenRegistry.",
+            hex::encode(src_chain_bytes4),
+            token
+        ));
+    }
+
+    // Parse WithdrawSubmit event: topics[0] = event sig, topics[1] = withdrawHash (indexed)
+    let logs = receipt
+        .get("logs")
+        .and_then(|l| l.as_array())
+        .ok_or_else(|| eyre::eyre!("No logs in withdrawSubmit receipt"))?;
+
+    let withdraw_hash = logs
+        .iter()
+        .find_map(|log| {
+            let topics = log.get("topics")?.as_array()?;
+            if topics.len() >= 2 {
+                let topic_hex = topics[1].as_str()?;
+                let bytes = hex::decode(topic_hex.trim_start_matches("0x")).ok()?;
+                if bytes.len() == 32 {
+                    return Some(B256::from_slice(&bytes));
+                }
+            }
+            None
+        })
+        .ok_or_else(|| eyre::eyre!("Could not extract withdrawHash from WithdrawSubmit event"))?;
 
     // --- Step 2: withdrawApprove ---
     let approve_sel = selector("withdrawApprove(bytes32)");

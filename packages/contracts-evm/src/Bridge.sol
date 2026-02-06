@@ -134,6 +134,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @param _tokenRegistry The token registry contract
     /// @param _lockUnlock The lock/unlock handler
     /// @param _mintBurn The mint/burn handler
+    /// @param _thisChainId The predetermined chain ID for this chain (must be registered in ChainRegistry)
     function initialize(
         address admin,
         address operator,
@@ -141,7 +142,8 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         ChainRegistry _chainRegistry,
         TokenRegistry _tokenRegistry,
         LockUnlock _lockUnlock,
-        MintBurn _mintBurn
+        MintBurn _mintBurn,
+        bytes4 _thisChainId
     ) public initializer {
         __Ownable_init(admin);
         __Pausable_init();
@@ -150,6 +152,12 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         tokenRegistry = _tokenRegistry;
         lockUnlock = _lockUnlock;
         mintBurn = _mintBurn;
+
+        // Set this chain's ID (must be registered in ChainRegistry)
+        if (!_chainRegistry.isChainRegistered(_thisChainId)) {
+            revert ChainNotRegistered(_thisChainId);
+        }
+        thisChainId = _thisChainId;
 
         // Set initial operator
         operators[operator] = true;
@@ -176,15 +184,6 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Unpause the bridge
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    /// @notice Set this chain's ID
-    /// @param _thisChainId The chain ID for this chain
-    function setThisChainId(bytes4 _thisChainId) external onlyOwner {
-        if (!chainRegistry.isChainRegistered(_thisChainId)) {
-            revert ChainNotRegistered(_thisChainId);
-        }
-        thisChainId = _thisChainId;
     }
 
     /// @notice Set the wrapped native token address

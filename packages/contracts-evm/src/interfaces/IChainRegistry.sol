@@ -2,17 +2,21 @@
 pragma solidity ^0.8.30;
 
 /// @title IChainRegistry
-/// @notice Interface for the V2 chain registry with 4-byte chain IDs
+/// @notice Interface for the V2 chain registry with predetermined 4-byte chain IDs
 interface IChainRegistry {
     // ============================================================================
     // Events
     // ============================================================================
 
     /// @notice Emitted when a new chain is registered
-    /// @param chainId The assigned 4-byte chain ID
+    /// @param chainId The caller-specified 4-byte chain ID
     /// @param identifier The chain identifier string
     /// @param hash The keccak256 hash of the identifier
     event ChainRegistered(bytes4 indexed chainId, string identifier, bytes32 hash);
+
+    /// @notice Emitted when a chain is unregistered
+    /// @param chainId The 4-byte chain ID that was removed
+    event ChainUnregistered(bytes4 indexed chainId);
 
     // ============================================================================
     // Errors
@@ -21,8 +25,14 @@ interface IChainRegistry {
     /// @notice Thrown when chain is not registered
     error ChainNotRegistered(bytes4 chainId);
 
-    /// @notice Thrown when chain is already registered
+    /// @notice Thrown when chain identifier is already registered
     error ChainAlreadyRegistered(string identifier);
+
+    /// @notice Thrown when the specified chain ID is already in use
+    error ChainIdAlreadyInUse(bytes4 chainId);
+
+    /// @notice Thrown when bytes4(0) is passed as a chain ID (reserved/invalid)
+    error InvalidChainId();
 
     /// @notice Thrown when caller is not operator
     error Unauthorized();
@@ -31,10 +41,14 @@ interface IChainRegistry {
     // Chain Registration (Operator-only)
     // ============================================================================
 
-    /// @notice Register a new chain
+    /// @notice Register a new chain with a predetermined chain ID
     /// @param identifier The chain identifier (e.g., "evm_1", "terraclassic_columbus-5")
-    /// @return chainId The assigned 4-byte chain ID
-    function registerChain(string calldata identifier) external returns (bytes4 chainId);
+    /// @param chainId The caller-specified 4-byte chain ID (must not be bytes4(0))
+    function registerChain(string calldata identifier, bytes4 chainId) external;
+
+    /// @notice Unregister an existing chain
+    /// @param chainId The 4-byte chain ID to remove
+    function unregisterChain(bytes4 chainId) external;
 
     // ============================================================================
     // View Functions
@@ -58,8 +72,4 @@ interface IChainRegistry {
     /// @notice Get all registered chain IDs
     /// @return chainIds Array of registered chain IDs
     function getRegisteredChains() external view returns (bytes4[] memory chainIds);
-
-    /// @notice Get the next chain ID that will be assigned
-    /// @return nextId The next chain ID
-    function getNextChainId() external view returns (bytes4 nextId);
 }

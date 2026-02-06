@@ -185,12 +185,23 @@ impl E2eSetup {
         Ok(())
     }
 
-    /// Register Terra chain on ChainRegistry via registerChain("terraclassic_localterra")
+    /// Register Terra chain on ChainRegistry via registerChain("terraclassic_localterra", bytes4)
     ///
-    /// This registers the Terra chain (localterra) on the EVM ChainRegistry,
-    /// returning the assigned 4-byte chain ID for use in token registration.
-    pub async fn register_chain_keys(&self, deployed: &DeployedContracts) -> Result<ChainId4> {
-        info!("Registering Terra chain on ChainRegistry");
+    /// This registers the Terra chain (localterra) on the EVM ChainRegistry
+    /// with a predetermined 4-byte chain ID.
+    ///
+    /// # Arguments
+    /// * `deployed` - Deployed contract addresses
+    /// * `predetermined_id` - The predetermined 4-byte chain ID for Terra (e.g., 0x00000002)
+    pub async fn register_chain_keys(
+        &self,
+        deployed: &DeployedContracts,
+        predetermined_id: ChainId4,
+    ) -> Result<ChainId4> {
+        info!(
+            "Registering Terra chain on ChainRegistry with predetermined ID: 0x{}",
+            hex::encode(predetermined_id)
+        );
 
         // Use test account's private key (Anvil's default account)
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
@@ -200,6 +211,7 @@ impl E2eSetup {
         let chain_id4 = chain_config::register_cosmw_chain_key(
             deployed.chain_registry,
             chain_id,
+            predetermined_id,
             rpc_url,
             &private_key,
         )
@@ -279,8 +291,10 @@ impl E2eSetup {
         // ================================================================
         // Register for EVM destination chain (for EVM-to-EVM transfers)
         // ================================================================
-        // First, register the EVM chain key if not already registered
+        // The EVM chain is already registered during deployment (DeployLocal.s.sol)
+        // with predetermined ID 0x00000001. We just look it up here.
         let evm_chain_id = self.config.evm.chain_id;
+        let evm_predetermined_id = ChainId4::from_slice(&1u32.to_be_bytes());
         info!(
             "Registering EVM chain key for chain ID {} (for EVM-to-EVM transfers)",
             evm_chain_id
@@ -289,6 +303,7 @@ impl E2eSetup {
         match chain_config::register_evm_chain_key(
             deployed.chain_registry,
             evm_chain_id,
+            evm_predetermined_id,
             rpc_url,
             &private_key,
         )

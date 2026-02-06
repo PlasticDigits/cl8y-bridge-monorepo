@@ -87,7 +87,7 @@ pub fn execute_withdraw_submit(
             })?;
 
     // Compute destination chain (this chain)
-    let dest_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let dest_chain = THIS_CHAIN_ID.load(deps.storage)?;
 
     // Encode token for hash computation
     let token_bytes32 = encode_token_address(deps.as_ref(), &token)?;

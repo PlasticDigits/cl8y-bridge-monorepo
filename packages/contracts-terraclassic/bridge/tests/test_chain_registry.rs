@@ -1,6 +1,6 @@
 //! Integration tests for the Chain Registry system.
 //!
-//! Tests chain registration with auto-incrementing 4-byte IDs, duplicate
+//! Tests chain registration with predetermined 4-byte IDs, duplicate
 //! rejection, chain enable/disable, query by ID, query all chains, and
 //! chain validation in deposit flows.
 
@@ -49,6 +49,7 @@ fn setup() -> (App, Addr) {
                 max_bridge_amount: Uint128::from(1_000_000_000_000u128),
                 fee_bps: 30,
                 fee_collector: admin.to_string(),
+                this_chain_id: Binary::from(vec![0, 0, 0, 1]),
             },
             &[],
             "cl8y-bridge",
@@ -74,6 +75,7 @@ fn test_register_single_chain() {
             contract_addr.clone(),
             &ExecuteMsg::RegisterChain {
                 identifier: "evm_1".to_string(),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
             &[],
         )
@@ -88,8 +90,7 @@ fn test_register_single_chain() {
         .map(|a| a.value.clone())
         .unwrap();
 
-    // First chain should be 0x00000001
-    assert_eq!(chain_id_attr, "0x00000001");
+    assert_eq!(chain_id_attr, "0x00000002");
 
     // Check identifier attribute
     let identifier_attr = res
@@ -103,25 +104,26 @@ fn test_register_single_chain() {
 }
 
 #[test]
-fn test_register_multiple_chains_auto_increment() {
+fn test_register_multiple_chains_predetermined() {
     let (mut app, contract_addr) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    let identifiers = vec![
-        "evm_1",
-        "evm_56",
-        "evm_31337",
-        "terraclassic_columbus-5",
-        "terraclassic_localterra",
+    let chains = vec![
+        ("evm_1", vec![0, 0, 0, 2]),
+        ("evm_56", vec![0, 0, 0, 3]),
+        ("evm_31337", vec![0, 0, 0, 4]),
+        ("terraclassic_columbus-5", vec![0, 0, 0, 5]),
+        ("terraclassic_localterra", vec![0, 0, 0, 6]),
     ];
 
-    for (i, identifier) in identifiers.iter().enumerate() {
+    for (identifier, chain_id_bytes) in &chains {
         let res = app
             .execute_contract(
                 admin.clone(),
                 contract_addr.clone(),
                 &ExecuteMsg::RegisterChain {
                     identifier: identifier.to_string(),
+                    chain_id: Binary::from(chain_id_bytes.clone()),
                 },
                 &[],
             )
@@ -135,7 +137,7 @@ fn test_register_multiple_chains_auto_increment() {
             .map(|a| a.value.clone())
             .unwrap();
 
-        let expected = format!("0x{:08x}", i + 1);
+        let expected = format!("0x{}", hex::encode(chain_id_bytes));
         assert_eq!(
             chain_id_attr, expected,
             "Chain {} should have ID {}",
@@ -162,6 +164,7 @@ fn test_register_chain_rejects_duplicate_identifier() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -173,6 +176,7 @@ fn test_register_chain_rejects_duplicate_identifier() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 3]),
         },
         &[],
     );
@@ -187,6 +191,67 @@ fn test_register_chain_rejects_duplicate_identifier() {
 }
 
 #[test]
+fn test_register_chain_rejects_duplicate_chain_id() {
+    let (mut app, contract_addr) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // First registration succeeds
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Second registration with same chain ID but different identifier should fail
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_56".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("already in use"),
+        "Expected chain ID already in use error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_register_chain_rejects_zero_chain_id() {
+    let (mut app, contract_addr) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 0]),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("reserved") || err_str.contains("invalid"),
+        "Expected reserved/invalid chain ID error, got: {}",
+        err_str
+    );
+}
+
+#[test]
 fn test_register_chain_non_admin_rejected() {
     let (mut app, contract_addr) = setup();
     let random = Addr::unchecked("terra1random");
@@ -196,6 +261,7 @@ fn test_register_chain_non_admin_rejected() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     );
@@ -207,6 +273,97 @@ fn test_register_chain_non_admin_rejected() {
         "Expected unauthorized error, got: {}",
         err_str
     );
+}
+
+// ============================================================================
+// Unregister Chain Tests
+// ============================================================================
+
+#[test]
+fn test_unregister_chain() {
+    let (mut app, contract_addr) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Unregister
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::UnregisterChain {
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Query should fail
+    let res: Result<ChainResponse, _> = app.wrap().query_wasm_smart(
+        &contract_addr,
+        &QueryMsg::Chain {
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_unregister_chain_can_reregister() {
+    let (mut app, contract_addr) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::UnregisterChain {
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Can re-register same identifier with different ID
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 3]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    let chain: ChainResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::Chain {
+                chain_id: Binary::from(vec![0, 0, 0, 3]),
+            },
+        )
+        .unwrap();
+    assert_eq!(chain.identifier, "evm_1");
 }
 
 // ============================================================================
@@ -223,6 +380,7 @@ fn test_query_chain_by_id() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_56".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -233,14 +391,14 @@ fn test_query_chain_by_id() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 1]),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
         )
         .unwrap();
 
     assert_eq!(chain.identifier, "evm_56");
     assert!(chain.enabled);
-    assert_eq!(chain.chain_id, Binary::from(vec![0, 0, 0, 1]));
+    assert_eq!(chain.chain_id, Binary::from(vec![0, 0, 0, 2]));
     // Identifier hash should be 32 bytes (keccak256)
     assert_eq!(chain.identifier_hash.len(), 32);
 }
@@ -250,20 +408,25 @@ fn test_query_all_chains() {
     let (mut app, contract_addr) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    let identifiers = ["evm_1", "evm_56", "terraclassic_columbus-5"];
-    for ident in &identifiers {
+    let chains = [
+        ("evm_1", vec![0, 0, 0, 2]),
+        ("evm_56", vec![0, 0, 0, 3]),
+        ("terraclassic_columbus-5", vec![0, 0, 0, 4]),
+    ];
+    for (ident, id) in &chains {
         app.execute_contract(
             admin.clone(),
             contract_addr.clone(),
             &ExecuteMsg::RegisterChain {
                 identifier: ident.to_string(),
+                chain_id: Binary::from(id.clone()),
             },
             &[],
         )
         .unwrap();
     }
 
-    let chains: ChainsResponse = app
+    let chains_resp: ChainsResponse = app
         .wrap()
         .query_wasm_smart(
             &contract_addr,
@@ -274,7 +437,7 @@ fn test_query_all_chains() {
         )
         .unwrap();
 
-    assert_eq!(chains.chains.len(), 3);
+    assert_eq!(chains_resp.chains.len(), 3);
 }
 
 #[test]
@@ -282,13 +445,14 @@ fn test_query_chains_pagination() {
     let (mut app, contract_addr) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    // Register 5 chains
+    // Register 5 chains with predetermined IDs
     for i in 1..=5 {
         app.execute_contract(
             admin.clone(),
             contract_addr.clone(),
             &ExecuteMsg::RegisterChain {
                 identifier: format!("chain_{}", i),
+                chain_id: Binary::from(vec![0, 0, 0, (i + 1) as u8]),
             },
             &[],
         )
@@ -349,6 +513,7 @@ fn test_update_chain_disable() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -359,7 +524,7 @@ fn test_update_chain_disable() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::UpdateChain {
-            chain_id: Binary::from(vec![0, 0, 0, 1]),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
             enabled: Some(false),
         },
         &[],
@@ -371,7 +536,7 @@ fn test_update_chain_disable() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 1]),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
         )
         .unwrap();
@@ -389,6 +554,7 @@ fn test_update_chain_reenable() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -399,7 +565,7 @@ fn test_update_chain_reenable() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::UpdateChain {
-            chain_id: Binary::from(vec![0, 0, 0, 1]),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
             enabled: Some(false),
         },
         &[],
@@ -410,7 +576,7 @@ fn test_update_chain_reenable() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::UpdateChain {
-            chain_id: Binary::from(vec![0, 0, 0, 1]),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
             enabled: Some(true),
         },
         &[],
@@ -422,7 +588,7 @@ fn test_update_chain_reenable() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 1]),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
         )
         .unwrap();
@@ -459,6 +625,7 @@ fn test_update_chain_non_admin_rejected() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -468,7 +635,7 @@ fn test_update_chain_non_admin_rejected() {
         random.clone(),
         contract_addr.clone(),
         &ExecuteMsg::UpdateChain {
-            chain_id: Binary::from(vec![0, 0, 0, 1]),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
             enabled: Some(false),
         },
         &[],
@@ -492,6 +659,7 @@ fn test_deposit_to_registered_chain_succeeds() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -521,7 +689,7 @@ fn test_deposit_to_registered_chain_succeeds() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account.to_vec()),
         },
         &coins(1_000_000, "uluna"),
@@ -535,12 +703,13 @@ fn test_deposit_to_unregistered_chain_rejected() {
     let (mut app, contract_addr) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    // Register chain 1 but try to deposit to chain 99
+    // Register chain 2 but try to deposit to chain 99
     app.execute_contract(
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -596,6 +765,7 @@ fn test_deposit_to_disabled_chain_rejected() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -605,7 +775,7 @@ fn test_deposit_to_disabled_chain_rejected() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::UpdateChain {
-            chain_id: Binary::from(vec![0, 0, 0, 1]),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
             enabled: Some(false),
         },
         &[],
@@ -636,7 +806,7 @@ fn test_deposit_to_disabled_chain_rejected() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::DepositNative {
-            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account.to_vec()),
         },
         &coins(1_000_000, "uluna"),
@@ -665,6 +835,7 @@ fn test_chain_identifier_hash_is_keccak256() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -675,7 +846,7 @@ fn test_chain_identifier_hash_is_keccak256() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 1]),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
         )
         .unwrap();
@@ -689,6 +860,7 @@ fn test_chain_identifier_hash_is_keccak256() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 3]),
         },
         &[],
     );
@@ -705,6 +877,7 @@ fn test_different_identifiers_different_hashes() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -715,6 +888,7 @@ fn test_different_identifiers_different_hashes() {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_56".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 3]),
         },
         &[],
     )
@@ -725,7 +899,7 @@ fn test_different_identifiers_different_hashes() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 1]),
+                chain_id: Binary::from(vec![0, 0, 0, 2]),
             },
         )
         .unwrap();
@@ -735,7 +909,7 @@ fn test_different_identifiers_different_hashes() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::Chain {
-                chain_id: Binary::from(vec![0, 0, 0, 2]),
+                chain_id: Binary::from(vec![0, 0, 0, 3]),
             },
         )
         .unwrap();

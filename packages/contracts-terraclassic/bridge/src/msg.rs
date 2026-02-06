@@ -32,6 +32,8 @@ pub struct InstantiateMsg {
     pub fee_bps: u32,
     /// Fee collector address
     pub fee_collector: String,
+    /// This chain's predetermined 4-byte chain ID (Binary of exactly 4 bytes)
+    pub this_chain_id: Binary,
 }
 
 // ============================================================================
@@ -178,12 +180,22 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Chain & Token Management
     // ========================================================================
-    /// Register a new chain (auto-assigns 4-byte chain ID)
+    /// Register a new chain with a predetermined 4-byte chain ID
     ///
     /// Authorization: Admin only
     RegisterChain {
         /// Human-readable identifier (e.g., "evm_1", "terraclassic_columbus-5")
         identifier: String,
+        /// Predetermined 4-byte chain ID (Binary of exactly 4 bytes, must not be 0x00000000)
+        chain_id: Binary,
+    },
+
+    /// Unregister an existing chain
+    ///
+    /// Authorization: Admin only
+    UnregisterChain {
+        /// 4-byte registered chain ID to remove
+        chain_id: Binary,
     },
 
     /// Update chain configuration (enable/disable)

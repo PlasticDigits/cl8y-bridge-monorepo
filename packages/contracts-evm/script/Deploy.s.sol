@@ -26,12 +26,14 @@ contract Deploy is Script {
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address operator = vm.envAddress("OPERATOR_ADDRESS");
         address feeRecipient = vm.envAddress("FEE_RECIPIENT_ADDRESS");
+        string memory chainIdentifier = vm.envString("CHAIN_IDENTIFIER");
+        bytes4 thisChainId = bytes4(uint32(vm.envUint("THIS_CHAIN_ID")));
 
         vm.startBroadcast();
 
         // Deploy all contracts
         (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(admin, operator, feeRecipient);
+            deployAll(admin, operator, feeRecipient, chainIdentifier, thisChainId);
 
         vm.stopBroadcast();
 
@@ -53,7 +55,13 @@ contract Deploy is Script {
     /// @return lockUnlock_ The lock/unlock proxy address
     /// @return mintBurn_ The mint/burn proxy address
     /// @return bridge_ The bridge proxy address
-    function deployAll(address admin, address operator, address feeRecipient)
+    function deployAll(
+        address admin,
+        address operator,
+        address feeRecipient,
+        string memory chainIdentifier,
+        bytes4 thisChainId
+    )
         public
         returns (
             address chainRegistry_,
@@ -66,16 +74,19 @@ contract Deploy is Script {
         // 1. Deploy ChainRegistry
         chainRegistry_ = deployChainRegistry(admin, operator);
 
-        // 2. Deploy TokenRegistry
+        // 2. Register this chain with the predetermined chain ID
+        ChainRegistry(chainRegistry_).registerChain(chainIdentifier, thisChainId);
+
+        // 3. Deploy TokenRegistry
         tokenRegistry_ = deployTokenRegistry(admin, operator, ChainRegistry(chainRegistry_));
 
-        // 3. Deploy LockUnlock
+        // 4. Deploy LockUnlock
         lockUnlock_ = deployLockUnlock(admin);
 
-        // 4. Deploy MintBurn
+        // 5. Deploy MintBurn
         mintBurn_ = deployMintBurn(admin);
 
-        // 5. Deploy Bridge
+        // 6. Deploy Bridge (thisChainId is set during initialization)
         bridge_ = deployBridge(
             admin,
             operator,
@@ -83,10 +94,11 @@ contract Deploy is Script {
             ChainRegistry(chainRegistry_),
             TokenRegistry(tokenRegistry_),
             LockUnlock(lockUnlock_),
-            MintBurn(mintBurn_)
+            MintBurn(mintBurn_),
+            thisChainId
         );
 
-        // 6. Configure LockUnlock and MintBurn to authorize Bridge
+        // 7. Configure LockUnlock and MintBurn to authorize Bridge
         LockUnlock(lockUnlock_).addAuthorizedCaller(bridge_);
         MintBurn(mintBurn_).addAuthorizedCaller(bridge_);
 
@@ -156,14 +168,16 @@ contract Deploy is Script {
         ChainRegistry chainRegistry,
         TokenRegistry tokenRegistry,
         LockUnlock lockUnlock,
-        MintBurn mintBurn
+        MintBurn mintBurn,
+        bytes4 thisChainId
     ) public returns (address proxy) {
         // Deploy implementation
         Bridge implementation = new Bridge();
 
         // Deploy proxy
         bytes memory initData = abi.encodeCall(
-            Bridge.initialize, (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn)
+            Bridge.initialize,
+            (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn, thisChainId)
         );
         proxy = address(new ERC1967Proxy(address(implementation), initData));
 

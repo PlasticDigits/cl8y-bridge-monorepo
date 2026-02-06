@@ -72,6 +72,7 @@ fn setup() -> TestEnv {
                 max_bridge_amount: Uint128::from(1_000_000_000_000u128),
                 fee_bps: 30,
                 fee_collector: admin.to_string(),
+                this_chain_id: Binary::from(vec![0, 0, 0, 1]),
             },
             &[],
             "cl8y-bridge",
@@ -96,6 +97,7 @@ fn setup() -> TestEnv {
         contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "bsc_56".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 2]),
         },
         &[],
     )
@@ -205,6 +207,7 @@ fn deposit_to_build_liquidity(env: &mut TestEnv, amount: u128) {
         env.contract_addr.clone(),
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
+            chain_id: Binary::from(vec![0, 0, 0, 3]),
         },
         &[],
     );
@@ -214,7 +217,7 @@ fn deposit_to_build_liquidity(env: &mut TestEnv, amount: u128) {
             env.user.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::DepositNative {
-                dest_chain: Binary::from(vec![0, 0, 0, 1]),
+                dest_chain: Binary::from(vec![0, 0, 0, 3]),
                 dest_account,
             },
             &coins(amount, "uluna"),

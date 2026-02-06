@@ -285,8 +285,11 @@ sol! {
     /// ChainRegistry contract - manages registered chains with 4-byte IDs
     #[sol(rpc)]
     contract ChainRegistry {
-        /// Register a new chain (operator only)
-        function registerChain(string calldata identifier) external returns (bytes4 chainId);
+        /// Register a new chain with a predetermined chain ID (operator only)
+        function registerChain(string calldata identifier, bytes4 chainId) external;
+
+        /// Unregister an existing chain (operator only)
+        function unregisterChain(bytes4 chainId) external;
 
         /// Get the hash for a chain ID
         function getChainHash(bytes4 chainId) external view returns (bytes32 hash);
@@ -299,9 +302,6 @@ sol! {
 
         /// Get all registered chain IDs
         function getRegisteredChains() external view returns (bytes4[] memory chainIds);
-
-        /// Get the next chain ID that will be assigned
-        function getNextChainId() external view returns (bytes4 nextId);
 
         /// Get count of registered chains
         function getChainCount() external view returns (uint256 count);

@@ -26,17 +26,16 @@ contract ChainRegistryTest is Test {
     function test_Initialize() public view {
         assertEq(chainRegistry.owner(), admin);
         assertTrue(chainRegistry.operators(operator));
-        assertEq(chainRegistry.nextChainId(), bytes4(uint32(1)));
         assertEq(chainRegistry.VERSION(), 1);
     }
 
     function test_RegisterChain() public {
-        vm.prank(operator);
-        bytes4 chainId = chainRegistry.registerChain("evm_1");
+        bytes4 chainId = bytes4(uint32(1));
 
-        assertEq(chainId, bytes4(uint32(1)));
+        vm.prank(operator);
+        chainRegistry.registerChain("evm_1", chainId);
+
         assertTrue(chainRegistry.isChainRegistered(chainId));
-        assertEq(chainRegistry.nextChainId(), bytes4(uint32(2)));
 
         // Check hash mapping
         bytes32 expectedHash = keccak256(abi.encode("evm_1"));
@@ -45,17 +44,19 @@ contract ChainRegistryTest is Test {
     }
 
     function test_RegisterMultipleChains() public {
+        bytes4 chain1 = bytes4(uint32(1));
+        bytes4 chain2 = bytes4(uint32(2));
+        bytes4 chain3 = bytes4(uint32(3));
+
         vm.startPrank(operator);
-
-        bytes4 chain1 = chainRegistry.registerChain("evm_1");
-        bytes4 chain2 = chainRegistry.registerChain("evm_56");
-        bytes4 chain3 = chainRegistry.registerChain("terraclassic_columbus-5");
-
+        chainRegistry.registerChain("evm_1", chain1);
+        chainRegistry.registerChain("evm_56", chain2);
+        chainRegistry.registerChain("terraclassic_columbus-5", chain3);
         vm.stopPrank();
 
-        assertEq(chain1, bytes4(uint32(1)));
-        assertEq(chain2, bytes4(uint32(2)));
-        assertEq(chain3, bytes4(uint32(3)));
+        assertTrue(chainRegistry.isChainRegistered(chain1));
+        assertTrue(chainRegistry.isChainRegistered(chain2));
+        assertTrue(chainRegistry.isChainRegistered(chain3));
 
         assertEq(chainRegistry.getChainCount(), 3);
 
@@ -66,25 +67,130 @@ contract ChainRegistryTest is Test {
         assertEq(chains[2], chain3);
     }
 
-    function test_RegisterChain_RevertsDuplicateRegistration() public {
+    function test_RegisterChain_RevertsDuplicateIdentifier() public {
         vm.prank(operator);
-        chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
 
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainAlreadyRegistered.selector, "evm_1"));
-        chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", bytes4(uint32(2)));
+    }
+
+    function test_RegisterChain_RevertsDuplicateChainId() public {
+        bytes4 chainId = bytes4(uint32(1));
+
+        vm.prank(operator);
+        chainRegistry.registerChain("evm_1", chainId);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainIdAlreadyInUse.selector, chainId));
+        chainRegistry.registerChain("evm_56", chainId);
+    }
+
+    function test_RegisterChain_RevertsZeroChainId() public {
+        vm.prank(operator);
+        vm.expectRevert(IChainRegistry.InvalidChainId.selector);
+        chainRegistry.registerChain("evm_1", bytes4(0));
     }
 
     function test_RegisterChain_RevertsIfNotOperator() public {
         vm.prank(user);
         vm.expectRevert(IChainRegistry.Unauthorized.selector);
-        chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
     }
 
     function test_AdminCanRegisterChain() public {
+        bytes4 chainId = bytes4(uint32(1));
         vm.prank(admin);
-        bytes4 chainId = chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", chainId);
         assertTrue(chainRegistry.isChainRegistered(chainId));
+    }
+
+    function test_UnregisterChain() public {
+        bytes4 chainId = bytes4(uint32(1));
+
+        vm.prank(operator);
+        chainRegistry.registerChain("evm_1", chainId);
+        assertTrue(chainRegistry.isChainRegistered(chainId));
+
+        vm.prank(operator);
+        chainRegistry.unregisterChain(chainId);
+
+        // Verify all mappings are cleared
+        assertFalse(chainRegistry.isChainRegistered(chainId));
+        assertEq(chainRegistry.getChainHash(chainId), bytes32(0));
+        assertEq(chainRegistry.getChainIdFromHash(keccak256(abi.encode("evm_1"))), bytes4(0));
+        assertEq(chainRegistry.getChainCount(), 0);
+    }
+
+    function test_UnregisterChain_CanReRegisterIdentifier() public {
+        bytes4 chainId1 = bytes4(uint32(1));
+        bytes4 chainId2 = bytes4(uint32(2));
+
+        vm.startPrank(operator);
+        chainRegistry.registerChain("evm_1", chainId1);
+        chainRegistry.unregisterChain(chainId1);
+
+        // Can re-register the same identifier with a different chain ID
+        chainRegistry.registerChain("evm_1", chainId2);
+        vm.stopPrank();
+
+        assertTrue(chainRegistry.isChainRegistered(chainId2));
+        assertFalse(chainRegistry.isChainRegistered(chainId1));
+    }
+
+    function test_UnregisterChain_CanReUseChainId() public {
+        bytes4 chainId = bytes4(uint32(1));
+
+        vm.startPrank(operator);
+        chainRegistry.registerChain("evm_1", chainId);
+        chainRegistry.unregisterChain(chainId);
+
+        // Can re-use the same chain ID with a different identifier
+        chainRegistry.registerChain("evm_56", chainId);
+        vm.stopPrank();
+
+        assertTrue(chainRegistry.isChainRegistered(chainId));
+        assertEq(chainRegistry.getChainHash(chainId), keccak256(abi.encode("evm_56")));
+    }
+
+    function test_UnregisterChain_RevertsIfNotRegistered() public {
+        bytes4 unregistered = bytes4(uint32(99));
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainNotRegistered.selector, unregistered));
+        chainRegistry.unregisterChain(unregistered);
+    }
+
+    function test_UnregisterChain_RevertsIfNotOperator() public {
+        bytes4 chainId = bytes4(uint32(1));
+        vm.prank(operator);
+        chainRegistry.registerChain("evm_1", chainId);
+
+        vm.prank(user);
+        vm.expectRevert(IChainRegistry.Unauthorized.selector);
+        chainRegistry.unregisterChain(chainId);
+    }
+
+    function test_UnregisterChain_MiddleOfArray() public {
+        bytes4 chain1 = bytes4(uint32(1));
+        bytes4 chain2 = bytes4(uint32(2));
+        bytes4 chain3 = bytes4(uint32(3));
+
+        vm.startPrank(operator);
+        chainRegistry.registerChain("evm_1", chain1);
+        chainRegistry.registerChain("evm_56", chain2);
+        chainRegistry.registerChain("terraclassic_columbus-5", chain3);
+
+        // Unregister the middle chain
+        chainRegistry.unregisterChain(chain2);
+        vm.stopPrank();
+
+        assertEq(chainRegistry.getChainCount(), 2);
+        bytes4[] memory chains = chainRegistry.getRegisteredChains();
+        assertEq(chains.length, 2);
+        // After swap-remove: [chain1, chain3]
+        assertEq(chains[0], chain1);
+        assertEq(chains[1], chain3);
     }
 
     function test_AddOperator() public {
@@ -96,8 +202,8 @@ contract ChainRegistryTest is Test {
         assertTrue(chainRegistry.operators(newOperator));
 
         vm.prank(newOperator);
-        bytes4 chainId = chainRegistry.registerChain("evm_1");
-        assertTrue(chainRegistry.isChainRegistered(chainId));
+        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
+        assertTrue(chainRegistry.isChainRegistered(bytes4(uint32(1))));
     }
 
     function test_RemoveOperator() public {
@@ -108,7 +214,7 @@ contract ChainRegistryTest is Test {
 
         vm.prank(operator);
         vm.expectRevert(IChainRegistry.Unauthorized.selector);
-        chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
     }
 
     function test_RevertIfChainNotRegistered() public {
@@ -131,8 +237,9 @@ contract ChainRegistryTest is Test {
 
     function test_Upgrade() public {
         // Register a chain before upgrade
+        bytes4 chainId = bytes4(uint32(1));
         vm.prank(operator);
-        bytes4 chainId = chainRegistry.registerChain("evm_1");
+        chainRegistry.registerChain("evm_1", chainId);
 
         // Deploy new implementation
         ChainRegistry newImplementation = new ChainRegistry();

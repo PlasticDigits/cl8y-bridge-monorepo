@@ -74,18 +74,15 @@ pub async fn test_fraud_detection_full(
             % 1000);
     let fraud_amount = "1234567890123456789";
 
-    // Create a fake source chain key (non-existent chain)
-    let fake_src_chain_key = B256::from_slice(&[
-        0x66, 0x61, 0x6b, 0x65, 0x5f, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-    ]); // "fake_chain" padded
+    // Use registered Terra chain ID — fraud is in the nonce (no matching deposit)
+    let fake_src_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes
+    });
 
-    // Use a fake token address
-    let fake_token = Address::from_slice(&[
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x99,
-    ]);
+    // Use registered test token
+    let fake_token = config.evm.contracts.test_token;
 
     info!(
         "Creating fraudulent approval: nonce={}, amount={}",

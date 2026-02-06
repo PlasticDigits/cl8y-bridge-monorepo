@@ -13,15 +13,14 @@ use crate::evm::AnvilTimeClient;
 use crate::services::ServiceManager;
 use crate::transfer_helpers::skip_withdrawal_delay;
 use crate::{E2eConfig, TestResult};
-use alloy::primitives::{Address, B256};
+use alloy::primitives::B256;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::info;
 
 use super::canceler_helpers::{
-    cancel_approval_directly, check_canceler_health, compute_cosmos_chain_key,
-    compute_evm_chain_key, create_fraudulent_approval, generate_unique_nonce,
-    is_approval_cancelled, try_execute_withdrawal, FraudulentApprovalResult,
+    cancel_approval_directly, check_canceler_health, create_fraudulent_approval,
+    generate_unique_nonce, is_approval_cancelled, try_execute_withdrawal, FraudulentApprovalResult,
 };
 use super::helpers::{query_contract_code, verify_tx_success};
 
@@ -82,34 +81,32 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
         );
     }
 
-    // Step 3: Generate unique fraud parameters with fake source chain key
+    // Step 3: Generate unique fraud parameters using registered chain and token
     let fraud_nonce = generate_unique_nonce();
     let fraud_amount = "1234567890123456789";
 
-    // Create a fake source chain key (non-existent chain)
-    let fake_src_chain_key = B256::from_slice(&[
-        0x66, 0x72, 0x61, 0x75, 0x64, 0x5f, 0x63, 0x68, // "fraud_ch"
-        0x61, 0x69, 0x6e, 0x5f, 0x6b, 0x65, 0x79, 0x00, // "ain_key"
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x01,
-    ]);
+    // Use registered Terra chain ID (0x00000001) — fraud is in the nonce (no matching deposit)
+    let fraud_src_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        bytes
+    });
 
-    let fake_token = Address::from_slice(&[
-        0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x99,
-    ]);
+    // Use registered test token
+    let fraud_token = config.evm.contracts.test_token;
 
     info!(
-        "Creating fraudulent approval: nonce={}, srcChainKey=0x{}...",
+        "Creating fraudulent approval: nonce={}, srcChain=0x{}, token={}",
         fraud_nonce,
-        hex::encode(&fake_src_chain_key.as_slice()[..8])
+        hex::encode(&fraud_src_chain_key.as_slice()[..4]),
+        fraud_token
     );
 
     // Step 4: Create fraudulent approval on-chain
     let fraud_result = match create_fraudulent_approval(
         config,
-        fake_src_chain_key,
-        fake_token,
+        fraud_src_chain_key,
+        fraud_token,
         config.test_accounts.evm_address,
         fraud_amount,
         fraud_nonce,
@@ -183,18 +180,18 @@ pub async fn test_cancelled_approval_blocks_withdrawal(config: &E2eConfig) -> Te
         );
     }
 
-    // Create a test approval
+    // Create a test approval using registered chain and token
     let test_nonce = generate_unique_nonce();
-    let test_src_chain_key = B256::from_slice(&[
-        0x65, 0x76, 0x6d, 0x5f, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x5f, 0x31, 0x33, 0x33, 0x37, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x02,
-    ]);
+    let test_src_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes
+    });
 
     let approval_result = match create_fraudulent_approval(
         config,
         test_src_chain_key,
-        config.evm.contracts.lock_unlock,
+        config.evm.contracts.test_token,
         config.test_accounts.evm_address,
         "5000000000000000000",
         test_nonce,
@@ -274,27 +271,22 @@ pub async fn test_canceler_concurrent_fraud_handling(config: &E2eConfig) -> Test
     let num_frauds = 5;
     let mut fraud_results: Vec<FraudulentApprovalResult> = Vec::new();
 
+    // Use registered chain and token for all concurrent frauds
+    let fraud_src_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes
+    });
+    let fraud_token = config.evm.contracts.test_token;
+
     for i in 0..num_frauds {
         let nonce = generate_unique_nonce() + i as u64;
         let amount = format!("{}00000000000000000", i + 1);
 
-        let fake_src_chain_key = B256::from_slice(&{
-            let mut bytes = [0u8; 32];
-            bytes[0..8].copy_from_slice(b"fraud___");
-            bytes[8..16].copy_from_slice(&nonce.to_be_bytes());
-            bytes
-        });
-
-        let fake_token = Address::from_slice(&{
-            let mut bytes = [0u8; 20];
-            bytes[0..4].copy_from_slice(&[0xBA, 0xD0, 0x00, i as u8]);
-            bytes
-        });
-
         if let Ok(result) = create_fraudulent_approval(
             config,
-            fake_src_chain_key,
-            fake_token,
+            fraud_src_chain_key,
+            fraud_token,
             config.test_accounts.evm_address,
             &amount,
             nonce,
@@ -354,16 +346,17 @@ pub async fn test_canceler_restart_fraud_detection(config: &E2eConfig) -> TestRe
     }
 
     let fraud_nonce = generate_unique_nonce();
-    let fake_src_chain_key = B256::from_slice(&{
+    // Use registered chain and token — fraud is in the nonce
+    let fraud_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..16].copy_from_slice(b"restart_fraud___");
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
         bytes
     });
 
     let fraud_result = match create_fraudulent_approval(
         config,
-        fake_src_chain_key,
-        Address::from_slice(&[0xBB; 20]),
+        fraud_src_chain_key,
+        config.evm.contracts.test_token,
         config.test_accounts.evm_address,
         "9999999999999999999",
         fraud_nonce,
@@ -414,19 +407,22 @@ pub async fn test_canceler_evm_source_fraud_detection(config: &E2eConfig) -> Tes
         return TestResult::skip(name, "Canceler service is not running");
     }
 
-    // Compute real EVM chain key for Anvil
-    let evm_chain_key = compute_evm_chain_key(config.evm.chain_id);
+    // Use registered EVM chain ID (0x00000002) — the bytes4 ID, not the native chain ID
+    let evm_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]); // registered EVM chain
+        bytes
+    });
     info!(
-        "Using real EVM chain key for chain_id={}: 0x{}",
-        config.evm.chain_id,
-        hex::encode(&evm_chain_key[..8])
+        "Using registered EVM chain key: 0x{}",
+        hex::encode(&evm_chain_key.as_slice()[..4])
     );
 
     let fraud_nonce = generate_unique_nonce();
     let fraud_result = match create_fraudulent_approval(
         config,
-        B256::from_slice(&evm_chain_key),
-        config.evm.contracts.lock_unlock,
+        evm_chain_key,
+        config.evm.contracts.test_token,
         config.test_accounts.evm_address,
         "2500000000000000000",
         fraud_nonce,
@@ -478,19 +474,22 @@ pub async fn test_canceler_terra_source_fraud_detection(config: &E2eConfig) -> T
         return TestResult::skip(name, "Canceler service is not running");
     }
 
-    // Compute real Terra chain key
-    let terra_chain_key = compute_cosmos_chain_key(&config.terra.chain_id);
+    // Use registered Terra chain ID (0x00000001) — the bytes4 ID assigned by ChainRegistry
+    let terra_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes
+    });
     info!(
-        "Using real Terra chain key for chain_id={}: 0x{}",
-        config.terra.chain_id,
-        hex::encode(&terra_chain_key[..8])
+        "Using registered Terra chain key: 0x{}",
+        hex::encode(&terra_chain_key.as_slice()[..4])
     );
 
     let fraud_nonce = generate_unique_nonce();
     let fraud_result = match create_fraudulent_approval(
         config,
-        B256::from_slice(&terra_chain_key),
-        config.evm.contracts.lock_unlock,
+        terra_chain_key,
+        config.evm.contracts.test_token,
         config.test_accounts.evm_address,
         "3500000000000000000",
         fraud_nonce,

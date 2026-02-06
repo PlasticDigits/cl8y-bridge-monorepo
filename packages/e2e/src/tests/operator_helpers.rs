@@ -273,6 +273,9 @@ pub async fn approve_erc20(
 /// Execute deposit on Bridge via depositERC20
 ///
 /// Function signature: depositERC20(address,uint256,bytes4,bytes32)
+///
+/// Automatically approves both the Bridge contract (for fee transfer) and
+/// the LockUnlock adapter (for token locking) before executing the deposit.
 pub async fn execute_deposit(
     config: &E2eConfig,
     token: Address,
@@ -280,6 +283,10 @@ pub async fn execute_deposit(
     dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<B256> {
+    // Approve both Bridge (for fee transferFrom) and LockUnlock (for lock transferFrom)
+    approve_erc20(config, token, config.evm.contracts.bridge, amount).await?;
+    approve_erc20(config, token, config.evm.contracts.lock_unlock, amount).await?;
+
     let client = reqwest::Client::new();
 
     let sel = selector("depositERC20(address,uint256,bytes4,bytes32)");

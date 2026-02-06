@@ -142,7 +142,7 @@ pub fn execute_deposit_native(
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash for verification
-    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &info.sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
@@ -354,7 +354,7 @@ fn execute_deposit_cw20_lock(
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash
-    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
@@ -512,7 +512,7 @@ fn execute_deposit_cw20_burn(
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash
-    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {

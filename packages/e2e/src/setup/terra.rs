@@ -82,7 +82,12 @@ impl E2eSetup {
         };
 
         // Step 2: Instantiate the bridge contract
+        // this_chain_id for Terra = 0x00000002 (predetermined, base64-encoded for CosmWasm Binary)
         let test_address = &self.config.test_accounts.terra_address;
+        use base64::Engine as _;
+        let terra_chain_id_bytes: [u8; 4] = [0, 0, 0, 2];
+        let terra_chain_id_b64 =
+            base64::engine::general_purpose::STANDARD.encode(terra_chain_id_bytes);
         let init_msg = serde_json::json!({
             "admin": test_address,
             "operators": [test_address],
@@ -90,7 +95,8 @@ impl E2eSetup {
             "min_bridge_amount": "1000000",
             "max_bridge_amount": "1000000000000000",
             "fee_bps": 30,
-            "fee_collector": test_address
+            "fee_collector": test_address,
+            "this_chain_id": terra_chain_id_b64
         });
 
         let bridge_address = match terra
@@ -131,22 +137,26 @@ impl E2eSetup {
         tokio::time::sleep(std::time::Duration::from_secs(6)).await;
 
         // Step 4: Register local EVM chain (31337) as supported destination
-        let add_chain_msg = serde_json::json!({
-            "add_chain": {
-                "chain_id": self.config.evm.chain_id,
-                "name": "LocalAnvil",
-                "bridge_address": format!("{}", self.config.evm.contracts.bridge)
+        // EVM chain uses predetermined ID 0x00000001
+        let evm_chain_id_bytes: [u8; 4] = [0, 0, 0, 1];
+        let evm_chain_id_b64 = base64::engine::general_purpose::STANDARD.encode(evm_chain_id_bytes);
+        let register_chain_msg = serde_json::json!({
+            "register_chain": {
+                "identifier": format!("evm_{}", self.config.evm.chain_id),
+                "chain_id": evm_chain_id_b64
             }
         });
 
         match terra
-            .execute_contract(&bridge_address, &add_chain_msg, None)
+            .execute_contract(&bridge_address, &register_chain_msg, None)
             .await
         {
             Ok(tx_hash) => {
                 info!(
-                    "Local EVM chain {} registered on Terra bridge, tx: {}",
-                    self.config.evm.chain_id, tx_hash
+                    "Local EVM chain {} registered on Terra bridge with ID 0x{}, tx: {}",
+                    self.config.evm.chain_id,
+                    hex::encode(evm_chain_id_bytes),
+                    tx_hash
                 );
             }
             Err(e) => {

@@ -25,10 +25,12 @@ contract TokenRegistryTest is Test {
         ERC1967Proxy chainProxy = new ERC1967Proxy(address(chainImpl), chainInitData);
         chainRegistry = ChainRegistry(address(chainProxy));
 
-        // Register chains
+        // Register chains with predetermined IDs
+        chain1 = bytes4(uint32(1));
+        chain2 = bytes4(uint32(2));
         vm.startPrank(operator);
-        chain1 = chainRegistry.registerChain("evm_1");
-        chain2 = chainRegistry.registerChain("terraclassic_columbus-5");
+        chainRegistry.registerChain("evm_1", chain1);
+        chainRegistry.registerChain("terraclassic_columbus-5", chain2);
         vm.stopPrank();
 
         // Deploy TokenRegistry

@@ -48,7 +48,14 @@ contract DeployLocal is Script {
         address mintBurnProxy =
             address(new ERC1967Proxy(address(mbImpl), abi.encodeCall(MintBurn.initialize, (deployer))));
 
-        // 6. Deploy Bridge (implementation + proxy)
+        // 6. Register the local EVM chain with a predetermined chain ID
+        //    This must happen before Bridge deployment so the chain ID can be
+        //    validated in Bridge.initialize().
+        //    Chain ID 0x00000001 is used for the local EVM (Anvil) chain.
+        bytes4 evmChainId = bytes4(uint32(1));
+        ChainRegistry(chainRegistryProxy).registerChain("evm_31337", evmChainId);
+
+        // 7. Deploy Bridge (implementation + proxy)
         Bridge bridgeImpl = new Bridge();
         address bridgeProxy = address(
             new ERC1967Proxy(
@@ -62,13 +69,14 @@ contract DeployLocal is Script {
                         ChainRegistry(chainRegistryProxy),
                         TokenRegistry(tokenRegistryProxy),
                         LockUnlock(lockUnlockProxy),
-                        MintBurn(mintBurnProxy)
+                        MintBurn(mintBurnProxy),
+                        evmChainId
                     )
                 )
             )
         );
 
-        // 7. Configure LockUnlock and MintBurn to authorize Bridge
+        // 8. Configure LockUnlock and MintBurn to authorize Bridge
         LockUnlock(lockUnlockProxy).addAuthorizedCaller(bridgeProxy);
         MintBurn(mintBurnProxy).addAuthorizedCaller(bridgeProxy);
 

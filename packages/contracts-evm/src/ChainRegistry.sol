@@ -7,8 +7,10 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /// @title ChainRegistry
-/// @notice Upgradeable chain registry with 4-byte chain ID system
-/// @dev Uses UUPS proxy pattern for upgradeability
+/// @notice Upgradeable chain registry with predetermined 4-byte chain IDs
+/// @dev Uses UUPS proxy pattern for upgradeability.
+///      Chain IDs are caller-specified (not auto-incremented), allowing
+///      predetermined, consistent IDs across all bridge deployments.
 contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IChainRegistry {
     // ============================================================================
     // Constants
@@ -30,8 +32,8 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @notice Mapping of registered chains
     mapping(bytes4 => bool) public registeredChains;
 
-    /// @notice Next chain ID to assign
-    bytes4 public nextChainId;
+    /// @dev Deprecated: was nextChainId in V1 (auto-increment). Kept for storage layout compatibility.
+    bytes4 private __deprecated_nextChainId;
 
     /// @notice Mapping of operators
     mapping(address => bool) public operators;
@@ -77,9 +79,6 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     function initialize(address admin, address operator) public initializer {
         __Ownable_init(admin);
 
-        // Start chain IDs at 1 (0 is reserved/invalid)
-        nextChainId = bytes4(uint32(1));
-
         // Set initial operator
         operators[operator] = true;
     }
@@ -111,21 +110,27 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     // Chain Registration
     // ============================================================================
 
-    /// @notice Register a new chain
-    /// @dev Only operator can register chains. Chain IDs are assigned incrementally.
+    /// @notice Register a new chain with a predetermined chain ID
+    /// @dev Only operator can register chains. The caller specifies the chain ID.
     /// @param identifier The chain identifier (e.g., "evm_1", "terraclassic_columbus-5")
-    /// @return chainId The assigned 4-byte chain ID
-    function registerChain(string calldata identifier) external onlyOperator returns (bytes4 chainId) {
+    /// @param chainId The caller-specified 4-byte chain ID (must not be bytes4(0))
+    function registerChain(string calldata identifier, bytes4 chainId) external onlyOperator {
+        // Validate chain ID is not zero (reserved/invalid)
+        if (chainId == bytes4(0)) {
+            revert InvalidChainId();
+        }
+
         bytes32 hash = keccak256(abi.encode(identifier));
 
-        // Check if already registered
+        // Check if identifier is already registered
         if (hashToChainId[hash] != bytes4(0)) {
             revert ChainAlreadyRegistered(identifier);
         }
 
-        // Assign chain ID
-        chainId = nextChainId;
-        nextChainId = bytes4(uint32(nextChainId) + 1);
+        // Check if chain ID is already in use
+        if (registeredChains[chainId]) {
+            revert ChainIdAlreadyInUse(chainId);
+        }
 
         // Store mappings
         chainIdToHash[chainId] = hash;
@@ -134,6 +139,31 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
         _chainIds.push(chainId);
 
         emit ChainRegistered(chainId, identifier, hash);
+    }
+
+    /// @notice Unregister an existing chain
+    /// @dev Only operator can unregister chains. Clears all mappings and removes from enumeration.
+    /// @param chainId The 4-byte chain ID to remove
+    function unregisterChain(bytes4 chainId) external onlyOperator onlyRegisteredChain(chainId) {
+        // Get the hash before clearing
+        bytes32 hash = chainIdToHash[chainId];
+
+        // Clear mappings
+        delete chainIdToHash[chainId];
+        delete hashToChainId[hash];
+        delete registeredChains[chainId];
+
+        // Remove from _chainIds array (swap with last element and pop)
+        uint256 len = _chainIds.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (_chainIds[i] == chainId) {
+                _chainIds[i] = _chainIds[len - 1];
+                _chainIds.pop();
+                break;
+            }
+        }
+
+        emit ChainUnregistered(chainId);
     }
 
     // ============================================================================
@@ -165,12 +195,6 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @return chainIds Array of registered chain IDs
     function getRegisteredChains() external view returns (bytes4[] memory chainIds) {
         return _chainIds;
-    }
-
-    /// @notice Get the next chain ID that will be assigned
-    /// @return nextId The next chain ID
-    function getNextChainId() external view returns (bytes4 nextId) {
-        return nextChainId;
     }
 
     /// @notice Get the count of registered chains

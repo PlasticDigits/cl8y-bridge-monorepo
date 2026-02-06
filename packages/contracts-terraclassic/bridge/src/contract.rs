@@ -18,10 +18,11 @@ use crate::execute::{
     execute_receive, execute_recover_asset, execute_register_chain, execute_remove_canceler,
     execute_remove_custom_account_fee, execute_remove_operator, execute_set_custom_account_fee,
     execute_set_fee_params, execute_set_rate_limit, execute_set_token_destination,
-    execute_set_withdraw_delay, execute_unpause, execute_update_chain, execute_update_fees,
-    execute_update_limits, execute_update_min_signatures, execute_update_token,
-    execute_withdraw_approve, execute_withdraw_cancel, execute_withdraw_execute_mint,
-    execute_withdraw_execute_unlock, execute_withdraw_submit, execute_withdraw_uncancel,
+    execute_set_withdraw_delay, execute_unpause, execute_unregister_chain, execute_update_chain,
+    execute_update_fees, execute_update_limits, execute_update_min_signatures,
+    execute_update_token, execute_withdraw_approve, execute_withdraw_cancel,
+    execute_withdraw_execute_mint, execute_withdraw_execute_unlock, execute_withdraw_submit,
+    execute_withdraw_uncancel,
 };
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
@@ -36,7 +37,7 @@ use crate::query::{
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
-    OPERATOR_COUNT, OUTGOING_NONCE, STATS, WITHDRAW_DELAY,
+    OPERATOR_COUNT, OUTGOING_NONCE, STATS, THIS_CHAIN_ID, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -109,12 +110,35 @@ pub fn instantiate(
     let fee_config = FeeConfig::default_with_recipient(config.fee_collector.clone());
     FEE_CONFIG.save(deps.storage, &fee_config)?;
 
+    // Set this chain's predetermined 4-byte chain ID
+    if msg.this_chain_id.len() != 4 {
+        return Err(ContractError::InvalidAddress {
+            reason: format!(
+                "this_chain_id must be exactly 4 bytes, got {}",
+                msg.this_chain_id.len()
+            ),
+        });
+    }
+    let this_chain_id: [u8; 4] = [
+        msg.this_chain_id[0],
+        msg.this_chain_id[1],
+        msg.this_chain_id[2],
+        msg.this_chain_id[3],
+    ];
+    if this_chain_id == [0u8; 4] {
+        return Err(ContractError::InvalidAddress {
+            reason: "this_chain_id 0x00000000 is reserved/invalid".to_string(),
+        });
+    }
+    THIS_CHAIN_ID.save(deps.storage, &this_chain_id)?;
+
     Ok(Response::new()
         .add_attribute("method", "instantiate")
         .add_attribute("admin", config.admin)
         .add_attribute("operator_count", operator_count.to_string())
         .add_attribute("min_signatures", msg.min_signatures.to_string())
-        .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string()))
+        .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string())
+        .add_attribute("this_chain_id", format!("0x{}", hex::encode(this_chain_id))))
 }
 
 // ============================================================================
@@ -186,7 +210,11 @@ pub fn execute(
         } => execute_set_rate_limit(deps, info, token, max_per_transaction, max_per_period),
 
         // Chain & token management
-        ExecuteMsg::RegisterChain { identifier } => execute_register_chain(deps, info, identifier),
+        ExecuteMsg::RegisterChain {
+            identifier,
+            chain_id,
+        } => execute_register_chain(deps, info, identifier, chain_id),
+        ExecuteMsg::UnregisterChain { chain_id } => execute_unregister_chain(deps, info, chain_id),
         ExecuteMsg::UpdateChain { chain_id, enabled } => {
             execute_update_chain(deps, info, chain_id, enabled)
         }

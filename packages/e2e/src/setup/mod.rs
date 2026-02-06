@@ -450,8 +450,13 @@ impl E2eSetup {
         on_step(SetupStep::GrantRoles, true);
 
         // Register Chain Keys (Terra chain on EVM ChainRegistry)
+        // Terra chain uses predetermined ID 0x00000002
+        let terra_predetermined_id = ChainId4::from_slice(&2u32.to_be_bytes());
         on_step(SetupStep::RegisterChainKeys, true);
-        let terra_chain_key = match self.register_chain_keys(&deployed).await {
+        let terra_chain_key = match self
+            .register_chain_keys(&deployed, terra_predetermined_id)
+            .await
+        {
             Ok(key) => {
                 deployed.terra_chain_key = Some(key);
                 Some(key)

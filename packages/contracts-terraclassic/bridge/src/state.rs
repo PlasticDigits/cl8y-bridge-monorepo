@@ -260,8 +260,7 @@ pub const CHAINS: Map<&[u8], ChainConfig> = Map::new("chains_v2");
 /// Reverse lookup: identifier string → 4-byte chain ID
 pub const CHAIN_BY_IDENTIFIER: Map<&str, [u8; 4]> = Map::new("chain_by_ident");
 
-/// Auto-incrementing chain counter (next chain ID to assign)
-pub const CHAIN_COUNTER: Item<u32> = Item::new("chain_counter");
+/// Deprecated: was auto-incrementing chain counter (removed in favor of predetermined chain IDs)
 
 /// Supported tokens configuration
 /// Key: token identifier, Value: TokenConfig
@@ -297,7 +296,7 @@ pub const OPERATOR_COUNT: Item<u32> = Item::new("operator_count");
 // Watchtower Pattern State (v2.0)
 // ============================================================================
 
-/// This chain's 4-byte V2 chain ID (set by admin, matches EVM ChainRegistry)
+/// This chain's predetermined 4-byte V2 chain ID (set during instantiation, matches EVM ChainRegistry)
 pub const THIS_CHAIN_ID: Item<[u8; 4]> = Item::new("this_chain_id");
 
 /// Global withdrawal delay in seconds (default: 300 = 5 minutes)
