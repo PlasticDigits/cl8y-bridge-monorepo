@@ -5,6 +5,7 @@
 //!
 //! Extracted from operator_helpers.rs to keep files under 900 LOC.
 
+use crate::tests::helpers::{chain_id4_to_bytes32, selector};
 use crate::E2eConfig;
 use alloy::primitives::Address;
 use eyre::Result;
@@ -61,14 +62,14 @@ pub fn generate_unique_nonce() -> u64 {
 // Token Registration Diagnostics
 // ============================================================================
 
-/// Check if a token is registered for a destination chain key
+/// Check if a token is registered for a destination chain (bytes4 chain ID)
 ///
-/// Queries TokenRegistry.isTokenDestChainKeyRegistered(token, destChainKey)
+/// Queries TokenRegistry.getDestToken(address,bytes4) and checks non-zero result.
 /// This helps diagnose deposit failures due to missing token registration.
 pub async fn is_token_registered_for_chain(
     config: &E2eConfig,
     token: Address,
-    dest_chain_key: [u8; 32],
+    dest_chain_id: [u8; 4],
 ) -> Result<bool> {
     // Check for zero addresses which indicate contracts not deployed
     if config.evm.contracts.token_registry == Address::ZERO {
@@ -79,12 +80,12 @@ pub async fn is_token_registered_for_chain(
 
     let client = reqwest::Client::new();
 
-    // isTokenDestChainKeyRegistered(address,bytes32) selector: 0xb2072f30
-    // Verified via: cast sig "isTokenDestChainKeyRegistered(address,bytes32)"
-    let selector = "b2072f30";
+    // getDestToken(address,bytes4) selector
+    let sel = selector("getDestToken(address,bytes4)");
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
-    let chain_key_hex = hex::encode(dest_chain_key);
-    let call_data = format!("0x{}{}{}", selector, token_padded, chain_key_hex);
+    // bytes4 is ABI-encoded left-aligned in 32 bytes
+    let chain_id_padded = hex::encode(chain_id4_to_bytes32(dest_chain_id));
+    let call_data = format!("0x{}{}{}", sel, token_padded, chain_id_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -110,14 +111,14 @@ pub async fn is_token_registered_for_chain(
         .as_str()
         .ok_or_else(|| eyre::eyre!("No result in response"))?;
 
-    // Result is a bool encoded as bytes32 - check if last byte is 1
+    // Result is bytes32 - non-zero means destination token is configured
     let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    let is_registered = bytes.last().copied().unwrap_or(0) == 1;
+    let is_registered = bytes.iter().any(|&b| b != 0);
 
     debug!(
         "Token {} registration for chain 0x{}: {}",
         token,
-        hex::encode(&dest_chain_key[..8]),
+        hex::encode(dest_chain_id),
         is_registered
     );
 
@@ -133,20 +134,20 @@ pub async fn is_token_registered_for_chain(
 pub async fn verify_token_setup(
     config: &E2eConfig,
     token: Address,
-    dest_chain_key: [u8; 32],
+    dest_chain_id: [u8; 4],
 ) -> Result<()> {
-    let is_registered = is_token_registered_for_chain(config, token, dest_chain_key).await?;
+    let is_registered = is_token_registered_for_chain(config, token, dest_chain_id).await?;
 
     if !is_registered {
         warn!(
             "Token {} is NOT registered for destination chain 0x{}! \
              Deposit transactions will revert. Run setup to register the token first.",
             token,
-            hex::encode(&dest_chain_key[..8])
+            hex::encode(dest_chain_id)
         );
         return Err(eyre::eyre!(
             "Token {} not registered for destination chain. \
-             Ensure TokenRegistry.addToken() and TokenRegistry.addTokenDestChainKey() were called during setup.",
+             Ensure TokenRegistry.registerToken() and TokenRegistry.setTokenDestination() were called during setup.",
             token
         ));
     }
@@ -154,34 +155,30 @@ pub async fn verify_token_setup(
     info!(
         "Token {} verified: registered for destination chain 0x{}",
         token,
-        hex::encode(&dest_chain_key[..8])
+        hex::encode(dest_chain_id)
     );
     Ok(())
 }
 
 /// Query all registered destination chains for a token
 ///
-/// Returns a list of chain keys that the token is registered for.
-/// Useful for debugging token registration issues.
+/// In the V2 system, chain IDs are assigned dynamically by ChainRegistry.
+/// This function checks a few well-known chain IDs (1, 2, 3...) to see
+/// which ones the token is registered for.
 pub async fn get_token_registered_chains(
     config: &E2eConfig,
     token: Address,
-) -> Result<Vec<[u8; 32]>> {
-    // For now, we check common chain keys
-    let chain_keys_to_check = vec![
-        compute_evm_chain_key(config.evm.chain_id), // Local EVM chain
-        compute_evm_chain_key(31337),               // Anvil default
-        compute_evm_chain_key(1),                   // Mainnet
-    ];
-
+) -> Result<Vec<[u8; 4]>> {
     let mut registered = Vec::new();
 
-    for chain_key in chain_keys_to_check {
-        if is_token_registered_for_chain(config, token, chain_key)
+    // Check first few chain IDs (assigned incrementally starting from 1)
+    for id in 1u32..=10 {
+        let chain_id = id.to_be_bytes();
+        if is_token_registered_for_chain(config, token, chain_id)
             .await
             .unwrap_or(false)
         {
-            registered.push(chain_key);
+            registered.push(chain_id);
         }
     }
 
@@ -196,18 +193,6 @@ pub async fn print_token_diagnostics(config: &E2eConfig, token: Address) -> Resu
     info!("Token address: {}", token);
     info!("TokenRegistry: {}", config.evm.contracts.token_registry);
 
-    // Check EVM chain key registration
-    let evm_chain_key = compute_evm_chain_key(config.evm.chain_id);
-    let is_evm_registered = is_token_registered_for_chain(config, token, evm_chain_key)
-        .await
-        .unwrap_or(false);
-    info!(
-        "Registered for EVM chain {} (0x{}): {}",
-        config.evm.chain_id,
-        hex::encode(&evm_chain_key[..8]),
-        if is_evm_registered { "YES" } else { "NO" }
-    );
-
     // Get all registered chains
     let registered_chains = get_token_registered_chains(config, token).await?;
     info!(
@@ -215,8 +200,8 @@ pub async fn print_token_diagnostics(config: &E2eConfig, token: Address) -> Resu
         registered_chains.len()
     );
 
-    for chain_key in &registered_chains {
-        info!("  - Chain key: 0x{}", hex::encode(&chain_key[..8]));
+    for chain_id in &registered_chains {
+        info!("  - Chain ID: 0x{}", hex::encode(chain_id));
     }
 
     if registered_chains.is_empty() {

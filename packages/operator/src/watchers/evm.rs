@@ -248,6 +248,7 @@ impl EvmWatcher {
             block_number: block_number as i64,
             block_hash: format!("{:?}", block_hash),
             dest_chain_type,
+            src_account: vec![0u8; 32], // V1 deposits don't include src_account
         })
     }
 
@@ -258,6 +259,7 @@ impl EvmWatcher {
     /// event Deposit(
     ///     bytes4 indexed destChain,
     ///     bytes32 indexed destAccount,
+    ///     bytes32 srcAccount,
     ///     address token,
     ///     uint256 amount,
     ///     uint64 nonce,
@@ -300,32 +302,40 @@ impl EvmWatcher {
         // Determine destination chain type based on dest_account format
         let dest_chain_type = Self::classify_dest_chain_type_v2(&dest_account);
 
-        // Decode non-indexed data
+        // Decode non-indexed data:
+        // [0..32]    srcAccount (bytes32)
+        // [32..64]   token (address, right-aligned)
+        // [64..96]   amount (uint256)
+        // [96..128]  nonce (uint64, right-aligned)
+        // [128..160] fee (uint256)
         let data = log.data().data.as_ref();
-        if data.len() < 128 {
+        if data.len() < 160 {
             return Err(eyre::eyre!("Not enough data in V2 Deposit event"));
         }
 
+        // srcAccount: bytes32
+        let src_account = data[0..32].to_vec();
+
         // token: address (right-aligned in 32 bytes)
-        let token = Address::from_slice(&data[12..32]);
+        let token = Address::from_slice(&data[44..64]);
 
         // amount: uint256
-        let amount = U256::from_be_slice(&data[32..64]);
+        let amount = U256::from_be_slice(&data[64..96]);
 
         // nonce: uint64 (right-aligned in 32 bytes)
         let nonce = u64::from_be_bytes([
-            data[64 + 24],
-            data[64 + 25],
-            data[64 + 26],
-            data[64 + 27],
-            data[64 + 28],
-            data[64 + 29],
-            data[64 + 30],
-            data[64 + 31],
+            data[96 + 24],
+            data[96 + 25],
+            data[96 + 26],
+            data[96 + 27],
+            data[96 + 28],
+            data[96 + 29],
+            data[96 + 30],
+            data[96 + 31],
         ]);
 
         // fee: uint256 (for informational purposes)
-        let _fee = U256::from_be_slice(&data[96..128]);
+        let _fee = U256::from_be_slice(&data[128..160]);
 
         // Get dest token from token registry (would need contract query)
         // For now, encode the source token address as dest token
@@ -358,6 +368,7 @@ impl EvmWatcher {
             block_number: block_number as i64,
             block_hash: format!("{:?}", block_hash),
             dest_chain_type,
+            src_account,
         })
     }
 

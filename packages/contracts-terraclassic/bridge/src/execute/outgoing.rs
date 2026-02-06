@@ -10,22 +10,40 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::fee_manager::{calculate_fee, get_fee_type, FeeConfig, FEE_CONFIG};
-use crate::hash::{
-    bytes32_to_hex, compute_transfer_id, evm_chain_key, hex_to_bytes32, terra_chain_key,
-};
+use crate::hash::{bytes32_to_hex, compute_transfer_hash, encode_terra_address, hex_to_bytes32};
 use crate::msg::ReceiveMsg;
 use crate::state::{
     BridgeTransaction, DepositInfo, TokenType, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
-    LOCKED_BALANCES, OUTGOING_NONCE, STATS, TOKENS, TRANSACTIONS,
+    LOCKED_BALANCES, OUTGOING_NONCE, STATS, THIS_CHAIN_ID, TOKENS, TRANSACTIONS,
 };
 
-/// Execute handler for locking native tokens (uluna, etc.)
-pub fn execute_lock_native(
+/// Parse a 4-byte chain ID from Binary input.
+fn parse_chain_id(chain: &cosmwasm_std::Binary) -> Result<[u8; 4], ContractError> {
+    chain
+        .to_vec()
+        .try_into()
+        .map_err(|_| ContractError::InvalidHashLength { got: chain.len() })
+}
+
+/// Parse a 32-byte account from Binary input.
+fn parse_bytes32(bin: &cosmwasm_std::Binary) -> Result<[u8; 32], ContractError> {
+    if bin.len() != 32 {
+        return Err(ContractError::InvalidAddress {
+            reason: format!("Expected 32 bytes, got {}", bin.len()),
+        });
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(bin);
+    Ok(arr)
+}
+
+/// Execute handler for depositing native tokens (uluna, etc.) — locks them on Terra.
+pub fn execute_deposit_native(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    dest_chain_id: u64,
-    recipient: String,
+    dest_chain: cosmwasm_std::Binary,
+    dest_account_bin: cosmwasm_std::Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -34,16 +52,17 @@ pub fn execute_lock_native(
     }
 
     // Check destination chain
-    let chain_key = dest_chain_id.to_string();
-    let chain = CHAINS.may_load(deps.storage, chain_key.clone())?.ok_or(
-        ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
-        },
-    )?;
+    let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+    let chain =
+        CHAINS
+            .may_load(deps.storage, &dest_chain_bytes)?
+            .ok_or(ContractError::InvalidAddress {
+                reason: "Destination chain not registered".to_string(),
+            })?;
 
     if !chain.enabled {
-        return Err(ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
+        return Err(ContractError::InvalidAddress {
+            reason: "Destination chain is disabled".to_string(),
         });
     }
 
@@ -108,43 +127,48 @@ pub fn execute_lock_native(
     OUTGOING_NONCE.save(deps.storage, &(nonce + 1))?;
 
     // Store transaction
+    let dest_account = parse_bytes32(&dest_account_bin)?;
+
     let tx = BridgeTransaction {
         nonce,
         sender: info.sender.to_string(),
-        recipient: recipient.clone(),
+        recipient: format!("0x{}", hex::encode(dest_account)),
         token: token.clone(),
         amount: net_amount,
-        dest_chain_id,
+        dest_chain: dest_chain_bytes,
         timestamp: env.block.time,
         is_outgoing: true,
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash for verification
-    let dest_chain_key = evm_chain_key(dest_chain_id);
+    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let dest_chain = dest_chain_bytes;
+    let src_account = encode_terra_address(deps.as_ref(), &info.sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
         ContractError::InvalidAddress {
             reason: e.to_string(),
         }
     })?;
-    let dest_account = hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {
-        reason: e.to_string(),
-    })?;
 
     let deposit_info = DepositInfo {
-        dest_chain_key,
-        dest_token_address,
+        src_chain,
+        dest_chain,
+        src_account,
         dest_account,
+        dest_token_address,
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
+        dest_chain_key: [0u8; 32],
     };
 
-    let deposit_hash = compute_transfer_id(
-        &terra_chain_key(),
-        &dest_chain_key,
-        &dest_token_address,
+    let deposit_hash = compute_transfer_hash(
+        &src_chain,
+        &dest_chain,
+        &src_account,
         &dest_account,
+        &dest_token_address,
         net_amount.u128(),
         nonce,
     );
@@ -158,7 +182,7 @@ pub fn execute_lock_native(
     stats.total_fees_collected += fee_amount;
     STATS.save(deps.storage, &stats)?;
 
-    // Send fee to collector (use fee_config.fee_recipient if available)
+    // Send fee to collector
     let fee_recipient = fee_config.fee_recipient.to_string();
     let mut messages: Vec<CosmosMsg> = vec![];
     if !fee_amount.is_zero() {
@@ -176,12 +200,12 @@ pub fn execute_lock_native(
         .add_attribute("action", "deposit_native")
         .add_attribute("nonce", nonce.to_string())
         .add_attribute("sender", info.sender)
-        .add_attribute("recipient", recipient)
+        .add_attribute("dest_account", format!("0x{}", hex::encode(dest_account)))
         .add_attribute("token", token)
         .add_attribute("amount", net_amount.to_string())
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
-        .add_attribute("dest_chain_id", dest_chain_id.to_string())
+        .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }
 
@@ -205,57 +229,59 @@ pub fn execute_receive(
     let receive_msg: ReceiveMsg = cosmwasm_std::from_json(&cw20_msg.msg)?;
 
     match receive_msg {
-        ReceiveMsg::Lock {
-            dest_chain_id,
-            recipient,
-        } => execute_cw20_lock(
+        ReceiveMsg::DepositCw20Lock {
+            dest_chain,
+            dest_account,
+        } => execute_deposit_cw20_lock(
             deps,
             env,
             config,
             token,
             amount,
             sender,
-            dest_chain_id,
-            recipient,
+            dest_chain,
+            dest_account,
         ),
-        ReceiveMsg::Burn {
-            dest_chain_id,
-            recipient,
-        } => execute_cw20_burn(
+        ReceiveMsg::DepositCw20MintableBurn {
+            dest_chain,
+            dest_account,
+        } => execute_deposit_cw20_burn(
             deps,
             env,
             config,
             token,
             amount,
             sender,
-            dest_chain_id,
-            recipient,
+            dest_chain,
+            dest_account,
         ),
     }
 }
 
 /// Internal handler for locking CW20 tokens (LockUnlock mode)
-fn execute_cw20_lock(
+#[allow(clippy::too_many_arguments)]
+fn execute_deposit_cw20_lock(
     deps: DepsMut,
     env: Env,
     config: crate::state::Config,
     token: String,
     amount: Uint128,
     sender: cosmwasm_std::Addr,
-    dest_chain_id: u64,
-    recipient: String,
+    dest_chain: cosmwasm_std::Binary,
+    dest_account_bin: cosmwasm_std::Binary,
 ) -> Result<Response, ContractError> {
     // Check destination chain
-    let chain_key = dest_chain_id.to_string();
-    let chain = CHAINS.may_load(deps.storage, chain_key.clone())?.ok_or(
-        ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
-        },
-    )?;
+    let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+    let chain =
+        CHAINS
+            .may_load(deps.storage, &dest_chain_bytes)?
+            .ok_or(ContractError::InvalidAddress {
+                reason: "Destination chain not registered".to_string(),
+            })?;
 
     if !chain.enabled {
-        return Err(ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
+        return Err(ContractError::InvalidAddress {
+            reason: "Destination chain is disabled".to_string(),
         });
     }
 
@@ -312,44 +338,49 @@ fn execute_cw20_lock(
     let nonce = OUTGOING_NONCE.load(deps.storage)?;
     OUTGOING_NONCE.save(deps.storage, &(nonce + 1))?;
 
+    let dest_account = parse_bytes32(&dest_account_bin)?;
+
     // Store transaction
     let tx = BridgeTransaction {
         nonce,
         sender: sender.to_string(),
-        recipient: recipient.clone(),
+        recipient: format!("0x{}", hex::encode(dest_account)),
         token: token.clone(),
         amount: net_amount,
-        dest_chain_id,
+        dest_chain: dest_chain_bytes,
         timestamp: env.block.time,
         is_outgoing: true,
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash
-    let dest_chain_key = evm_chain_key(dest_chain_id);
+    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let dest_chain = dest_chain_bytes;
+    let src_account = encode_terra_address(deps.as_ref(), &sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
         ContractError::InvalidAddress {
             reason: e.to_string(),
         }
     })?;
-    let dest_account = hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {
-        reason: e.to_string(),
-    })?;
 
     let deposit_info = DepositInfo {
-        dest_chain_key,
-        dest_token_address,
+        src_chain,
+        dest_chain,
+        src_account,
         dest_account,
+        dest_token_address,
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
+        dest_chain_key: [0u8; 32],
     };
 
-    let deposit_hash = compute_transfer_id(
-        &terra_chain_key(),
-        &dest_chain_key,
-        &dest_token_address,
+    let deposit_hash = compute_transfer_hash(
+        &src_chain,
+        &dest_chain,
+        &src_account,
         &dest_account,
+        &dest_token_address,
         net_amount.u128(),
         nonce,
     );
@@ -382,37 +413,39 @@ fn execute_cw20_lock(
         .add_attribute("action", "deposit_cw20_lock")
         .add_attribute("nonce", nonce.to_string())
         .add_attribute("sender", sender)
-        .add_attribute("recipient", recipient)
+        .add_attribute("dest_account", format!("0x{}", hex::encode(dest_account)))
         .add_attribute("token", token)
         .add_attribute("amount", net_amount.to_string())
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
-        .add_attribute("dest_chain_id", dest_chain_id.to_string())
+        .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }
 
 /// Internal handler for burning CW20 mintable tokens (MintBurn mode)
-fn execute_cw20_burn(
+#[allow(clippy::too_many_arguments)]
+fn execute_deposit_cw20_burn(
     deps: DepsMut,
     env: Env,
     config: crate::state::Config,
     token: String,
     amount: Uint128,
     sender: cosmwasm_std::Addr,
-    dest_chain_id: u64,
-    recipient: String,
+    dest_chain: cosmwasm_std::Binary,
+    dest_account_bin: cosmwasm_std::Binary,
 ) -> Result<Response, ContractError> {
     // Check destination chain
-    let chain_key = dest_chain_id.to_string();
-    let chain = CHAINS.may_load(deps.storage, chain_key.clone())?.ok_or(
-        ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
-        },
-    )?;
+    let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+    let chain =
+        CHAINS
+            .may_load(deps.storage, &dest_chain_bytes)?
+            .ok_or(ContractError::InvalidAddress {
+                reason: "Destination chain not registered".to_string(),
+            })?;
 
     if !chain.enabled {
-        return Err(ContractError::ChainNotSupported {
-            chain_id: dest_chain_id,
+        return Err(ContractError::InvalidAddress {
+            reason: "Destination chain is disabled".to_string(),
         });
     }
 
@@ -463,44 +496,49 @@ fn execute_cw20_burn(
     let nonce = OUTGOING_NONCE.load(deps.storage)?;
     OUTGOING_NONCE.save(deps.storage, &(nonce + 1))?;
 
+    let dest_account = parse_bytes32(&dest_account_bin)?;
+
     // Store transaction
     let tx = BridgeTransaction {
         nonce,
         sender: sender.to_string(),
-        recipient: recipient.clone(),
+        recipient: format!("0x{}", hex::encode(dest_account)),
         token: token.clone(),
         amount: net_amount,
-        dest_chain_id,
+        dest_chain: dest_chain_bytes,
         timestamp: env.block.time,
         is_outgoing: true,
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
     // Compute and store deposit hash
-    let dest_chain_key = evm_chain_key(dest_chain_id);
+    let src_chain = THIS_CHAIN_ID.may_load(deps.storage)?.unwrap_or([0u8; 4]);
+    let dest_chain = dest_chain_bytes;
+    let src_account = encode_terra_address(deps.as_ref(), &sender)?;
     let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
         ContractError::InvalidAddress {
             reason: e.to_string(),
         }
     })?;
-    let dest_account = hex_to_bytes32(&recipient).map_err(|e| ContractError::InvalidAddress {
-        reason: e.to_string(),
-    })?;
 
     let deposit_info = DepositInfo {
-        dest_chain_key,
-        dest_token_address,
+        src_chain,
+        dest_chain,
+        src_account,
         dest_account,
+        dest_token_address,
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
+        dest_chain_key: [0u8; 32],
     };
 
-    let deposit_hash = compute_transfer_id(
-        &terra_chain_key(),
-        &dest_chain_key,
-        &dest_token_address,
+    let deposit_hash = compute_transfer_hash(
+        &src_chain,
+        &dest_chain,
+        &src_account,
         &dest_account,
+        &dest_token_address,
         net_amount.u128(),
         nonce,
     );
@@ -542,11 +580,11 @@ fn execute_cw20_burn(
         .add_attribute("action", "deposit_cw20_mintable_burn")
         .add_attribute("nonce", nonce.to_string())
         .add_attribute("sender", sender)
-        .add_attribute("recipient", recipient)
+        .add_attribute("dest_account", format!("0x{}", hex::encode(dest_account)))
         .add_attribute("token", token)
         .add_attribute("amount", net_amount.to_string())
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
-        .add_attribute("dest_chain_id", dest_chain_id.to_string())
+        .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }

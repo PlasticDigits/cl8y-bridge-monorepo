@@ -113,15 +113,45 @@ pub enum ContractError {
     CannotRemoveLastOperator,
 
     // ========================================================================
-    // Watchtower Pattern Errors (v2.0)
+    // Withdrawal Flow Errors (V2)
     // ========================================================================
+    #[error("Withdrawal not found")]
+    WithdrawNotFound,
+
     #[error("Withdrawal not approved")]
     WithdrawNotApproved,
 
+    #[error("Withdrawal already submitted")]
+    WithdrawAlreadySubmitted,
+
+    #[error("Withdrawal already executed")]
+    WithdrawAlreadyExecuted,
+
+    #[error("Withdrawal cancelled")]
+    WithdrawCancelled,
+
+    #[error("Withdrawal not cancelled (cannot uncancel)")]
+    WithdrawNotCancelled,
+
+    #[error("Cancel window still active, ends at {ends_at}")]
+    CancelWindowActive { ends_at: u64 },
+
+    #[error("Cancel window expired")]
+    CancelWindowExpired,
+
+    #[error("Withdraw data missing for hash")]
+    WithdrawDataMissing,
+
+    #[error("Invalid token type for operation: expected {expected}")]
+    WrongTokenType { expected: String },
+
+    // ========================================================================
+    // Legacy Watchtower Errors (deprecated, kept for backward compat)
+    // ========================================================================
     #[error("Withdrawal approval cancelled")]
     ApprovalCancelled,
 
-    #[error("Withdrawal already executed")]
+    #[error("Withdrawal already executed (legacy)")]
     ApprovalAlreadyExecuted,
 
     #[error("Withdrawal delay not elapsed: {remaining_seconds} seconds remaining")]
@@ -129,9 +159,6 @@ pub enum ContractError {
 
     #[error("Approval not cancelled (cannot reenable)")]
     ApprovalNotCancelled,
-
-    #[error("Withdraw data missing for hash")]
-    WithdrawDataMissing,
 
     // ========================================================================
     // Rate Limit Errors

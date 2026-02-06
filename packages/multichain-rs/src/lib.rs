@@ -4,9 +4,9 @@
 //!
 //! - **Address Encoding/Decoding** - Universal address codec for EVM and Cosmos chains
 //! - **Hash Computation** - Deposit/withdraw hash computation matching contract logic
-//! - **Types** - Shared types like ChainId, UniversalAddress
-//! - **EVM Module** - EVM client, contract bindings, event parsing, token helpers
-//! - **Terra Module** - Terra client, contract messages, event parsing, token helpers
+//! - **Types** - Shared types like ChainId, UniversalAddress, FeeParams, ChainRegistration
+//! - **EVM Module** - EVM client, contract bindings, event parsing, signing, watching
+//! - **Terra Module** - Terra client, contract messages, event parsing, signing, queries
 //! - **Testing Module** - Helpers for E2E tests (user EOA simulation, assertions)
 //!
 //! ## Usage
@@ -47,7 +47,10 @@ pub use address_codec::{
 
 pub use hash::{
     address_to_bytes32, bytes32_to_address, bytes32_to_hex, bytes4_to_hex, compute_deposit_hash,
-    compute_withdraw_hash, keccak256,
+    compute_transfer_hash, compute_withdraw_hash, keccak256,
 };
 
-pub use types::{ChainId, EvmAddress, Status, TokenType, WithdrawHash};
+pub use types::{
+    ChainId, ChainRegistration, EvmAddress, FeeCalculator, FeeParams, OperatorGasConfig, Status,
+    TokenDestination, TokenRegistration, TokenType, WithdrawHash,
+};

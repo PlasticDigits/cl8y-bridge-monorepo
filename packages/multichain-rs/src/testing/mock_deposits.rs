@@ -3,7 +3,7 @@
 //! Utilities for creating test deposit scenarios and generating expected hashes.
 
 use crate::{
-    compute_deposit_hash, compute_withdraw_hash,
+    compute_transfer_hash,
     types::{ChainId, EvmAddress},
 };
 use serde::{Deserialize, Serialize};
@@ -15,10 +15,12 @@ pub struct MockDeposit {
     pub src_chain: ChainId,
     /// Destination chain ID
     pub dest_chain: ChainId,
-    /// Destination token (32 bytes universal)
-    pub dest_token: [u8; 32],
-    /// Destination account (32 bytes universal)
+    /// Source account (depositor, 32 bytes universal)
+    pub src_account: [u8; 32],
+    /// Destination account (recipient, 32 bytes universal)
     pub dest_account: [u8; 32],
+    /// Token address on destination chain (32 bytes universal)
+    pub token: [u8; 32],
     /// Amount
     pub amount: u128,
     /// Nonce
@@ -30,43 +32,39 @@ impl MockDeposit {
     pub fn new(
         src_chain: u32,
         dest_chain: u32,
-        dest_token: [u8; 32],
+        src_account: [u8; 32],
         dest_account: [u8; 32],
+        token: [u8; 32],
         amount: u128,
         nonce: u64,
     ) -> Self {
         Self {
             src_chain: ChainId::from_u32(src_chain),
             dest_chain: ChainId::from_u32(dest_chain),
-            dest_token,
+            src_account,
             dest_account,
+            token,
             amount,
             nonce,
         }
     }
 
-    /// Compute the deposit hash
+    /// Compute the unified transfer hash (same for deposit and withdraw)
     pub fn compute_hash(&self) -> [u8; 32] {
-        compute_deposit_hash(
+        compute_transfer_hash(
             self.src_chain.as_bytes(),
             self.dest_chain.as_bytes(),
-            &self.dest_token,
+            &self.src_account,
             &self.dest_account,
+            &self.token,
             self.amount,
             self.nonce,
         )
     }
 
-    /// Compute the withdraw hash (same as deposit hash)
+    /// Compute the withdraw hash (same as deposit hash for cross-chain matching)
     pub fn compute_withdraw_hash(&self) -> [u8; 32] {
-        compute_withdraw_hash(
-            self.src_chain.as_bytes(),
-            self.dest_chain.as_bytes(),
-            &self.dest_token,
-            &self.dest_account,
-            self.amount,
-            self.nonce,
-        )
+        self.compute_hash()
     }
 }
 
@@ -74,8 +72,9 @@ impl MockDeposit {
 pub struct MockDepositBuilder {
     src_chain: u32,
     dest_chain: u32,
-    dest_token: [u8; 32],
+    src_account: [u8; 32],
     dest_account: [u8; 32],
+    token: [u8; 32],
     amount: u128,
     nonce: u64,
 }
@@ -85,8 +84,9 @@ impl Default for MockDepositBuilder {
         Self {
             src_chain: 1,
             dest_chain: 2,
-            dest_token: [0u8; 32],
+            src_account: [0u8; 32],
             dest_account: [0u8; 32],
+            token: [0u8; 32],
             amount: 1_000_000,
             nonce: 1,
         }
@@ -111,21 +111,27 @@ impl MockDepositBuilder {
         self
     }
 
-    /// Set destination token from EVM address
-    pub fn dest_token_evm(mut self, address: &EvmAddress) -> Self {
-        self.dest_token = address.as_bytes32();
-        self
-    }
-
-    /// Set destination token from raw bytes
-    pub fn dest_token(mut self, token: [u8; 32]) -> Self {
-        self.dest_token = token;
+    /// Set source account from raw bytes
+    pub fn src_account(mut self, account: [u8; 32]) -> Self {
+        self.src_account = account;
         self
     }
 
     /// Set destination account from raw bytes
     pub fn dest_account(mut self, account: [u8; 32]) -> Self {
         self.dest_account = account;
+        self
+    }
+
+    /// Set token from EVM address
+    pub fn token_evm(mut self, address: &EvmAddress) -> Self {
+        self.token = address.as_bytes32();
+        self
+    }
+
+    /// Set token from raw bytes
+    pub fn token(mut self, token: [u8; 32]) -> Self {
+        self.token = token;
         self
     }
 
@@ -146,8 +152,9 @@ impl MockDepositBuilder {
         MockDeposit::new(
             self.src_chain,
             self.dest_chain,
-            self.dest_token,
+            self.src_account,
             self.dest_account,
+            self.token,
             self.amount,
             self.nonce,
         )

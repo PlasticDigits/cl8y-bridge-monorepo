@@ -35,6 +35,9 @@ pub struct EvmDeposit {
     pub dest_chain_id: Option<i64>,
     /// Destination chain type: 'evm' or 'cosmos' (added in migration 003, defaults to 'cosmos')
     pub dest_chain_type: Option<String>,
+    /// Source account (depositor) encoded as 32-byte universal address (V2 hash fix)
+    #[sqlx(default)]
+    pub src_account: Option<Vec<u8>>,
 }
 
 /// For inserting new EVM deposits
@@ -53,6 +56,8 @@ pub struct NewEvmDeposit {
     pub block_hash: String,
     /// Destination chain type: 'evm' or 'cosmos'
     pub dest_chain_type: String,
+    /// Source account (depositor) encoded as 32-byte universal address (V2 hash fix)
+    pub src_account: Vec<u8>,
 }
 
 /// Represents a deposit (lock) from Terra Classic

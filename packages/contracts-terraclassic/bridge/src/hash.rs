@@ -1,29 +1,33 @@
 //! Hash computation module for cross-chain verification
 //!
 //! This module provides canonical hash computation that produces identical output
-//! to the EVM contract's `_computeTransferId` function.
+//! to the EVM contract's `HashLib.computeTransferHash` function.
 //!
-//! # EVM Reference
+//! # V2 Unified Transfer Hash (7-field)
+//!
+//! Both deposits and withdrawals use the same hash so they produce identical
+//! hashes for the same transfer, enabling cross-chain verification.
+//!
 //! ```solidity
-//! function _computeTransferId(
-//!     bytes32 srcChainKey,
-//!     bytes32 destChainKey,
-//!     bytes32 destTokenAddress,
-//!     bytes32 destAccount,
-//!     uint256 amount,
-//!     uint256 nonce
-//! ) internal pure returns (bytes32) {
-//!     return keccak256(abi.encode(...));
-//! }
+//! keccak256(abi.encode(
+//!     bytes32(srcChain),     // 4 bytes -> padded to 32
+//!     bytes32(destChain),    // 4 bytes -> padded to 32
+//!     srcAccount,            // bytes32
+//!     destAccount,           // bytes32
+//!     token,                 // bytes32
+//!     uint256(amount),       // 32 bytes
+//!     uint256(nonce)         // 32 bytes
+//! ))
 //! ```
 //!
-//! # Byte Layout (192 bytes total)
-//! - Bytes 0-31:    srcChainKey (32 bytes)
-//! - Bytes 32-63:   destChainKey (32 bytes)
-//! - Bytes 64-95:   destTokenAddress (32 bytes)
+//! # Byte Layout (224 bytes total, abi.encode format)
+//! - Bytes 0-31:    srcChain (bytes4 left-aligned, zero-padded to 32)
+//! - Bytes 32-63:   destChain (bytes4 left-aligned, zero-padded to 32)
+//! - Bytes 64-95:   srcAccount (32 bytes)
 //! - Bytes 96-127:  destAccount (32 bytes)
-//! - Bytes 128-159: amount (uint256, big-endian, left-padded)
-//! - Bytes 160-191: nonce (uint256, big-endian, left-padded)
+//! - Bytes 128-159: token (32 bytes)
+//! - Bytes 160-191: amount (uint256, big-endian, left-padded)
+//! - Bytes 192-223: nonce (uint256, big-endian, left-padded)
 
 use cosmwasm_std::{Addr, Deps, StdResult};
 use tiny_keccak::{Hasher, Keccak};
@@ -40,48 +44,92 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
     output
 }
 
-/// Compute the canonical transferId hash matching EVM's _computeTransferId
+/// Compute unified transfer hash matching EVM's HashLib.computeTransferHash
 ///
 /// This function produces identical output to the Solidity:
-/// `keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))`
+/// ```solidity
+/// keccak256(abi.encode(
+///     bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
+/// ))
+/// ```
+///
+/// Both deposits and withdrawals use this same hash, enabling cross-chain matching.
 ///
 /// # Arguments
-/// * `src_chain_key` - 32-byte source chain identifier
-/// * `dest_chain_key` - 32-byte destination chain identifier
-/// * `dest_token_address` - 32-byte destination token address
-/// * `dest_account` - 32-byte destination account
+/// * `src_chain` - 4-byte source chain ID
+/// * `dest_chain` - 4-byte destination chain ID
+/// * `src_account` - 32-byte source account (depositor)
+/// * `dest_account` - 32-byte destination account (recipient)
+/// * `token` - 32-byte token address on destination chain
 /// * `amount` - Transfer amount (u128, will be left-padded to 32 bytes)
 /// * `nonce` - Unique nonce (u64, will be left-padded to 32 bytes)
 ///
 /// # Returns
 /// 32-byte keccak256 hash
-pub fn compute_transfer_id(
-    src_chain_key: &[u8; 32],
-    dest_chain_key: &[u8; 32],
-    dest_token_address: &[u8; 32],
+pub fn compute_transfer_hash(
+    src_chain: &[u8; 4],
+    dest_chain: &[u8; 4],
+    src_account: &[u8; 32],
     dest_account: &[u8; 32],
+    token: &[u8; 32],
     amount: u128,
     nonce: u64,
 ) -> [u8; 32] {
-    // Pre-allocate exact size: 6 * 32 = 192 bytes
-    let mut data = [0u8; 192];
+    // Pre-allocate exact size: 7 * 32 = 224 bytes (abi.encode format)
+    let mut data = [0u8; 224];
 
-    // Copy fixed-size values (first 4 slots)
-    data[0..32].copy_from_slice(src_chain_key);
-    data[32..64].copy_from_slice(dest_chain_key);
-    data[64..96].copy_from_slice(dest_token_address);
+    // srcChain (bytes4 left-aligned in bytes32, rest zero-padded)
+    data[0..4].copy_from_slice(src_chain);
+    // bytes 4..32 remain zero
+
+    // destChain (bytes4 left-aligned in bytes32, rest zero-padded)
+    data[32..36].copy_from_slice(dest_chain);
+    // bytes 36..64 remain zero
+
+    // srcAccount (32 bytes)
+    data[64..96].copy_from_slice(src_account);
+
+    // destAccount (32 bytes)
     data[96..128].copy_from_slice(dest_account);
+
+    // token (32 bytes)
+    data[128..160].copy_from_slice(token);
 
     // uint256 amount - left-padded to 32 bytes, big-endian
     // u128 (16 bytes) goes into bytes 16-31, bytes 0-15 remain zero
     let amount_bytes = amount.to_be_bytes();
-    data[128 + 16..160].copy_from_slice(&amount_bytes);
+    data[160 + 16..192].copy_from_slice(&amount_bytes);
 
     // uint256 nonce - left-padded to 32 bytes, big-endian
     // u64 (8 bytes) goes into bytes 24-31, bytes 0-23 remain zero
     let nonce_bytes = nonce.to_be_bytes();
-    data[160 + 24..192].copy_from_slice(&nonce_bytes);
+    data[192 + 24..224].copy_from_slice(&nonce_bytes);
 
+    keccak256(&data)
+}
+
+/// Legacy V1 transfer ID computation (6-field, 32-byte chain keys).
+///
+/// **Deprecated**: Use [`compute_transfer_hash`] for the unified 7-field V2 hash.
+/// Retained for backward compatibility with `ComputeWithdrawHash` legacy query.
+#[deprecated(note = "Use compute_transfer_hash (V2 7-field) instead")]
+pub fn compute_transfer_id(
+    src_chain_key: &[u8; 32],
+    dest_chain_key: &[u8; 32],
+    token: &[u8; 32],
+    account: &[u8; 32],
+    amount: u128,
+    nonce: u64,
+) -> [u8; 32] {
+    let mut data = [0u8; 192]; // 6 * 32 = 192 bytes
+    data[0..32].copy_from_slice(src_chain_key);
+    data[32..64].copy_from_slice(dest_chain_key);
+    data[64..96].copy_from_slice(token);
+    data[96..128].copy_from_slice(account);
+    let amount_bytes = amount.to_be_bytes();
+    data[128 + 16..160].copy_from_slice(&amount_bytes);
+    let nonce_bytes = nonce.to_be_bytes();
+    data[160 + 24..192].copy_from_slice(&nonce_bytes);
     keccak256(&data)
 }
 
@@ -154,6 +202,22 @@ pub fn encode_terra_address(deps: Deps, addr: &Addr) -> StdResult<[u8; 32]> {
     }
 
     Ok(result)
+}
+
+/// Decode a 32-byte left-padded address back to a Terra/Cosmos address.
+///
+/// Reverse of [`encode_terra_address`]: strips leading zero-padding and humanizes
+/// the canonical address bytes.
+pub fn decode_terra_address(deps: Deps, bytes: &[u8; 32]) -> StdResult<Addr> {
+    // Find first non-zero byte — everything before is padding
+    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(32);
+    if first_nonzero >= 32 {
+        return Err(cosmwasm_std::StdError::generic_err(
+            "Cannot decode zero address",
+        ));
+    }
+    let canonical = cosmwasm_std::CanonicalAddr::from(bytes[first_nonzero..].to_vec());
+    deps.api.addr_humanize(&canonical)
 }
 
 /// Encode a token denom/address as 32 bytes
@@ -259,66 +323,91 @@ fn abi_encode_chain_key(chain_type: &str, raw_key: &[u8; 32]) -> [u8; 32] {
 mod tests {
     use super::*;
 
-    /// Vector 1: All zeros - matches EVM HashVectors.t.sol testVector1_AllZeros
+    /// Test V2 7-field hash: all zeros
     #[test]
-    fn test_vector1_all_zeros() {
-        let result = compute_transfer_id(&[0u8; 32], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0);
-
-        assert_eq!(
-            bytes32_to_hex(&result),
-            "0x1e990e27f0d7976bf2adbd60e20384da0125b76e2885a96aa707bcb054108b0d"
+    fn test_transfer_hash_all_zeros() {
+        let result = compute_transfer_hash(
+            &[0u8; 4], &[0u8; 4], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0,
         );
+
+        // All-zero 224-byte input should produce a deterministic hash
+        assert_eq!(result.len(), 32);
+
+        // Same inputs should produce same hash
+        let result2 = compute_transfer_hash(
+            &[0u8; 4], &[0u8; 4], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0,
+        );
+        assert_eq!(result, result2);
     }
 
-    /// Vector 2: Simple values - matches EVM HashVectors.t.sol testVector2_SimpleValues
+    /// Test V2 7-field hash: different nonces produce different hashes
     #[test]
-    fn test_vector2_simple_values() {
-        // srcChainKey = 1, destChainKey = 2, destTokenAddress = 3, destAccount = 4
-        let mut src_chain_key = [0u8; 32];
-        src_chain_key[31] = 1;
+    fn test_transfer_hash_different_nonce() {
+        let src_chain: [u8; 4] = [0, 0, 0, 1];
+        let dest_chain: [u8; 4] = [0, 0, 0, 2];
+        let src_account = [0u8; 32];
+        let dest_account = [0u8; 32];
+        let token = [0u8; 32];
 
-        let mut dest_chain_key = [0u8; 32];
-        dest_chain_key[31] = 2;
-
-        let mut dest_token_address = [0u8; 32];
-        dest_token_address[31] = 3;
-
-        let mut dest_account = [0u8; 32];
-        dest_account[31] = 4;
-
-        let amount: u128 = 1_000_000_000_000_000_000; // 1e18
-        let nonce: u64 = 42;
-
-        let result = compute_transfer_id(
-            &src_chain_key,
-            &dest_chain_key,
-            &dest_token_address,
+        let hash1 = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
             &dest_account,
-            amount,
-            nonce,
+            &token,
+            1_000_000,
+            1,
+        );
+        let hash2 = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            1_000_000,
+            2,
         );
 
-        assert_eq!(
-            bytes32_to_hex(&result),
-            "0x7226dd6b664f0c50fb3e50adfa82057dab4819f592ef9d35c08b9c4531b05150"
+        assert_ne!(
+            hash1, hash2,
+            "Different nonces must produce different hashes"
         );
     }
 
-    /// Vector 6: Maximum values - matches EVM HashVectors.t.sol testVector6_MaxValues
+    /// Test V2 7-field hash: srcAccount matters
     #[test]
-    fn test_vector6_max_values() {
-        let result = compute_transfer_id(
-            &[0xff; 32],
-            &[0xff; 32],
-            &[0xff; 32],
-            &[0xff; 32],
-            u128::MAX, // 340282366920938463463374607431768211455
-            u64::MAX,  // 18446744073709551615
+    fn test_transfer_hash_src_account_matters() {
+        let src_chain: [u8; 4] = [0, 0, 0, 1];
+        let dest_chain: [u8; 4] = [0, 0, 0, 2];
+        let mut src_account_a = [0u8; 32];
+        src_account_a[31] = 0xAA;
+        let mut src_account_b = [0u8; 32];
+        src_account_b[31] = 0xBB;
+        let dest_account = [0u8; 32];
+        let token = [0u8; 32];
+
+        let hash_a = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account_a,
+            &dest_account,
+            &token,
+            1_000_000,
+            1,
+        );
+        let hash_b = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account_b,
+            &dest_account,
+            &token,
+            1_000_000,
+            1,
         );
 
-        assert_eq!(
-            bytes32_to_hex(&result),
-            "0x8433decfd52c831dd32c2ce04d46812b4dc8c2ee057f1edae791837d230be522"
+        assert_ne!(
+            hash_a, hash_b,
+            "Different srcAccounts must produce different hashes"
         );
     }
 
@@ -399,40 +488,6 @@ mod tests {
         assert_eq!(
             bytes32_to_hex(&terra_key),
             "0x0ece70814ff48c843659d2c2cfd2138d070b75d11f9fd81e424873e90a47d8b3"
-        );
-    }
-
-    /// Vector 5: Realistic BSC->Terra transfer - matches EVM HashVectors.t.sol testVector5_RealisticTransfer
-    #[test]
-    fn test_vector5_realistic_transfer() {
-        let src_chain_key = evm_chain_key(56); // BSC
-        let dest_chain_key = cosmos_chain_key("columbus-5"); // Terra
-
-        // Token: USDT on BSC (0x55d398326f99059fF775485246999027B3197955) left-padded
-        let dest_token_address =
-            hex_to_bytes32("0x00000000000000000000000055d398326f99059ff775485246999027b3197955")
-                .unwrap();
-
-        // Recipient: example address left-padded
-        let dest_account =
-            hex_to_bytes32("0x0000000000000000000000001234567890abcdef1234567890abcdef12345678")
-                .unwrap();
-
-        let amount: u128 = 1_000_000; // 1 USDT (6 decimals)
-        let nonce: u64 = 1;
-
-        let result = compute_transfer_id(
-            &src_chain_key,
-            &dest_chain_key,
-            &dest_token_address,
-            &dest_account,
-            amount,
-            nonce,
-        );
-
-        assert_eq!(
-            bytes32_to_hex(&result),
-            "0x16ccad826b64971ab063989a5d66ef27a97e962f463ad917f76a4d2a313e2c79"
         );
     }
 

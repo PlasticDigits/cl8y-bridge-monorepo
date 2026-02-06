@@ -5,6 +5,7 @@
 
 use crate::services::ServiceManager;
 use crate::terra::TerraClient;
+use crate::tests::helpers::{chain_id4_to_bytes32, selector};
 use crate::E2eConfig;
 use alloy::primitives::{Address, B256, U256};
 use eyre::Result;
@@ -87,9 +88,7 @@ pub async fn check_operator_health() -> bool {
 pub async fn query_deposit_nonce(config: &E2eConfig) -> Result<u64> {
     let client = reqwest::Client::new();
 
-    // Encode depositNonce() function call
-    // Function selector for depositNonce() - from ABI: "de35f5cb"
-    let call_data = "0xde35f5cb";
+    let call_data = format!("0x{}", selector("depositNonce()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -123,21 +122,19 @@ pub async fn query_deposit_nonce(config: &E2eConfig) -> Result<u64> {
     Ok(nonce)
 }
 
-/// Get Terra chain key from ChainRegistry
-pub async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 32]> {
+/// Get Terra chain ID (bytes4) from ChainRegistry using identifier "terraclassic_{chain_id}"
+///
+/// Uses computeIdentifierHash + getChainIdFromHash to look up the bytes4 chain ID.
+pub async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 4]> {
     let client = reqwest::Client::new();
+    let identifier = format!("terraclassic_{}", config.terra.chain_id);
 
-    // Encode getChainKeyCOSMW(string) function call
-    let chain_id = &config.terra.chain_id;
-
-    // ABI encode: function selector + offset + length + data
-    // Verified with: cast sig "getChainKeyCOSMW(string)" = 0x1b69b176
-    let selector = "0x1b69b176";
-    let offset = format!("{:064x}", 32); // offset to string data
-    let length = format!("{:064x}", chain_id.len());
-    let data_padded = format!("{:0<64}", hex::encode(chain_id.as_bytes()));
-
-    let call_data = format!("{}{}{}{}", selector, offset, length, data_padded);
+    // Step 1: computeIdentifierHash(string)
+    let sel1 = selector("computeIdentifierHash(string)");
+    let offset = format!("{:064x}", 32);
+    let length = format!("{:064x}", identifier.len());
+    let data_padded = format!("{:0<64}", hex::encode(identifier.as_bytes()));
+    let call_data = format!("0x{}{}{}{}", sel1, offset, length, data_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -154,16 +151,42 @@ pub async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 32]> {
         .await?;
 
     let body: serde_json::Value = response.json().await?;
-    let hex_result = body["result"]
+    let hash_hex = body["result"]
         .as_str()
-        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+        .ok_or_else(|| eyre::eyre!("No result from computeIdentifierHash"))?;
 
-    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    let mut chain_key = [0u8; 32];
-    if bytes.len() >= 32 {
-        chain_key.copy_from_slice(&bytes[..32]);
+    // Step 2: getChainIdFromHash(bytes32)
+    let sel2 = selector("getChainIdFromHash(bytes32)");
+    let hash_clean = hash_hex.trim_start_matches("0x");
+    let call_data2 = format!("0x{}{}", sel2, hash_clean);
+
+    let response2 = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.chain_registry),
+                "data": call_data2
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body2: serde_json::Value = response2.json().await?;
+    let chain_id_hex = body2["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result from getChainIdFromHash"))?;
+
+    // Parse bytes4 from ABI-encoded result (left-aligned in 32 bytes)
+    let bytes = hex::decode(chain_id_hex.trim_start_matches("0x"))?;
+    if bytes.len() < 4 {
+        return Err(eyre::eyre!("Invalid chain ID response: too short"));
     }
-    Ok(chain_key)
+    let mut chain_id = [0u8; 4];
+    chain_id.copy_from_slice(&bytes[..4]);
+    Ok(chain_id)
 }
 
 /// Encode Terra address as bytes32 (right-padded hex)
@@ -185,10 +208,10 @@ pub async fn approve_erc20(
     let client = reqwest::Client::new();
 
     // Encode approve(address,uint256) function call
-    // selector: 0x095ea7b3
+    let sel = selector("approve(address,uint256)");
     let spender_padded = format!("{:0>64}", hex::encode(spender.as_slice()));
     let amount_padded = format!("{:064x}", amount);
-    let call_data = format!("0x095ea7b3{}{}", spender_padded, amount_padded);
+    let call_data = format!("0x{}{}{}", sel, spender_padded, amount_padded);
 
     debug!(
         "Approving token {} for spender {} amount {}",
@@ -247,40 +270,37 @@ pub async fn approve_erc20(
     Ok(tx_hash)
 }
 
-/// Execute deposit on BridgeRouter
+/// Execute deposit on Bridge via depositERC20
 ///
-/// Function signature: deposit(address,uint256,bytes32,bytes32)
-/// Selector: 0x7dcc9f07 (keccak256 first 4 bytes)
+/// Function signature: depositERC20(address,uint256,bytes4,bytes32)
 pub async fn execute_deposit(
     config: &E2eConfig,
-    router: Address,
     token: Address,
     amount: u128,
-    dest_chain_key: [u8; 32],
+    dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<B256> {
     let client = reqwest::Client::new();
 
-    // Function selector for deposit(address,uint256,bytes32,bytes32)
-    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x7dcc9f07
-    let selector = "7dcc9f07";
+    let sel = selector("depositERC20(address,uint256,bytes4,bytes32)");
 
-    // ABI encode parameters (each 32 bytes, left-padded for addresses/ints, raw for bytes32)
+    // ABI encode parameters
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount);
-    let chain_key_hex = hex::encode(dest_chain_key);
+    // bytes4 is ABI-encoded left-aligned in 32 bytes (right-padded with zeros)
+    let chain_id_padded = hex::encode(chain_id4_to_bytes32(dest_chain_id));
     let dest_account_hex = hex::encode(dest_account);
 
     let call_data = format!(
         "0x{}{}{}{}{}",
-        selector, token_padded, amount_padded, chain_key_hex, dest_account_hex
+        sel, token_padded, amount_padded, chain_id_padded, dest_account_hex
     );
 
     debug!(
-        "Executing deposit: token={}, amount={}, destChain=0x{}, destAccount=0x{}",
+        "Executing depositERC20: token={}, amount={}, destChain=0x{}, destAccount=0x{}",
         token,
         amount,
-        hex::encode(&dest_chain_key[..8]),
+        hex::encode(dest_chain_id),
         hex::encode(&dest_account[..8])
     );
 
@@ -291,7 +311,7 @@ pub async fn execute_deposit(
             "method": "eth_sendTransaction",
             "params": [{
                 "from": format!("{}", config.test_accounts.evm_address),
-                "to": format!("{}", router),
+                "to": format!("{}", config.evm.contracts.bridge),
                 "data": call_data,
                 "gas": "0x200000"
             }],
@@ -511,13 +531,11 @@ pub async fn poll_terra_for_approval(
 // Withdrawal Helpers
 // ============================================================================
 
-/// Query withdraw delay from bridge contract
-pub async fn query_withdraw_delay(config: &E2eConfig) -> Result<u64> {
+/// Query cancel window (formerly "withdraw delay") from bridge contract
+pub async fn query_cancel_window(config: &E2eConfig) -> Result<u64> {
     let client = reqwest::Client::new();
 
-    // Encode withdrawDelay() function call
-    // Verified with: cast sig "withdrawDelay()"
-    let call_data = "0x0288a39c";
+    let call_data = format!("0x{}", selector("getCancelWindow()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -559,9 +577,9 @@ pub async fn get_erc20_balance(
     let client = reqwest::Client::new();
 
     // Encode balanceOf(address) function call
-    // selector: 0x70a08231
+    let sel = selector("balanceOf(address)");
     let account_padded = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!("0x70a08231{}", account_padded);
+    let call_data = format!("0x{}{}", sel, account_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -594,8 +612,7 @@ pub async fn get_erc20_balance(
 pub async fn query_fee_collector(config: &E2eConfig) -> Result<Address> {
     let client = reqwest::Client::new();
 
-    // feeCollector() selector
-    let call_data = "0xc415b95c";
+    let call_data = format!("0x{}", selector("feeCollector()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -628,8 +645,7 @@ pub async fn query_fee_collector(config: &E2eConfig) -> Result<Address> {
 pub async fn query_fee_bps(config: &E2eConfig) -> Result<u64> {
     let client = reqwest::Client::new();
 
-    // feeBps() selector
-    let call_data = "0x3e4086e5";
+    let call_data = format!("0x{}", selector("feeBps()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -669,12 +685,11 @@ pub async fn execute_batch_deposits(
     token: Address,
     amount_per_deposit: u128,
     num_deposits: u32,
-    dest_chain_key: [u8; 32],
+    dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<Vec<B256>> {
     let mut tx_hashes = Vec::new();
     let lock_unlock = config.evm.contracts.lock_unlock;
-    let router = config.evm.contracts.router;
 
     // Approve total amount
     let total_amount = amount_per_deposit * (num_deposits as u128);
@@ -685,10 +700,9 @@ pub async fn execute_batch_deposits(
         info!("Executing batch deposit {}/{}", i + 1, num_deposits);
         match execute_deposit(
             config,
-            router,
             token,
             amount_per_deposit,
-            dest_chain_key,
+            dest_chain_id,
             dest_account,
         )
         .await
@@ -752,10 +766,9 @@ pub async fn is_approval_timed_out(
 ) -> Result<bool> {
     let client = reqwest::Client::new();
 
-    // getWithdrawApproval(bytes32) selector
-    let selector = "9211345c";
+    let sel = selector("pendingWithdraws(bytes32)");
     let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", selector, withdraw_hash_hex);
+    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -777,12 +790,17 @@ pub async fn is_approval_timed_out(
         .ok_or_else(|| eyre::eyre!("No result in response"))?;
 
     let bytes = hex::decode(result_hex.trim_start_matches("0x"))?;
-    if bytes.len() < 96 {
+    if bytes.len() < 13 * 32 {
         return Ok(false);
     }
 
-    // approvedAt is at offset 64 (third slot)
-    let approved_at = u64::from_be_bytes(bytes[88..96].try_into().unwrap_or([0u8; 8]));
+    // approvedAt is at slot 9 (offset 288) in PendingWithdraw struct
+    let approved_at_offset = 9 * 32;
+    let approved_at = u64::from_be_bytes(
+        bytes[approved_at_offset + 24..approved_at_offset + 32]
+            .try_into()
+            .unwrap_or([0u8; 8]),
+    );
 
     if approved_at == 0 {
         return Ok(false);

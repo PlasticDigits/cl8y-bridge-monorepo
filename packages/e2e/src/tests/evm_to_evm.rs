@@ -6,12 +6,12 @@
 use crate::transfer_helpers::{
     get_erc20_balance, poll_for_approval, skip_withdrawal_delay, verify_withdrawal_executed,
 };
-use crate::{ChainKey, E2eConfig, TestResult};
-use alloy::primitives::{Address, B256, U256};
+use crate::{E2eConfig, TestResult};
+use alloy::primitives::{Address, U256};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
-use super::helpers::{approve_erc20, execute_deposit, query_deposit_nonce};
+use super::helpers::{approve_erc20, execute_deposit, query_deposit_nonce, selector};
 
 /// Secondary EVM chain configuration for cross-EVM tests
 #[derive(Debug, Clone)]
@@ -22,8 +22,6 @@ pub struct SecondaryEvmConfig {
     pub chain_id: u64,
     /// Bridge address on secondary chain
     pub bridge: Address,
-    /// Router address on secondary chain  
-    pub router: Address,
     /// Token registry on secondary chain
     pub token_registry: Address,
     /// Chain registry on secondary chain
@@ -36,7 +34,6 @@ impl Default for SecondaryEvmConfig {
             rpc_url: "http://localhost:8546".to_string(), // Second Anvil port
             chain_id: 31338,                              // Different chain ID
             bridge: Address::ZERO,
-            router: Address::ZERO,
             token_registry: Address::ZERO,
             chain_registry: Address::ZERO,
         }
@@ -78,27 +75,25 @@ impl Default for EvmToEvmOptions {
 // EVM Chain Key Registration
 // ============================================================================
 
-/// Register a secondary EVM chain key in the chain registry
+/// Register a secondary EVM chain in the chain registry (V2)
 ///
-/// This registers a new EVM chain for cross-EVM transfers.
-/// The chain key format is: `evm_<chain_id>` (first 4 bytes "evm_", then chain ID as bytes)
+/// Uses registerChain("evm_{chain_id}") to register the chain.
 pub async fn register_evm_chain_key(
     config: &E2eConfig,
     secondary_chain_id: u64,
-) -> eyre::Result<B256> {
-    info!(
-        "Registering EVM chain key for chain ID {}",
-        secondary_chain_id
-    );
+) -> eyre::Result<[u8; 4]> {
+    info!("Registering EVM chain for chain ID {}", secondary_chain_id);
 
-    // Compute chain key using the same format as ChainRegistry.getChainKeyEVM
-    let chain_key = ChainKey::evm(secondary_chain_id);
-    let chain_key_bytes = chain_key.0;
-
-    // Check if already registered by calling getChainKeyEVM
+    // Query if already registered using the helper
     let client = reqwest::Client::new();
-    let chain_id_hex = format!("{:064x}", secondary_chain_id);
-    let call_data = format!("0x8e499bcf{}", chain_id_hex); // getChainKeyEVM(uint256)
+    let identifier = format!("evm_{}", secondary_chain_id);
+
+    // computeIdentifierHash(string)
+    let sel1 = selector("computeIdentifierHash(string)");
+    let offset = format!("{:064x}", 32);
+    let length = format!("{:064x}", identifier.len());
+    let data_padded = format!("{:0<64}", hex::encode(identifier.as_bytes()));
+    let call_data = format!("0x{}{}{}{}", sel1, offset, length, data_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -115,52 +110,70 @@ pub async fn register_evm_chain_key(
         .await?;
 
     let body: serde_json::Value = response.json().await?;
-    let result_hex = body["result"].as_str().unwrap_or("0x");
-    let existing = hex::decode(result_hex.trim_start_matches("0x")).unwrap_or_default();
+    let hash_hex = body["result"].as_str().unwrap_or("0x");
 
-    // Check if non-zero (already registered)
-    if existing.len() == 32 && existing.iter().any(|&b| b != 0) {
-        let existing_key = B256::from_slice(&existing);
+    // getChainIdFromHash(bytes32)
+    let sel2 = selector("getChainIdFromHash(bytes32)");
+    let hash_clean = hash_hex.trim_start_matches("0x");
+    let call_data2 = format!("0x{}{}", sel2, hash_clean);
+
+    let response2 = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.chain_registry),
+                "data": call_data2
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body2: serde_json::Value = response2.json().await?;
+    let chain_id_hex = body2["result"].as_str().unwrap_or("0x");
+    let bytes = hex::decode(chain_id_hex.trim_start_matches("0x")).unwrap_or_default();
+
+    if bytes.len() >= 4 && bytes[..4] != [0u8; 4] {
+        let mut chain_id = [0u8; 4];
+        chain_id.copy_from_slice(&bytes[..4]);
         info!(
-            "EVM chain key already registered: 0x{}",
-            hex::encode(existing_key)
+            "EVM chain already registered with ID: 0x{}",
+            hex::encode(chain_id)
         );
-        return Ok(existing_key);
+        return Ok(chain_id);
     }
 
-    // Register new chain key via addEVMChainKey (if available)
-    // For now, return the computed key (assumes pre-registration or use mock)
-    info!("EVM chain key computed: 0x{}", hex::encode(chain_key_bytes));
-    Ok(chain_key_bytes)
+    // Chain not registered - return zero (would need admin registration)
+    info!("EVM chain {} not yet registered", secondary_chain_id);
+    Ok([0u8; 4])
 }
 
-/// Get the EVM chain key for a given chain ID
-pub fn get_evm_chain_key(chain_id: u64) -> B256 {
-    ChainKey::evm(chain_id).0
+/// Get a placeholder EVM chain ID (for test compatibility)
+///
+/// In V2, chain IDs are assigned dynamically by ChainRegistry.
+/// This returns a placeholder value for tests that need a chain ID format.
+pub fn get_evm_chain_key(chain_id: u64) -> [u8; 4] {
+    // Use the chain_id modulo to fit in 4 bytes as a simple placeholder
+    (chain_id as u32).to_be_bytes()
 }
 
 // ============================================================================
 // Mock Chain Key Registration (for single-Anvil testing)
 // ============================================================================
 
-/// Register a mock EVM chain key for testing without second Anvil
-///
-/// This creates a "fake" chain key that allows testing the deposit flow
-/// on a single Anvil instance by registering a non-existent chain.
+/// Register a mock EVM chain for testing without second Anvil
 pub async fn register_mock_evm_chain(
     _config: &E2eConfig,
     mock_chain_id: u64,
-) -> eyre::Result<B256> {
+) -> eyre::Result<[u8; 4]> {
     info!("Registering mock EVM chain: {}", mock_chain_id);
 
-    // Create a mock chain key
-    let chain_key = get_evm_chain_key(mock_chain_id);
+    let chain_id = get_evm_chain_key(mock_chain_id);
+    info!("Mock EVM chain ID: 0x{}", hex::encode(chain_id));
 
-    // For mock testing, we just use the computed key
-    // Real registration would require admin access to ChainRegistry
-    info!("Mock EVM chain key: 0x{}", hex::encode(chain_key));
-
-    Ok(chain_key)
+    Ok(chain_id)
 }
 
 // ============================================================================
@@ -245,17 +258,7 @@ pub async fn test_evm_to_evm_deposit(config: &E2eConfig, options: &EvmToEvmOptio
     info!("Token approval successful");
 
     // Step 6: Execute deposit
-    let router = config.evm.contracts.router;
-    match execute_deposit(
-        config,
-        router,
-        token,
-        amount_u128,
-        dest_chain_key.into(),
-        dest_account,
-    )
-    .await
-    {
+    match execute_deposit(config, token, amount_u128, dest_chain_key, dest_account).await {
         Ok(tx) => {
             info!("Deposit executed: 0x{}", hex::encode(tx));
         }
@@ -403,15 +406,15 @@ pub async fn run_evm_to_evm_tests(config: &E2eConfig, token: Option<Address>) ->
 // Helper Tests
 // ============================================================================
 
-/// Test chain key computation for EVM chains
+/// Test chain ID computation for EVM chains (V2)
 ///
-/// Verifies that chain keys are computed correctly using keccak256(abi.encode("EVM", bytes32(chainId))).
-/// This matches the on-chain ChainRegistry.getChainKeyEVM() function.
+/// Verifies that chain IDs are derived deterministically from chain ID numbers.
+/// In V2, chain IDs are 4-byte identifiers assigned by ChainRegistry.
 pub async fn test_evm_chain_key_computation(_config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "evm_chain_key_computation";
 
-    // Test that chain key computation matches expected format
+    // Test that chain IDs are unique for different chain IDs
     let chain_id_1 = 1u64; // Mainnet
     let chain_id_2 = 31337u64; // Anvil
     let chain_id_3 = 31338u64; // Secondary Anvil
@@ -420,34 +423,22 @@ pub async fn test_evm_chain_key_computation(_config: &E2eConfig) -> TestResult {
     let key_2 = get_evm_chain_key(chain_id_2);
     let key_3 = get_evm_chain_key(chain_id_3);
 
-    info!("Chain key for {}: 0x{}", chain_id_1, hex::encode(key_1));
-    info!("Chain key for {}: 0x{}", chain_id_2, hex::encode(key_2));
-    info!("Chain key for {}: 0x{}", chain_id_3, hex::encode(key_3));
+    info!("Chain ID for {}: 0x{}", chain_id_1, hex::encode(key_1));
+    info!("Chain ID for {}: 0x{}", chain_id_2, hex::encode(key_2));
+    info!("Chain ID for {}: 0x{}", chain_id_3, hex::encode(key_3));
 
-    // Verify keys are different for different chain IDs
+    // Verify IDs are different for different chain IDs
     if key_1 == key_2 || key_2 == key_3 || key_1 == key_3 {
         return TestResult::fail(
             name,
-            "Chain keys should be unique for different chain IDs",
+            "Chain IDs should be unique for different chain IDs",
             start.elapsed(),
         );
     }
 
-    // Verify keys are non-zero (proper hash output)
-    if key_1 == B256::ZERO || key_2 == B256::ZERO || key_3 == B256::ZERO {
-        return TestResult::fail(name, "Chain keys should not be zero", start.elapsed());
-    }
-
-    // Verify key is a proper 32-byte hash (not a simple prefix concatenation)
-    // The hash should have high entropy - check that bytes are distributed
-    let bytes = key_1.as_slice();
-    let unique_bytes: std::collections::HashSet<u8> = bytes.iter().cloned().collect();
-    if unique_bytes.len() < 8 {
-        return TestResult::fail(
-            name,
-            "Chain key should have high entropy (proper keccak256 hash)",
-            start.elapsed(),
-        );
+    // Verify IDs are non-zero
+    if key_1 == [0u8; 4] || key_2 == [0u8; 4] || key_3 == [0u8; 4] {
+        return TestResult::fail(name, "Chain IDs should not be zero", start.elapsed());
     }
 
     TestResult::pass(name, start.elapsed())

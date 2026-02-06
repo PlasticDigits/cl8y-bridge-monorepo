@@ -23,9 +23,6 @@ pub async fn test_evm_contracts_deployed(config: &E2eConfig) -> TestResult {
     if contracts.bridge == Address::ZERO {
         return TestResult::fail(name, "Bridge address is zero", start.elapsed());
     }
-    if contracts.router == Address::ZERO {
-        return TestResult::fail(name, "Router address is zero", start.elapsed());
-    }
     if contracts.access_manager == Address::ZERO {
         return TestResult::fail(name, "AccessManager address is zero", start.elapsed());
     }
@@ -42,11 +39,7 @@ pub async fn test_evm_contracts_deployed(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "LockUnlock address is zero", start.elapsed());
     }
 
-    tracing::info!(
-        "All EVM contracts deployed: bridge={}, router={}",
-        contracts.bridge,
-        contracts.router
-    );
+    tracing::info!("All EVM contracts deployed: bridge={}", contracts.bridge);
 
     TestResult::pass(name, start.elapsed())
 }

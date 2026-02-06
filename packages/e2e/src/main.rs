@@ -263,7 +263,6 @@ async fn main() -> Result<()> {
             if config.evm.contracts.bridge != alloy::primitives::Address::ZERO {
                 println!("Contracts:");
                 println!("  Bridge:         {}", config.evm.contracts.bridge);
-                println!("  Router:         {}", config.evm.contracts.router);
                 println!("  AccessManager:  {}", config.evm.contracts.access_manager);
                 println!("  ChainRegistry:  {}", config.evm.contracts.chain_registry);
                 println!("  TokenRegistry:  {}", config.evm.contracts.token_registry);
@@ -352,7 +351,6 @@ async fn main() -> Result<()> {
                     fresh_config.evm.contracts.mint_burn = contracts.mint_burn;
                     fresh_config.evm.contracts.lock_unlock = contracts.lock_unlock;
                     fresh_config.evm.contracts.bridge = contracts.bridge;
-                    fresh_config.evm.contracts.router = contracts.router;
 
                     // Propagate test token address - this is the critical fix
                     if let Some(test_token) = contracts.test_token {

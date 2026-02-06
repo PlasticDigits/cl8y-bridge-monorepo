@@ -152,7 +152,7 @@ pub enum QueryMsg {
         nonce: u64,
     },
 
-    /// V2: Compute a withdraw hash from parameters (4-byte chain IDs)
+    /// V2: Compute a withdraw hash from parameters (4-byte chain IDs, legacy 6-field)
     ComputeWithdrawHashV2 {
         /// Source chain ID (4 bytes as base64)
         src_chain: String,
@@ -162,6 +162,24 @@ pub enum QueryMsg {
         dest_token: String,
         /// Destination account (32 bytes as base64)
         dest_account: String,
+        /// Amount
+        amount: String,
+        /// Nonce
+        nonce: u64,
+    },
+
+    /// V2: Compute unified transfer hash (7-field: srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
+    ComputeTransferHash {
+        /// Source chain ID (4 bytes as base64)
+        src_chain: String,
+        /// Destination chain ID (4 bytes as base64)
+        dest_chain: String,
+        /// Source account (32 bytes as base64)
+        src_account: String,
+        /// Destination account (32 bytes as base64)
+        dest_account: String,
+        /// Token address (32 bytes as base64)
+        token: String,
         /// Amount
         amount: String,
         /// Nonce
@@ -226,7 +244,69 @@ pub fn build_execute_withdraw_msg(withdraw_hash: [u8; 32]) -> ExecuteMsg {
 }
 
 // ============================================================================
-// V2 Message Builders
+// V2 Deposit Message Builders
+// ============================================================================
+
+/// Build a native token deposit message (V2)
+///
+/// For depositing uluna or other native denoms to the bridge.
+/// The funds must be attached to the transaction separately.
+pub fn build_deposit_native_msg_v2(
+    dest_chain: [u8; 4],
+    dest_account: [u8; 32],
+) -> serde_json::Value {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    serde_json::json!({
+        "deposit": {
+            "dest_chain": encoder.encode(dest_chain),
+            "dest_account": encoder.encode(dest_account)
+        }
+    })
+}
+
+/// Build a CW20 deposit inner message (V2)
+///
+/// This is the message that gets base64-encoded inside a CW20 `Send` message.
+/// Use with `build_cw20_send_msg(bridge_addr, amount, &inner_msg_str)`.
+pub fn build_deposit_cw20_inner_msg_v2(
+    dest_chain: [u8; 4],
+    dest_account: [u8; 32],
+) -> serde_json::Value {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    serde_json::json!({
+        "deposit": {
+            "dest_chain": encoder.encode(dest_chain),
+            "dest_account": encoder.encode(dest_account)
+        }
+    })
+}
+
+/// Build a WithdrawSubmit message (V2)
+///
+/// User-initiated withdrawal submission on the destination chain.
+pub fn build_withdraw_submit_msg_v2(
+    src_chain: [u8; 4],
+    token: &str,
+    amount: u128,
+    nonce: u64,
+) -> ExecuteMsgV2 {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    ExecuteMsgV2::WithdrawSubmit {
+        src_chain: encoder.encode(src_chain),
+        token: token.to_string(),
+        amount: amount.to_string(),
+        nonce,
+    }
+}
+
+// ============================================================================
+// V2 Withdrawal Message Builders
 // ============================================================================
 
 /// Build a WithdrawApprove message (V2)

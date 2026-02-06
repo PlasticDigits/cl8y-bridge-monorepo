@@ -7,14 +7,14 @@ use alloy::primitives::Address;
 use std::time::Instant;
 
 use super::helpers::{
-    check_terra_connection, query_contract_code, query_deposit_nonce, query_terra_bridge_delay,
-    query_withdraw_delay,
+    check_terra_connection, query_cancel_window, query_contract_code, query_deposit_nonce,
+    query_terra_bridge_delay,
 };
 
 /// Test EVM to Terra transfer
 ///
 /// Verifies EVM -> Terra transfer flow by checking:
-/// 1. Bridge and router contracts are configured
+/// 1. Bridge contracts are configured
 /// 2. Deposit nonce can be read
 /// 3. Terra bridge address is configured (if Terra enabled)
 ///
@@ -31,10 +31,6 @@ pub async fn test_evm_to_terra_transfer(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "Bridge address not configured", start.elapsed());
     }
 
-    if config.evm.contracts.router == Address::ZERO {
-        return TestResult::fail(name, "Router address not configured", start.elapsed());
-    }
-
     // Step 2: Check deposit nonce is queryable
     match query_deposit_nonce(config).await {
         Ok(nonce) => {
@@ -49,16 +45,16 @@ pub async fn test_evm_to_terra_transfer(config: &E2eConfig) -> TestResult {
         }
     }
 
-    // Step 3: Check withdraw delay configuration
+    // Step 3: Check cancel window configuration
     // SECURITY HARDENED: Convert WARN to FAIL
-    match query_withdraw_delay(config).await {
-        Ok(delay) => {
-            tracing::info!("EVM withdraw delay: {} seconds", delay);
+    match query_cancel_window(config).await {
+        Ok(window) => {
+            tracing::info!("EVM cancel window: {} seconds", window);
         }
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Withdraw delay query failed (security-critical): {}", e),
+                format!("Cancel window query failed (security-critical): {}", e),
                 start.elapsed(),
             );
         }
@@ -103,7 +99,6 @@ pub async fn test_evm_to_terra_transfer(config: &E2eConfig) -> TestResult {
 
     tracing::info!("EVM -> Terra transfer infrastructure verified");
     tracing::info!("  Bridge: {}", config.evm.contracts.bridge);
-    tracing::info!("  Router: {}", config.evm.contracts.router);
     tracing::info!("  LockUnlock: {}", config.evm.contracts.lock_unlock);
 
     TestResult::pass(name, start.elapsed())

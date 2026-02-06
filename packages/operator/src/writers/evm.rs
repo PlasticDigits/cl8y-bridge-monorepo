@@ -29,7 +29,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::{EvmConfig, FeeConfig};
 use crate::contracts::evm_bridge::Bridge;
 use crate::db::{self, NewApproval, TerraDeposit};
-use crate::hash::{bytes32_to_hex, compute_withdraw_hash};
+use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash};
 use crate::types::{ChainId, EvmAddress};
 
 /// Pending approval tracking for auto-execution
@@ -229,19 +229,23 @@ impl EvmWriter {
             .parse()
             .map_err(|_| eyre!("Invalid amount: {}", deposit.amount))?;
 
-        // Compute withdraw hash using V2 format
-        let withdraw_hash = compute_withdraw_hash(
+        // Destination account (EVM recipient) encoded as bytes32
+        let dest_account = address_to_bytes32(&recipient.0);
+
+        // Compute unified transfer hash using V2 format (7-field)
+        let withdraw_hash = compute_transfer_hash(
             src_chain_id.as_bytes(),
             self.this_chain_id.as_bytes(),
-            &token_bytes32,
             &src_account,
+            &dest_account,
+            &token_bytes32,
             amount,
             deposit.nonce as u64,
         );
 
         // Format addresses as standard EVM format (0x + 40 hex chars)
-        let token_for_approval = format!("0x{}", hex::encode(&token.0));
-        let recipient_for_approval = format!("0x{}", hex::encode(&recipient.0));
+        let token_for_approval = format!("0x{}", hex::encode(token.0));
+        let recipient_for_approval = format!("0x{}", hex::encode(recipient.0));
 
         let new_approval = NewApproval {
             src_chain_key: src_chain_id.as_bytes().to_vec(),

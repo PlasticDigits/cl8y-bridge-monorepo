@@ -60,9 +60,9 @@ pub async fn test_operator_fee_collection(config: &E2eConfig) -> TestResult {
     }
 
     // Verify we can read the withdraw delay (indicates bridge is properly configured)
-    match super::helpers::query_withdraw_delay(config).await {
+    match super::helpers::query_cancel_window(config).await {
         Ok(delay) => {
-            tracing::info!("Bridge withdraw delay: {} seconds", delay);
+            tracing::info!("Bridge cancel window: {} seconds", delay);
             TestResult::pass(name, start.elapsed())
         }
         Err(e) => TestResult::fail(

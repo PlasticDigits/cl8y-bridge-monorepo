@@ -27,7 +27,6 @@ pub struct EvmConfig {
     pub rpc_url: String,
     pub chain_id: u64,
     pub bridge_address: String,
-    pub router_address: String,
     pub private_key: String,
     #[serde(default = "default_finality_blocks")]
     pub finality_blocks: u64,
@@ -134,8 +133,6 @@ impl Config {
                 .wrap_err("EVM_CHAIN_ID must be a valid u64")?,
             bridge_address: env::var("EVM_BRIDGE_ADDRESS")
                 .map_err(|_| eyre!("EVM_BRIDGE_ADDRESS environment variable is required"))?,
-            router_address: env::var("EVM_ROUTER_ADDRESS")
-                .map_err(|_| eyre!("EVM_ROUTER_ADDRESS environment variable is required"))?,
             private_key: env::var("EVM_PRIVATE_KEY")
                 .map_err(|_| eyre!("EVM_PRIVATE_KEY environment variable is required"))?,
             finality_blocks: env::var("FINALITY_BLOCKS")
@@ -222,13 +219,6 @@ impl Config {
         if self.evm.bridge_address.len() != 42 || !self.evm.bridge_address.starts_with("0x") {
             return Err(eyre!(
                 "evm.bridge_address must be a valid hex address (42 chars with 0x prefix)"
-            ));
-        }
-
-        // Validate EVM router address
-        if self.evm.router_address.len() != 42 || !self.evm.router_address.starts_with("0x") {
-            return Err(eyre!(
-                "evm.router_address must be a valid hex address (42 chars with 0x prefix)"
             ));
         }
 
@@ -320,7 +310,6 @@ mod tests {
                 rpc_url: "http://localhost:8545".to_string(),
                 chain_id: 1,
                 bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
-                router_address: "0x0000000000000000000000000000000000000002".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
                 finality_blocks: 1,
                 this_chain_id: None,
@@ -376,7 +365,6 @@ mod tests {
                 rpc_url: "http://localhost:8545".to_string(),
                 chain_id: 1,
                 bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
-                router_address: "0x0000000000000000000000000000000000000002".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
                 finality_blocks: 1,
                 this_chain_id: None,

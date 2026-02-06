@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // Re-export common types from multichain-rs
-pub use multichain_rs::types::{ChainId, EvmAddress, WithdrawHash};
+pub use multichain_rs::types::{ChainId, EvmAddress};
 
 // ============================================================================
 // Operator-Specific Types (with sqlx integration)

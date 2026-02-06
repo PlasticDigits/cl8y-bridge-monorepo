@@ -287,9 +287,43 @@ pub async fn query_native_balance(lcd_url: &str, address: &str, denom: &str) -> 
         .map_err(|e| eyre!("Failed to parse balance: {}", e))
 }
 
+/// Convert a human-readable amount to raw token units
+pub fn to_token_units(amount: f64, decimals: u8) -> u128 {
+    let multiplier = 10u64.pow(decimals as u32);
+    (amount * multiplier as f64) as u128
+}
+
+/// Convert raw token units to human-readable amount
+pub fn from_token_units(raw: u128, decimals: u8) -> f64 {
+    let divisor = 10u64.pow(decimals as u32);
+    raw as f64 / divisor as f64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_to_token_units() {
+        // 1.5 tokens with 6 decimals (like LUNA)
+        let result = to_token_units(1.5, 6);
+        assert_eq!(result, 1_500_000);
+
+        // 100 tokens with 6 decimals
+        let result = to_token_units(100.0, 6);
+        assert_eq!(result, 100_000_000);
+    }
+
+    #[test]
+    fn test_from_token_units() {
+        // 1.5 LUNA in uluna
+        let result = from_token_units(1_500_000, 6);
+        assert!((result - 1.5).abs() < 0.0001);
+
+        // 100 tokens in raw units
+        let result = from_token_units(100_000_000, 6);
+        assert!((result - 100.0).abs() < 0.0001);
+    }
 
     #[test]
     fn test_cw20_transfer_msg() {

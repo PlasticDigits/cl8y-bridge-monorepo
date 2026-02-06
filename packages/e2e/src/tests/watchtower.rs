@@ -100,7 +100,7 @@ pub async fn test_watchtower_delay_mechanism(config: &E2eConfig) -> TestResult {
     let name = "watchtower_delay_mechanism";
 
     // Query the withdraw delay from bridge
-    let delay = match super::helpers::query_withdraw_delay(config).await {
+    let delay = match super::helpers::query_cancel_window(config).await {
         Ok(d) => d,
         Err(e) => {
             return TestResult::fail(
@@ -184,7 +184,7 @@ pub async fn test_withdraw_delay_enforcement(config: &E2eConfig) -> TestResult {
     let name = "withdraw_delay_enforcement";
 
     // Query the withdraw delay from bridge
-    let delay = match super::helpers::query_withdraw_delay(config).await {
+    let delay = match super::helpers::query_cancel_window(config).await {
         Ok(d) => d,
         Err(e) => {
             return TestResult::fail(

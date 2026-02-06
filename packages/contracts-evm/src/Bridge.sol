@@ -14,7 +14,6 @@ import {ChainRegistry} from "./ChainRegistry.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {LockUnlock} from "./LockUnlock.sol";
 import {MintBurn} from "./MintBurn.sol";
-import {AddressCodecLib} from "./lib/AddressCodecLib.sol";
 import {FeeCalculatorLib} from "./lib/FeeCalculatorLib.sol";
 import {HashLib} from "./lib/HashLib.sol";
 
@@ -348,14 +347,17 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Compute deposit hash
+        // Encode source account and compute unified transfer hash
+        bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
         bytes32 destToken = tokenRegistry.getDestToken(wrappedNative, destChain);
-        bytes32 depositHash =
-            HashLib.computeDepositHash(thisChainId, destChain, destToken, destAccount, netAmount, currentNonce);
+        bytes32 depositHash = HashLib.computeTransferHash(
+            thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
+        );
 
         // Store deposit record
         deposits[depositHash] = DepositRecord({
             destChain: destChain,
+            srcAccount: srcAccount,
             destAccount: destAccount,
             token: wrappedNative,
             amount: netAmount,
@@ -364,7 +366,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             timestamp: block.timestamp
         });
 
-        emit Deposit(destChain, destAccount, wrappedNative, netAmount, currentNonce, fee);
+        emit Deposit(destChain, destAccount, srcAccount, wrappedNative, netAmount, currentNonce, fee);
     }
 
     /// @notice Deposit ERC20 tokens (lock mode)
@@ -397,14 +399,17 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Compute deposit hash
+        // Encode source account and compute unified transfer hash
+        bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
         bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
-        bytes32 depositHash =
-            HashLib.computeDepositHash(thisChainId, destChain, destToken, destAccount, netAmount, currentNonce);
+        bytes32 depositHash = HashLib.computeTransferHash(
+            thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
+        );
 
         // Store deposit record
         deposits[depositHash] = DepositRecord({
             destChain: destChain,
+            srcAccount: srcAccount,
             destAccount: destAccount,
             token: token,
             amount: netAmount,
@@ -413,7 +418,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             timestamp: block.timestamp
         });
 
-        emit Deposit(destChain, destAccount, token, netAmount, currentNonce, fee);
+        emit Deposit(destChain, destAccount, srcAccount, token, netAmount, currentNonce, fee);
     }
 
     /// @notice Deposit ERC20 tokens (burn mode for mintable tokens)
@@ -446,14 +451,17 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Compute deposit hash
+        // Encode source account and compute unified transfer hash
+        bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
         bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
-        bytes32 depositHash =
-            HashLib.computeDepositHash(thisChainId, destChain, destToken, destAccount, burnAmount, currentNonce);
+        bytes32 depositHash = HashLib.computeTransferHash(
+            thisChainId, destChain, srcAccount, destAccount, destToken, burnAmount, currentNonce
+        );
 
         // Store deposit record
         deposits[depositHash] = DepositRecord({
             destChain: destChain,
+            srcAccount: srcAccount,
             destAccount: destAccount,
             token: token,
             amount: burnAmount,
@@ -462,7 +470,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             timestamp: block.timestamp
         });
 
-        emit Deposit(destChain, destAccount, token, burnAmount, currentNonce, fee);
+        emit Deposit(destChain, destAccount, srcAccount, token, burnAmount, currentNonce, fee);
     }
 
     // ============================================================================
@@ -470,24 +478,27 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     // ============================================================================
 
     /// @notice User submits a withdrawal request
-    /// @param srcChain Source chain ID
+    /// @param srcChain Source chain ID where the deposit was made
+    /// @param srcAccount Source account (depositor) encoded as bytes32
+    /// @param destAccount Destination account (recipient) encoded as bytes32
     /// @param token Token address on this chain
     /// @param amount Amount to withdraw
     /// @param nonce Deposit nonce from source chain
-    function withdrawSubmit(bytes4 srcChain, address token, uint256 amount, uint64 nonce)
-        external
-        payable
-        whenNotPaused
-        nonReentrant
-    {
+    function withdrawSubmit(
+        bytes4 srcChain,
+        bytes32 srcAccount,
+        bytes32 destAccount,
+        address token,
+        uint256 amount,
+        uint64 nonce
+    ) external payable whenNotPaused nonReentrant {
         if (amount == 0) revert InvalidAmount(0);
         if (!chainRegistry.isChainRegistered(srcChain)) revert ChainNotRegistered(srcChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
 
-        // Compute withdraw hash
-        bytes32 srcAccount = AddressCodecLib.encodeEVM(msg.sender);
-        bytes32 withdrawHash = HashLib.computeWithdrawHash(
-            srcChain, thisChainId, HashLib.addressToBytes32(token), srcAccount, amount, nonce
+        // Compute unified transfer hash (same hash as deposit on source chain)
+        bytes32 withdrawHash = HashLib.computeTransferHash(
+            srcChain, thisChainId, srcAccount, destAccount, HashLib.addressToBytes32(token), amount, nonce
         );
 
         // Ensure not already submitted
@@ -495,12 +506,16 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             revert WithdrawAlreadyExecuted(withdrawHash);
         }
 
+        // Decode recipient from destAccount
+        address recipient = HashLib.bytes32ToAddress(destAccount);
+
         // Store pending withdrawal
         pendingWithdraws[withdrawHash] = PendingWithdraw({
             srcChain: srcChain,
             srcAccount: srcAccount,
+            destAccount: destAccount,
             token: token,
-            recipient: msg.sender,
+            recipient: recipient,
             amount: amount,
             nonce: nonce,
             operatorGas: msg.value,
@@ -511,7 +526,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             executed: false
         });
 
-        emit WithdrawSubmit(withdrawHash, srcChain, token, amount, nonce, msg.value);
+        emit WithdrawSubmit(withdrawHash, srcChain, srcAccount, destAccount, token, amount, nonce, msg.value);
     }
 
     /// @notice Operator approves a pending withdrawal

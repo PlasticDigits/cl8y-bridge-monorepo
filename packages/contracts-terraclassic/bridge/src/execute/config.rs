@@ -18,10 +18,13 @@ use crate::fee_manager::{
     remove_custom_account_fee, set_custom_account_fee, validate_custom_fee, FeeConfig, FEE_CONFIG,
     MAX_FEE_BPS,
 };
-use crate::hash::hex_to_bytes32;
+use cosmwasm_std::Binary;
+
+use crate::hash::{hex_to_bytes32, keccak256};
 use crate::state::{
     ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenType, CANCELERS, CHAINS,
-    CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS, TOKEN_DEST_MAPPINGS, WITHDRAW_DELAY,
+    CHAIN_BY_IDENTIFIER, CHAIN_COUNTER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
+    TOKEN_DEST_MAPPINGS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -128,40 +131,54 @@ pub fn execute_set_rate_limit(
 // ============================================================================
 
 /// Add a new supported chain.
-pub fn execute_add_chain(
+/// Register a new chain with auto-incrementing 4-byte chain ID.
+pub fn execute_register_chain(
     deps: DepsMut,
     info: MessageInfo,
-    chain_id: u64,
-    name: String,
-    bridge_address: String,
+    identifier: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
     }
 
-    let chain_key = chain_id.to_string();
+    // Check identifier not already registered
+    if CHAIN_BY_IDENTIFIER
+        .may_load(deps.storage, &identifier)?
+        .is_some()
+    {
+        return Err(ContractError::InvalidAddress {
+            reason: format!("Chain identifier '{}' already registered", identifier),
+        });
+    }
+
+    // Auto-increment chain counter (starts at 1)
+    let counter = CHAIN_COUNTER.may_load(deps.storage)?.unwrap_or(0) + 1;
+    let chain_id: [u8; 4] = counter.to_be_bytes();
+    CHAIN_COUNTER.save(deps.storage, &counter)?;
+
+    let identifier_hash = keccak256(identifier.as_bytes());
+
     let chain = ChainConfig {
         chain_id,
-        name: name.clone(),
-        bridge_address,
+        identifier: identifier.clone(),
+        identifier_hash,
         enabled: true,
     };
-    CHAINS.save(deps.storage, chain_key, &chain)?;
+    CHAINS.save(deps.storage, &chain_id, &chain)?;
+    CHAIN_BY_IDENTIFIER.save(deps.storage, &identifier, &chain_id)?;
 
     Ok(Response::new()
-        .add_attribute("method", "add_chain")
-        .add_attribute("chain_id", chain_id.to_string())
-        .add_attribute("name", name))
+        .add_attribute("action", "register_chain")
+        .add_attribute("chain_id", format!("0x{}", hex::encode(chain_id)))
+        .add_attribute("identifier", identifier))
 }
 
-/// Update an existing chain configuration.
+/// Update an existing chain configuration (enable/disable).
 pub fn execute_update_chain(
     deps: DepsMut,
     info: MessageInfo,
-    chain_id: u64,
-    name: Option<String>,
-    bridge_address: Option<String>,
+    chain_id: Binary,
     enabled: Option<bool>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -169,26 +186,30 @@ pub fn execute_update_chain(
         return Err(ContractError::Unauthorized);
     }
 
-    let chain_key = chain_id.to_string();
-    let mut chain = CHAINS
-        .may_load(deps.storage, chain_key.clone())?
-        .ok_or(ContractError::ChainNotSupported { chain_id })?;
+    let chain_id_bytes: [u8; 4] =
+        chain_id
+            .to_vec()
+            .try_into()
+            .map_err(|_| ContractError::InvalidHashLength {
+                got: chain_id.len(),
+            })?;
 
-    if let Some(n) = name {
-        chain.name = n;
-    }
-    if let Some(addr) = bridge_address {
-        chain.bridge_address = addr;
-    }
+    let mut chain =
+        CHAINS
+            .may_load(deps.storage, &chain_id_bytes)?
+            .ok_or(ContractError::InvalidAddress {
+                reason: "Chain not registered".to_string(),
+            })?;
+
     if let Some(e) = enabled {
         chain.enabled = e;
     }
 
-    CHAINS.save(deps.storage, chain_key, &chain)?;
+    CHAINS.save(deps.storage, &chain_id_bytes, &chain)?;
 
     Ok(Response::new()
-        .add_attribute("method", "update_chain")
-        .add_attribute("chain_id", chain_id.to_string()))
+        .add_attribute("action", "update_chain")
+        .add_attribute("chain_id", format!("0x{}", hex::encode(chain_id_bytes))))
 }
 
 // ============================================================================
@@ -204,6 +225,7 @@ fn parse_token_type(token_type_str: Option<String>) -> TokenType {
 }
 
 /// Add a new supported token.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_add_token(
     deps: DepsMut,
     info: MessageInfo,
@@ -283,7 +305,7 @@ pub fn execute_set_token_destination(
     deps: DepsMut,
     info: MessageInfo,
     token: String,
-    dest_chain_id: u64,
+    dest_chain: Binary,
     dest_token: String,
     dest_decimals: u8,
 ) -> Result<Response, ContractError> {
@@ -300,13 +322,19 @@ pub fn execute_set_token_destination(
                 token: token.clone(),
             })?;
 
-    // Verify destination chain exists
-    let chain_key = dest_chain_id.to_string();
+    // Parse and verify destination chain
+    let dest_chain_bytes: [u8; 4] =
+        dest_chain
+            .to_vec()
+            .try_into()
+            .map_err(|_| ContractError::InvalidHashLength {
+                got: dest_chain.len(),
+            })?;
     let _chain =
         CHAINS
-            .may_load(deps.storage, chain_key)?
-            .ok_or(ContractError::ChainNotSupported {
-                chain_id: dest_chain_id,
+            .may_load(deps.storage, &dest_chain_bytes)?
+            .ok_or(ContractError::InvalidAddress {
+                reason: "Destination chain not registered".to_string(),
             })?;
 
     // Parse destination token address
@@ -320,12 +348,13 @@ pub fn execute_set_token_destination(
         dest_decimals,
     };
 
-    TOKEN_DEST_MAPPINGS.save(deps.storage, (&token, &dest_chain_id.to_string()), &mapping)?;
+    let dest_chain_key = hex::encode(dest_chain_bytes);
+    TOKEN_DEST_MAPPINGS.save(deps.storage, (&token, &dest_chain_key), &mapping)?;
 
     Ok(Response::new()
         .add_attribute("action", "set_token_destination")
         .add_attribute("token", token)
-        .add_attribute("dest_chain_id", dest_chain_id.to_string())
+        .add_attribute("dest_chain", format!("0x{}", dest_chain_key))
         .add_attribute("dest_token", dest_token)
         .add_attribute("dest_decimals", dest_decimals.to_string()))
 }

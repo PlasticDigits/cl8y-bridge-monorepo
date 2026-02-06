@@ -12,15 +12,30 @@
 use alloy::sol;
 
 sol! {
-    /// V2 Bridge contract interface
+    /// V2 Bridge contract interface (complete, matching IBridge.sol)
     #[sol(rpc)]
     contract Bridge {
+        // ========================================================================
+        // Deposit Methods
+        // ========================================================================
+
+        /// Deposit native tokens (ETH) for bridging
+        function depositNative(bytes4 destChain, bytes32 destAccount) external payable;
+
+        /// Deposit ERC20 tokens for bridging (lock/unlock mode)
+        function depositERC20(address token, uint256 amount, bytes4 destChain, bytes32 destAccount) external;
+
+        /// Deposit ERC20 tokens for bridging (mint/burn mode)
+        function depositERC20Mintable(address token, uint256 amount, bytes4 destChain, bytes32 destAccount) external;
+
         // ========================================================================
         // Withdrawal Methods (V2 - User-initiated flow)
         // ========================================================================
 
+        /// User submits a withdrawal request (requires operatorGas payment)
+        function withdrawSubmit(bytes4 srcChain, address token, uint256 amount, uint64 nonce) external payable;
+
         /// Operator approves a pending withdrawal
-        /// The user must first call withdrawSubmit to create the pending withdrawal
         function withdrawApprove(bytes32 withdrawHash) external;
 
         /// Canceler cancels a pending withdrawal (within cancel window)
@@ -34,6 +49,34 @@ sol! {
 
         /// Execute an approved withdrawal (mint mode) - anyone can call after window
         function withdrawExecuteMint(bytes32 withdrawHash) external;
+
+        // ========================================================================
+        // Fee Management
+        // ========================================================================
+
+        /// Calculate fee for a deposit
+        function calculateFee(address depositor, uint256 amount) external view returns (uint256 feeAmount);
+
+        /// Set fee parameters (admin only)
+        function setFeeParams(
+            uint256 standardFeeBps,
+            uint256 discountedFeeBps,
+            uint256 cl8yThreshold,
+            address cl8yToken,
+            address feeRecipient
+        ) external;
+
+        /// Set custom fee for a specific account
+        function setCustomAccountFee(address account, uint256 feeBps) external;
+
+        /// Remove custom fee for an account
+        function removeCustomAccountFee(address account) external;
+
+        /// Get the fee BPS for an account
+        function getAccountFee(address account) external view returns (uint256 feeBps, string memory feeType);
+
+        /// Check if account has custom fee
+        function hasCustomFee(address account) external view returns (bool hasCustom);
 
         // ========================================================================
         // View Functions
@@ -108,6 +151,21 @@ sol! {
 
         /// Fee collected
         event FeeCollected(address indexed token, uint256 amount, address recipient);
+
+        /// Fee parameters updated
+        event FeeParametersUpdated(
+            uint256 standardFeeBps,
+            uint256 discountedFeeBps,
+            uint256 cl8yThreshold,
+            address cl8yToken,
+            address feeRecipient
+        );
+
+        /// Custom account fee set
+        event CustomAccountFeeSet(address indexed account, uint256 feeBps);
+
+        /// Custom account fee removed
+        event CustomAccountFeeRemoved(address indexed account);
     }
 
     // ========================================================================
@@ -218,5 +276,198 @@ sol! {
 
         event Transfer(address indexed from, address indexed to, uint256 value);
         event Approval(address indexed owner, address indexed spender, uint256 value);
+    }
+
+    // ========================================================================
+    // ChainRegistry Contract
+    // ========================================================================
+
+    /// ChainRegistry contract - manages registered chains with 4-byte IDs
+    #[sol(rpc)]
+    contract ChainRegistry {
+        /// Register a new chain (operator only)
+        function registerChain(string calldata identifier) external returns (bytes4 chainId);
+
+        /// Get the hash for a chain ID
+        function getChainHash(bytes4 chainId) external view returns (bytes32 hash);
+
+        /// Get chain ID from its hash
+        function getChainIdFromHash(bytes32 hash) external view returns (bytes4 chainId);
+
+        /// Check if a chain is registered
+        function isChainRegistered(bytes4 chainId) external view returns (bool registered);
+
+        /// Get all registered chain IDs
+        function getRegisteredChains() external view returns (bytes4[] memory chainIds);
+
+        /// Get the next chain ID that will be assigned
+        function getNextChainId() external view returns (bytes4 nextId);
+
+        /// Get count of registered chains
+        function getChainCount() external view returns (uint256 count);
+
+        /// Revert if chain is not registered
+        function revertIfChainNotRegistered(bytes4 chainId) external view;
+
+        /// Compute the identifier hash (pure function)
+        function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash);
+
+        /// Check if address is an operator
+        function isOperator(address account) external view returns (bool isOp);
+
+        /// Add an operator (admin only)
+        function addOperator(address operator) external;
+
+        /// Remove an operator (admin only)
+        function removeOperator(address operator) external;
+
+        /// Chain registered event
+        event ChainRegistered(bytes4 indexed chainId, string identifier, bytes32 hash);
+    }
+
+    // ========================================================================
+    // TokenRegistry Contract
+    // ========================================================================
+
+    /// Token type enum matching Solidity
+    enum TokenType {
+        LockUnlock,
+        MintBurn
+    }
+
+    /// Token destination mapping struct
+    struct TokenDestMapping {
+        bytes32 destToken;
+        uint8 destDecimals;
+    }
+
+    /// TokenRegistry contract - manages registered tokens and their cross-chain mappings
+    #[sol(rpc)]
+    contract TokenRegistry {
+        /// Register a new token (operator only)
+        function registerToken(address token, uint8 tokenType) external;
+
+        /// Set destination token mapping
+        function setTokenDestination(address token, bytes4 destChain, bytes32 destToken) external;
+
+        /// Set destination token mapping with decimals
+        function setTokenDestinationWithDecimals(address token, bytes4 destChain, bytes32 destToken, uint8 destDecimals) external;
+
+        /// Set token type
+        function setTokenType(address token, uint8 tokenType) external;
+
+        /// Get token type
+        function getTokenType(address token) external view returns (uint8 tokenType);
+
+        /// Check if token is registered
+        function isTokenRegistered(address token) external view returns (bool registered);
+
+        /// Get destination token for a chain
+        function getDestToken(address token, bytes4 destChain) external view returns (bytes32 destToken);
+
+        /// Get full destination token mapping
+        function getDestTokenMapping(address token, bytes4 destChain) external view returns (bytes32 destToken, uint8 destDecimals);
+
+        /// Get all destination chains for a token
+        function getTokenDestChains(address token) external view returns (bytes4[] memory destChains);
+
+        /// Get all registered tokens
+        function getAllTokens() external view returns (address[] memory tokens);
+
+        /// Get count of registered tokens
+        function getTokenCount() external view returns (uint256 count);
+
+        /// Revert if token is not registered
+        function revertIfTokenNotRegistered(address token) external view;
+
+        /// Check if address is an operator
+        function isOperator(address account) external view returns (bool isOp);
+
+        /// Add an operator (admin only)
+        function addOperator(address operator) external;
+
+        /// Remove an operator (admin only)
+        function removeOperator(address operator) external;
+
+        /// Token registered event
+        event TokenRegistered(address indexed token, uint8 tokenType);
+
+        /// Token destination set event
+        event TokenDestinationSet(address indexed token, bytes4 indexed destChain, bytes32 destToken);
+    }
+
+    // ========================================================================
+    // LockUnlock Contract
+    // ========================================================================
+
+    /// LockUnlock contract - handles locking/unlocking of ERC20 tokens
+    #[sol(rpc)]
+    contract LockUnlock {
+        /// Lock tokens (authorized caller only)
+        function lock(address from, address token, uint256 amount) external;
+
+        /// Unlock tokens (authorized caller only)
+        function unlock(address to, address token, uint256 amount) external;
+
+        /// Get locked balance for a token
+        function getLockedBalance(address token) external view returns (uint256 balance);
+
+        /// Check if caller is authorized
+        function isAuthorizedCaller(address caller) external view returns (bool authorized);
+
+        /// Add authorized caller (admin only)
+        function addAuthorizedCaller(address caller) external;
+
+        /// Remove authorized caller (admin only)
+        function removeAuthorizedCaller(address caller) external;
+
+        /// Tokens locked event
+        event TokensLocked(address indexed token, address indexed from, uint256 amount);
+
+        /// Tokens unlocked event
+        event TokensUnlocked(address indexed token, address indexed to, uint256 amount);
+    }
+
+    // ========================================================================
+    // MintBurn Contract
+    // ========================================================================
+
+    /// MintBurn contract - handles minting/burning of bridged tokens
+    #[sol(rpc)]
+    contract MintBurn {
+        /// Burn tokens (authorized caller only)
+        function burn(address from, address token, uint256 amount) external;
+
+        /// Mint tokens (authorized caller only)
+        function mint(address to, address token, uint256 amount) external;
+
+        /// Check if caller is authorized
+        function isAuthorizedCaller(address caller) external view returns (bool authorized);
+
+        /// Add authorized caller (admin only)
+        function addAuthorizedCaller(address caller) external;
+
+        /// Remove authorized caller (admin only)
+        function removeAuthorizedCaller(address caller) external;
+
+        /// Tokens burned event
+        event TokensBurned(address indexed token, address indexed from, uint256 amount);
+
+        /// Tokens minted event
+        event TokensMinted(address indexed token, address indexed to, uint256 amount);
+    }
+
+    // ========================================================================
+    // IMintable Interface
+    // ========================================================================
+
+    /// IMintable interface for mintable/burnable tokens
+    #[sol(rpc)]
+    contract IMintable {
+        /// Mint tokens to an address
+        function mint(address to, uint256 amount) external;
+
+        /// Burn tokens from an address
+        function burnFrom(address from, uint256 amount) external;
     }
 }

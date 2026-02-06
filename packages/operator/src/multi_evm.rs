@@ -22,8 +22,6 @@ pub struct EvmChainConfig {
     pub rpc_url: String,
     /// Bridge contract address
     pub bridge_address: String,
-    /// Optional router address
-    pub router_address: Option<String>,
     /// Required confirmations (default 12)
     pub finality_blocks: u64,
     /// Whether this chain is active
@@ -38,7 +36,6 @@ impl Default for EvmChainConfig {
             this_chain_id: ChainId::from_u32(0),
             rpc_url: String::new(),
             bridge_address: String::new(),
-            router_address: None,
             finality_blocks: 12,
             enabled: true,
         }
@@ -172,8 +169,6 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
         let bridge_address = std::env::var(format!("{}_BRIDGE_ADDRESS", prefix))
             .map_err(|_| eyre!("Missing {}_BRIDGE_ADDRESS", prefix))?;
 
-        let router_address = std::env::var(format!("{}_ROUTER_ADDRESS", prefix)).ok();
-
         let finality_blocks: u64 = std::env::var(format!("{}_FINALITY_BLOCKS", prefix))
             .ok()
             .and_then(|s| s.parse().ok())
@@ -190,7 +185,6 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             this_chain_id: ChainId::from_u32(this_chain_id),
             rpc_url,
             bridge_address,
-            router_address,
             finality_blocks,
             enabled,
         });

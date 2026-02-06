@@ -17,13 +17,13 @@ sol! {
     #[sol(rpc)]
     contract IBridge {
         function depositNonce() public view returns (uint256);
-        function withdrawDelay() public view returns (uint256);
-        function deposit(
+        function getCancelWindow() public view returns (uint256);
+        function depositERC20(
             address token,
             uint256 amount,
-            bytes32 destChainKey,
+            bytes4 destChain,
             bytes32 destAccount
-        ) external returns (uint256);
+        ) external;
     }
 
     /// Access Manager contract ABI
@@ -74,17 +74,14 @@ pub const CANCELER_ROLE: u64 = 2;
 pub struct EvmBridgeClient<P> {
     provider: P,
     bridge_address: Address,
-    #[allow(dead_code)]
-    router_address: Address,
 }
 
 impl<P: Provider + Clone> EvmBridgeClient<P> {
     /// Create a new EvmBridgeClient instance
-    pub fn new(provider: P, bridge_address: Address, router_address: Address) -> Self {
+    pub fn new(provider: P, bridge_address: Address) -> Self {
         Self {
             provider,
             bridge_address,
-            router_address,
         }
     }
 
@@ -95,10 +92,10 @@ impl<P: Provider + Clone> EvmBridgeClient<P> {
         Ok(result._0.try_into().unwrap_or(0))
     }
 
-    /// Get withdraw delay in seconds
-    pub async fn withdraw_delay(&self) -> Result<u64> {
+    /// Get cancel window in seconds
+    pub async fn cancel_window(&self) -> Result<u64> {
         let bridge = IBridge::new(self.bridge_address, &self.provider);
-        let result = bridge.withdrawDelay().call().await?;
+        let result = bridge.getCancelWindow().call().await?;
         Ok(result._0.try_into().unwrap_or(0))
     }
 

@@ -301,19 +301,24 @@ contract BridgeTest is Test {
     // ============================================================================
 
     function test_WithdrawSubmit() public {
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         // The hash is computed internally
     }
 
     function test_WithdrawApprove() public {
         // Submit withdrawal
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        // Get withdrawal hash (simplified - in reality compute from params)
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        // Get withdrawal hash
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         // Approve
         uint256 operatorBalanceBefore = operator.balance;
@@ -330,10 +335,13 @@ contract BridgeTest is Test {
 
     function test_WithdrawCancel() public {
         // Setup: submit and approve
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
         bridge.withdrawApprove(withdrawHash);
@@ -348,10 +356,13 @@ contract BridgeTest is Test {
 
     function test_WithdrawCancel_RevertsAfterWindow() public {
         // Setup: submit and approve
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
         bridge.withdrawApprove(withdrawHash);
@@ -366,10 +377,13 @@ contract BridgeTest is Test {
 
     function test_WithdrawUncancel() public {
         // Setup: submit, approve, cancel
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
         bridge.withdrawApprove(withdrawHash);
@@ -393,13 +407,16 @@ contract BridgeTest is Test {
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
 
-        // Submit withdrawal
+        // Submit withdrawal - third-party submitter (anyone can submit)
         address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777)))); // depositor on source chain
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
         vm.deal(recipient, 1 ether); // Give recipient some ETH for gas tip
         vm.prank(recipient);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 50 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHashRecipient(destChainId, address(token), 50 ether, 1, recipient);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
 
         // Approve
         vm.prank(operator);
@@ -417,20 +434,26 @@ contract BridgeTest is Test {
     }
 
     function test_WithdrawExecute_RevertsIfNotApproved() public {
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawNotApproved.selector, withdrawHash));
         bridge.withdrawExecuteUnlock(withdrawHash);
     }
 
     function test_WithdrawExecute_RevertsDuringCancelWindow() public {
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
         bridge.withdrawApprove(withdrawHash);
@@ -444,10 +467,13 @@ contract BridgeTest is Test {
     }
 
     function test_WithdrawExecute_RevertsIfCancelled() public {
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        bytes32 withdrawHash = _computeWithdrawHash(destChainId, address(token), 100 ether, 1);
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
         bridge.withdrawApprove(withdrawHash);
@@ -541,29 +567,22 @@ contract BridgeTest is Test {
     // Helper Functions
     // ============================================================================
 
-    function _computeWithdrawHash(bytes4 srcChain, address _token, uint256 amount, uint64 nonce)
-        internal
-        view
-        returns (bytes32)
-    {
-        return _computeWithdrawHashRecipient(srcChain, _token, amount, nonce, user);
-    }
-
-    function _computeWithdrawHashRecipient(
+    function _computeWithdrawHash(
         bytes4 srcChain,
+        bytes32 srcAccount,
+        bytes32 _destAccount,
         address _token,
         uint256 amount,
-        uint64 nonce,
-        address recipient
+        uint64 nonce
     ) internal view returns (bytes32) {
-        // Simplified hash computation matching HashLib
-        bytes32 srcAccount = bytes32(bytes4(uint32(1))) | (bytes32(bytes20(uint160(recipient))) >> 32);
+        // Matches HashLib.computeTransferHash (7-field unified hash)
         return keccak256(
             abi.encode(
                 bytes32(srcChain),
                 bytes32(thisChainId),
-                bytes32(uint256(uint160(_token))),
                 srcAccount,
+                _destAccount,
+                bytes32(uint256(uint160(_token))),
                 amount,
                 uint256(nonce)
             )

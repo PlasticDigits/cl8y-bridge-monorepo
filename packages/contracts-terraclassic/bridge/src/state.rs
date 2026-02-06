@@ -42,12 +42,12 @@ pub struct PendingAdmin {
 /// Supported chain configuration
 #[cw_serde]
 pub struct ChainConfig {
-    /// EVM chain ID
-    pub chain_id: u64,
-    /// Human-readable chain name
-    pub name: String,
-    /// Bridge contract address on the EVM chain (as hex string)
-    pub bridge_address: String,
+    /// 4-byte registered chain ID (auto-incremented on registration)
+    pub chain_id: [u8; 4],
+    /// Human-readable identifier (e.g., "evm_1", "terraclassic_columbus-5")
+    pub identifier: String,
+    /// keccak256(identifier) — for cross-chain verification
+    pub identifier_hash: [u8; 32],
     /// Whether this chain is currently enabled
     pub enabled: bool,
 }
@@ -113,8 +113,8 @@ pub struct BridgeTransaction {
     pub token: String,
     /// Amount being bridged
     pub amount: Uint128,
-    /// Destination chain ID
-    pub dest_chain_id: u64,
+    /// Destination chain (4-byte registered chain ID)
+    pub dest_chain: [u8; 4],
     /// Transaction timestamp
     pub timestamp: Timestamp,
     /// Whether this is an outgoing (lock) or incoming (withdraw) transaction
@@ -138,36 +138,39 @@ pub struct Stats {
 
 /// Withdrawal approval tracking (keyed by transferId hash)
 ///
-/// This structure tracks pending withdrawal approvals in the watchtower pattern.
-/// Approvals must wait for the delay period before execution, during which
-/// cancelers can verify and block fraudulent approvals.
+/// V2 pending withdrawal record. Created by user via `WithdrawSubmit`,
+/// approved by operator via `WithdrawApprove`, then executed after cancel window.
 #[cw_serde]
-pub struct WithdrawApproval {
-    /// Source chain key (32 bytes)
-    pub src_chain_key: [u8; 32],
-    /// Token identifier on this chain
-    pub token: String,
-    /// Recipient address on this chain
-    pub recipient: Addr,
-    /// Destination account (32 bytes, for hash computation/verification)
+pub struct PendingWithdraw {
+    /// Source chain ID (4 bytes)
+    pub src_chain: [u8; 4],
+    /// Source account (depositor on source chain, 32 bytes)
+    pub src_account: [u8; 32],
+    /// Destination account (recipient on this chain, 32 bytes)
     pub dest_account: [u8; 32],
-    /// Amount to withdraw
+    /// Token identifier on this chain (denom or CW20 contract address)
+    pub token: String,
+    /// Decoded recipient address on this chain
+    pub recipient: Addr,
+    /// Amount to withdraw (in source chain decimals; converted at execution time)
     pub amount: Uint128,
-    /// Nonce from source chain
+    /// Nonce from source chain deposit
     pub nonce: u64,
-    /// Fee amount (in uluna)
-    pub fee: Uint128,
-    /// Fee recipient address
-    pub fee_recipient: Addr,
-    /// Block timestamp when approval was created
-    pub approved_at: Timestamp,
-    /// Whether approval was created (always true after ApproveWithdraw)
-    pub is_approved: bool,
-    /// Whether to deduct fee from amount (vs separate payment in uluna)
-    pub deduct_from_amount: bool,
-    /// Whether approval was cancelled by a canceler
+    /// Source chain token decimals (e.g. 18 for EVM ERC20)
+    pub src_decimals: u8,
+    /// Destination chain token decimals (e.g. 6 for Terra native)
+    pub dest_decimals: u8,
+    /// Operator gas tip (native tokens sent with WithdrawSubmit)
+    pub operator_gas: Uint128,
+    /// Block timestamp when submitted by user
+    pub submitted_at: u64,
+    /// Block timestamp when approved by operator (0 if not yet approved)
+    pub approved_at: u64,
+    /// Whether operator has approved
+    pub approved: bool,
+    /// Whether cancelled by canceler
     pub cancelled: bool,
-    /// Whether withdrawal was executed
+    /// Whether executed (tokens released)
     pub executed: bool,
 }
 
@@ -177,18 +180,24 @@ pub struct WithdrawApproval {
 /// the destination chain can verify the deposit exists.
 #[cw_serde]
 pub struct DepositInfo {
-    /// Destination chain key (32 bytes)
-    pub dest_chain_key: [u8; 32],
-    /// Token address on destination chain (32 bytes)
-    pub dest_token_address: [u8; 32],
+    /// Source chain ID (4 bytes)
+    pub src_chain: [u8; 4],
+    /// Destination chain ID (4 bytes)
+    pub dest_chain: [u8; 4],
+    /// Source account (depositor) encoded as 32 bytes
+    pub src_account: [u8; 32],
     /// Destination account (32 bytes)
     pub dest_account: [u8; 32],
+    /// Token address on destination chain (32 bytes)
+    pub dest_token_address: [u8; 32],
     /// Deposit amount (normalized to destination decimals)
     pub amount: Uint128,
     /// Unique nonce for this deposit
     pub nonce: u64,
     /// Block timestamp when deposit was made
     pub deposited_at: Timestamp,
+    /// Legacy field: destination chain key (32 bytes) - kept for backward compat
+    pub dest_chain_key: [u8; 32],
 }
 
 /// Rate limit configuration for a token
@@ -244,8 +253,15 @@ pub const PENDING_ADMIN: Item<PendingAdmin> = Item::new("pending_admin");
 pub const STATS: Item<Stats> = Item::new("stats");
 
 /// Supported chains configuration
-/// Key: chain_id (u64 as string), Value: ChainConfig
-pub const CHAINS: Map<String, ChainConfig> = Map::new("chains");
+/// V2 chain registry — keyed by 4-byte chain ID
+/// Key: 4-byte chain ID as &[u8], Value: ChainConfig
+pub const CHAINS: Map<&[u8], ChainConfig> = Map::new("chains_v2");
+
+/// Reverse lookup: identifier string → 4-byte chain ID
+pub const CHAIN_BY_IDENTIFIER: Map<&str, [u8; 4]> = Map::new("chain_by_ident");
+
+/// Auto-incrementing chain counter (next chain ID to assign)
+pub const CHAIN_COUNTER: Item<u32> = Item::new("chain_counter");
 
 /// Supported tokens configuration
 /// Key: token identifier, Value: TokenConfig
@@ -281,12 +297,16 @@ pub const OPERATOR_COUNT: Item<u32> = Item::new("operator_count");
 // Watchtower Pattern State (v2.0)
 // ============================================================================
 
+/// This chain's 4-byte V2 chain ID (set by admin, matches EVM ChainRegistry)
+pub const THIS_CHAIN_ID: Item<[u8; 4]> = Item::new("this_chain_id");
+
 /// Global withdrawal delay in seconds (default: 300 = 5 minutes)
 pub const WITHDRAW_DELAY: Item<u64> = Item::new("withdraw_delay");
 
 /// Withdrawal approvals indexed by transferId hash
-/// Key: 32-byte hash as &[u8], Value: WithdrawApproval
-pub const WITHDRAW_APPROVALS: Map<&[u8], WithdrawApproval> = Map::new("withdraw_approvals");
+/// V2 pending withdrawals — user-initiated
+/// Key: 32-byte withdraw hash as &[u8], Value: PendingWithdraw
+pub const PENDING_WITHDRAWS: Map<&[u8], PendingWithdraw> = Map::new("pending_withdraws");
 
 /// Tracks nonce usage per source chain to prevent duplicates
 /// Key: (src_chain_key as &[u8], nonce), Value: bool (true if used)

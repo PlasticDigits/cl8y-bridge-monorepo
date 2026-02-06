@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 
 use super::operator_helpers::{
     approve_erc20, encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
-    poll_terra_for_approval, query_deposit_nonce, query_withdraw_delay, verify_token_setup,
+    poll_terra_for_approval, query_cancel_window, query_deposit_nonce, verify_token_setup,
     DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT, WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
@@ -128,7 +128,7 @@ pub async fn test_operator_live_deposit_detection(
     // Step 5: Get Terra chain key
     let terra_chain_key = match get_terra_chain_key(config).await {
         Ok(key) => {
-            info!("Terra chain key: 0x{}", hex::encode(&key[..8]));
+            info!("Terra chain key: 0x{}", hex::encode(&key));
             key
         }
         Err(e) => {
@@ -179,10 +179,8 @@ pub async fn test_operator_live_deposit_detection(
     }
 
     // Step 8: Execute deposit on EVM
-    let router = config.evm.contracts.router;
     let deposit_tx = match execute_deposit(
         config,
-        router,
         token,
         transfer_amount,
         terra_chain_key,
@@ -407,8 +405,8 @@ pub async fn test_operator_live_withdrawal_execution(
         }
     };
 
-    // Step 5: Query withdraw delay and skip time on Anvil
-    let withdraw_delay = match query_withdraw_delay(config).await {
+    // Step 5: Query cancel window and skip time on Anvil
+    let withdraw_delay = match query_cancel_window(config).await {
         Ok(d) => d,
         Err(e) => {
             warn!("Could not query withdraw delay, using default: {}", e);
@@ -571,7 +569,6 @@ pub async fn test_operator_sequential_deposit_processing(
 
     let dest_account = encode_terra_address(&config.test_accounts.terra_address);
     let lock_unlock = config.evm.contracts.lock_unlock;
-    let router = config.evm.contracts.router;
     let amount_per_deposit = DEFAULT_TRANSFER_AMOUNT;
 
     // Verify token is properly registered before attempting deposits
@@ -604,7 +601,6 @@ pub async fn test_operator_sequential_deposit_processing(
 
         match execute_deposit(
             config,
-            router,
             token,
             amount_per_deposit,
             terra_chain_key,

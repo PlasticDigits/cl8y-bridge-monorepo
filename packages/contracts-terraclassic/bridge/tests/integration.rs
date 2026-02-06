@@ -1,12 +1,12 @@
-//! Integration tests for CL8Y Bridge Contract using cw-multi-test.
+//! Integration tests for CL8Y Bridge Contract V2 using cw-multi-test.
 //!
-//! These tests verify the watchtower pattern handlers and rate limiting.
+//! These tests verify the V2 withdrawal flow and rate limiting.
 
 use cosmwasm_std::{coins, Addr, Binary, Uint128};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
 use bridge::msg::{
-    ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg, WithdrawApprovalResponse,
+    ConfigResponse, ExecuteMsg, InstantiateMsg, PendingWithdrawResponse, QueryMsg,
     WithdrawDelayResponse,
 };
 
@@ -82,29 +82,27 @@ fn setup() -> (App, Addr, Addr, Addr) {
     )
     .unwrap();
 
-    // Add supported chain (BSC = 56)
+    // Register supported chain (BSC)
     app.execute_contract(
         admin.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::AddChain {
-            chain_id: 56,
-            name: "BSC".to_string(),
-            bridge_address: "0x1234567890123456789012345678901234567890".to_string(),
+        &ExecuteMsg::RegisterChain {
+            identifier: "bsc_56".to_string(),
         },
         &[],
     )
     .unwrap();
 
-    // Add supported token (uluna)
-    // EVM token address must be 32 bytes (64 hex chars) - left-padded EVM address
+    // Add supported token (uluna) — LockUnlock mode (default)
     app.execute_contract(
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::AddToken {
             token: "uluna".to_string(),
             is_native: true,
+            token_type: None,
             evm_token_address: "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-                .to_string(), // 32 bytes
+                .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
         },
@@ -112,8 +110,7 @@ fn setup() -> (App, Addr, Addr, Addr) {
     )
     .unwrap();
 
-    // Set withdraw delay to 10 seconds for testing (minimum is 60)
-    // Note: we'll use 60 seconds in tests since that's the minimum
+    // Set withdraw delay to 60 seconds
     app.execute_contract(
         admin.clone(),
         contract_addr.clone(),
@@ -125,19 +122,66 @@ fn setup() -> (App, Addr, Addr, Addr) {
     (app, contract_addr, operator, user)
 }
 
-fn create_test_src_chain_key() -> Binary {
-    // BSC chain key (keccak256(abi.encode("EVM", bytes32(56))))
-    let mut key = [0u8; 32];
-    key[31] = 56; // Simplified BSC chain key for testing
-    Binary::from(key.to_vec())
+/// Create a 4-byte source chain ID (e.g., BSC chain id 56)
+fn create_test_src_chain() -> Binary {
+    let bytes: [u8; 4] = 56u32.to_be_bytes();
+    Binary::from(bytes.to_vec())
 }
 
-fn create_test_dest_account() -> Binary {
+/// Create a test source account (EVM depositor, 32 bytes)
+fn create_test_src_account() -> Binary {
     let mut account = [0u8; 32];
-    // terra1user encoded as bytes32
-    let addr_bytes = b"terra1user";
-    account[..addr_bytes.len()].copy_from_slice(addr_bytes);
+    // Simulated EVM address (20 bytes, right-aligned)
+    account[12..32].copy_from_slice(&[0xAB; 20]);
     Binary::from(account.to_vec())
+}
+
+/// Helper: user submits a withdrawal, returns the withdraw hash as Binary.
+fn submit_withdraw(
+    app: &mut App,
+    user: &Addr,
+    contract_addr: &Addr,
+    token: &str,
+    amount: u128,
+    nonce: u64,
+    operator_gas: u128,
+) -> Binary {
+    let src_chain = create_test_src_chain();
+    let src_account = create_test_src_account();
+
+    let funds = if operator_gas > 0 {
+        coins(operator_gas, "uluna")
+    } else {
+        vec![]
+    };
+
+    let res = app
+        .execute_contract(
+            user.clone(),
+            contract_addr.clone(),
+            &ExecuteMsg::WithdrawSubmit {
+                src_chain,
+                src_account,
+                token: token.to_string(),
+                recipient: user.to_string(),
+                amount: Uint128::from(amount),
+                nonce,
+            },
+            &funds,
+        )
+        .unwrap();
+
+    // Extract withdraw hash from attributes
+    let withdraw_hash_hex = res
+        .events
+        .iter()
+        .flat_map(|e| &e.attributes)
+        .find(|a| a.key == "withdraw_hash")
+        .map(|a| a.value.clone())
+        .expect("withdraw_hash attribute not found");
+
+    let hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap(); // Remove 0x prefix
+    Binary::from(hash_bytes)
 }
 
 // ============================================================================
@@ -148,7 +192,6 @@ fn create_test_dest_account() -> Binary {
 fn test_instantiate() {
     let (app, contract_addr, _operator, _user) = setup();
 
-    // Query config
     let config: ConfigResponse = app
         .wrap()
         .query_wasm_smart(&contract_addr, &QueryMsg::Config {})
@@ -160,350 +203,507 @@ fn test_instantiate() {
 }
 
 // ============================================================================
-// ApproveWithdraw Tests
+// WithdrawSubmit Tests
 // ============================================================================
 
 #[test]
-fn test_approve_withdraw_creates_approval() {
-    let (mut app, contract_addr, operator, user) = setup();
+fn test_withdraw_submit_creates_pending() {
+    let (mut app, contract_addr, _operator, user) = setup();
 
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
+    // Amount in source chain (EVM) decimals: 1 token = 1e18
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        100,
+    );
 
-    // Operator approves withdraw
+    // Query the pending withdrawal
+    let pending: PendingWithdrawResponse = app
+        .wrap()
+        .query_wasm_smart(&contract_addr, &QueryMsg::PendingWithdraw { withdraw_hash })
+        .unwrap();
+
+    assert!(pending.exists);
+    assert!(!pending.approved);
+    assert!(!pending.cancelled);
+    assert!(!pending.executed);
+    assert_eq!(pending.amount, Uint128::from(1_000_000_000_000_000_000u128));
+    assert_eq!(pending.operator_gas, Uint128::from(100u128));
+}
+
+#[test]
+fn test_withdraw_submit_rejects_duplicate() {
+    let (mut app, contract_addr, _operator, user) = setup();
+
+    // First submission succeeds
+    submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Second submission with same params should fail
+    let src_chain = create_test_src_chain();
+    let src_account = create_test_src_account();
+
     let res = app.execute_contract(
-        operator.clone(),
+        user.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::ApproveWithdraw {
-            src_chain_key: src_chain_key.clone(),
+        &ExecuteMsg::WithdrawSubmit {
+            src_chain,
+            src_account,
             token: "uluna".to_string(),
             recipient: user.to_string(),
-            dest_account: dest_account.clone(),
-            amount: Uint128::from(1_000_000u128),
+            amount: Uint128::from(1_000_000_000_000_000_000u128),
             nonce: 0,
-            fee: Uint128::from(1000u128),
-            fee_recipient: operator.to_string(),
-            deduct_from_amount: false,
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+}
+
+// ============================================================================
+// WithdrawApprove Tests
+// ============================================================================
+
+#[test]
+fn test_withdraw_approve_requires_operator() {
+    let (mut app, contract_addr, _operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Non-operator tries to approve — should fail
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_withdraw_approve_sets_approved() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Operator approves
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Query — should be approved
+    let pending: PendingWithdrawResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::PendingWithdraw {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+        )
+        .unwrap();
+
+    assert!(pending.approved);
+    assert!(!pending.cancelled);
+    assert!(!pending.executed);
+}
+
+// ============================================================================
+// WithdrawCancel Tests
+// ============================================================================
+
+#[test]
+fn test_withdraw_cancel_within_window() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let canceler = Addr::unchecked("terra1canceler");
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Operator approves (starts cancel window)
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Canceler cancels within window (immediately after approval)
+    let res = app.execute_contract(
+        canceler.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
         },
         &[],
     );
 
     assert!(res.is_ok());
 
-    // Extract withdraw hash from attributes
-    let res = res.unwrap();
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-
-    // Query the approval
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap(); // Remove 0x prefix
-    let approval: WithdrawApprovalResponse = app
+    // Query — should be cancelled
+    let pending: PendingWithdrawResponse = app
         .wrap()
-        .query_wasm_smart(
-            &contract_addr,
-            &QueryMsg::WithdrawApproval {
-                withdraw_hash: Binary::from(hash_bytes),
-            },
-        )
+        .query_wasm_smart(&contract_addr, &QueryMsg::PendingWithdraw { withdraw_hash })
         .unwrap();
 
-    assert!(approval.exists);
-    assert!(approval.is_approved);
-    assert!(!approval.cancelled);
-    assert!(!approval.executed);
-    assert_eq!(approval.amount, Uint128::from(1_000_000u128));
+    assert!(pending.cancelled);
 }
 
 #[test]
-fn test_approve_withdraw_requires_operator() {
-    let (mut app, contract_addr, _operator, user) = setup();
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // Non-operator tries to approve - should fail
-    let res = app.execute_contract(
-        user.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ApproveWithdraw {
-            src_chain_key,
-            token: "uluna".to_string(),
-            recipient: user.to_string(),
-            dest_account,
-            amount: Uint128::from(1_000_000u128),
-            nonce: 0,
-            fee: Uint128::zero(),
-            fee_recipient: user.to_string(),
-            deduct_from_amount: false,
-        },
-        &[],
-    );
-
-    assert!(res.is_err());
-}
-
-#[test]
-fn test_approve_withdraw_rejects_duplicate_nonce() {
-    let (mut app, contract_addr, operator, user) = setup();
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // First approval
-    app.execute_contract(
-        operator.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ApproveWithdraw {
-            src_chain_key: src_chain_key.clone(),
-            token: "uluna".to_string(),
-            recipient: user.to_string(),
-            dest_account: dest_account.clone(),
-            amount: Uint128::from(1_000_000u128),
-            nonce: 0,
-            fee: Uint128::zero(),
-            fee_recipient: operator.to_string(),
-            deduct_from_amount: false,
-        },
-        &[],
-    )
-    .unwrap();
-
-    // Second approval with same nonce - should fail
-    let res = app.execute_contract(
-        operator.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ApproveWithdraw {
-            src_chain_key,
-            token: "uluna".to_string(),
-            recipient: user.to_string(),
-            dest_account,
-            amount: Uint128::from(2_000_000u128),
-            nonce: 0, // Same nonce!
-            fee: Uint128::zero(),
-            fee_recipient: operator.to_string(),
-            deduct_from_amount: false,
-        },
-        &[],
-    );
-
-    assert!(res.is_err());
-}
-
-// ============================================================================
-// ExecuteWithdraw Tests
-// ============================================================================
-
-#[test]
-fn test_execute_withdraw_before_delay_fails() {
-    let (mut app, contract_addr, operator, user) = setup();
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // First, fund the contract with liquidity
-    app.send_tokens(
-        Addr::unchecked("terra1admin"),
-        contract_addr.clone(),
-        &coins(10_000_000, "uluna"),
-    )
-    .unwrap();
-
-    // Approve withdraw
-    let res = app
-        .execute_contract(
-            operator.clone(),
-            contract_addr.clone(),
-            &ExecuteMsg::ApproveWithdraw {
-                src_chain_key,
-                token: "uluna".to_string(),
-                recipient: user.to_string(),
-                dest_account,
-                amount: Uint128::from(1_000_000u128),
-                nonce: 0,
-                fee: Uint128::zero(),
-                fee_recipient: operator.to_string(),
-                deduct_from_amount: true,
-            },
-            &[],
-        )
-        .unwrap();
-
-    // Extract withdraw hash
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap();
-
-    // Try to execute immediately (before delay) - should fail
-    let res = app.execute_contract(
-        user.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ExecuteWithdraw {
-            withdraw_hash: Binary::from(hash_bytes),
-        },
-        &[],
-    );
-
-    assert!(res.is_err());
-    // Check error message contains delay info
-    let err = res.unwrap_err();
-    assert!(err.root_cause().to_string().contains("delay"));
-}
-
-#[test]
-fn test_execute_withdraw_after_delay_succeeds() {
-    let (mut app, contract_addr, operator, user) = setup();
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // Fund the contract with liquidity (locked balance)
-    // We need to add locked balance by simulating a previous lock
-    app.send_tokens(
-        Addr::unchecked("terra1admin"),
-        contract_addr.clone(),
-        &coins(10_000_000, "uluna"),
-    )
-    .unwrap();
-
-    // Approve withdraw
-    let res = app
-        .execute_contract(
-            operator.clone(),
-            contract_addr.clone(),
-            &ExecuteMsg::ApproveWithdraw {
-                src_chain_key,
-                token: "uluna".to_string(),
-                recipient: user.to_string(),
-                dest_account,
-                amount: Uint128::from(1_000_000u128),
-                nonce: 0,
-                fee: Uint128::zero(),
-                fee_recipient: operator.to_string(),
-                deduct_from_amount: true,
-            },
-            &[],
-        )
-        .unwrap();
-
-    // Extract withdraw hash
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap();
-
-    // Advance time by 61 seconds (more than 60 second delay)
-    app.update_block(|block| {
-        block.time = block.time.plus_seconds(61);
-    });
-
-    // Note: This test will fail because we need actual locked balance
-    // The contract checks LOCKED_BALANCES which is only increased via Lock operations
-    // For a full test, we'd need to simulate a Lock first
-    // For now, we just verify the delay check passes
-    let res = app.execute_contract(
-        user.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ExecuteWithdraw {
-            withdraw_hash: Binary::from(hash_bytes),
-        },
-        &[],
-    );
-
-    // This should fail with InsufficientLiquidity, not delay error
-    if let Err(e) = res {
-        let err_str = e.root_cause().to_string();
-        // The delay check passed, now it fails on liquidity
-        assert!(
-            err_str.contains("liquidity") || err_str.contains("Insufficient"),
-            "Expected liquidity error, got: {}",
-            err_str
-        );
-    }
-}
-
-// ============================================================================
-// CancelWithdrawApproval Tests
-// ============================================================================
-
-#[test]
-fn test_cancel_withdraw_blocks_execution() {
+fn test_withdraw_cancel_after_window_fails() {
     let (mut app, contract_addr, operator, user) = setup();
     let canceler = Addr::unchecked("terra1canceler");
 
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
 
-    // Approve withdraw
-    let res = app
-        .execute_contract(
-            operator.clone(),
-            contract_addr.clone(),
-            &ExecuteMsg::ApproveWithdraw {
-                src_chain_key,
-                token: "uluna".to_string(),
-                recipient: user.to_string(),
-                dest_account,
-                amount: Uint128::from(1_000_000u128),
-                nonce: 0,
-                fee: Uint128::zero(),
-                fee_recipient: operator.to_string(),
-                deduct_from_amount: true,
-            },
-            &[],
-        )
-        .unwrap();
+    // Operator approves
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
 
-    // Extract withdraw hash
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
+    // Advance past cancel window (5 min + 1 sec)
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
 
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap();
-    let withdraw_hash_binary = Binary::from(hash_bytes.clone());
-
-    // Canceler cancels the approval
-    let cancel_res = app.execute_contract(
+    // Cancel should fail — window expired
+    let res = app.execute_contract(
         canceler.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::CancelWithdrawApproval {
-            withdraw_hash: withdraw_hash_binary.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
         },
         &[],
     );
 
-    assert!(cancel_res.is_ok());
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("expired"),
+        "Expected cancel window expired error, got: {}",
+        err_str
+    );
+}
 
-    // Advance time past delay
+#[test]
+fn test_withdraw_cancel_requires_canceler_role() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Operator approves
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Random user tries to cancel — should fail
+    let random = Addr::unchecked("terra1random");
+    let res = app.execute_contract(
+        random,
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+}
+
+// ============================================================================
+// WithdrawUncancel Tests
+// ============================================================================
+
+#[test]
+fn test_withdraw_uncancel_restores_and_resets_window() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let canceler = Addr::unchecked("terra1canceler");
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Approve → Cancel → Uncancel
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        canceler.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Advance time by 30 seconds
     app.update_block(|block| {
-        block.time = block.time.plus_seconds(61);
+        block.time = block.time.plus_seconds(30);
     });
 
-    // Try to execute - should fail because cancelled
+    // Operator uncancels
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawUncancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Query — should be un-cancelled with new cancel window
+    let pending: PendingWithdrawResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::PendingWithdraw {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+        )
+        .unwrap();
+
+    assert!(!pending.cancelled);
+    assert!(pending.approved);
+    // Cancel window should have been reset — remaining should be close to 300
+    assert!(
+        pending.cancel_window_remaining > 290,
+        "Expected cancel window near 300s, got: {}",
+        pending.cancel_window_remaining
+    );
+}
+
+// ============================================================================
+// WithdrawExecuteUnlock Tests
+// ============================================================================
+
+#[test]
+fn test_execute_unlock_before_window_fails() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Approve
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Try to execute immediately (within cancel window) — should fail
     let res = app.execute_contract(
         user.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::ExecuteWithdraw {
-            withdraw_hash: withdraw_hash_binary,
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("Cancel window still active"),
+        "Expected cancel window active error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_execute_unlock_after_window_insufficient_liquidity() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Approve
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Advance past cancel window
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    // Execute — should fail with insufficient liquidity (no locked balance)
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("liquidity") || err_str.contains("Insufficient"),
+        "Expected liquidity error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_cancelled_withdraw_cannot_execute() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let canceler = Addr::unchecked("terra1canceler");
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    // Approve → Cancel
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        canceler.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Advance past cancel window
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    // Try to execute — should fail because cancelled
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
         },
         &[],
     );
@@ -515,145 +715,6 @@ fn test_cancel_withdraw_blocks_execution() {
         "Expected cancelled error, got: {}",
         err_str
     );
-}
-
-#[test]
-fn test_cancel_requires_canceler_role() {
-    let (mut app, contract_addr, operator, user) = setup();
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // Approve withdraw
-    let res = app
-        .execute_contract(
-            operator.clone(),
-            contract_addr.clone(),
-            &ExecuteMsg::ApproveWithdraw {
-                src_chain_key,
-                token: "uluna".to_string(),
-                recipient: user.to_string(),
-                dest_account,
-                amount: Uint128::from(1_000_000u128),
-                nonce: 0,
-                fee: Uint128::zero(),
-                fee_recipient: operator.to_string(),
-                deduct_from_amount: true,
-            },
-            &[],
-        )
-        .unwrap();
-
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap();
-
-    // Random user (not canceler) tries to cancel - should fail
-    let random_user = Addr::unchecked("terra1random");
-    let res = app.execute_contract(
-        random_user,
-        contract_addr.clone(),
-        &ExecuteMsg::CancelWithdrawApproval {
-            withdraw_hash: Binary::from(hash_bytes),
-        },
-        &[],
-    );
-
-    assert!(res.is_err());
-}
-
-// ============================================================================
-// ReenableWithdrawApproval Tests
-// ============================================================================
-
-#[test]
-fn test_reenable_approval_resets_delay() {
-    let (mut app, contract_addr, operator, user) = setup();
-    let admin = Addr::unchecked("terra1admin");
-    let canceler = Addr::unchecked("terra1canceler");
-
-    let src_chain_key = create_test_src_chain_key();
-    let dest_account = create_test_dest_account();
-
-    // Approve withdraw
-    let res = app
-        .execute_contract(
-            operator.clone(),
-            contract_addr.clone(),
-            &ExecuteMsg::ApproveWithdraw {
-                src_chain_key,
-                token: "uluna".to_string(),
-                recipient: user.to_string(),
-                dest_account,
-                amount: Uint128::from(1_000_000u128),
-                nonce: 0,
-                fee: Uint128::zero(),
-                fee_recipient: operator.to_string(),
-                deduct_from_amount: true,
-            },
-            &[],
-        )
-        .unwrap();
-
-    let withdraw_hash = res
-        .events
-        .iter()
-        .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
-        .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-
-    let hash_bytes = hex::decode(&withdraw_hash[2..]).unwrap();
-    let withdraw_hash_binary = Binary::from(hash_bytes.clone());
-
-    // Cancel the approval
-    app.execute_contract(
-        canceler.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::CancelWithdrawApproval {
-            withdraw_hash: withdraw_hash_binary.clone(),
-        },
-        &[],
-    )
-    .unwrap();
-
-    // Advance time by 30 seconds
-    app.update_block(|block| {
-        block.time = block.time.plus_seconds(30);
-    });
-
-    // Admin reenables the approval
-    app.execute_contract(
-        admin.clone(),
-        contract_addr.clone(),
-        &ExecuteMsg::ReenableWithdrawApproval {
-            withdraw_hash: withdraw_hash_binary.clone(),
-        },
-        &[],
-    )
-    .unwrap();
-
-    // Query approval to verify it's reenabled
-    let approval: WithdrawApprovalResponse = app
-        .wrap()
-        .query_wasm_smart(
-            &contract_addr,
-            &QueryMsg::WithdrawApproval {
-                withdraw_hash: withdraw_hash_binary.clone(),
-            },
-        )
-        .unwrap();
-
-    assert!(!approval.cancelled);
-    assert!(approval.is_approved);
-    // Delay timer was reset, so delay_remaining should be close to full delay
-    assert!(approval.delay_remaining > 50); // Should be ~60 seconds
 }
 
 // ============================================================================
@@ -703,26 +764,24 @@ fn test_rate_limit_configuration() {
 fn test_lock_stores_deposit_hash() {
     let (mut app, contract_addr, _operator, user) = setup();
 
-    // Lock tokens - recipient must be a 64-char hex string (32 bytes)
-    // This represents an EVM address left-padded to 32 bytes
-    let recipient_hex = "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    // 32-byte dest_account (EVM address, left-padded)
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[
+        0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72, 0x79,
+        0xcf, 0xfF, 0xb9, 0x22, 0x66,
+    ]);
 
     let res = app.execute_contract(
         user.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::Lock {
-            dest_chain_id: 56,
-            recipient: recipient_hex.to_string(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 1]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
         },
         &coins(1_000_000, "uluna"),
     );
 
-    // This may fail if the token config's evm_token_address is not a valid 32-byte hex
-    // For this test, we need to ensure the setup creates a valid token config
-    if let Err(e) = &res {
-        println!("Lock error: {:?}", e);
-    }
-    assert!(res.is_ok(), "Lock failed: {:?}", res.err());
+    assert!(res.is_ok(), "DepositNative failed: {:?}", res.err());
 
     // Check that deposit_hash attribute is emitted
     let res = res.unwrap();

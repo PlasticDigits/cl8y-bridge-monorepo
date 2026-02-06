@@ -24,12 +24,12 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
+use super::helpers::query_evm_chain_key;
 use super::operator_helpers::{
-    approve_erc20, calculate_fee, compute_evm_chain_key, encode_terra_address,
-    execute_batch_deposits, execute_deposit, get_erc20_balance, get_terra_chain_key,
-    query_deposit_nonce, query_fee_bps, query_fee_collector, query_withdraw_delay,
-    verify_token_setup, wait_for_batch_approvals, DEFAULT_TRANSFER_AMOUNT,
-    WITHDRAWAL_EXECUTION_TIMEOUT,
+    approve_erc20, calculate_fee, encode_terra_address, execute_batch_deposits, execute_deposit,
+    get_erc20_balance, get_terra_chain_key, query_cancel_window, query_deposit_nonce,
+    query_fee_bps, query_fee_collector, verify_token_setup, wait_for_batch_approvals,
+    DEFAULT_TRANSFER_AMOUNT, WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
 // ============================================================================
@@ -122,7 +122,6 @@ pub async fn test_operator_live_fee_collection(
 
     let dest_account = encode_terra_address(&config.test_accounts.terra_address);
     let lock_unlock = config.evm.contracts.lock_unlock;
-    let router = config.evm.contracts.router;
     let transfer_amount = DEFAULT_TRANSFER_AMOUNT;
 
     // Verify token is properly registered before attempting deposit
@@ -144,7 +143,6 @@ pub async fn test_operator_live_fee_collection(
 
     if let Err(e) = execute_deposit(
         config,
-        router,
         token,
         transfer_amount,
         terra_chain_key,
@@ -375,12 +373,21 @@ pub async fn test_operator_evm_to_evm_withdrawal(
         return TestResult::skip(name, "Operator service is not running");
     }
 
-    // Compute EVM chain key for Anvil (chain ID 31337)
-    let evm_chain_key = compute_evm_chain_key(config.evm.chain_id);
+    // Query EVM chain ID from registry
+    let evm_chain_key = match query_evm_chain_key(config, config.evm.chain_id).await {
+        Ok(id) => id,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query EVM chain ID: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
     info!(
-        "EVM chain key for chain {}: 0x{}",
+        "EVM chain ID for chain {}: 0x{}",
         config.evm.chain_id,
-        hex::encode(&evm_chain_key[..8])
+        hex::encode(evm_chain_key)
     );
 
     // Use the test account as destination (EVM address as bytes32)
@@ -389,7 +396,6 @@ pub async fn test_operator_evm_to_evm_withdrawal(
 
     let test_account = config.test_accounts.evm_address;
     let lock_unlock = config.evm.contracts.lock_unlock;
-    let router = config.evm.contracts.router;
     let transfer_amount = DEFAULT_TRANSFER_AMOUNT;
 
     // Get initial state
@@ -437,15 +443,8 @@ pub async fn test_operator_evm_to_evm_withdrawal(
         );
     }
 
-    if let Err(e) = execute_deposit(
-        config,
-        router,
-        token,
-        transfer_amount,
-        evm_chain_key,
-        dest_account,
-    )
-    .await
+    if let Err(e) =
+        execute_deposit(config, token, transfer_amount, evm_chain_key, dest_account).await
     {
         return TestResult::fail(name, format!("Deposit failed: {}", e), start.elapsed());
     }
@@ -746,8 +745,8 @@ pub async fn test_operator_approval_timeout_handling(
         approval.nonce
     );
 
-    // Query withdraw delay (this is the timeout period)
-    let withdraw_delay = (query_withdraw_delay(config).await).unwrap_or(300u64);
+    // Query cancel window (this is the timeout period)
+    let withdraw_delay = (query_cancel_window(config).await).unwrap_or(300u64);
 
     // Operator should handle approvals that are past their delay
     // We skip time well past the delay to test timeout handling

@@ -8,6 +8,8 @@ use alloy::primitives::{keccak256, Address, B256};
 use std::time::Duration;
 use tracing::{debug, info};
 
+use super::helpers::{chain_id4_to_bytes32, selector};
+
 // ============================================================================
 // Chain Key Computation
 // ============================================================================
@@ -80,10 +82,10 @@ pub struct FraudulentApprovalResult {
     pub withdraw_hash: B256,
 }
 
-/// Create a fraudulent approval on the bridge
+/// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
 ///
-/// Function signature: approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)
-/// This creates an approval that has no matching deposit (fraud scenario)
+/// This creates an approval that has no matching deposit (fraud scenario).
+/// Uses the new 2-step withdraw flow.
 pub async fn create_fraudulent_approval(
     config: &E2eConfig,
     src_chain_key: B256,
@@ -97,14 +99,15 @@ pub async fn create_fraudulent_approval(
 
     let client = reqwest::Client::new();
 
-    // Function selector for approveWithdraw
-    let selector = "7f86a1a8";
-
     // Create destAccount (the recipient's address as bytes32, left-padded)
     let mut dest_account_bytes = [0u8; 32];
     dest_account_bytes[12..32].copy_from_slice(recipient.as_slice());
     let dest_account_b256 = B256::from(dest_account_bytes);
-    let dest_account = format!("{:0>64}", hex::encode(recipient.as_slice()));
+
+    // Create a fake srcAccount
+    let mut src_account_bytes = [0u8; 32];
+    src_account_bytes[0..8].copy_from_slice(&nonce.to_be_bytes());
+    src_account_bytes[8] = 0xff;
 
     // Parse amount to u256
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
@@ -119,32 +122,29 @@ pub async fn create_fraudulent_approval(
         nonce,
     );
 
-    // ABI encode all parameters
-    let src_chain_key_hex = hex::encode(src_chain_key.as_slice());
+    // --- Step 1: withdrawSubmit ---
+    let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
+    let src_chain_bytes4 = &src_chain_key.as_slice()[..4];
+    let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_bytes4.try_into().unwrap()));
+    let src_account_hex = hex::encode(src_account_bytes);
+    let dest_account_hex = hex::encode(dest_account_bytes);
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
-    let to_padded = format!("{:0>64}", hex::encode(recipient.as_slice()));
     let amount_padded = format!("{:064x}", amount_u256);
     let nonce_padded = format!("{:064x}", nonce);
-    let fee_padded = format!("{:064x}", 0u128);
-    let fee_recipient_padded = format!("{:0>64}", "00");
-    let deduct_from_amount = format!("{:064x}", 0u8);
 
-    let call_data = format!(
-        "0x{}{}{}{}{}{}{}{}{}{}",
-        selector,
-        src_chain_key_hex,
+    let submit_data = format!(
+        "0x{}{}{}{}{}{}{}",
+        submit_sel,
+        src_chain_padded,
+        src_account_hex,
+        dest_account_hex,
         token_padded,
-        to_padded,
-        dest_account,
         amount_padded,
-        nonce_padded,
-        fee_padded,
-        fee_recipient_padded,
-        deduct_from_amount
+        nonce_padded
     );
 
     debug!(
-        "Creating fraudulent approval: srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}",
+        "Creating fraudulent withdrawal (submit): srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}",
         hex::encode(&src_chain_key.as_slice()[..8]),
         token,
         recipient,
@@ -160,8 +160,8 @@ pub async fn create_fraudulent_approval(
             "params": [{
                 "from": format!("{}", config.test_accounts.evm_address),
                 "to": format!("{}", config.evm.contracts.bridge),
-                "data": call_data,
-                "gas": "0x100000"
+                "data": submit_data,
+                "gas": "0x200000"
             }],
             "id": 1
         }))
@@ -171,37 +171,71 @@ pub async fn create_fraudulent_approval(
     let body: serde_json::Value = response.json().await?;
 
     if let Some(error) = body.get("error") {
-        return Err(eyre::eyre!("approveWithdraw failed: {}", error));
+        return Err(eyre::eyre!("withdrawSubmit failed: {}", error));
     }
 
-    let tx_hash_hex = body["result"]
+    let submit_tx_hex = body["result"]
         .as_str()
         .ok_or_else(|| eyre::eyre!("No tx hash in response"))?;
 
-    let tx_hash = B256::from_slice(&hex::decode(tx_hash_hex.trim_start_matches("0x"))?);
+    let _submit_tx = B256::from_slice(&hex::decode(submit_tx_hex.trim_start_matches("0x"))?);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // --- Step 2: withdrawApprove ---
+    let approve_sel = selector("withdrawApprove(bytes32)");
+    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
+    let approve_data = format!("0x{}{}", approve_sel, withdraw_hash_hex);
+
+    let response2 = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_sendTransaction",
+            "params": [{
+                "from": format!("{}", config.test_accounts.evm_address),
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": approve_data,
+                "gas": "0x100000"
+            }],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body2: serde_json::Value = response2.json().await?;
+
+    if let Some(error) = body2.get("error") {
+        return Err(eyre::eyre!("withdrawApprove failed: {}", error));
+    }
+
+    let approve_tx_hex = body2["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No tx hash in response"))?;
+
+    let approve_tx = B256::from_slice(&hex::decode(approve_tx_hex.trim_start_matches("0x"))?);
     info!(
         "Fraudulent approval transaction: 0x{}, withdrawHash: 0x{}",
-        hex::encode(tx_hash),
+        hex::encode(approve_tx),
         hex::encode(withdraw_hash)
     );
 
-    // Wait for confirmation
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok(FraudulentApprovalResult {
-        tx_hash,
+        tx_hash: approve_tx,
         withdraw_hash,
     })
 }
 
-/// Check if an approval was cancelled by querying getWithdrawApproval
+/// Check if a withdrawal was cancelled by querying pendingWithdraws(bytes32)
+///
+/// PendingWithdraw has 13 fields, cancelled is at slot 11 (offset 352).
 pub async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
-    // Function selector for getWithdrawApproval(bytes32)
-    let selector = "9211345c";
+    let sel = selector("pendingWithdraws(bytes32)");
     let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", selector, withdraw_hash_hex);
+    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
 
     debug!(
         "Checking approval status for withdrawHash=0x{}",
@@ -225,7 +259,7 @@ pub async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> e
     let body: serde_json::Value = response.json().await?;
 
     if let Some(error) = body.get("error") {
-        debug!("Query failed (approval may not exist): {}", error);
+        debug!("Query failed (withdrawal may not exist): {}", error);
         return Ok(false);
     }
 
@@ -235,28 +269,30 @@ pub async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> e
 
     let bytes = hex::decode(result_hex.trim_start_matches("0x")).unwrap_or_default();
 
-    if bytes.len() < 224 {
+    if bytes.len() < 13 * 32 {
         debug!(
-            "Response too short ({}), approval may not exist",
+            "Response too short ({}), withdrawal may not exist",
             bytes.len()
         );
         return Ok(false);
     }
 
-    let is_approved = bytes.get(96 + 31).copied().unwrap_or(0) != 0;
-    if !is_approved {
-        debug!("Approval does not exist (isApproved=false)");
+    // Check submittedAt (slot 8) to verify withdrawal exists
+    let submitted_nonzero = bytes[8 * 32..9 * 32].iter().any(|&b| b != 0);
+    if !submitted_nonzero {
+        debug!("Withdrawal does not exist (submittedAt=0)");
         return Ok(false);
     }
 
-    let is_cancelled = bytes.get(160 + 31).copied().unwrap_or(0) != 0;
+    let approved = bytes.get(10 * 32 + 31).copied().unwrap_or(0) != 0;
+    let cancelled = bytes.get(11 * 32 + 31).copied().unwrap_or(0) != 0;
 
     debug!(
-        "Approval status: isApproved={}, cancelled={}",
-        is_approved, is_cancelled
+        "Withdrawal status: approved={}, cancelled={}",
+        approved, cancelled
     );
 
-    Ok(is_cancelled)
+    Ok(cancelled)
 }
 
 /// Generate a unique nonce based on current timestamp
@@ -296,9 +332,9 @@ pub async fn cancel_approval_directly(
 ) -> eyre::Result<B256> {
     let client = reqwest::Client::new();
 
-    let selector = "ac23b667";
+    let sel = selector("withdrawCancel(bytes32)");
     let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", selector, withdraw_hash_hex);
+    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -336,9 +372,9 @@ pub async fn cancel_approval_directly(
 pub async fn try_execute_withdrawal(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
-    let selector = "2e1a7d4d";
+    let sel = selector("withdrawExecuteUnlock(bytes32)");
     let hash_hex = hex::encode(withdraw_hash);
-    let call_data = format!("0x{}{}", selector, hash_hex);
+    let call_data = format!("0x{}{}", sel, hash_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())

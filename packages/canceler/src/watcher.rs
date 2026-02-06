@@ -339,7 +339,10 @@ impl CancelerWatcher {
                     }
 
                     // Get cancel window
-                    let cancel_window = contract.getCancelWindow().call().await
+                    let cancel_window = contract
+                        .getCancelWindow()
+                        .call()
+                        .await
                         .map(|w| w._0)
                         .unwrap_or(300);
 
@@ -348,6 +351,7 @@ impl CancelerWatcher {
                         withdraw_hash,
                         src_chain_id: info.srcChain.0,
                         dest_chain_id: self.this_chain_id,
+                        src_account: info.srcAccount.0,
                         dest_token: info.token.0,
                         dest_account: info.srcAccount.0,
                         amount: info.amount,
@@ -469,10 +473,7 @@ impl CancelerWatcher {
 
                 // Parse pending withdrawals from response
                 if let Some(withdrawals) = json["data"]["withdrawals"].as_array() {
-                    info!(
-                        count = withdrawals.len(),
-                        "Found pending Terra withdrawals"
-                    );
+                    info!(count = withdrawals.len(), "Found pending Terra withdrawals");
 
                     for withdrawal_json in withdrawals {
                         // Parse withdraw_hash from base64
@@ -498,10 +499,13 @@ impl CancelerWatcher {
                         }
 
                         // Parse other fields (V2 format)
-                        let src_chain_id = self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
-                        let dest_chain_id = self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
+                        let src_chain_id =
+                            self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
+                        let dest_chain_id =
+                            self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
                         let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
-                        let dest_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
+                        let dest_account =
+                            self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
 
                         let amount: u128 = withdrawal_json["amount"]
                             .as_str()
@@ -527,6 +531,7 @@ impl CancelerWatcher {
                             withdraw_hash,
                             src_chain_id,
                             dest_chain_id,
+                            src_account: [0u8; 32], // Terra source not decoded yet
                             dest_token,
                             dest_account,
                             amount,

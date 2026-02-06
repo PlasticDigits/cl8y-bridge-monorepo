@@ -46,82 +46,90 @@ pub enum ExecuteMsg {
     // ========================================================================
     /// Lock tokens for bridging to an EVM chain
     /// User sends native tokens with this message
-    Lock {
-        /// Destination chain ID
-        dest_chain_id: u64,
-        /// Recipient address on destination chain (EVM address as hex string)
-        recipient: String,
+    /// Deposit native tokens for bridging (locks them on Terra)
+    DepositNative {
+        /// Destination chain (4-byte registered chain ID)
+        dest_chain: Binary,
+        /// Destination account on the target chain (32-byte universal address)
+        dest_account: Binary,
     },
 
-    /// Lock CW20 tokens for bridging (called via CW20 send)
+    /// Deposit CW20 tokens for bridging (called via CW20 send)
     /// Implements CW20 Receiver interface
     Receive(cw20::Cw20ReceiveMsg),
 
     // ========================================================================
-    // Watchtower Pattern (Incoming Transfers)
+    // V2 Withdrawal Flow (User-Initiated)
     // ========================================================================
-    /// Approve a withdrawal (creates pending approval)
+    /// Submit a withdrawal request (user-initiated)
     ///
-    /// Authorization: Operator only
+    /// Authorization: Anyone (user pays gas + optional operator tip)
     ///
-    /// This creates a pending approval that cannot be executed until
-    /// `withdraw_delay` seconds have passed. During this window, cancelers
-    /// can verify the approval against the source chain and cancel if invalid.
-    ApproveWithdraw {
-        /// Source chain key (32 bytes, from ChainRegistry)
-        src_chain_key: Binary,
+    /// Creates a `PendingWithdraw` record. The user sends native token (uluna)
+    /// as an operator gas tip, which is paid to the operator upon approval.
+    WithdrawSubmit {
+        /// Source chain ID (4 bytes)
+        src_chain: Binary,
+        /// Source account (depositor on source chain, 32 bytes)
+        src_account: Binary,
         /// Token to withdraw (denom for native, contract for CW20)
         token: String,
-        /// Recipient address on Terra Classic
+        /// Recipient address on this chain (Terra address string)
         recipient: String,
-        /// Destination account (32 bytes, for hash verification)
-        dest_account: Binary,
         /// Amount to withdraw
         amount: Uint128,
         /// Nonce from source chain deposit
         nonce: u64,
-        /// Fee amount (in uluna)
-        fee: Uint128,
-        /// Fee recipient address
-        fee_recipient: String,
-        /// If true, fee is deducted from withdrawal amount
-        deduct_from_amount: bool,
     },
 
-    /// Execute a withdrawal after delay has elapsed
+    /// Approve a pending withdrawal (operator only)
     ///
-    /// Authorization: Anyone (typically the recipient)
+    /// Authorization: Operator only
     ///
-    /// The approval must:
-    /// - Exist and be approved
-    /// - Not be cancelled
-    /// - Not be already executed
-    /// - Have delay period elapsed
-    ExecuteWithdraw {
-        /// The 32-byte transferId hash
+    /// Operator verifies the deposit exists on the source chain and approves.
+    /// Starts the cancel window timer. Operator receives the gas tip.
+    WithdrawApprove {
+        /// The 32-byte withdraw hash
         withdraw_hash: Binary,
     },
 
-    /// Cancel a pending withdrawal approval
+    /// Cancel a pending withdrawal (within cancel window)
     ///
-    /// Authorization: Canceler or Admin
+    /// Authorization: Canceler, Operator, or Admin
     ///
-    /// Cancelers call this when they detect a fraudulent approval
-    /// (e.g., no matching deposit on source chain, or parameter mismatch).
-    CancelWithdrawApproval {
-        /// The 32-byte transferId hash to cancel
+    /// Can only cancel after approval and within the cancel window.
+    WithdrawCancel {
+        /// The 32-byte withdraw hash
         withdraw_hash: Binary,
     },
 
-    /// Re-enable a cancelled approval (for reorg recovery)
+    /// Uncancel a cancelled withdrawal
     ///
-    /// Authorization: Admin only
+    /// Authorization: Operator only
     ///
-    /// If a legitimate approval was cancelled (e.g., due to source chain
-    /// reorg that temporarily hid the deposit), admin can restore it.
-    /// The delay timer resets when reenabled.
-    ReenableWithdrawApproval {
-        /// The 32-byte transferId hash to reenable
+    /// Restores a cancelled withdrawal and resets the cancel window timer.
+    WithdrawUncancel {
+        /// The 32-byte withdraw hash
+        withdraw_hash: Binary,
+    },
+
+    /// Execute withdrawal by unlocking tokens (LockUnlock mode)
+    ///
+    /// Authorization: Anyone (after cancel window expires)
+    ///
+    /// Releases locked tokens to the recipient.
+    WithdrawExecuteUnlock {
+        /// The 32-byte withdraw hash
+        withdraw_hash: Binary,
+    },
+
+    /// Execute withdrawal by minting tokens (MintBurn mode)
+    ///
+    /// Authorization: Anyone (after cancel window expires)
+    ///
+    /// Mints wrapped tokens to the recipient.
+    WithdrawExecuteMint {
+        /// The 32-byte withdraw hash
         withdraw_hash: Binary,
     },
 
@@ -170,18 +178,20 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Chain & Token Management
     // ========================================================================
-    /// Add a new supported chain
-    AddChain {
-        chain_id: u64,
-        name: String,
-        bridge_address: String,
+    /// Register a new chain (auto-assigns 4-byte chain ID)
+    ///
+    /// Authorization: Admin only
+    RegisterChain {
+        /// Human-readable identifier (e.g., "evm_1", "terraclassic_columbus-5")
+        identifier: String,
     },
 
-    /// Update chain configuration
+    /// Update chain configuration (enable/disable)
+    ///
+    /// Authorization: Admin only
     UpdateChain {
-        chain_id: u64,
-        name: Option<String>,
-        bridge_address: Option<String>,
+        /// 4-byte registered chain ID
+        chain_id: Binary,
         enabled: Option<bool>,
     },
 
@@ -209,8 +219,8 @@ pub enum ExecuteMsg {
     SetTokenDestination {
         /// Local token identifier
         token: String,
-        /// Destination chain ID
-        dest_chain_id: u64,
+        /// Destination chain (4-byte registered chain ID)
+        dest_chain: Binary,
         /// Destination token address (32 bytes hex)
         dest_token: String,
         /// Destination token decimals
@@ -289,14 +299,14 @@ pub enum ExecuteMsg {
 #[cw_serde]
 pub enum ReceiveMsg {
     /// Lock CW20 tokens for bridging (LockUnlock mode)
-    Lock {
-        dest_chain_id: u64,
-        recipient: String,
+    DepositCw20Lock {
+        dest_chain: Binary,
+        dest_account: Binary,
     },
     /// Burn CW20 mintable tokens for bridging (MintBurn mode)
-    Burn {
-        dest_chain_id: u64,
-        recipient: String,
+    DepositCw20MintableBurn {
+        dest_chain: Binary,
+        dest_account: Binary,
     },
 }
 
@@ -323,14 +333,14 @@ pub enum QueryMsg {
     #[returns(StatsResponse)]
     Stats {},
 
-    /// Returns information about a supported chain
+    /// Returns information about a registered chain
     #[returns(ChainResponse)]
-    Chain { chain_id: u64 },
+    Chain { chain_id: Binary },
 
     /// Returns all supported chains
     #[returns(ChainsResponse)]
     Chains {
-        start_after: Option<u64>,
+        start_after: Option<Binary>,
         limit: Option<u32>,
     },
 
@@ -374,17 +384,17 @@ pub enum QueryMsg {
     SimulateBridge {
         token: String,
         amount: Uint128,
-        dest_chain_id: u64,
+        dest_chain: Binary,
     },
 
     // ========================================================================
-    // Watchtower Queries
+    // Withdrawal Queries (V2)
     // ========================================================================
-    /// Get withdrawal approval by hash
-    #[returns(WithdrawApprovalResponse)]
-    WithdrawApproval { withdraw_hash: Binary },
+    /// Get pending withdrawal by hash
+    #[returns(PendingWithdrawResponse)]
+    PendingWithdraw { withdraw_hash: Binary },
 
-    /// Compute withdraw hash without storing (for verification)
+    /// Compute withdraw hash without storing (for verification) - V1 legacy
     #[returns(ComputeHashResponse)]
     ComputeWithdrawHash {
         src_chain_key: Binary,
@@ -392,6 +402,25 @@ pub enum QueryMsg {
         dest_token_address: Binary,
         dest_account: Binary,
         amount: Uint128,
+        nonce: u64,
+    },
+
+    /// Compute unified transfer hash (V2 7-field)
+    #[returns(ComputeHashResponse)]
+    ComputeTransferHash {
+        /// Source chain ID (4 bytes)
+        src_chain: Binary,
+        /// Destination chain ID (4 bytes)
+        dest_chain: Binary,
+        /// Source account (32 bytes)
+        src_account: Binary,
+        /// Destination account (32 bytes)
+        dest_account: Binary,
+        /// Token address (32 bytes)
+        token: Binary,
+        /// Amount
+        amount: Uint128,
+        /// Nonce
         nonce: u64,
     },
 
@@ -468,7 +497,7 @@ pub enum QueryMsg {
 
     /// Get token destination mapping
     #[returns(Option<TokenDestMappingResponse>)]
-    TokenDestMapping { token: String, dest_chain_id: u64 },
+    TokenDestMapping { token: String, dest_chain: Binary },
 }
 
 // ============================================================================
@@ -503,9 +532,9 @@ pub struct StatsResponse {
 
 #[cw_serde]
 pub struct ChainResponse {
-    pub chain_id: u64,
-    pub name: String,
-    pub bridge_address: String,
+    pub chain_id: Binary,
+    pub identifier: String,
+    pub identifier_hash: Binary,
     pub enabled: bool,
 }
 
@@ -553,7 +582,7 @@ pub struct TransactionResponse {
     pub recipient: String,
     pub token: String,
     pub amount: Uint128,
-    pub dest_chain_id: u64,
+    pub dest_chain: Binary,
     pub timestamp: Timestamp,
     pub is_outgoing: bool,
 }
@@ -579,47 +608,51 @@ pub struct SimulationResponse {
 }
 
 // ============================================================================
-// Response Types - Watchtower
+// Response Types - Withdrawal (V2)
 // ============================================================================
 
 #[cw_serde]
-pub struct WithdrawApprovalResponse {
+pub struct PendingWithdrawResponse {
     pub exists: bool,
-    pub src_chain_key: Binary,
+    pub src_chain: Binary,
+    pub src_account: Binary,
+    pub dest_account: Binary,
     pub token: String,
     pub recipient: Addr,
-    pub dest_account: Binary,
     pub amount: Uint128,
     pub nonce: u64,
-    pub fee: Uint128,
-    pub fee_recipient: Addr,
-    pub approved_at: Timestamp,
-    pub is_approved: bool,
-    pub deduct_from_amount: bool,
+    pub src_decimals: u8,
+    pub dest_decimals: u8,
+    pub operator_gas: Uint128,
+    pub submitted_at: u64,
+    pub approved_at: u64,
+    pub approved: bool,
     pub cancelled: bool,
     pub executed: bool,
-    /// Seconds remaining until executable (0 if ready)
-    pub delay_remaining: u64,
+    /// Seconds remaining in cancel window (0 if expired or not yet approved)
+    pub cancel_window_remaining: u64,
 }
 
-impl Default for WithdrawApprovalResponse {
+impl Default for PendingWithdrawResponse {
     fn default() -> Self {
         Self {
             exists: false,
-            src_chain_key: Binary::default(),
+            src_chain: Binary::default(),
+            src_account: Binary::default(),
+            dest_account: Binary::default(),
             token: String::new(),
             recipient: Addr::unchecked(""),
-            dest_account: Binary::default(),
             amount: Uint128::zero(),
             nonce: 0,
-            fee: Uint128::zero(),
-            fee_recipient: Addr::unchecked(""),
-            approved_at: Timestamp::from_seconds(0),
-            is_approved: false,
-            deduct_from_amount: false,
+            src_decimals: 0,
+            dest_decimals: 0,
+            operator_gas: Uint128::zero(),
+            submitted_at: 0,
+            approved_at: 0,
+            approved: false,
             cancelled: false,
             executed: false,
-            delay_remaining: 0,
+            cancel_window_remaining: 0,
         }
     }
 }
@@ -633,6 +666,7 @@ pub struct ComputeHashResponse {
 pub struct DepositInfoResponse {
     pub deposit_hash: Binary,
     pub dest_chain_key: Binary,
+    pub src_account: Binary,
     pub dest_token_address: Binary,
     pub dest_account: Binary,
     pub amount: Uint128,
@@ -736,7 +770,7 @@ pub struct TokenTypeResponse {
 #[cw_serde]
 pub struct TokenDestMappingResponse {
     pub token: String,
-    pub dest_chain_id: u64,
+    pub dest_chain: Binary,
     pub dest_token: Binary,
     pub dest_decimals: u8,
 }

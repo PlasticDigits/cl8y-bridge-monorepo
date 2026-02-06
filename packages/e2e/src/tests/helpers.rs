@@ -9,13 +9,18 @@ use std::time::Duration;
 use tracing::{debug, info};
 use url::Url;
 
-/// Query withdraw delay from bridge contract
-pub(crate) async fn query_withdraw_delay(config: &E2eConfig) -> eyre::Result<u64> {
+/// Compute the 4-byte function selector from a Solidity function signature.
+///
+/// Example: `selector("getCancelWindow()")` returns the first 4 bytes of keccak256.
+pub(crate) fn selector(sig: &str) -> String {
+    hex::encode(&keccak256(sig.as_bytes())[..4])
+}
+
+/// Query cancel window (formerly "withdraw delay") from bridge contract
+pub(crate) async fn query_cancel_window(config: &E2eConfig) -> eyre::Result<u64> {
     let client = reqwest::Client::new();
 
-    // Encode withdrawDelay() function call
-    // Verified with: cast sig "withdrawDelay()"
-    let call_data = "0x0288a39c";
+    let call_data = format!("0x{}", selector("getCancelWindow()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -52,9 +57,7 @@ pub(crate) async fn query_withdraw_delay(config: &E2eConfig) -> eyre::Result<u64
 pub(crate) async fn query_deposit_nonce(config: &E2eConfig) -> eyre::Result<u64> {
     let client = reqwest::Client::new();
 
-    // Encode depositNonce() function call
-    // Function selector for depositNonce() - from ABI: "de35f5cb"
-    let call_data = "0xde35f5cb";
+    let call_data = format!("0x{}", selector("depositNonce()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -123,17 +126,33 @@ pub(crate) async fn query_contract_code(
     Ok(code != "0x" && code != "0x0" && code.len() > 4)
 }
 
-/// Query EVM chain key from ChainRegistry
+/// Query EVM chain ID (bytes4) from ChainRegistry using identifier "evm_{chain_id}"
+///
+/// Uses computeIdentifierHash + getChainIdFromHash to look up the bytes4 chain ID.
 pub(crate) async fn query_evm_chain_key(
     config: &E2eConfig,
     chain_id: u64,
-) -> eyre::Result<[u8; 32]> {
+) -> eyre::Result<[u8; 4]> {
+    let identifier = format!("evm_{}", chain_id);
+    query_chain_id_by_identifier(config, &identifier).await
+}
+
+/// Look up a chain's bytes4 ID by its string identifier
+///
+/// Step 1: computeIdentifierHash(string) -> bytes32
+/// Step 2: getChainIdFromHash(bytes32) -> bytes4
+async fn query_chain_id_by_identifier(
+    config: &E2eConfig,
+    identifier: &str,
+) -> eyre::Result<[u8; 4]> {
     let client = reqwest::Client::new();
 
-    // Encode getChainKeyEVM(uint256) function call
-    // Verified with: cast sig "getChainKeyEVM(uint256)" = 0x5411d37f
-    let chain_id_hex = format!("{:064x}", chain_id);
-    let call_data = format!("0x5411d37f{}", chain_id_hex);
+    // Step 1: computeIdentifierHash(string)
+    let sel1 = selector("computeIdentifierHash(string)");
+    let offset = format!("{:064x}", 32);
+    let length = format!("{:064x}", identifier.len());
+    let data_padded = format!("{:0<64}", hex::encode(identifier.as_bytes()));
+    let call_data = format!("0x{}{}{}{}", sel1, offset, length, data_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -149,43 +168,57 @@ pub(crate) async fn query_evm_chain_key(
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        return Err(eyre::eyre!(
-            "EVM RPC returned status: {}",
-            response.status()
-        ));
-    }
-
     let body: serde_json::Value = response.json().await?;
-
-    let hex_result = body["result"]
+    let hash_hex = body["result"]
         .as_str()
-        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+        .ok_or_else(|| eyre::eyre!("No result from computeIdentifierHash"))?;
 
-    // Parse hex to bytes32
-    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    if bytes.len() < 32 {
-        return Err(eyre::eyre!(
-            "Invalid chain key response: expected 32 bytes, got {}",
-            bytes.len()
-        ));
+    // Step 2: getChainIdFromHash(bytes32)
+    let sel2 = selector("getChainIdFromHash(bytes32)");
+    let hash_clean = hash_hex.trim_start_matches("0x");
+    let call_data2 = format!("0x{}{}", sel2, hash_clean);
+
+    let response2 = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.chain_registry),
+                "data": call_data2
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body2: serde_json::Value = response2.json().await?;
+    let chain_id_hex = body2["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result from getChainIdFromHash"))?;
+
+    // Parse bytes4 from the ABI-encoded result (left-aligned in 32 bytes)
+    let bytes = hex::decode(chain_id_hex.trim_start_matches("0x"))?;
+    if bytes.len() < 4 {
+        return Err(eyre::eyre!("Invalid chain ID response: too short"));
     }
-    let mut chain_key = [0u8; 32];
-    chain_key.copy_from_slice(&bytes[..32]);
-    Ok(chain_key)
+    let mut chain_id = [0u8; 4];
+    chain_id.copy_from_slice(&bytes[..4]);
+    Ok(chain_id)
 }
 
-/// Check if a chain key is registered in ChainRegistry
+/// Check if a chain is registered in ChainRegistry by its bytes4 chain ID
 pub(crate) async fn is_chain_key_registered(
     config: &E2eConfig,
-    chain_key: [u8; 32],
+    chain_id: [u8; 4],
 ) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
-    // Encode isChainKeyRegistered(bytes32) function call
-    // Verified with: cast sig "isChainKeyRegistered(bytes32)" = 0x3a3099d1
-    let chain_key_hex = hex::encode(chain_key);
-    let call_data = format!("0x3a3099d1{}", chain_key_hex);
+    // Encode isChainRegistered(bytes4) function call
+    // bytes4 is ABI-encoded as left-aligned in 32 bytes (right-padded with zeros)
+    let sel = selector("isChainRegistered(bytes4)");
+    let chain_id_padded = hex::encode(chain_id4_to_bytes32(chain_id));
+    let call_data = format!("0x{}{}", sel, chain_id_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -228,11 +261,10 @@ pub(crate) async fn query_has_role(
     let client = reqwest::Client::new();
 
     // Encode hasRole(uint64,address) function call
-    // Verified with: cast sig "hasRole(uint64,address)" = 0xd1f856ee
-    // ABI encode: padded role_id (32 bytes) + padded address (32 bytes)
+    let sel = selector("hasRole(uint64,address)");
     let role_padded = format!("{:064x}", role_id);
     let addr_padded = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!("0xd1f856ee{}{}", role_padded, addr_padded);
+    let call_data = format!("0x{}{}{}", sel, role_padded, addr_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -319,9 +351,9 @@ pub(crate) async fn get_erc20_balance(
     let client = reqwest::Client::new();
 
     // Encode balanceOf(address) function call
-    // selector: 0x70a08231
+    let sel = selector("balanceOf(address)");
     let account_padded = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!("0x70a08231{}", account_padded);
+    let call_data = format!("0x{}{}", sel, account_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -346,47 +378,10 @@ pub(crate) async fn get_erc20_balance(
     Ok(balance)
 }
 
-/// Get Terra chain key from ChainRegistry
-pub(crate) async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 32]> {
-    let client = reqwest::Client::new();
-
-    // Encode getChainKeyCOSMW(string) function call
-    let chain_id = &config.terra.chain_id;
-
-    // ABI encode: function selector + offset + length + data
-    // Verified with: cast sig "getChainKeyCOSMW(string)" = 0x1b69b176
-    let selector = "0x1b69b176";
-    let offset = format!("{:064x}", 32); // offset to string data
-    let length = format!("{:064x}", chain_id.len());
-    let data_padded = format!("{:0<64}", hex::encode(chain_id.as_bytes()));
-
-    let call_data = format!("{}{}{}{}", selector, offset, length, data_padded);
-
-    let response = client
-        .post(config.evm.rpc_url.as_str())
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "eth_call",
-            "params": [{
-                "to": format!("{}", config.evm.contracts.chain_registry),
-                "data": call_data
-            }, "latest"],
-            "id": 1
-        }))
-        .send()
-        .await?;
-
-    let body: serde_json::Value = response.json().await?;
-    let hex_result = body["result"]
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("No result in response"))?;
-
-    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    let mut chain_key = [0u8; 32];
-    if bytes.len() >= 32 {
-        chain_key.copy_from_slice(&bytes[..32]);
-    }
-    Ok(chain_key)
+/// Get Terra chain ID (bytes4) from ChainRegistry using identifier "terraclassic_{chain_id}"
+pub(crate) async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 4]> {
+    let identifier = format!("terraclassic_{}", config.terra.chain_id);
+    query_chain_id_by_identifier(config, &identifier).await
 }
 
 /// Encode Terra address as bytes32 (right-padded hex)
@@ -408,10 +403,10 @@ pub(crate) async fn approve_erc20(
     let client = reqwest::Client::new();
 
     // Encode approve(address,uint256) function call
-    // selector: 0x095ea7b3
+    let sel = selector("approve(address,uint256)");
     let spender_padded = format!("{:0>64}", hex::encode(spender.as_slice()));
     let amount_padded = format!("{:064x}", amount);
-    let call_data = format!("0x095ea7b3{}{}", spender_padded, amount_padded);
+    let call_data = format!("0x{}{}{}", sel, spender_padded, amount_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -447,40 +442,37 @@ pub(crate) async fn approve_erc20(
     Ok(tx_hash)
 }
 
-/// Execute deposit on BridgeRouter
+/// Execute deposit on Bridge via depositERC20
 ///
-/// Function signature: deposit(address,uint256,bytes32,bytes32)
-/// Selector: 0x7dcc9f07 (keccak256 first 4 bytes)
+/// Function signature: depositERC20(address,uint256,bytes4,bytes32)
 pub(crate) async fn execute_deposit(
     config: &E2eConfig,
-    router: Address,
     token: Address,
     amount: u128,
-    dest_chain_key: [u8; 32],
+    dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<B256> {
     let client = reqwest::Client::new();
 
-    // Function selector for deposit(address,uint256,bytes32,bytes32)
-    // keccak256("deposit(address,uint256,bytes32,bytes32)")[0:4] = 0x7dcc9f07
-    let selector = "7dcc9f07";
+    let sel = selector("depositERC20(address,uint256,bytes4,bytes32)");
 
-    // ABI encode parameters (each 32 bytes, left-padded for addresses/ints, raw for bytes32)
+    // ABI encode parameters
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount);
-    let chain_key_hex = hex::encode(dest_chain_key);
+    // bytes4 is ABI-encoded left-aligned in 32 bytes (right-padded with zeros)
+    let chain_id_padded = hex::encode(chain_id4_to_bytes32(dest_chain_id));
     let dest_account_hex = hex::encode(dest_account);
 
     let call_data = format!(
         "0x{}{}{}{}{}",
-        selector, token_padded, amount_padded, chain_key_hex, dest_account_hex
+        sel, token_padded, amount_padded, chain_id_padded, dest_account_hex
     );
 
     debug!(
-        "Executing deposit: token={}, amount={}, destChain=0x{}, destAccount=0x{}",
+        "Executing depositERC20: token={}, amount={}, destChain=0x{}, destAccount=0x{}",
         token,
         amount,
-        hex::encode(&dest_chain_key[..8]),
+        hex::encode(dest_chain_id),
         hex::encode(&dest_account[..8])
     );
 
@@ -491,7 +483,7 @@ pub(crate) async fn execute_deposit(
             "method": "eth_sendTransaction",
             "params": [{
                 "from": format!("{}", config.test_accounts.evm_address),
-                "to": format!("{}", router),
+                "to": format!("{}", config.evm.contracts.bridge),
                 "data": call_data,
                 "gas": "0x200000"
             }],
@@ -536,10 +528,11 @@ pub struct FraudulentApprovalResult {
     pub withdraw_hash: B256,
 }
 
-/// Create a fraudulent approval on the bridge
+/// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
 ///
-/// Function signature: approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)
-/// This creates an approval that has no matching deposit (fraud scenario)
+/// This creates an approval that has no matching deposit (fraud scenario).
+/// Step 1: withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64) - creates pending withdrawal
+/// Step 2: withdrawApprove(bytes32) - operator approves it
 ///
 /// Returns both the transaction hash and the computed withdraw hash for querying approval status.
 pub(crate) async fn create_fraudulent_approval(
@@ -552,20 +545,20 @@ pub(crate) async fn create_fraudulent_approval(
 ) -> Result<FraudulentApprovalResult> {
     let client = reqwest::Client::new();
 
-    // Function selector for approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)
-    // Verified with: cast sig "approveWithdraw(bytes32,address,address,bytes32,uint256,uint256,uint256,address,bool)"
-    let selector = "7f86a1a8";
-
-    // Create destAccount (the recipient's address as bytes32, left-padded)
+    // Create destAccount (the recipient's address as bytes32, left-padded with zeros)
     let mut dest_account_bytes = [0u8; 32];
     dest_account_bytes[12..32].copy_from_slice(recipient.as_slice());
     let dest_account_b256 = B256::from(dest_account_bytes);
-    let dest_account = format!("{:0>64}", hex::encode(recipient.as_slice()));
+
+    // Create a fake srcAccount (just a random bytes32)
+    let mut src_account_bytes = [0u8; 32];
+    src_account_bytes[0..8].copy_from_slice(&nonce.to_be_bytes());
+    src_account_bytes[8] = 0xff; // marker
 
     // Parse amount to u256
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
 
-    // Compute the withdraw hash for later querying
+    // Compute the withdraw hash matching HashLib.computeTransferHash
     let withdraw_hash = compute_withdraw_hash(
         src_chain_key,
         config.evm.chain_id,
@@ -575,32 +568,32 @@ pub(crate) async fn create_fraudulent_approval(
         nonce,
     );
 
-    // ABI encode all parameters
-    let src_chain_key_hex = hex::encode(src_chain_key.as_slice());
+    // --- Step 1: withdrawSubmit ---
+    // withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)
+    let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
+
+    // srcChain is the first 4 bytes of src_chain_key, ABI-encoded as bytes4 (left-aligned in 32 bytes)
+    let src_chain_bytes4 = &src_chain_key.as_slice()[..4];
+    let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_bytes4.try_into().unwrap()));
+    let src_account_hex = hex::encode(src_account_bytes);
+    let dest_account_hex = hex::encode(dest_account_bytes);
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
-    let to_padded = format!("{:0>64}", hex::encode(recipient.as_slice()));
     let amount_padded = format!("{:064x}", amount_u256);
     let nonce_padded = format!("{:064x}", nonce);
-    let fee_padded = format!("{:064x}", 0u128); // No fee
-    let fee_recipient_padded = format!("{:0>64}", "00"); // Zero address
-    let deduct_from_amount = format!("{:064x}", 0u8); // false
 
-    let call_data = format!(
-        "0x{}{}{}{}{}{}{}{}{}{}",
-        selector,
-        src_chain_key_hex,
+    let submit_data = format!(
+        "0x{}{}{}{}{}{}{}",
+        submit_sel,
+        src_chain_padded,
+        src_account_hex,
+        dest_account_hex,
         token_padded,
-        to_padded,
-        dest_account,
         amount_padded,
-        nonce_padded,
-        fee_padded,
-        fee_recipient_padded,
-        deduct_from_amount
+        nonce_padded
     );
 
     debug!(
-        "Creating fraudulent approval: srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}, withdrawHash=0x{}",
+        "Creating fraudulent withdrawal (submit): srcChainKey=0x{}, token={}, recipient={}, amount={}, nonce={}, withdrawHash=0x{}",
         hex::encode(&src_chain_key.as_slice()[..8]),
         token,
         recipient,
@@ -617,8 +610,8 @@ pub(crate) async fn create_fraudulent_approval(
             "params": [{
                 "from": format!("{}", config.test_accounts.evm_address),
                 "to": format!("{}", config.evm.contracts.bridge),
-                "data": call_data,
-                "gas": "0x100000"
+                "data": submit_data,
+                "gas": "0x200000"
             }],
             "id": 1
         }))
@@ -628,17 +621,62 @@ pub(crate) async fn create_fraudulent_approval(
     let body: serde_json::Value = response.json().await?;
 
     if let Some(error) = body.get("error") {
-        return Err(eyre::eyre!("approveWithdraw failed: {}", error));
+        return Err(eyre::eyre!("withdrawSubmit failed: {}", error));
     }
 
     let tx_hash_hex = body["result"]
         .as_str()
         .ok_or_else(|| eyre::eyre!("No tx hash in response"))?;
 
-    let tx_hash = B256::from_slice(&hex::decode(tx_hash_hex.trim_start_matches("0x"))?);
+    let submit_tx_hash = B256::from_slice(&hex::decode(tx_hash_hex.trim_start_matches("0x"))?);
+
+    // Wait for confirmation
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify the submit succeeded
+    match verify_tx_success(config, submit_tx_hash).await {
+        Ok(true) => {}
+        Ok(false) => return Err(eyre::eyre!("withdrawSubmit transaction reverted")),
+        Err(e) => {
+            tracing::warn!("Could not verify withdrawSubmit receipt: {}", e);
+        }
+    }
+
+    // --- Step 2: withdrawApprove ---
+    let approve_sel = selector("withdrawApprove(bytes32)");
+    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
+    let approve_data = format!("0x{}{}", approve_sel, withdraw_hash_hex);
+
+    let response2 = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_sendTransaction",
+            "params": [{
+                "from": format!("{}", config.test_accounts.evm_address),
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": approve_data,
+                "gas": "0x100000"
+            }],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body2: serde_json::Value = response2.json().await?;
+
+    if let Some(error) = body2.get("error") {
+        return Err(eyre::eyre!("withdrawApprove failed: {}", error));
+    }
+
+    let approve_tx_hex = body2["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No tx hash in response"))?;
+
+    let approve_tx_hash = B256::from_slice(&hex::decode(approve_tx_hex.trim_start_matches("0x"))?);
     info!(
         "Fraudulent approval transaction: 0x{}, withdrawHash: 0x{}",
-        hex::encode(tx_hash),
+        hex::encode(approve_tx_hash),
         hex::encode(withdraw_hash)
     );
 
@@ -646,32 +684,33 @@ pub(crate) async fn create_fraudulent_approval(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok(FraudulentApprovalResult {
-        tx_hash,
+        tx_hash: approve_tx_hash,
         withdraw_hash,
     })
 }
 
-/// Check if an approval was cancelled by querying getWithdrawApproval
+/// Check if a withdrawal was cancelled by querying pendingWithdraws(bytes32)
 ///
-/// Function signature: getWithdrawApproval(bytes32) returns (WithdrawApproval)
-///
-/// WithdrawApproval struct layout (each field is 32 bytes in ABI encoding):
-/// - offset 0: fee (uint256)
-/// - offset 32: feeRecipient (address, left-padded)
-/// - offset 64: approvedAt (uint64, left-padded)
-/// - offset 96: isApproved (bool)
-/// - offset 128: deductFromAmount (bool)
-/// - offset 160: cancelled (bool)
-/// - offset 192: executed (bool)
+/// PendingWithdraw struct layout (each field is 32 bytes in ABI encoding):
+/// - slot 0: srcChain (bytes4, left-aligned in 32 bytes)
+/// - slot 1: srcAccount (bytes32)
+/// - slot 2: destAccount (bytes32)
+/// - slot 3: token (address, left-padded in 32 bytes)
+/// - slot 4: recipient (address, left-padded in 32 bytes)
+/// - slot 5: amount (uint256)
+/// - slot 6: nonce (uint64, left-padded in 32 bytes)
+/// - slot 7: operatorGas (uint256)
+/// - slot 8: submittedAt (uint256)
+/// - slot 9: approvedAt (uint256)
+/// - slot 10: approved (bool)
+/// - slot 11: cancelled (bool)
+/// - slot 12: executed (bool)
 pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
     let client = reqwest::Client::new();
 
-    // Function selector for getWithdrawApproval(bytes32)
-    // Verified with: cast sig "getWithdrawApproval(bytes32)"
-    let selector = "9211345c";
-
+    let sel = selector("pendingWithdraws(bytes32)");
     let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", selector, withdraw_hash_hex);
+    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
 
     debug!(
         "Checking approval status for withdrawHash=0x{}",
@@ -695,7 +734,7 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
     let body: serde_json::Value = response.json().await?;
 
     if let Some(error) = body.get("error") {
-        debug!("Query failed (approval may not exist): {}", error);
+        debug!("Query failed (withdrawal may not exist): {}", error);
         return Ok(false);
     }
 
@@ -703,35 +742,44 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
         .as_str()
         .ok_or_else(|| eyre::eyre!("No result in response"))?;
 
-    // Parse the WithdrawApproval struct response
     let bytes = hex::decode(result_hex.trim_start_matches("0x")).unwrap_or_default();
 
-    if bytes.len() < 224 {
+    // PendingWithdraw has 13 fields * 32 bytes = 416 bytes
+    if bytes.len() < 13 * 32 {
         debug!(
-            "Response too short ({}), approval may not exist",
+            "Response too short ({}), withdrawal may not exist",
             bytes.len()
         );
         return Ok(false);
     }
 
-    // First check if isApproved is true (offset 96, last byte at 127)
-    let is_approved = bytes.get(96 + 31).copied().unwrap_or(0) != 0;
-    if !is_approved {
-        debug!("Approval does not exist (isApproved=false)");
+    // Check submittedAt (slot 8, offset 256) to verify it exists
+    let submitted_at_offset = 8 * 32;
+    let submitted_at_byte = bytes.get(submitted_at_offset + 31).copied().unwrap_or(0);
+    let submitted_at_nonzero = bytes[submitted_at_offset..submitted_at_offset + 32]
+        .iter()
+        .any(|&b| b != 0);
+
+    if !submitted_at_nonzero {
+        debug!("Withdrawal does not exist (submittedAt=0)");
         return Ok(false);
     }
 
-    // Check the cancelled field (offset 160, last byte at 191)
-    let is_cancelled = bytes.get(160 + 31).copied().unwrap_or(0) != 0;
+    // Check approved (slot 10, offset 320)
+    let approved = bytes.get(10 * 32 + 31).copied().unwrap_or(0) != 0;
+
+    // Check cancelled (slot 11, offset 352)
+    let cancelled = bytes.get(11 * 32 + 31).copied().unwrap_or(0) != 0;
 
     debug!(
-        "Approval status for withdrawHash=0x{}: isApproved={}, cancelled={}",
+        "Withdrawal status for withdrawHash=0x{}: submitted={}, approved={}, cancelled={}",
         hex::encode(&withdraw_hash.as_slice()[..8]),
-        is_approved,
-        is_cancelled
+        submitted_at_byte != 0 || submitted_at_nonzero,
+        approved,
+        cancelled
     );
 
-    Ok(is_cancelled)
+    Ok(cancelled)
 }
 
 /// Verify a transaction succeeded by checking its receipt
@@ -760,55 +808,37 @@ pub(crate) async fn verify_tx_success(config: &E2eConfig, tx_hash: B256) -> Resu
     Ok(status == "0x1")
 }
 
-/// Compute the destination chain key for an EVM chain
+/// Convert a bytes4 chain ID to bytes32 (left-aligned, right-padded with zeros)
 ///
-/// This matches the Solidity: keccak256(abi.encode("EVM", bytes32(block.chainid)))
-pub(crate) fn compute_dest_chain_key(chain_id: u64) -> B256 {
-    // ABI encode: "EVM" as string (offset + length + data) + bytes32(chainId)
-    // Simplified: use same encoding as contract
-    // keccak256(abi.encode("EVM", bytes32(chainId)))
+/// This matches Solidity's bytes32(bytes4(chainId)) cast behavior:
+/// bytes4(0x00000001) -> 0x0000000100000000...000
 
-    let mut data = Vec::with_capacity(96);
-
-    // "EVM" as bytes32 (right-padded with zeros, then abi.encode pads to 32 bytes)
-    // Actually in Solidity: abi.encode("EVM", bytes32(chainId)) encodes string as dynamic type
-    // String encoding: offset (32) + length (32) + data (padded to 32)
-    // But "EVM" is 3 bytes, so: offset=0x40, then bytes32(chainId), then length=3, then "EVM" padded
-
-    // Let's match exactly what Solidity does:
-    // abi.encode("EVM", bytes32(chainId)) for string "EVM" and bytes32:
-    // [0x00-0x1f]: offset to string data = 0x40 (64)
-    // [0x20-0x3f]: bytes32(chainId)
-    // [0x40-0x5f]: string length = 3
-    // [0x60-0x7f]: "EVM" + padding
-
-    // Offset to string data (64 = 0x40)
-    data.extend_from_slice(&U256::from(64).to_be_bytes::<32>());
-
-    // bytes32(chainId) - left-padded
-    data.extend_from_slice(&U256::from(chain_id).to_be_bytes::<32>());
-
-    // String length (3)
-    data.extend_from_slice(&U256::from(3).to_be_bytes::<32>());
-
-    // "EVM" padded to 32 bytes
-    let mut evm_padded = [0u8; 32];
-    evm_padded[0..3].copy_from_slice(b"EVM");
-    data.extend_from_slice(&evm_padded);
-
-    keccak256(&data)
+pub(crate) fn chain_id4_to_bytes32(chain_id: [u8; 4]) -> [u8; 32] {
+    let mut result = [0u8; 32];
+    result[..4].copy_from_slice(&chain_id);
+    result
 }
 
 /// Compute the withdrawHash for a given set of parameters
 ///
-/// This matches the Solidity:
+/// Matches HashLib.computeTransferHash which uses bytes4 chain IDs
+/// cast to bytes32 for hashing:
 /// ```solidity
-/// function getWithdrawHash(Withdraw memory w) public view returns (bytes32) {
-///     bytes32 destChainKey = _thisChainKey();
-///     bytes32 destTokenAddress = bytes32(uint256(uint160(w.token)));
-///     return keccak256(abi.encode(w.srcChainKey, destChainKey, destTokenAddress, w.destAccount, w.amount, w.nonce));
-/// }
+/// keccak256(abi.encode(
+///     bytes32(srcChain), bytes32(destChain),
+///     srcAccount, destAccount, token,
+///     amount, uint256(nonce)
+/// ))
 /// ```
+///
+/// For the withdraw side, the hash is computed as:
+///   srcChain = source chain bytes4 (left-aligned in 32 bytes)
+///   destChain = this chain's bytes4 (left-aligned in 32 bytes)
+///   srcAccount = depositor account on source chain
+///   destAccount = recipient on this chain
+///   token = token address on this chain (left-padded to bytes32)
+///   amount = transfer amount
+///   nonce = deposit nonce from source chain
 pub(crate) fn compute_withdraw_hash(
     src_chain_key: B256,
     dest_chain_id: u64,
@@ -817,19 +847,29 @@ pub(crate) fn compute_withdraw_hash(
     amount: U256,
     nonce: u64,
 ) -> B256 {
-    // Compute destination chain key
-    let dest_chain_key = compute_dest_chain_key(dest_chain_id);
+    // src_chain_key is already bytes32 (bytes4 left-aligned, right-padded with zeros)
 
-    // Convert token address to bytes32 (left-padded with zeros)
-    let mut dest_token_address = [0u8; 32];
-    dest_token_address[12..32].copy_from_slice(token.as_slice());
+    // dest chain key: bytes4 left-aligned in 32 bytes
+    let mut dest_chain_key = [0u8; 32];
+    dest_chain_key[..4].copy_from_slice(&(dest_chain_id as u32).to_be_bytes());
 
-    // ABI encode: keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))
-    let mut data = Vec::with_capacity(192);
-    data.extend_from_slice(src_chain_key.as_slice());
-    data.extend_from_slice(dest_chain_key.as_slice());
-    data.extend_from_slice(&dest_token_address);
-    data.extend_from_slice(dest_account.as_slice());
+    // For withdraw-side hash, we need srcAccount. In fraud tests this is a fake
+    // value. We use a deterministic srcAccount derived from nonce.
+    let mut src_account = [0u8; 32];
+    src_account[0..8].copy_from_slice(&nonce.to_be_bytes());
+    src_account[8] = 0xff; // marker
+
+    // Convert token address to bytes32 (left-padded with zeros, matching addressToBytes32)
+    let mut token_bytes32 = [0u8; 32];
+    token_bytes32[12..32].copy_from_slice(token.as_slice());
+
+    // ABI encode all 7 fields: keccak256(abi.encode(srcChain, destChain, srcAccount, destAccount, token, amount, nonce))
+    let mut data = Vec::with_capacity(7 * 32);
+    data.extend_from_slice(src_chain_key.as_slice()); // bytes32(srcChain)
+    data.extend_from_slice(&dest_chain_key); // bytes32(destChain)
+    data.extend_from_slice(&src_account); // srcAccount
+    data.extend_from_slice(dest_account.as_slice()); // destAccount
+    data.extend_from_slice(&token_bytes32); // token as bytes32
     data.extend_from_slice(&amount.to_be_bytes::<32>());
     data.extend_from_slice(&U256::from(nonce).to_be_bytes::<32>());
 

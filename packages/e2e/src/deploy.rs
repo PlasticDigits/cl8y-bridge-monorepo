@@ -21,27 +21,30 @@ sol! {
         function hasRole(uint64 roleId, address account) public view returns (bool, uint32);
     }
 
-    /// Chain Registry contract ABI
+    /// Chain Registry contract ABI (V2 - uses bytes4 chain IDs)
     #[derive(Debug)]
     #[sol(rpc)]
     contract IChainRegistry {
-        function addCOSMWChainKey(string calldata chainId) external returns (bytes32);
-        function getChainKeyCOSMW(string calldata chainId) public view returns (bytes32);
-        function getChainKeyEVM(uint256 chainId) public view returns (bytes32);
+        function registerChain(string calldata identifier) external returns (bytes4 chainId);
+        function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash);
+        function getChainIdFromHash(bytes32 hash) external view returns (bytes4 chainId);
+        function isChainRegistered(bytes4 chainId) external view returns (bool registered);
+        function getChainHash(bytes4 chainId) external view returns (bytes32 hash);
     }
 
-    /// Token Registry contract ABI
+    /// Token Registry contract ABI (V2)
     #[derive(Debug)]
     #[sol(rpc)]
     contract ITokenRegistry {
-        function addToken(address token, uint8 bridgeType) external;
-        function addTokenDestChainKey(
+        function registerToken(address token, uint8 tokenType) external;
+        function setTokenDestinationWithDecimals(
             address token,
-            bytes32 destChainKey,
-            bytes32 destTokenAddress,
-            uint8 decimals
+            bytes4 destChain,
+            bytes32 destToken,
+            uint8 destDecimals
         ) external;
-        function isTokenDestChainKeyRegistered(address token, bytes32 destChainKey) public view returns (bool);
+        function isTokenRegistered(address token) external view returns (bool registered);
+        function getDestToken(address token, bytes4 destChain) external view returns (bytes32 destToken);
     }
 
     /// ERC20 token ABI
@@ -171,20 +174,22 @@ pub async fn deploy_evm_contracts(
 ) -> Result<EvmDeployment> {
     info!("Starting EVM contract deployment");
 
-    // Use the default deployment script
-    let script_path = "scripts/deploy.s.sol";
-    let result = run_forge_script(script_path, rpc_url, private_key, project_root).await?;
+    // Run forge from contracts-evm directory where the script and foundry.toml live
+    let contracts_dir = project_root.join("packages").join("contracts-evm");
+    let script_path = "script/Deploy.s.sol:Deploy";
+    let result = run_forge_script(script_path, rpc_url, private_key, &contracts_dir).await?;
 
     if !result.success {
         return Err(eyre!("Forge script failed: {}", result.stderr));
     }
 
-    // Find broadcast file in out directory
+    // Find broadcast file in contracts-evm broadcast directory
     let broadcast_path = project_root
-        .join("out")
-        .join("deploy-script")
+        .join("packages")
+        .join("contracts-evm")
         .join("broadcast")
-        .join("sepolia")
+        .join("Deploy.s.sol")
+        .join("31337")
         .join("run-latest.json");
 
     if !broadcast_path.exists() {
@@ -197,13 +202,14 @@ pub async fn deploy_evm_contracts(
     let broadcast = BroadcastFile::from_file(&broadcast_path)?;
 
     let deployed = EvmDeployment {
-        access_manager: broadcast.find_contract("AccessManagerEnumerable")?,
+        access_manager: broadcast
+            .find_contract("AccessManagerEnumerable")
+            .unwrap_or(Address::ZERO),
         chain_registry: broadcast.find_contract("ChainRegistry")?,
         token_registry: broadcast.find_contract("TokenRegistry")?,
         mint_burn: broadcast.find_contract("MintBurn")?,
         lock_unlock: broadcast.find_contract("LockUnlock")?,
-        bridge: broadcast.find_contract("Cl8YBridge")?,
-        router: broadcast.find_contract("BridgeRouter")?,
+        bridge: broadcast.find_contract("Bridge")?,
         broadcast_file: broadcast_path,
     };
 
@@ -220,21 +226,18 @@ pub struct EvmDeployment {
     pub mint_burn: Address,
     pub lock_unlock: Address,
     pub bridge: Address,
-    pub router: Address,
     pub broadcast_file: PathBuf,
 }
 
 impl EvmDeployment {
-    /// Verify all contracts are deployed (not zero address)
+    /// Verify all core contracts are deployed (not zero address)
     pub fn verify(&self) -> Result<()> {
         let contracts = [
-            ("AccessManagerEnumerable", self.access_manager),
             ("ChainRegistry", self.chain_registry),
             ("TokenRegistry", self.token_registry),
             ("MintBurn", self.mint_burn),
             ("LockUnlock", self.lock_unlock),
-            ("Cl8YBridge", self.bridge),
-            ("BridgeRouter", self.router),
+            ("Bridge", self.bridge),
         ];
 
         for (name, addr) in contracts {
@@ -242,6 +245,14 @@ impl EvmDeployment {
                 return Err(eyre!("Contract '{}' is not deployed (zero address)", name));
             }
             debug!("Contract '{}' deployed at: 0x{}", name, addr);
+        }
+
+        // Optional contracts (may be zero in some deployments)
+        if self.access_manager != Address::ZERO {
+            debug!(
+                "Contract 'AccessManagerEnumerable' deployed at: 0x{}",
+                self.access_manager
+            );
         }
 
         Ok(())
@@ -252,13 +263,14 @@ impl EvmDeployment {
         let broadcast = BroadcastFile::from_file(path)?;
 
         Ok(Self {
-            access_manager: broadcast.find_contract("AccessManagerEnumerable")?,
+            access_manager: broadcast
+                .find_contract("AccessManagerEnumerable")
+                .unwrap_or(Address::ZERO),
             chain_registry: broadcast.find_contract("ChainRegistry")?,
             token_registry: broadcast.find_contract("TokenRegistry")?,
             mint_burn: broadcast.find_contract("MintBurn")?,
             lock_unlock: broadcast.find_contract("LockUnlock")?,
-            bridge: broadcast.find_contract("Cl8YBridge")?,
-            router: broadcast.find_contract("BridgeRouter")?,
+            bridge: broadcast.find_contract("Bridge")?,
             broadcast_file: path.to_path_buf(),
         })
     }
@@ -318,56 +330,72 @@ pub async fn grant_canceler_role(
     Ok(())
 }
 
-/// Register a COSMW chain key on ChainRegistry
+/// Register a COSMW chain on ChainRegistry V2
+///
+/// Uses registerChain with identifier format "terraclassic_{chain_id}"
 pub async fn register_cosmw_chain(
     chain_registry: Address,
     chain_id: &str,
     rpc_url: &str,
     _private_key: B256,
-) -> Result<B256> {
-    info!("Registering COSMW chain: {}", chain_id);
+) -> Result<alloy::primitives::FixedBytes<4>> {
+    let identifier = format!("terraclassic_{}", chain_id);
+    info!(
+        "Registering COSMW chain: {} (identifier: {})",
+        chain_id, identifier
+    );
 
     let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
 
     let cr = IChainRegistry::new(chain_registry, &provider);
 
-    // Check if already registered
-    let result = cr.getChainKeyCOSMW(chain_id.to_string()).call().await?;
-    if result._0 != B256::ZERO {
-        info!("Chain key already registered: 0x{}", result._0);
-        return Ok(result._0);
+    // Check if already registered by looking up the hash
+    let hash = cr
+        .computeIdentifierHash(identifier.clone())
+        .call()
+        .await?
+        .hash;
+    let existing_id = cr.getChainIdFromHash(hash).call().await?.chainId;
+    if existing_id != alloy::primitives::FixedBytes::ZERO {
+        info!(
+            "Chain already registered with ID: 0x{}",
+            hex::encode(existing_id)
+        );
+        return Ok(existing_id);
     }
 
-    // Register chain key
-    let _result = cr.addCOSMWChainKey(chain_id.to_string()).send().await?;
+    // Register chain
+    let _result = cr.registerChain(identifier.clone()).send().await?;
 
     // Wait for transaction confirmation
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    let chain_key = cr.getChainKeyCOSMW(chain_id.to_string()).call().await?._0;
-    if chain_key == B256::ZERO {
-        return Err(eyre!("Failed to register chain key"));
+    let chain_id_4 = cr.getChainIdFromHash(hash).call().await?.chainId;
+    if chain_id_4 == alloy::primitives::FixedBytes::ZERO {
+        return Err(eyre!("Failed to register chain"));
     }
 
-    info!("Chain key registered: 0x{}", chain_key);
-    Ok(chain_key)
+    info!("Chain registered with ID: 0x{}", hex::encode(chain_id_4));
+    Ok(chain_id_4)
 }
 
-/// Get chain key for a COSMW chain
+/// Get chain ID for a COSMW chain
 pub async fn get_cosmw_chain_key(
     chain_registry: Address,
     chain_id: &str,
     rpc_url: &str,
-) -> Result<B256> {
+) -> Result<alloy::primitives::FixedBytes<4>> {
+    let identifier = format!("terraclassic_{}", chain_id);
     let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
 
     let cr = IChainRegistry::new(chain_registry, &provider);
 
-    let result = cr.getChainKeyCOSMW(chain_id.to_string()).call().await?;
-    Ok(result._0)
+    let hash = cr.computeIdentifierHash(identifier).call().await?.hash;
+    let chain_id_4 = cr.getChainIdFromHash(hash).call().await?.chainId;
+    Ok(chain_id_4)
 }
 
-/// Register a token on TokenRegistry
+/// Register a token on TokenRegistry V2
 pub async fn register_token(
     token_registry: Address,
     token: Address,
@@ -385,39 +413,35 @@ pub async fn register_token(
     let tr = ITokenRegistry::new(token_registry, &provider);
 
     // Check if already registered
-    let existing = tr
-        .isTokenDestChainKeyRegistered(token, B256::ZERO)
-        .call()
-        .await?
-        ._0;
+    let existing = tr.isTokenRegistered(token).call().await?.registered;
     if existing {
         info!("Token already registered");
         return Ok(());
     }
 
-    let _ = tr.addToken(token, bridge_type as u8).send().await?;
+    let _ = tr.registerToken(token, bridge_type as u8).send().await?;
 
     Ok(())
 }
 
-/// Add destination chain for a token
+/// Set destination chain for a token on TokenRegistry V2
 pub async fn add_token_dest_chain(
     token_registry: Address,
     token: Address,
-    dest_chain_key: B256,
+    dest_chain_id: alloy::primitives::FixedBytes<4>,
     dest_token_address: B256,
     decimals: u8,
     rpc_url: &str,
     _private_key: B256,
 ) -> Result<()> {
-    info!("Adding destination chain for token: 0x{}", token);
+    info!("Setting destination chain for token: 0x{}", token);
 
     let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
 
     let tr = ITokenRegistry::new(token_registry, &provider);
 
     let _ = tr
-        .addTokenDestChainKey(token, dest_chain_key, dest_token_address, decimals)
+        .setTokenDestinationWithDecimals(token, dest_chain_id, dest_token_address, decimals)
         .send()
         .await?;
 
@@ -432,8 +456,10 @@ pub async fn deploy_test_token(
 ) -> Result<Option<Address>> {
     info!("Deploying test ERC20 token via forge script");
 
-    let script_path = "scripts/test-token.s.sol";
-    let result = run_forge_script(script_path, rpc_url, private_key, project_root).await?;
+    // Run forge from contracts-evm directory where the script and foundry.toml live
+    let contracts_dir = project_root.join("packages").join("contracts-evm");
+    let script_path = "script/DeployTestToken.s.sol:DeployTestToken";
+    let result = run_forge_script(script_path, rpc_url, private_key, &contracts_dir).await?;
 
     if !result.success {
         return Err(eyre!("Test token deployment failed: {}", result.stderr));
@@ -441,10 +467,11 @@ pub async fn deploy_test_token(
 
     // Find broadcast file for test token
     let broadcast_path = project_root
-        .join("out")
-        .join("test-token-script")
+        .join("packages")
+        .join("contracts-evm")
         .join("broadcast")
-        .join("sepolia")
+        .join("DeployTestToken.s.sol")
+        .join("31337")
         .join("run-latest.json");
 
     if !broadcast_path.exists() {

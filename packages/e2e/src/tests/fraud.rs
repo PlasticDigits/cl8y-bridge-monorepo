@@ -6,7 +6,7 @@ use crate::{E2eConfig, TestResult};
 use alloy::primitives::Address;
 use std::time::Instant;
 
-use super::helpers::{query_contract_code, query_has_role, query_withdraw_delay};
+use super::helpers::{query_cancel_window, query_contract_code, query_has_role};
 
 /// Test fraud detection mechanism
 ///
@@ -43,9 +43,9 @@ pub async fn test_fraud_detection(config: &E2eConfig) -> TestResult {
         }
     }
 
-    // Step 2: Check withdraw delay is configured (must be > 0 for watchtower pattern)
+    // Step 2: Check cancel window is configured (must be > 0 for watchtower pattern)
     // SECURITY HARDENED: Convert WARN to FAIL
-    match query_withdraw_delay(config).await {
+    match query_cancel_window(config).await {
         Ok(delay) => {
             if delay == 0 {
                 return TestResult::fail(

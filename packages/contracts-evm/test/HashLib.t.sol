@@ -148,61 +148,66 @@ contract HashLibTest is Test {
     }
 
     // ============================================================================
-    // Withdraw Hash Tests
+    // V2 Transfer Hash Tests (7-field unified)
     // ============================================================================
 
-    function test_ComputeWithdrawHash() public pure {
+    function test_ComputeTransferHash() public pure {
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
-        bytes32 token = bytes32(uint256(uint160(0xdEad000000000000000000000000000000000000)));
-        bytes32 recipient = bytes32(uint256(uint160(0xbeeF000000000000000000000000000000000000)));
+        bytes32 srcAccount = bytes32(uint256(uint160(0xdEad000000000000000000000000000000000000)));
+        bytes32 destAccount = bytes32(uint256(uint160(0xbeeF000000000000000000000000000000000000)));
+        bytes32 token = bytes32(uint256(uint160(0x1234567890AbcdEF1234567890aBcdef12345678)));
         uint256 amount = 1e18;
         uint64 nonce = 123;
 
-        bytes32 withdrawHash = HashLib.computeWithdrawHash(srcChain, destChain, token, recipient, amount, nonce);
+        bytes32 hash1 = HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
         // Verify it's deterministic
-        bytes32 withdrawHash2 = HashLib.computeWithdrawHash(srcChain, destChain, token, recipient, amount, nonce);
-        assertEq(withdrawHash, withdrawHash2);
+        bytes32 hash2 = HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        assertEq(hash1, hash2, "Transfer hash should be deterministic");
 
         // Different nonce should give different hash
-        bytes32 differentHash = HashLib.computeWithdrawHash(srcChain, destChain, token, recipient, amount, nonce + 1);
-        assertTrue(withdrawHash != differentHash);
+        bytes32 differentHash =
+            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce + 1);
+        assertTrue(hash1 != differentHash, "Different nonce should give different hash");
     }
 
-    // ============================================================================
-    // Deposit Hash Tests
-    // ============================================================================
-
-    function test_ComputeDepositHash() public pure {
+    function test_TransferHash_SrcAccountMatters() public pure {
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
-        bytes32 destToken = bytes32(uint256(3));
+        bytes32 srcAccountA = bytes32(uint256(0xAA));
+        bytes32 srcAccountB = bytes32(uint256(0xBB));
         bytes32 destAccount = bytes32(uint256(4));
+        bytes32 token = bytes32(uint256(3));
         uint256 amount = 1e18;
         uint64 nonce = 42;
 
-        bytes32 depositHash = HashLib.computeDepositHash(srcChain, destChain, destToken, destAccount, amount, nonce);
+        bytes32 hashA = HashLib.computeTransferHash(srcChain, destChain, srcAccountA, destAccount, token, amount, nonce);
+        bytes32 hashB = HashLib.computeTransferHash(srcChain, destChain, srcAccountB, destAccount, token, amount, nonce);
 
-        // Verify it's deterministic
-        bytes32 depositHash2 = HashLib.computeDepositHash(srcChain, destChain, destToken, destAccount, amount, nonce);
-        assertEq(depositHash, depositHash2);
+        assertTrue(hashA != hashB, "Different srcAccounts must produce different hashes");
     }
 
-    function test_DepositHashEqualsWithdrawHash() public pure {
-        // When using the same parameters, deposit and withdraw hash should be equal
+    function test_TransferHash_DepositWithdrawMatch() public pure {
+        // The deposit hash on the source chain and the withdraw hash on the dest chain
+        // should produce the same hash for the same transfer when using identical params.
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
-        bytes32 token = bytes32(uint256(3));
-        bytes32 account = bytes32(uint256(4));
+        bytes32 srcAccount = bytes32(uint256(uint160(0xAAAA)));
+        bytes32 destAccount = bytes32(uint256(uint160(0xBBBB)));
+        bytes32 token = bytes32(uint256(uint160(0xCCCC)));
         uint256 amount = 1e18;
         uint64 nonce = 42;
 
-        bytes32 depositHash = HashLib.computeDepositHash(srcChain, destChain, token, account, amount, nonce);
+        // Deposit side (computed on source chain)
+        bytes32 depositHash =
+            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
-        bytes32 withdrawHash = HashLib.computeWithdrawHash(srcChain, destChain, token, account, amount, nonce);
+        // Withdraw side (computed on dest chain with same params)
+        bytes32 withdrawHash =
+            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
-        assertEq(depositHash, withdrawHash, "Deposit and withdraw hash should match for same params");
+        assertEq(depositHash, withdrawHash, "Deposit and withdraw hash must match for cross-chain verification");
     }
 
     // ============================================================================

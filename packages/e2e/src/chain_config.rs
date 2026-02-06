@@ -7,11 +7,14 @@
 //!
 //! CW20 token deployment has been moved to `cw20_deploy` module to keep this file under 900 LOC.
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, FixedBytes, B256};
 use alloy::signers::local::PrivateKeySigner;
 use eyre::{eyre, Result};
 use std::time::Duration;
 use tracing::{debug, info, warn};
+
+/// Type alias for 4-byte chain IDs used by ChainRegistry V2
+pub type ChainId4 = FixedBytes<4>;
 
 use crate::config::E2eConfig;
 pub use crate::cw20_deploy::{
@@ -259,7 +262,9 @@ pub fn derive_address_from_private_key(private_key: &B256) -> Result<Address> {
 // Chain Registration (ChainRegistry)
 // =============================================================================
 
-/// Register a COSMW chain key on ChainRegistry via addCOSMWChainKey()
+/// Register a COSMW chain on ChainRegistry via registerChain()
+///
+/// The chain identifier format is "terraclassic_{chain_id}" (e.g., "terraclassic_localterra").
 ///
 /// # Arguments
 /// * `chain_registry` - Address of the ChainRegistry contract
@@ -268,25 +273,27 @@ pub fn derive_address_from_private_key(private_key: &B256) -> Result<Address> {
 /// * `private_key` - Private key for signing
 ///
 /// # Returns
-/// The computed chain key (bytes32)
+/// The assigned 4-byte chain ID
 pub async fn register_cosmw_chain_key(
     chain_registry: Address,
     chain_id: &str,
     rpc_url: &str,
     private_key: &str,
-) -> Result<B256> {
-    info!("Registering COSMW chain key for: {}", chain_id);
+) -> Result<ChainId4> {
+    let identifier = format!("terraclassic_{}", chain_id);
+    info!("Registering COSMW chain with identifier: {}", identifier);
 
-    // Compute the chain key first
-    let chain_key = get_cosmw_chain_key(chain_registry, chain_id, rpc_url).await?;
-
-    // Check if it's actually registered in the contract's EnumerableSet
-    if is_chain_key_registered(chain_registry, chain_key, rpc_url).await? {
-        info!("Chain key already registered: {}", chain_key);
-        return Ok(chain_key);
+    // Check if already registered by computing hash and looking up chain ID
+    let existing = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
+    if existing != ChainId4::ZERO {
+        info!(
+            "Chain already registered with ID: 0x{}",
+            hex::encode(existing)
+        );
+        return Ok(existing);
     }
 
-    // Register chain key: addCOSMWChainKey(string)
+    // Register chain: registerChain(string)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -296,50 +303,69 @@ pub async fn register_cosmw_chain_key(
             "--private-key",
             private_key,
             &format!("{}", chain_registry),
-            "addCOSMWChainKey(string)",
-            chain_id,
+            "registerChain(string)",
+            &identifier,
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Check if already registered
-        if stderr.contains("already") || stderr.contains("ChainKeyAlreadyRegistered") {
-            // Get the existing key
-            let key = get_cosmw_chain_key(chain_registry, chain_id, rpc_url).await?;
-            info!("Chain key already registered: {}", key);
-            return Ok(key);
+        if stderr.contains("already") || stderr.contains("ChainAlreadyRegistered") {
+            let chain_id = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
+            info!(
+                "Chain already registered with ID: 0x{}",
+                hex::encode(chain_id)
+            );
+            return Ok(chain_id);
         }
-        return Err(eyre!("Failed to register chain key: {}", stderr));
+        return Err(eyre!("Failed to register chain: {}", stderr));
     }
 
     // Wait a moment for the transaction to be mined
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // Get the registered chain key
-    let chain_key = get_cosmw_chain_key(chain_registry, chain_id, rpc_url).await?;
+    // Get the registered chain ID
+    let chain_id = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
 
-    if chain_key == B256::ZERO {
+    if chain_id == ChainId4::ZERO {
         return Err(eyre!(
-            "Chain key registration failed - key is zero after registration"
+            "Chain registration failed - chain ID is zero after registration"
         ));
     }
 
-    info!("Chain key registered: {}", chain_key);
-    Ok(chain_key)
+    info!("Chain registered with ID: 0x{}", hex::encode(chain_id));
+    Ok(chain_id)
 }
 
-/// Get COSMW chain key from ChainRegistry
+/// Get the chain ID for a COSMW chain from ChainRegistry
+///
+/// Uses computeIdentifierHash + getChainIdFromHash to look up the bytes4 chain ID.
 ///
 /// # Arguments
 /// * `chain_registry` - Address of the ChainRegistry contract
-/// * `chain_id` - The COSMW chain ID
+/// * `chain_id` - The COSMW chain ID (e.g., "localterra")
 /// * `rpc_url` - EVM RPC URL
 pub async fn get_cosmw_chain_key(
     chain_registry: Address,
     chain_id: &str,
     rpc_url: &str,
-) -> Result<B256> {
+) -> Result<ChainId4> {
+    let identifier = format!("terraclassic_{}", chain_id);
+    get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await
+}
+
+/// Look up a chain's bytes4 ID by its string identifier
+///
+/// First computes the identifier hash via computeIdentifierHash(string),
+/// then looks up the chain ID via getChainIdFromHash(bytes32).
+/// Returns ChainId4::ZERO if the chain is not registered.
+pub async fn get_chain_id_by_identifier(
+    chain_registry: Address,
+    identifier: &str,
+    rpc_url: &str,
+) -> Result<ChainId4> {
+    // Step 1: Compute identifier hash
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -347,28 +373,48 @@ pub async fn get_cosmw_chain_key(
             "--rpc-url",
             rpc_url,
             &format!("{}", chain_registry),
-            "getChainKeyCOSMW(string)(bytes32)",
-            chain_id,
+            "computeIdentifierHash(string)(bytes32)",
+            identifier,
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Failed to get chain key: {}", stderr));
+        return Err(eyre!("Failed to compute identifier hash: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let hex_str = stdout.trim();
+    let hash_hex = stdout.trim();
 
-    // Parse the bytes32 value
-    let chain_key: B256 = hex_str
-        .parse()
-        .map_err(|e| eyre!("Failed to parse chain key '{}': {}", hex_str, e))?;
+    // Step 2: Look up chain ID from hash
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "call",
+            "--rpc-url",
+            rpc_url,
+            &format!("{}", chain_registry),
+            "getChainIdFromHash(bytes32)(bytes4)",
+            hash_hex,
+        ])
+        .output()?;
 
-    Ok(chain_key)
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to get chain ID from hash: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let chain_id_hex = stdout.trim();
+    debug!("Chain ID for '{}': {}", identifier, chain_id_hex);
+
+    // Parse bytes4 value - cast returns e.g. "0x00000001"
+    parse_bytes4(chain_id_hex)
 }
 
-/// Register an EVM chain key on ChainRegistry via addEVMChainKey()
+/// Register an EVM chain on ChainRegistry via registerChain()
+///
+/// The chain identifier format is "evm_{chain_id}" (e.g., "evm_31337").
 ///
 /// # Arguments
 /// * `chain_registry` - Address of the ChainRegistry contract
@@ -377,25 +423,27 @@ pub async fn get_cosmw_chain_key(
 /// * `private_key` - Private key for signing
 ///
 /// # Returns
-/// The computed chain key (bytes32)
+/// The assigned 4-byte chain ID
 pub async fn register_evm_chain_key(
     chain_registry: Address,
     chain_id: u64,
     rpc_url: &str,
     private_key: &str,
-) -> Result<B256> {
-    info!("Registering EVM chain key for chain ID: {}", chain_id);
+) -> Result<ChainId4> {
+    let identifier = format!("evm_{}", chain_id);
+    info!("Registering EVM chain with identifier: {}", identifier);
 
-    // Compute the chain key first
-    let chain_key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
-
-    // Check if it's actually registered in the contract
-    if is_chain_key_registered(chain_registry, chain_key, rpc_url).await? {
-        info!("EVM chain key already registered: {}", chain_key);
-        return Ok(chain_key);
+    // Check if already registered
+    let existing = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
+    if existing != ChainId4::ZERO {
+        info!(
+            "EVM chain already registered with ID: 0x{}",
+            hex::encode(existing)
+        );
+        return Ok(existing);
     }
 
-    // Register chain key: addEVMChainKey(uint256)
+    // Register chain: registerChain(string)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -405,88 +453,67 @@ pub async fn register_evm_chain_key(
             "--private-key",
             private_key,
             &format!("{}", chain_registry),
-            "addEVMChainKey(uint256)",
-            &chain_id.to_string(),
+            "registerChain(string)",
+            &identifier,
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Check if already registered
-        if stderr.contains("already") || stderr.contains("ChainKeyAlreadyRegistered") {
-            let key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
-            info!("EVM chain key already registered: {}", key);
-            return Ok(key);
+        if stderr.contains("already") || stderr.contains("ChainAlreadyRegistered") {
+            let chain_id = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
+            info!(
+                "EVM chain already registered with ID: 0x{}",
+                hex::encode(chain_id)
+            );
+            return Ok(chain_id);
         }
-        return Err(eyre!("Failed to register EVM chain key: {}", stderr));
+        return Err(eyre!("Failed to register EVM chain: {}", stderr));
     }
 
     // Wait for the transaction to be mined
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // Get the registered chain key
-    let chain_key = get_evm_chain_key(chain_registry, chain_id, rpc_url).await?;
+    // Get the registered chain ID
+    let chain_id = get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await?;
 
-    if chain_key == B256::ZERO {
+    if chain_id == ChainId4::ZERO {
         return Err(eyre!(
-            "EVM chain key registration failed - key is zero after registration"
+            "EVM chain registration failed - chain ID is zero after registration"
         ));
     }
 
-    info!("EVM chain key registered: {}", chain_key);
-    Ok(chain_key)
+    info!("EVM chain registered with ID: 0x{}", hex::encode(chain_id));
+    Ok(chain_id)
 }
 
-/// Get EVM chain key from ChainRegistry
+/// Get the chain ID for an EVM chain from ChainRegistry
 ///
 /// # Arguments
 /// * `chain_registry` - Address of the ChainRegistry contract
-/// * `chain_id` - The EVM chain ID
+/// * `chain_id` - The EVM chain ID (e.g., 31337)
 /// * `rpc_url` - EVM RPC URL
 pub async fn get_evm_chain_key(
     chain_registry: Address,
     chain_id: u64,
     rpc_url: &str,
-) -> Result<B256> {
-    let output = std::process::Command::new("cast")
-        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
-        .args([
-            "call",
-            "--rpc-url",
-            rpc_url,
-            &format!("{}", chain_registry),
-            "getChainKeyEVM(uint256)(bytes32)",
-            &chain_id.to_string(),
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Failed to get EVM chain key: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let hex_str = stdout.trim();
-
-    // Parse the bytes32 value
-    let chain_key: B256 = hex_str
-        .parse()
-        .map_err(|e| eyre!("Failed to parse EVM chain key '{}': {}", hex_str, e))?;
-
-    Ok(chain_key)
+) -> Result<ChainId4> {
+    let identifier = format!("evm_{}", chain_id);
+    get_chain_id_by_identifier(chain_registry, &identifier, rpc_url).await
 }
 
-/// Check if a chain key is registered in ChainRegistry
+/// Check if a chain is registered in ChainRegistry by its bytes4 chain ID
 ///
 /// # Arguments
 /// * `chain_registry` - Address of the ChainRegistry contract
-/// * `chain_key` - The chain key to check
+/// * `chain_id` - The 4-byte chain ID to check
 /// * `rpc_url` - EVM RPC URL
-pub async fn is_chain_key_registered(
+pub async fn is_chain_registered(
     chain_registry: Address,
-    chain_key: B256,
+    chain_id: ChainId4,
     rpc_url: &str,
 ) -> Result<bool> {
+    let chain_id_hex = format!("0x{}", hex::encode(chain_id));
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -494,29 +521,45 @@ pub async fn is_chain_key_registered(
             "--rpc-url",
             rpc_url,
             &format!("{}", chain_registry),
-            "isChainKeyRegistered(bytes32)(bool)",
-            &format!("{}", chain_key),
+            "isChainRegistered(bytes4)(bool)",
+            &chain_id_hex,
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Failed to check chain key registration: {}", stderr));
+        return Err(eyre!("Failed to check chain registration: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let result = stdout.trim();
 
-    // Parse boolean result (cast returns "true" or "false")
     Ok(result == "true")
 }
 
-/// Register Terra chain key on ChainRegistry
+/// Parse a hex string into a FixedBytes<4> (bytes4)
 ///
-/// This is the main entry point for Terra chain registration, matching the bash
-/// script's `register_terra_chain_key()` function.
-pub async fn register_terra_chain_key(config: &E2eConfig) -> Result<B256> {
-    info!("Registering Terra chain key on ChainRegistry");
+/// Handles various formats: "0x00000001", "0x0000000100000000..." (ABI-padded)
+fn parse_bytes4(hex_str: &str) -> Result<ChainId4> {
+    let clean = hex_str.trim().trim_start_matches("0x");
+
+    if clean.len() < 8 {
+        return Err(eyre!("Hex string too short for bytes4: '{}'", hex_str));
+    }
+
+    // Take the first 8 hex chars (4 bytes)
+    let bytes = hex::decode(&clean[..8])
+        .map_err(|e| eyre!("Failed to decode bytes4 hex '{}': {}", hex_str, e))?;
+
+    Ok(ChainId4::from_slice(&bytes))
+}
+
+/// Register Terra chain on ChainRegistry
+///
+/// This is the main entry point for Terra chain registration.
+/// Uses identifier format "terraclassic_{chain_id}".
+pub async fn register_terra_chain_key(config: &E2eConfig) -> Result<ChainId4> {
+    info!("Registering Terra chain on ChainRegistry");
 
     let chain_registry = config.evm.contracts.chain_registry;
     let rpc_url = config.evm.rpc_url.as_str();
@@ -556,7 +599,7 @@ pub async fn register_token(
         return Ok(());
     }
 
-    // addToken(address token, uint8 bridgeType)
+    // registerToken(address token, uint8 tokenType)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -566,7 +609,7 @@ pub async fn register_token(
             "--private-key",
             private_key,
             &format!("{}", token_registry),
-            "addToken(address,uint8)",
+            "registerToken(address,uint8)",
             &format!("{}", token),
             &(bridge_type as u8).to_string(),
         ])
@@ -574,7 +617,10 @@ pub async fn register_token(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("already") || stderr.contains("TokenAlreadyRegistered") {
+        if stderr.contains("already")
+            || stderr.contains("TokenAlreadyRegistered")
+            || stderr.contains("AlreadyRegistered")
+        {
             info!("Token {} already registered", token);
             return Ok(());
         }
@@ -615,12 +661,12 @@ async fn is_token_registered(
     Ok(is_registered)
 }
 
-/// Add a destination chain key for a token on TokenRegistry
+/// Set a destination chain mapping for a token on TokenRegistry
 ///
 /// # Arguments
 /// * `token_registry` - Address of the TokenRegistry contract
 /// * `token` - Address of the source token
-/// * `dest_chain_key` - The destination chain key (bytes32)
+/// * `dest_chain_id` - The destination chain ID (bytes4)
 /// * `dest_token_address` - The destination token address (bytes32-encoded)
 /// * `decimals` - The token decimals on the destination chain
 /// * `rpc_url` - EVM RPC URL
@@ -628,27 +674,28 @@ async fn is_token_registered(
 pub async fn add_token_dest_chain_key(
     token_registry: Address,
     token: Address,
-    dest_chain_key: B256,
+    dest_chain_id: ChainId4,
     dest_token_address: B256,
     decimals: u8,
     rpc_url: &str,
     private_key: &str,
 ) -> Result<()> {
+    let dest_chain_hex = format!("0x{}", hex::encode(dest_chain_id));
     info!(
-        "Adding destination chain key for token {}: chain_key={}, dest_token={}, decimals={}",
-        token, dest_chain_key, dest_token_address, decimals
+        "Setting token destination for {}: dest_chain={}, dest_token={}, decimals={}",
+        token, dest_chain_hex, dest_token_address, decimals
     );
 
     // Check if already registered
-    if is_token_dest_chain_registered(token_registry, token, dest_chain_key, rpc_url).await? {
+    if is_token_dest_chain_registered(token_registry, token, dest_chain_id, rpc_url).await? {
         info!(
             "Token {} destination chain {} already registered",
-            token, dest_chain_key
+            token, dest_chain_hex
         );
         return Ok(());
     }
 
-    // addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destTokenAddress, uint256 decimals)
+    // setTokenDestinationWithDecimals(address token, bytes4 destChain, bytes32 destToken, uint8 destDecimals)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -658,9 +705,9 @@ pub async fn add_token_dest_chain_key(
             "--private-key",
             private_key,
             &format!("{}", token_registry),
-            "addTokenDestChainKey(address,bytes32,bytes32,uint256)",
+            "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)",
             &format!("{}", token),
-            &format!("{}", dest_chain_key),
+            &dest_chain_hex,
             &format!("{}", dest_token_address),
             &decimals.to_string(),
         ])
@@ -668,24 +715,27 @@ pub async fn add_token_dest_chain_key(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("already") || stderr.contains("DestChainKeyAlreadyRegistered") {
-            info!("Destination chain key already registered");
+        if stderr.contains("already") {
+            info!("Token destination already set");
             return Ok(());
         }
-        return Err(eyre!("Failed to add destination chain key: {}", stderr));
+        return Err(eyre!("Failed to set token destination: {}", stderr));
     }
 
-    info!("Destination chain key added successfully");
+    info!("Token destination set successfully");
     Ok(())
 }
 
-/// Check if a token's destination chain key is registered
+/// Check if a token's destination chain is registered
+///
+/// Uses getDestToken(address,bytes4) and checks if the result is non-zero.
 async fn is_token_dest_chain_registered(
     token_registry: Address,
     token: Address,
-    dest_chain_key: B256,
+    dest_chain_id: ChainId4,
     rpc_url: &str,
 ) -> Result<bool> {
+    let dest_chain_hex = format!("0x{}", hex::encode(dest_chain_id));
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
@@ -693,9 +743,9 @@ async fn is_token_dest_chain_registered(
             "--rpc-url",
             rpc_url,
             &format!("{}", token_registry),
-            "isTokenDestChainKeyRegistered(address,bytes32)(bool)",
+            "getDestToken(address,bytes4)(bytes32)",
             &format!("{}", token),
-            &format!("{}", dest_chain_key),
+            &dest_chain_hex,
         ])
         .output()?;
 
@@ -704,7 +754,11 @@ async fn is_token_dest_chain_registered(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.trim() == "true")
+    let result = stdout.trim();
+
+    // If getDestToken returns zero bytes32, the destination is not set
+    let dest_token: B256 = result.parse().unwrap_or(B256::ZERO);
+    Ok(dest_token != B256::ZERO)
 }
 
 /// Encode a Terra address (or native denom) as bytes32
@@ -737,12 +791,12 @@ pub fn encode_terra_token_address(token: &str) -> B256 {
 /// * `config` - E2E configuration
 /// * `test_token` - Optional ERC20 token address (if None, skips registration)
 /// * `terra_cw20_address` - Optional CW20 address on Terra (if None, uses "uluna")
-/// * `terra_chain_key` - The Terra chain key from ChainRegistry
+/// * `terra_chain_key` - The Terra chain ID (bytes4) from ChainRegistry
 pub async fn register_test_tokens(
     config: &E2eConfig,
     test_token: Option<Address>,
     terra_cw20_address: Option<&str>,
-    terra_chain_key: B256,
+    terra_chain_key: ChainId4,
 ) -> Result<()> {
     let Some(token) = test_token else {
         warn!("No test token address provided, skipping token registration");
@@ -792,8 +846,8 @@ pub async fn register_test_tokens(
 /// Configuration result from full chain setup
 #[derive(Debug, Clone)]
 pub struct ChainConfigResult {
-    /// Terra chain key (bytes32)
-    pub terra_chain_key: B256,
+    /// Terra chain ID (bytes4)
+    pub terra_chain_key: ChainId4,
     /// CW20 token address (if deployed)
     pub cw20_address: Option<String>,
     /// Whether roles were granted successfully
@@ -804,9 +858,9 @@ pub struct ChainConfigResult {
 
 /// Perform complete chain configuration for E2E testing
 ///
-/// This function performs all 4 setup gaps:
+/// This function performs all 4 setup steps:
 /// 1. Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts
-/// 2. Register Terra chain key via ChainRegistry.addCOSMWChainKey()
+/// 2. Register Terra chain via ChainRegistry.registerChain()
 /// 3. Register test tokens on TokenRegistry with destination chain mappings
 /// 4. Deploy CW20 test token on LocalTerra (optional)
 ///

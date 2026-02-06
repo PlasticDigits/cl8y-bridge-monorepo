@@ -8,20 +8,22 @@ use cw_storage_plus::Bound;
 use crate::fee_manager::{
     calculate_fee, get_effective_fee_bps, get_fee_type, has_custom_fee, FeeConfig, FEE_CONFIG,
 };
+use crate::hash::compute_transfer_hash;
+#[allow(deprecated)]
 use crate::hash::compute_transfer_id;
 use crate::msg::{
     AccountFeeResponse, CalculateFeeResponse, CancelersResponse, ChainResponse, ChainsResponse,
     ComputeHashResponse, ConfigResponse, DepositInfoResponse, FeeConfigResponse,
     HasCustomFeeResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
-    NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PeriodUsageResponse,
-    RateLimitResponse, SimulationResponse, StatsResponse, StatusResponse, TokenDestMappingResponse,
-    TokenResponse, TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
-    WithdrawApprovalResponse, WithdrawDelayResponse,
+    NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse,
+    PeriodUsageResponse, RateLimitResponse, SimulationResponse, StatsResponse, StatusResponse,
+    TokenDestMappingResponse, TokenResponse, TokenTypeResponse, TokensResponse,
+    TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
 };
 use crate::state::{
     CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
-    OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS,
-    STATS, TOKENS, TOKEN_DEST_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_APPROVALS,
+    OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS, RATE_LIMITS,
+    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, TOKENS, TOKEN_DEST_MAPPINGS, TRANSACTIONS, USED_NONCES,
     WITHDRAW_DELAY,
 };
 
@@ -79,13 +81,15 @@ pub fn query_stats(deps: Deps) -> StdResult<StatsResponse> {
 // ============================================================================
 
 /// Query a specific chain configuration.
-pub fn query_chain(deps: Deps, chain_id: u64) -> StdResult<ChainResponse> {
-    let chain_key = chain_id.to_string();
-    let chain = CHAINS.load(deps.storage, chain_key)?;
+pub fn query_chain(deps: Deps, chain_id: Binary) -> StdResult<ChainResponse> {
+    if chain_id.len() != 4 {
+        return Err(StdError::generic_err("chain_id must be 4 bytes"));
+    }
+    let chain = CHAINS.load(deps.storage, &chain_id)?;
     Ok(ChainResponse {
-        chain_id: chain.chain_id,
-        name: chain.name,
-        bridge_address: chain.bridge_address,
+        chain_id: Binary::from(chain.chain_id.to_vec()),
+        identifier: chain.identifier,
+        identifier_hash: Binary::from(chain.identifier_hash.to_vec()),
         enabled: chain.enabled,
     })
 }
@@ -93,11 +97,13 @@ pub fn query_chain(deps: Deps, chain_id: u64) -> StdResult<ChainResponse> {
 /// Query paginated list of chains.
 pub fn query_chains(
     deps: Deps,
-    start_after: Option<u64>,
+    start_after: Option<Binary>,
     limit: Option<u32>,
 ) -> StdResult<ChainsResponse> {
     let limit = limit.unwrap_or(10).min(50) as usize;
-    let start = start_after.map(|id| Bound::exclusive(id.to_string()));
+    let start: Option<Bound<&[u8]>> = start_after
+        .as_ref()
+        .map(|id| Bound::exclusive(id.as_slice()));
 
     let chains: Vec<ChainResponse> = CHAINS
         .range(deps.storage, start, None, Order::Ascending)
@@ -105,9 +111,9 @@ pub fn query_chains(
         .map(|item| {
             let (_, chain) = item?;
             Ok(ChainResponse {
-                chain_id: chain.chain_id,
-                name: chain.name,
-                bridge_address: chain.bridge_address,
+                chain_id: Binary::from(chain.chain_id.to_vec()),
+                identifier: chain.identifier,
+                identifier_hash: Binary::from(chain.identifier_hash.to_vec()),
                 enabled: chain.enabled,
             })
         })
@@ -212,7 +218,7 @@ pub fn query_transaction(deps: Deps, nonce: u64) -> StdResult<TransactionRespons
         recipient: tx.recipient,
         token: tx.token,
         amount: tx.amount,
-        dest_chain_id: tx.dest_chain_id,
+        dest_chain: Binary::from(tx.dest_chain.to_vec()),
         timestamp: tx.timestamp,
         is_outgoing: tx.is_outgoing,
     })
@@ -252,12 +258,14 @@ pub fn query_simulate_bridge(
     deps: Deps,
     token: String,
     amount: Uint128,
-    dest_chain_id: u64,
+    dest_chain: Binary,
 ) -> StdResult<SimulationResponse> {
     let config = CONFIG.load(deps.storage)?;
 
-    let chain_key = dest_chain_id.to_string();
-    let _chain = CHAINS.load(deps.storage, chain_key)?;
+    if dest_chain.len() != 4 {
+        return Err(StdError::generic_err("dest_chain must be 4 bytes"));
+    }
+    let _chain = CHAINS.load(deps.storage, &dest_chain)?;
     let _token_config = TOKENS.load(deps.storage, token)?;
 
     let fee_amount = amount.multiply_ratio(config.fee_bps as u128, 10000u128);
@@ -275,48 +283,56 @@ pub fn query_simulate_bridge(
 // Watchtower Queries
 // ============================================================================
 
-/// Query a withdraw approval by hash.
-pub fn query_withdraw_approval(
+/// Query a V2 pending withdrawal by hash.
+pub fn query_pending_withdraw(
     deps: Deps,
     env: Env,
     withdraw_hash: Binary,
-) -> StdResult<WithdrawApprovalResponse> {
+) -> StdResult<PendingWithdrawResponse> {
     let hash_bytes: [u8; 32] = withdraw_hash
         .to_vec()
         .try_into()
         .map_err(|_| StdError::generic_err("Invalid hash length"))?;
 
-    let approval = WITHDRAW_APPROVALS.may_load(deps.storage, &hash_bytes)?;
+    let pending = PENDING_WITHDRAWS.may_load(deps.storage, &hash_bytes)?;
 
-    match approval {
-        Some(a) => {
-            let delay = WITHDRAW_DELAY.load(deps.storage)?;
-            let elapsed = env.block.time.seconds() - a.approved_at.seconds();
-            let remaining = delay.saturating_sub(elapsed);
+    match pending {
+        Some(w) => {
+            // Calculate cancel window remaining
+            let cancel_window_remaining = if w.approved && !w.cancelled {
+                let cancel_window = 300u64; // 5 minutes, matches withdraw.rs CANCEL_WINDOW
+                let elapsed = env.block.time.seconds().saturating_sub(w.approved_at);
+                cancel_window.saturating_sub(elapsed)
+            } else {
+                0
+            };
 
-            Ok(WithdrawApprovalResponse {
+            Ok(PendingWithdrawResponse {
                 exists: true,
-                src_chain_key: Binary::from(a.src_chain_key.to_vec()),
-                token: a.token,
-                recipient: a.recipient,
-                dest_account: Binary::from(a.dest_account.to_vec()),
-                amount: a.amount,
-                nonce: a.nonce,
-                fee: a.fee,
-                fee_recipient: a.fee_recipient,
-                approved_at: a.approved_at,
-                is_approved: a.is_approved,
-                deduct_from_amount: a.deduct_from_amount,
-                cancelled: a.cancelled,
-                executed: a.executed,
-                delay_remaining: remaining,
+                src_chain: Binary::from(w.src_chain.to_vec()),
+                src_account: Binary::from(w.src_account.to_vec()),
+                dest_account: Binary::from(w.dest_account.to_vec()),
+                token: w.token,
+                recipient: w.recipient,
+                amount: w.amount,
+                nonce: w.nonce,
+                src_decimals: w.src_decimals,
+                dest_decimals: w.dest_decimals,
+                operator_gas: w.operator_gas,
+                submitted_at: w.submitted_at,
+                approved_at: w.approved_at,
+                approved: w.approved,
+                cancelled: w.cancelled,
+                executed: w.executed,
+                cancel_window_remaining,
             })
         }
-        None => Ok(WithdrawApprovalResponse::default()),
+        None => Ok(PendingWithdrawResponse::default()),
     }
 }
 
-/// Compute a withdraw hash from parameters.
+/// Compute a withdraw hash from parameters (V1 legacy 6-field format).
+#[allow(deprecated)]
 pub fn query_compute_withdraw_hash(
     src_chain_key: Binary,
     dest_chain_key: Binary,
@@ -349,6 +365,52 @@ pub fn query_compute_withdraw_hash(
     })
 }
 
+/// Compute a unified V2 transfer hash from 7-field parameters.
+pub fn query_compute_transfer_hash(
+    src_chain: Binary,
+    dest_chain: Binary,
+    src_account: Binary,
+    dest_account: Binary,
+    token: Binary,
+    amount: Uint128,
+    nonce: u64,
+) -> StdResult<ComputeHashResponse> {
+    let src_chain_bytes: [u8; 4] = src_chain
+        .to_vec()
+        .try_into()
+        .map_err(|_| StdError::generic_err("Invalid src_chain length, expected 4 bytes"))?;
+    let dest_chain_bytes: [u8; 4] = dest_chain
+        .to_vec()
+        .try_into()
+        .map_err(|_| StdError::generic_err("Invalid dest_chain length, expected 4 bytes"))?;
+    let src_account_bytes: [u8; 32] = src_account
+        .to_vec()
+        .try_into()
+        .map_err(|_| StdError::generic_err("Invalid src_account length"))?;
+    let dest_account_bytes: [u8; 32] = dest_account
+        .to_vec()
+        .try_into()
+        .map_err(|_| StdError::generic_err("Invalid dest_account length"))?;
+    let token_bytes: [u8; 32] = token
+        .to_vec()
+        .try_into()
+        .map_err(|_| StdError::generic_err("Invalid token length"))?;
+
+    let hash = compute_transfer_hash(
+        &src_chain_bytes,
+        &dest_chain_bytes,
+        &src_account_bytes,
+        &dest_account_bytes,
+        &token_bytes,
+        amount.u128(),
+        nonce,
+    );
+
+    Ok(ComputeHashResponse {
+        hash: Binary::from(hash.to_vec()),
+    })
+}
+
 // ============================================================================
 // Deposit Queries
 // ============================================================================
@@ -368,6 +430,7 @@ pub fn query_deposit_hash(
     Ok(deposit.map(|d| DepositInfoResponse {
         deposit_hash: Binary::from(hash_bytes.to_vec()),
         dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
+        src_account: Binary::from(d.src_account.to_vec()),
         dest_token_address: Binary::from(d.dest_token_address.to_vec()),
         dest_account: Binary::from(d.dest_account.to_vec()),
         amount: d.amount,
@@ -386,6 +449,7 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
             Ok(deposit.map(|d| DepositInfoResponse {
                 deposit_hash: Binary::from(hash_bytes.to_vec()),
                 dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
+                src_account: Binary::from(d.src_account.to_vec()),
                 dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                 dest_account: Binary::from(d.dest_account.to_vec()),
                 amount: d.amount,
@@ -432,6 +496,7 @@ pub fn query_verify_deposit(
                 deposit: Some(DepositInfoResponse {
                     deposit_hash: Binary::from(hash_bytes.to_vec()),
                     dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
+                    src_account: Binary::from(d.src_account.to_vec()),
                     dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                     dest_account: Binary::from(d.dest_account.to_vec()),
                     amount: d.amount,
@@ -628,14 +693,17 @@ pub fn query_token_type(deps: Deps, token: String) -> StdResult<TokenTypeRespons
 pub fn query_token_dest_mapping(
     deps: Deps,
     token: String,
-    dest_chain_id: u64,
+    dest_chain: Binary,
 ) -> StdResult<Option<TokenDestMappingResponse>> {
-    let mapping =
-        TOKEN_DEST_MAPPINGS.may_load(deps.storage, (&token, &dest_chain_id.to_string()))?;
+    if dest_chain.len() != 4 {
+        return Err(StdError::generic_err("dest_chain must be 4 bytes"));
+    }
+    let chain_key = hex::encode(&dest_chain);
+    let mapping = TOKEN_DEST_MAPPINGS.may_load(deps.storage, (&token, &chain_key))?;
 
     Ok(mapping.map(|m| TokenDestMappingResponse {
         token,
-        dest_chain_id,
+        dest_chain: dest_chain.clone(),
         dest_token: Binary::from(m.dest_token.to_vec()),
         dest_decimals: m.dest_decimals,
     }))

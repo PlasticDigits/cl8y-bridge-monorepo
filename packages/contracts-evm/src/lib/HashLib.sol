@@ -5,8 +5,8 @@ pragma solidity ^0.8.30;
 /// @notice Library for cross-chain hash computation
 /// @dev Provides deterministic hash computation for transfer IDs that match across all chains
 ///
-/// Transfer ID Format:
-/// keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))
+/// V2 Transfer Hash Format (7-field, unified for deposit and withdraw):
+/// keccak256(abi.encode(srcChain, destChain, srcAccount, destAccount, token, amount, nonce))
 ///
 /// Chain Key Format (V2):
 /// - Uses 4-byte chain ID instead of keccak256 hash of identifier
@@ -110,51 +110,37 @@ library HashLib {
     }
 
     // ============================================================================
-    // Withdraw Hash Computation
+    // V2 Transfer Hash (Unified for Deposit and Withdraw)
     // ============================================================================
 
-    /// @notice Compute withdraw hash for approval tracking
-    /// @dev This is the same as computeTransferId but with explicit parameter names
-    /// @param srcChain Source chain ID (4 bytes as bytes32)
-    /// @param destChain Destination chain ID (4 bytes as bytes32)
-    /// @param token Token address (encoded as bytes32)
-    /// @param recipient Recipient address (encoded as bytes32)
+    /// @notice Compute unified transfer hash for cross-chain matching
+    /// @dev Both deposit and withdraw use the same 7-field hash so they produce
+    ///      identical hashes for the same transfer, enabling cross-chain verification.
+    ///
+    ///      On deposit (source chain):
+    ///        srcChain = thisChainId, srcAccount = msg.sender, destChain/destAccount/token from params
+    ///      On withdraw (dest chain):
+    ///        srcChain/srcAccount from params, destChain = thisChainId, destAccount/token from params
+    ///
+    /// @param srcChain Source chain ID (4 bytes)
+    /// @param destChain Destination chain ID (4 bytes)
+    /// @param srcAccount Source account (depositor) encoded as bytes32
+    /// @param destAccount Destination account (recipient) encoded as bytes32
+    /// @param token Token address on destination chain encoded as bytes32
     /// @param amount Transfer amount
     /// @param nonce Deposit nonce from source chain
-    /// @return withdrawHash The withdraw hash for approval tracking
-    function computeWithdrawHash(
+    /// @return transferHash The canonical transfer hash
+    function computeTransferHash(
         bytes4 srcChain,
         bytes4 destChain,
-        bytes32 token,
-        bytes32 recipient,
-        uint256 amount,
-        uint64 nonce
-    ) internal pure returns (bytes32 withdrawHash) {
-        return keccak256(abi.encode(bytes32(srcChain), bytes32(destChain), token, recipient, amount, uint256(nonce)));
-    }
-
-    // ============================================================================
-    // Deposit Hash Computation
-    // ============================================================================
-
-    /// @notice Compute deposit hash for tracking
-    /// @param srcChain Source chain ID
-    /// @param destChain Destination chain ID
-    /// @param destToken Token address on destination chain
-    /// @param destAccount Recipient account on destination chain
-    /// @param amount Transfer amount
-    /// @param nonce Deposit nonce
-    /// @return depositHash The deposit hash
-    function computeDepositHash(
-        bytes4 srcChain,
-        bytes4 destChain,
-        bytes32 destToken,
+        bytes32 srcAccount,
         bytes32 destAccount,
+        bytes32 token,
         uint256 amount,
         uint64 nonce
-    ) internal pure returns (bytes32 depositHash) {
+    ) internal pure returns (bytes32 transferHash) {
         return keccak256(
-            abi.encode(bytes32(srcChain), bytes32(destChain), destToken, destAccount, amount, uint256(nonce))
+            abi.encode(bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce))
         );
     }
 

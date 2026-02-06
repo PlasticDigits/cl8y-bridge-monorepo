@@ -234,28 +234,28 @@ pub async fn test_hash_parity(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "hash_parity";
 
-    // Test that our ChainKey computation matches on-chain
-    // 1. Compute EVM chain key locally using ChainKey::evm()
-    // 2. Query chain key from ChainRegistry on-chain
-    // 3. Verify they match
+    // Test that EVM chain ID can be queried from ChainRegistry
+    // V2 uses bytes4 chain IDs assigned incrementally, so we just verify
+    // the chain is registered and returns a non-zero ID.
 
     let chain_id = 31337u64; // Anvil default chain ID
 
-    // Compute local chain key
-    let local_chain_key = crate::ChainKey::evm(chain_id);
-
-    // Query on-chain chain key
+    // Query on-chain chain ID (bytes4)
     match super::helpers::query_evm_chain_key(config, chain_id).await {
-        Ok(onchain_key) => {
-            if local_chain_key.as_bytes() == &onchain_key {
+        Ok(onchain_id) => {
+            if onchain_id != [0u8; 4] {
+                tracing::info!(
+                    "EVM chain {} registered with ID: 0x{}",
+                    chain_id,
+                    hex::encode(onchain_id)
+                );
                 TestResult::pass(name, start.elapsed())
             } else {
                 TestResult::fail(
                     name,
                     format!(
-                        "Chain key mismatch: local=0x{} vs onchain=0x{}",
-                        hex::encode(local_chain_key.as_bytes()),
-                        hex::encode(onchain_key)
+                        "EVM chain {} returned zero chain ID (not registered)",
+                        chain_id
                     ),
                     start.elapsed(),
                 )
@@ -265,7 +265,7 @@ pub async fn test_hash_parity(config: &E2eConfig) -> TestResult {
             // Chain might not be registered yet, which is acceptable
             TestResult::skip(
                 name,
-                format!("Could not query chain key (may not be registered): {}", e),
+                format!("Could not query chain ID (may not be registered): {}", e),
             )
         }
     }

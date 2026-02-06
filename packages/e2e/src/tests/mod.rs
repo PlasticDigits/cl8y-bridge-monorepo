@@ -15,18 +15,24 @@
 //! - **watchtower**: Watchtower pattern tests (EVM time skip, delay mechanism, delay enforcement)
 //! - **cw20**: CW20 cross-chain transfer tests (deployment, balance, mint/burn, lock/unlock)
 
+mod address_codec;
 mod canceler;
 mod canceler_execution;
 mod canceler_helpers;
+mod chain_registry;
 mod configuration;
 mod connectivity;
 mod cw20;
 mod database;
+mod deposit_flow;
 mod edge_cases;
 pub mod evm_to_evm;
+mod fee_system;
 mod fraud;
 pub mod helpers;
 mod integration;
+mod integration_deposit;
+mod integration_withdraw;
 mod operator;
 mod operator_execution;
 mod operator_execution_advanced;
@@ -34,22 +40,30 @@ pub mod operator_helpers;
 pub mod token_diagnostics;
 mod transfer;
 mod watchtower;
+mod withdraw_flow;
 
 // Re-export all public tests
+pub use address_codec::*;
 pub use canceler::*;
 pub use canceler_execution::*;
+pub use chain_registry::*;
 pub use configuration::*;
 pub use connectivity::*;
 pub use cw20::*;
 pub use database::*;
+pub use deposit_flow::*;
 pub use edge_cases::*;
+pub use fee_system::*;
 pub use fraud::*;
 pub use integration::*;
+pub use integration_deposit::*;
+pub use integration_withdraw::*;
 pub use operator::*;
 pub use operator_execution::*;
 pub use operator_execution_advanced::*;
 pub use transfer::*;
 pub use watchtower::*;
+pub use withdraw_flow::*;
 
 use crate::{E2eConfig, TestResult};
 use alloy::primitives::Address;
@@ -219,7 +233,7 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     // Full cycle tests (3) - Complete deposit → approval → withdrawal flows
     let default_transfer_amount = 1_000_000u128; // 1 token (6 decimals)
     results.push(
-        integration::test_real_evm_to_terra_transfer(
+        integration_deposit::test_real_evm_to_terra_transfer(
             config,
             token_address,
             default_transfer_amount,
@@ -230,7 +244,7 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
         // Terra → EVM uses native Terra token (uluna)
         let terra_denom = "uluna";
         results.push(
-            integration::test_real_terra_to_evm_transfer(
+            integration_withdraw::test_real_terra_to_evm_transfer(
                 config,
                 default_transfer_amount,
                 terra_denom,

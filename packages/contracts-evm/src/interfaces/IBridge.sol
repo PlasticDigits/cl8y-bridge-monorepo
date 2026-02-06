@@ -12,6 +12,7 @@ interface IBridge {
     struct PendingWithdraw {
         bytes4 srcChain;
         bytes32 srcAccount;
+        bytes32 destAccount;
         address token;
         address recipient;
         uint256 amount;
@@ -27,6 +28,7 @@ interface IBridge {
     /// @notice Deposit record data structure
     struct DepositRecord {
         bytes4 destChain;
+        bytes32 srcAccount;
         bytes32 destAccount;
         address token;
         uint256 amount;
@@ -41,12 +43,25 @@ interface IBridge {
 
     /// @notice Emitted on deposit
     event Deposit(
-        bytes4 indexed destChain, bytes32 indexed destAccount, address token, uint256 amount, uint64 nonce, uint256 fee
+        bytes4 indexed destChain,
+        bytes32 indexed destAccount,
+        bytes32 srcAccount,
+        address token,
+        uint256 amount,
+        uint64 nonce,
+        uint256 fee
     );
 
     /// @notice Emitted when user submits a withdrawal
     event WithdrawSubmit(
-        bytes32 indexed withdrawHash, bytes4 srcChain, address token, uint256 amount, uint64 nonce, uint256 operatorGas
+        bytes32 indexed withdrawHash,
+        bytes4 srcChain,
+        bytes32 srcAccount,
+        bytes32 destAccount,
+        address token,
+        uint256 amount,
+        uint64 nonce,
+        uint256 operatorGas
     );
 
     /// @notice Emitted when operator approves a withdrawal
@@ -123,10 +138,19 @@ interface IBridge {
 
     /// @notice User submits a withdrawal request
     /// @param srcChain Source chain ID
+    /// @param srcAccount Source account (depositor) encoded as bytes32
+    /// @param destAccount Destination account (recipient) encoded as bytes32
     /// @param token Token address on this chain
     /// @param amount Amount to withdraw
     /// @param nonce Deposit nonce from source chain
-    function withdrawSubmit(bytes4 srcChain, address token, uint256 amount, uint64 nonce) external payable;
+    function withdrawSubmit(
+        bytes4 srcChain,
+        bytes32 srcAccount,
+        bytes32 destAccount,
+        address token,
+        uint256 amount,
+        uint64 nonce
+    ) external payable;
 
     /// @notice Operator approves a pending withdrawal
     /// @param withdrawHash The withdrawal hash

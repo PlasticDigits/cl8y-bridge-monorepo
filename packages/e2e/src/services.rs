@@ -408,7 +408,6 @@ impl ServiceManager {
 
         info!(
             bridge_address = %config.evm.contracts.bridge,
-            router_address = %config.evm.contracts.router,
             terra_bridge_address = config.terra.bridge_address.as_deref().unwrap_or("NOT SET"),
             chain_id = config.evm.chain_id,
             "Building operator environment"
@@ -423,10 +422,6 @@ impl ServiceManager {
             (
                 "EVM_BRIDGE_ADDRESS".to_string(),
                 format!("{}", config.evm.contracts.bridge),
-            ),
-            (
-                "EVM_ROUTER_ADDRESS".to_string(),
-                format!("{}", config.evm.contracts.router),
             ),
             (
                 "EVM_PRIVATE_KEY".to_string(),

@@ -252,7 +252,7 @@ pub async fn test_operator_withdrawal_execution(config: &E2eConfig) -> TestResul
     let name = "operator_withdrawal_execution";
 
     // Query withdraw delay from bridge
-    let delay = match super::helpers::query_withdraw_delay(config).await {
+    let delay = match super::helpers::query_cancel_window(config).await {
         Ok(d) => d,
         Err(e) => {
             return TestResult::fail(

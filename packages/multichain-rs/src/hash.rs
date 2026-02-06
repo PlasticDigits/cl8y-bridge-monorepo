@@ -3,11 +3,21 @@
 //! This module provides hash computation functions that match the EVM and
 //! Terra contract implementations for verifying transfer identities.
 //!
-//! ## V2 Format
+//! ## V2 Format (7-field unified hash)
 //!
-//! V2 uses 4-byte chain IDs instead of 32-byte chain keys:
-//! - `srcChain` and `destChain` are `bytes4`
-//! - Hashes are computed using `abi.encodePacked` for compact encoding
+//! V2 uses 4-byte chain IDs and a unified 7-field hash for both deposits and withdrawals:
+//! ```text
+//! transferHash = keccak256(abi.encode(
+//!     bytes32(srcChain),   // 4 bytes -> padded to 32
+//!     bytes32(destChain),  // 4 bytes -> padded to 32
+//!     srcAccount,          // bytes32
+//!     destAccount,         // bytes32
+//!     token,               // bytes32
+//!     uint256(amount),     // 32 bytes
+//!     uint256(nonce)       // 32 bytes
+//! ))
+//! // Total: 7 * 32 = 224 bytes (abi.encode padding)
+//! ```
 
 use tiny_keccak::{Hasher, Keccak};
 
@@ -26,72 +36,118 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
 }
 
 // ============================================================================
-// V2 Hash Functions (4-byte chain IDs)
+// V2 Hash Functions (7-field unified, abi.encode compatible)
 // ============================================================================
 
-/// Compute deposit hash for V2 format (matches HashLib.sol computeDepositHash)
+/// Compute unified transfer hash for V2 format (matches HashLib.sol computeTransferHash)
 ///
-/// This is used to identify a deposit on the source chain:
+/// Both deposits and withdrawals use the same 7-field hash so they produce
+/// identical hashes for the same transfer, enabling cross-chain verification.
+///
 /// ```solidity
-/// keccak256(abi.encodePacked(srcChain, destChain, destToken, destAccount, amount, nonce))
+/// keccak256(abi.encode(
+///     bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
+/// ))
 /// ```
 ///
-/// Uses `abi.encodePacked` for compact encoding (no padding).
-pub fn compute_deposit_hash(
+/// Uses `abi.encode` padding (each field padded to 32 bytes = 224 bytes total).
+///
+/// On deposit (source chain):
+///   srcChain = thisChainId, srcAccount = msg.sender, destChain/destAccount/token from params
+/// On withdraw (dest chain):
+///   srcChain/srcAccount from params, destChain = thisChainId, destAccount/token from params
+pub fn compute_transfer_hash(
     src_chain: &[u8; 4],
     dest_chain: &[u8; 4],
-    dest_token: &[u8; 32],
+    src_account: &[u8; 32],
     dest_account: &[u8; 32],
+    token: &[u8; 32],
     amount: u128,
     nonce: u64,
 ) -> [u8; 32] {
-    // abi.encodePacked layout: 4 + 4 + 32 + 32 + 32 + 8 = 112 bytes
-    let mut data = [0u8; 112];
+    // abi.encode layout: 7 * 32 = 224 bytes (each field padded to 32 bytes)
+    let mut data = [0u8; 224];
 
-    // srcChain (4 bytes)
+    // srcChain (bytes4 -> left-aligned in bytes32, rest zero-padded)
     data[0..4].copy_from_slice(src_chain);
+    // bytes 4..32 remain zero
 
-    // destChain (4 bytes)
-    data[4..8].copy_from_slice(dest_chain);
+    // destChain (bytes4 -> left-aligned in bytes32, rest zero-padded)
+    data[32..36].copy_from_slice(dest_chain);
+    // bytes 36..64 remain zero
 
-    // destToken (32 bytes)
-    data[8..40].copy_from_slice(dest_token);
+    // srcAccount (32 bytes)
+    data[64..96].copy_from_slice(src_account);
 
     // destAccount (32 bytes)
-    data[40..72].copy_from_slice(dest_account);
+    data[96..128].copy_from_slice(dest_account);
 
-    // amount (uint256 as 32 bytes, big-endian)
+    // token (32 bytes)
+    data[128..160].copy_from_slice(token);
+
+    // amount (uint256 as 32 bytes, big-endian, left-padded)
     let amount_bytes = amount.to_be_bytes();
-    data[72 + 16..104].copy_from_slice(&amount_bytes);
+    data[160 + 16..192].copy_from_slice(&amount_bytes);
 
-    // nonce (uint64 as 8 bytes, big-endian)
+    // nonce (uint64 -> uint256 as 32 bytes, big-endian, left-padded)
     let nonce_bytes = nonce.to_be_bytes();
-    data[104..112].copy_from_slice(&nonce_bytes);
+    data[192 + 24..224].copy_from_slice(&nonce_bytes);
 
     keccak256(&data)
 }
 
-/// Compute withdraw hash for V2 format (matches HashLib.sol computeWithdrawHash)
+/// Compute deposit hash (alias for compute_transfer_hash)
 ///
-/// This is used to identify a withdrawal on the destination chain:
-/// ```solidity
-/// keccak256(abi.encodePacked(srcChain, destChain, token, srcAccount, amount, nonce))
-/// ```
-pub fn compute_withdraw_hash(
+/// On the source chain, call with:
+/// - src_chain = this chain's bytes4 ID
+/// - src_account = depositor's address (msg.sender encoded as bytes32)
+/// - dest_chain, dest_account, token = from deposit parameters
+pub fn compute_deposit_hash(
     src_chain: &[u8; 4],
     dest_chain: &[u8; 4],
-    token: &[u8; 32],
     src_account: &[u8; 32],
+    dest_account: &[u8; 32],
+    token: &[u8; 32],
     amount: u128,
     nonce: u64,
 ) -> [u8; 32] {
-    // Same layout as deposit hash
-    compute_deposit_hash(src_chain, dest_chain, token, src_account, amount, nonce)
+    compute_transfer_hash(
+        src_chain,
+        dest_chain,
+        src_account,
+        dest_account,
+        token,
+        amount,
+        nonce,
+    )
 }
 
-// Keep V2 aliases for compatibility with existing code using _v2 suffix
-pub use compute_deposit_hash as compute_deposit_hash_v2;
-pub use compute_withdraw_hash as compute_withdraw_hash_v2;
+/// Compute withdraw hash (alias for compute_transfer_hash)
+///
+/// On the destination chain, call with:
+/// - src_chain, src_account = from withdraw parameters (source chain info)
+/// - dest_chain = this chain's bytes4 ID
+/// - dest_account = recipient's address (from withdraw parameters)
+/// - token = local token address
+pub fn compute_withdraw_hash(
+    src_chain: &[u8; 4],
+    dest_chain: &[u8; 4],
+    src_account: &[u8; 32],
+    dest_account: &[u8; 32],
+    token: &[u8; 32],
+    amount: u128,
+    nonce: u64,
+) -> [u8; 32] {
+    compute_transfer_hash(
+        src_chain,
+        dest_chain,
+        src_account,
+        dest_account,
+        token,
+        amount,
+        nonce,
+    )
+}
 
 /// Convert an EVM address to bytes32 (left-padded with zeros)
 pub fn address_to_bytes32(addr: &[u8; 20]) -> [u8; 32] {
@@ -171,19 +227,21 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_deposit_hash() {
+    fn test_compute_transfer_hash() {
         let src_chain: [u8; 4] = [0, 0, 0, 1]; // Chain ID 1
         let dest_chain: [u8; 4] = [0, 0, 0, 2]; // Chain ID 2
-        let dest_token = [0u8; 32];
+        let src_account = [0u8; 32];
         let dest_account = [0u8; 32];
+        let token = [0u8; 32];
         let amount: u128 = 1_000_000;
         let nonce: u64 = 1;
 
-        let hash = compute_deposit_hash(
+        let hash = compute_transfer_hash(
             &src_chain,
             &dest_chain,
-            &dest_token,
+            &src_account,
             &dest_account,
+            &token,
             amount,
             nonce,
         );
@@ -192,26 +250,68 @@ mod tests {
         assert_eq!(hash.len(), 32);
 
         // Same inputs should produce same hash
-        let hash2 = compute_deposit_hash(
+        let hash2 = compute_transfer_hash(
             &src_chain,
             &dest_chain,
-            &dest_token,
+            &src_account,
             &dest_account,
+            &token,
             amount,
             nonce,
         );
         assert_eq!(hash, hash2);
 
         // Different inputs should produce different hash
-        let hash3 = compute_deposit_hash(
+        let hash3 = compute_transfer_hash(
             &src_chain,
             &dest_chain,
-            &dest_token,
+            &src_account,
             &dest_account,
+            &token,
             amount,
             2, // Different nonce
         );
         assert_ne!(hash, hash3);
+    }
+
+    #[test]
+    fn test_deposit_and_withdraw_hash_match() {
+        // The deposit hash on the source chain and the withdraw hash on the dest chain
+        // should produce the same hash for the same transfer.
+        let src_chain: [u8; 4] = [0, 0, 0, 1];
+        let dest_chain: [u8; 4] = [0, 0, 0, 2];
+        let mut src_account = [0u8; 32];
+        src_account[31] = 0xAA;
+        let mut dest_account = [0u8; 32];
+        dest_account[31] = 0xBB;
+        let mut token = [0u8; 32];
+        token[31] = 0xCC;
+        let amount: u128 = 1_000_000;
+        let nonce: u64 = 42;
+
+        let deposit_hash = compute_deposit_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            amount,
+            nonce,
+        );
+        let withdraw_hash = compute_withdraw_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            amount,
+            nonce,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "Deposit and withdraw hashes must match for cross-chain verification"
+        );
     }
 
     #[test]

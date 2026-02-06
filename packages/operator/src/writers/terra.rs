@@ -21,7 +21,7 @@ use crate::contracts::terra_bridge::{
     build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
 };
 use crate::db::{self, EvmDeposit, NewRelease};
-use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_withdraw_hash, parse_evm_address};
+use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash, parse_evm_address};
 use crate::terra_client::TerraClient;
 use crate::types::ChainId;
 
@@ -43,6 +43,7 @@ struct PendingExecution {
 pub struct TerraWriter {
     #[allow(dead_code)]
     lcd_url: String,
+    #[allow(dead_code)]
     chain_id: String,
     contract_address: String,
     #[allow(dead_code)]
@@ -52,6 +53,7 @@ pub struct TerraWriter {
     /// Cancel window in seconds
     cancel_window: u64,
     /// Fee recipient for withdrawals
+    #[allow(dead_code)]
     fee_recipient: String,
     /// Pending approvals awaiting execution
     pending_executions: HashMap<[u8; 32], PendingExecution>,
@@ -363,12 +365,22 @@ impl TerraWriter {
             crate::hash::keccak256(deposit.token.as_bytes())
         };
 
-        // Compute withdraw hash using V2 algorithm (abi.encodePacked with 4-byte chain IDs)
-        let withdraw_hash = compute_withdraw_hash(
+        // Source account (EVM depositor) encoded as bytes32
+        let src_account: [u8; 32] = if let Some(ref sa) = deposit.src_account {
+            sa.clone().try_into().unwrap_or([0u8; 32])
+        } else {
+            // Fallback: zero account if src_account not yet available in DB
+            tracing::warn!("EvmDeposit missing src_account, using zero bytes");
+            [0u8; 32]
+        };
+
+        // Compute unified transfer hash using V2 format (7-field)
+        let withdraw_hash = compute_transfer_hash(
             src_chain_id.as_bytes(),
             self.this_chain_id.as_bytes(),
-            &dest_token,
+            &src_account,
             &dest_account,
+            &dest_token,
             amount,
             deposit.nonce as u64,
         );
@@ -449,7 +461,7 @@ impl TerraWriter {
                 Ok(addr) => {
                     tracing::debug!(
                         chain_type = chain_type,
-                        raw_hex = hex::encode(&raw_address),
+                        raw_hex = hex::encode(raw_address),
                         bech32 = %addr,
                         "Decoded V2 universal address to Terra address"
                     );

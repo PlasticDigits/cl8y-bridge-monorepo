@@ -23,7 +23,7 @@ use reqwest::Client;
 use std::str::FromStr;
 use tracing::{debug, info, warn};
 
-use crate::hash::{bytes32_to_hex, compute_withdraw_hash};
+use crate::hash::{bytes32_to_hex, compute_transfer_hash};
 
 // EVM bridge contract interface for deposit verification (V2)
 sol! {
@@ -50,8 +50,12 @@ pub struct PendingApproval {
     pub src_chain_id: [u8; 4],
     /// Destination chain ID (4 bytes)
     pub dest_chain_id: [u8; 4],
-    pub dest_token: [u8; 32],
+    /// Source account (depositor) encoded as bytes32
+    pub src_account: [u8; 32],
+    /// Destination account (recipient) encoded as bytes32
     pub dest_account: [u8; 32],
+    /// Token address on destination chain encoded as bytes32
+    pub dest_token: [u8; 32],
     pub amount: u128,
     pub nonce: u64,
     /// Timestamp when approval was created (for delay tracking)
@@ -117,7 +121,7 @@ impl ApprovalVerifier {
 
         // Convert native EVM chain ID to 4-byte format
         let evm_chain_id_bytes = (evm_chain_id as u32).to_be_bytes();
-        
+
         // Terra chain ID (default: 5 for localterra, 4 for columbus-5)
         let terra_chain_id_bytes = if _terra_chain_id == "localterra" {
             5u32.to_be_bytes()
@@ -139,11 +143,12 @@ impl ApprovalVerifier {
     /// Verify an approval against the source chain
     pub async fn verify(&self, approval: &PendingApproval) -> Result<VerificationResult> {
         // First, verify the hash is correctly computed from the approval parameters
-        let computed_hash = compute_withdraw_hash(
+        let computed_hash = compute_transfer_hash(
             &approval.src_chain_id,
             &approval.dest_chain_id,
-            &approval.dest_token,
+            &approval.src_account,
             &approval.dest_account,
+            &approval.dest_token,
             approval.amount,
             approval.nonce,
         );

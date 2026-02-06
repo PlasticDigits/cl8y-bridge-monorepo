@@ -396,7 +396,7 @@ fn bech32_polymod(values: &[u8]) -> u32 {
     let mut chk: u32 = 1;
     for &v in values {
         let top = chk >> 25;
-        chk = (chk & 0x01ff_ffff) << 5 ^ (v as u32);
+        chk = ((chk & 0x01ff_ffff) << 5) ^ (v as u32);
         for (i, gen) in GENERATOR.iter().enumerate() {
             if (top >> i) & 1 == 1 {
                 chk ^= gen;

@@ -11,7 +11,7 @@
 //! - Gas estimation helpers
 
 use alloy::{
-    network::{Ethereum, EthereumWallet, TransactionBuilder},
+    network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, FixedBytes, U256},
     providers::{Provider, ProviderBuilder, RootProvider},
     rpc::types::{TransactionReceipt, TransactionRequest},
@@ -39,7 +39,8 @@ pub struct EvmSigner {
     signer: PrivateKeySigner,
     /// Ethereum wallet wrapper
     wallet: EthereumWallet,
-    /// RPC URL
+    /// RPC URL (retained for reconnection)
+    #[allow(dead_code)]
     rpc_url: String,
     /// Chain ID
     chain_id: u64,
@@ -68,14 +69,12 @@ impl EvmSigner {
         let address = signer.address();
         let wallet = EthereumWallet::from(signer.clone());
 
-        let provider = ProviderBuilder::new()
-            .wallet(wallet.clone())
-            .on_http(
-                config
-                    .rpc_url
-                    .parse()
-                    .map_err(|e| eyre!("Invalid RPC URL: {}", e))?,
-            );
+        let provider = ProviderBuilder::new().wallet(wallet.clone()).on_http(
+            config
+                .rpc_url
+                .parse()
+                .map_err(|e| eyre!("Invalid RPC URL: {}", e))?,
+        );
 
         info!(
             address = %address,
@@ -105,6 +104,11 @@ impl EvmSigner {
     /// Get the signer's address
     pub fn address(&self) -> Address {
         self.address
+    }
+
+    /// Get the signer's address as a checksummed hex string
+    pub fn address_str(&self) -> String {
+        format!("{}", self.address)
     }
 
     /// Get the chain ID
@@ -198,10 +202,7 @@ impl EvmSigner {
     // =========================================================================
 
     /// Send a raw transaction and wait for receipt
-    pub async fn send_transaction(
-        &self,
-        tx: TransactionRequest,
-    ) -> Result<TransactionReceipt> {
+    pub async fn send_transaction(&self, tx: TransactionRequest) -> Result<TransactionReceipt> {
         let pending = self
             .provider
             .send_transaction(tx)
@@ -406,7 +407,8 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| eyre!("Transaction failed after {} retries", config.max_retries)))
+    Err(last_error
+        .unwrap_or_else(|| eyre!("Transaction failed after {} retries", config.max_retries)))
 }
 
 #[cfg(test)]
@@ -461,13 +463,6 @@ mod tests {
 
     #[test]
     fn test_calculate_bumped_gas_price() {
-        let config = EvmSignerConfig {
-            rpc_url: "http://localhost:8545".to_string(),
-            chain_id: 1,
-            private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                .to_string(),
-        };
-
         // Can't create signer without network, just test the calculation
         let base = 1_000_000_000u128;
         let bump_10 = base * 110 / 100;

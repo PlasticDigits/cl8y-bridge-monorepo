@@ -10,8 +10,15 @@ use eyre::{eyre, Result};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+use alloy::primitives::keccak256;
+
 use crate::evm::AnvilTimeClient;
 use crate::E2eConfig;
+
+/// Compute the 4-byte function selector from a Solidity function signature.
+fn selector(sig: &str) -> String {
+    hex::encode(&keccak256(sig.as_bytes())[..4])
+}
 
 /// Default timeout for polling operations (120 seconds)
 /// Increased to account for operator processing and block confirmation
@@ -326,8 +333,8 @@ pub async fn poll_for_withdrawal_ready(
 pub async fn skip_withdrawal_delay(config: &E2eConfig, extra_seconds: u64) -> Result<()> {
     let anvil = AnvilTimeClient::new(config.evm.rpc_url.as_str());
 
-    // Query the actual withdraw delay from contract
-    let delay = query_withdraw_delay_seconds(config)
+    // Query the actual cancel window from contract
+    let delay = query_cancel_window_seconds(config)
         .await
         .unwrap_or(DEFAULT_WITHDRAW_DELAY);
 
@@ -464,11 +471,10 @@ async fn is_withdrawal_ready(config: &E2eConfig, withdraw_hash: B256) -> Result<
     let client = reqwest::Client::new();
 
     // Query isWithdrawReady(bytes32) function
-    // Selector: keccak256("isWithdrawReady(bytes32)")[0:4]
-    let selector = "5b8c0a5d"; // Computed selector
+    let sel = selector("isWithdrawReady(bytes32)");
     let hash_hex = hex::encode(withdraw_hash);
 
-    let call_data = format!("0x{}{}", selector, hash_hex);
+    let call_data = format!("0x{}{}", sel, hash_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -495,12 +501,11 @@ async fn is_withdrawal_ready(config: &E2eConfig, withdraw_hash: B256) -> Result<
     Ok(bytes.last().copied().unwrap_or(0) != 0)
 }
 
-/// Query withdraw delay from bridge contract
-async fn query_withdraw_delay_seconds(config: &E2eConfig) -> Result<u64> {
+/// Query cancel window from bridge contract
+async fn query_cancel_window_seconds(config: &E2eConfig) -> Result<u64> {
     let client = reqwest::Client::new();
 
-    // withdrawDelay() selector
-    let call_data = "0xe7a48f3c";
+    let call_data = format!("0x{}", selector("getCancelWindow()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -577,9 +582,9 @@ pub async fn get_erc20_balance(
 ) -> Result<U256> {
     let client = reqwest::Client::new();
 
-    // balanceOf(address) selector: 0x70a08231
+    let sel = selector("balanceOf(address)");
     let account_padded = format!("{:0>64}", hex::encode(account.as_slice()));
-    let call_data = format!("0x70a08231{}", account_padded);
+    let call_data = format!("0x{}{}", sel, account_padded);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
