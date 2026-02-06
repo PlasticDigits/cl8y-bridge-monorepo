@@ -24,8 +24,9 @@ use tracing::{debug, info, warn};
 
 use super::operator_helpers::{
     approve_erc20, encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
-    poll_terra_for_approval, query_cancel_window, query_deposit_nonce, verify_token_setup,
-    DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT, WITHDRAWAL_EXECUTION_TIMEOUT,
+    poll_terra_for_approval, query_cancel_window, query_deposit_nonce, submit_withdraw_on_terra,
+    verify_token_setup, DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT,
+    WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
 // ============================================================================
@@ -231,8 +232,54 @@ pub async fn test_operator_live_deposit_detection(
         hex::encode(&deposit_tx.as_slice()[..8])
     );
 
-    // Step 10: Poll Terra for approval creation by operator
-    info!("Waiting for operator to create approval on Terra...");
+    // Step 10: Submit WithdrawSubmit on Terra (V2 user-initiated step)
+    //
+    // In V2, the user must call WithdrawSubmit on the destination chain (Terra)
+    // before the operator can approve it. This creates the entry in PENDING_WITHDRAWS.
+    let evm_chain_id: [u8; 4] = [0, 0, 0, 1]; // EVM predetermined chain ID
+
+    // Encode the EVM test account as a 32-byte source account
+    let mut src_account_bytes32 = [0u8; 32];
+    src_account_bytes32[12..32].copy_from_slice(test_account.as_slice());
+
+    info!(
+        "Submitting WithdrawSubmit on Terra: nonce={}, token=uluna, amount={}",
+        nonce_after, transfer_amount
+    );
+
+    match submit_withdraw_on_terra(
+        &terra_client,
+        &terra_bridge,
+        evm_chain_id,
+        src_account_bytes32,
+        "uluna",
+        terra_recipient,
+        transfer_amount,
+        nonce_after,
+    )
+    .await
+    {
+        Ok(tx_hash) => {
+            info!(
+                "WithdrawSubmit succeeded on Terra: tx={}, nonce={}",
+                tx_hash, nonce_after
+            );
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!(
+                    "WithdrawSubmit on Terra failed: {}. \
+                     Ensure the Terra bridge has uluna registered and the chain is configured.",
+                    e
+                ),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Step 11: Poll Terra for approval by operator
+    info!("Waiting for operator to approve withdrawal on Terra...");
 
     let approval_result = poll_terra_for_approval(
         &terra_client,

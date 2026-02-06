@@ -1368,3 +1368,160 @@ fn test_pending_withdrawals_fields_match_single_query() {
         single.cancel_window_remaining
     );
 }
+
+// ============================================================================
+// V2 Flow Regression Tests
+// ============================================================================
+
+/// Regression test: Verifies that `PendingWithdrawals` correctly tracks the
+/// `approved` status through the V2 flow (Submit → Approve).
+///
+/// This catches the bug where E2E tests polled `pending_withdrawals` after an
+/// EVM deposit but before `WithdrawSubmit` was called on Terra, resulting in
+/// an empty list and 180-second timeout.
+///
+/// The correct V2 flow is:
+/// 1. User calls `WithdrawSubmit` → entry appears with `approved: false`
+/// 2. Operator calls `WithdrawApprove` → entry changes to `approved: true`
+#[test]
+fn test_v2_flow_submit_creates_unapproved_then_approve_updates() {
+    let mut env = setup();
+
+    // Step 1: Submit a withdrawal (user-initiated)
+    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 500, 0);
+
+    // Step 2: Query pending_withdrawals - entry should exist but NOT be approved
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.withdrawals.len(),
+        1,
+        "Should have exactly 1 pending withdrawal after submit"
+    );
+
+    let entry = &result.withdrawals[0];
+    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert_eq!(entry.nonce, 500);
+    assert!(
+        !entry.approved,
+        "Entry should NOT be approved right after WithdrawSubmit"
+    );
+    assert_eq!(
+        entry.approved_at, 0,
+        "approved_at should be 0 before approval"
+    );
+    assert!(!entry.cancelled);
+    assert!(!entry.executed);
+    assert_eq!(
+        entry.cancel_window_remaining, 0,
+        "No cancel window before approval"
+    );
+
+    // Step 3: Operator approves the withdrawal
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Step 4: Query again - entry should now be approved
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(result.withdrawals.len(), 1);
+    let entry = &result.withdrawals[0];
+    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert!(
+        entry.approved,
+        "Entry should be approved after WithdrawApprove"
+    );
+    assert!(
+        entry.approved_at > 0,
+        "approved_at should be set after approval"
+    );
+    assert!(!entry.cancelled);
+    assert!(!entry.executed);
+    assert!(
+        entry.cancel_window_remaining > 0,
+        "Cancel window should be active after approval"
+    );
+}
+
+/// Regression test: Ensures that polling for an approved withdrawal correctly
+/// distinguishes between unapproved and approved entries.
+///
+/// Simulates the E2E test scenario where:
+/// - Multiple withdrawals are submitted (some approved, some not)
+/// - A poller looking for approved entries should correctly filter
+#[test]
+fn test_v2_flow_mixed_approved_and_unapproved() {
+    let mut env = setup();
+
+    // Submit 3 withdrawals
+    let hash1 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 600, 0);
+    let _hash2 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 601, 0);
+    let _hash3 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 602, 0);
+
+    // Approve only hash1
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: hash1.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Query all
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(result.withdrawals.len(), 3);
+
+    // Count approved vs unapproved
+    let approved_count = result.withdrawals.iter().filter(|w| w.approved).count();
+    let unapproved_count = result.withdrawals.iter().filter(|w| !w.approved).count();
+
+    assert_eq!(approved_count, 1, "Only 1 withdrawal should be approved");
+    assert_eq!(unapproved_count, 2, "2 withdrawals should be unapproved");
+
+    // The approved one should be nonce 600
+    let approved_entry = result.withdrawals.iter().find(|w| w.approved).unwrap();
+    assert_eq!(approved_entry.nonce, 600);
+    assert_eq!(approved_entry.withdraw_hash, hash1);
+}

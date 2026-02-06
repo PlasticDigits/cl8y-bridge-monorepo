@@ -398,6 +398,74 @@ async fn verify_tx_receipt(config: &E2eConfig, tx_hash: B256) -> Result<bool> {
 }
 
 // ============================================================================
+// Terra WithdrawSubmit Helper (V2 user-initiated step)
+// ============================================================================
+
+/// Submit a V2 WithdrawSubmit on Terra to create the pending withdrawal entry.
+///
+/// In the V2 flow, the **user** must call `WithdrawSubmit` on the destination chain
+/// (Terra) before the operator can approve it. This function simulates that step.
+///
+/// # Arguments
+/// * `terra_client` - Terra client for executing the transaction
+/// * `bridge_address` - Terra bridge contract address
+/// * `src_chain_id` - Source chain ID (4 bytes, e.g., `[0,0,0,1]` for EVM)
+/// * `src_account` - EVM depositor address encoded as bytes32
+/// * `token` - Terra-side token denom (e.g., "uluna")
+/// * `recipient` - Terra recipient address
+/// * `amount` - Amount in source chain decimals
+/// * `nonce` - Deposit nonce from the source chain
+pub async fn submit_withdraw_on_terra(
+    terra_client: &TerraClient,
+    bridge_address: &str,
+    src_chain_id: [u8; 4],
+    src_account: [u8; 32],
+    token: &str,
+    recipient: &str,
+    amount: u128,
+    nonce: u64,
+) -> Result<String> {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    let msg = serde_json::json!({
+        "withdraw_submit": {
+            "src_chain": encoder.encode(src_chain_id),
+            "src_account": encoder.encode(src_account),
+            "token": token,
+            "recipient": recipient,
+            "amount": amount.to_string(),
+            "nonce": nonce
+        }
+    });
+
+    info!(
+        nonce = nonce,
+        token = token,
+        recipient = recipient,
+        amount = amount,
+        src_chain = hex::encode(src_chain_id),
+        "Submitting WithdrawSubmit on Terra (V2 user step)"
+    );
+
+    let tx_hash = terra_client
+        .execute_contract(bridge_address, &msg, None)
+        .await
+        .map_err(|e| eyre::eyre!("WithdrawSubmit on Terra failed: {}", e))?;
+
+    info!(
+        nonce = nonce,
+        tx_hash = %tx_hash,
+        "WithdrawSubmit transaction submitted on Terra"
+    );
+
+    // Wait for confirmation
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    Ok(tx_hash)
+}
+
+// ============================================================================
 // Terra Approval Helpers
 // ============================================================================
 
@@ -418,7 +486,11 @@ pub struct TerraApprovalInfo {
     pub cancelled: bool,
 }
 
-/// Poll Terra bridge for a pending withdrawal matching the given nonce.
+/// Poll Terra bridge for an **approved** pending withdrawal matching the given nonce.
+///
+/// In the V2 flow, `WithdrawSubmit` creates the entry (with `approved: false`),
+/// and the operator later calls `WithdrawApprove` (setting `approved: true`).
+/// This function waits until the entry exists AND is approved.
 ///
 /// Uses the `pending_withdrawals` paginated list query to discover entries,
 /// then matches by nonce. Uses exponential backoff starting with fast polling
@@ -432,11 +504,12 @@ pub async fn poll_terra_for_approval(
     let start = Instant::now();
     let mut poll_interval = TERRA_POLL_INITIAL_INTERVAL;
     let mut attempt = 0;
+    let mut found_unapproved = false;
 
     info!(
         nonce = nonce,
         timeout_secs = timeout.as_secs(),
-        "Polling Terra for pending withdrawal (nonce match)"
+        "Polling Terra for approved withdrawal (nonce match)"
     );
 
     while start.elapsed() < timeout {
@@ -474,6 +547,25 @@ pub async fn poll_terra_for_approval(
                                 entry.get("nonce").and_then(|n| n.as_u64()).unwrap_or(0);
 
                             if entry_nonce == nonce {
+                                let is_approved = entry
+                                    .get("approved")
+                                    .and_then(|a| a.as_bool())
+                                    .unwrap_or(false);
+
+                                if !is_approved {
+                                    // Entry exists but not yet approved by operator
+                                    if !found_unapproved {
+                                        info!(
+                                            nonce = nonce,
+                                            attempt = attempt,
+                                            "Found unapproved withdrawal, waiting for operator approval..."
+                                        );
+                                        found_unapproved = true;
+                                    }
+                                    // Don't return yet - keep polling until approved
+                                    break; // break inner pagination loop, retry outer
+                                }
+
                                 let amount_str =
                                     entry.get("amount").and_then(|a| a.as_str()).unwrap_or("0");
                                 let amount =
@@ -483,7 +575,7 @@ pub async fn poll_terra_for_approval(
                                     nonce = nonce,
                                     attempt = attempt,
                                     elapsed_secs = start.elapsed().as_secs(),
-                                    "Found Terra pending withdrawal"
+                                    "Found approved Terra withdrawal"
                                 );
 
                                 return Ok(TerraApprovalInfo {
@@ -543,7 +635,8 @@ pub async fn poll_terra_for_approval(
                 nonce = nonce,
                 attempt = attempt,
                 elapsed_secs = start.elapsed().as_secs(),
-                "Still waiting for Terra pending withdrawal"
+                found_unapproved = found_unapproved,
+                "Still waiting for Terra approved withdrawal"
             );
         }
 
@@ -553,12 +646,23 @@ pub async fn poll_terra_for_approval(
         poll_interval = std::cmp::min(poll_interval * 2, TERRA_POLL_MAX_INTERVAL);
     }
 
-    Err(eyre::eyre!(
-        "Pending withdrawal for nonce {} not found within {:?} ({} attempts)",
-        nonce,
-        timeout,
-        attempt
-    ))
+    if found_unapproved {
+        Err(eyre::eyre!(
+            "Withdrawal for nonce {} was submitted but NOT approved by operator within {:?} ({} attempts). \
+             The operator may have failed to call WithdrawApprove.",
+            nonce,
+            timeout,
+            attempt
+        ))
+    } else {
+        Err(eyre::eyre!(
+            "Pending withdrawal for nonce {} not found within {:?} ({} attempts). \
+             Ensure WithdrawSubmit was called on Terra after the EVM deposit.",
+            nonce,
+            timeout,
+            attempt
+        ))
+    }
 }
 
 // ============================================================================
