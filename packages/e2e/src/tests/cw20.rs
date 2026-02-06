@@ -339,12 +339,19 @@ pub async fn test_cw20_lock_unlock_pattern(
         );
     }
 
-    // Step 2: Approve bridge to spend CW20 tokens (via send message)
-    // CW20 uses the "send" message which combines transfer and callback
+    // Step 2: Send CW20 tokens to bridge via CW20 send (combines transfer and callback)
+    // The bridge's ReceiveMsg::DepositCw20Lock expects:
+    //   dest_chain: Binary (base64-encoded 4-byte chain ID)
+    //   dest_account: Binary (base64-encoded recipient address bytes)
+    let evm_chain_id_bytes: [u8; 4] = 1u32.to_be_bytes(); // EVM predetermined chain ID = 1
+    let dest_chain_b64 = base64::engine::general_purpose::STANDARD.encode(evm_chain_id_bytes);
+    let evm_addr_bytes = hex::decode(&evm_recipient).unwrap_or_default();
+    let dest_account_b64 = base64::engine::general_purpose::STANDARD.encode(&evm_addr_bytes);
+
     let lock_inner_msg = serde_json::json!({
-        "lock": {
-            "dest_chain_id": config.evm.chain_id,
-            "recipient": evm_recipient
+        "deposit_cw20_lock": {
+            "dest_chain": dest_chain_b64,
+            "dest_account": dest_account_b64
         }
     });
     let lock_msg_bytes = serde_json::to_vec(&lock_inner_msg).unwrap_or_default();

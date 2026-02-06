@@ -11,8 +11,8 @@ use cosmwasm_std::{coins, Addr, Binary, Uint128};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
 use bridge::msg::{
-    ExecuteMsg, InstantiateMsg, LockedBalanceResponse, PendingWithdrawResponse, QueryMsg,
-    StatsResponse,
+    ExecuteMsg, InstantiateMsg, LockedBalanceResponse, PendingWithdrawResponse,
+    PendingWithdrawalsResponse, QueryMsg, StatsResponse,
 };
 
 // ============================================================================
@@ -1054,4 +1054,317 @@ fn test_cancel_window_countdown() {
         )
         .unwrap();
     assert_eq!(pending.cancel_window_remaining, 0);
+}
+
+// ============================================================================
+// PendingWithdrawals Pagination Tests
+// ============================================================================
+
+#[test]
+fn test_pending_withdrawals_empty() {
+    let env = setup();
+
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert!(result.withdrawals.is_empty());
+}
+
+#[test]
+fn test_pending_withdrawals_returns_all() {
+    let mut env = setup();
+
+    // Submit 3 withdrawals with different nonces
+    let hash1 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 100, 0);
+    let hash2 = submit_withdraw(&mut env, "uluna", 2_000_000_000_000_000_000, 101, 0);
+    let hash3 = submit_withdraw(&mut env, "uluna", 3_000_000_000_000_000_000, 102, 0);
+
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(result.withdrawals.len(), 3);
+
+    // Verify all hashes are present
+    let returned_hashes: Vec<Binary> = result
+        .withdrawals
+        .iter()
+        .map(|w| w.withdraw_hash.clone())
+        .collect();
+    assert!(returned_hashes.contains(&hash1));
+    assert!(returned_hashes.contains(&hash2));
+    assert!(returned_hashes.contains(&hash3));
+
+    // Verify nonces are present
+    let returned_nonces: Vec<u64> = result.withdrawals.iter().map(|w| w.nonce).collect();
+    assert!(returned_nonces.contains(&100));
+    assert!(returned_nonces.contains(&101));
+    assert!(returned_nonces.contains(&102));
+}
+
+#[test]
+fn test_pending_withdrawals_pagination_limit() {
+    let mut env = setup();
+
+    // Submit 5 withdrawals
+    for i in 200..205u64 {
+        submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, i, 0);
+    }
+
+    // Query with limit=2
+    let page1: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: Some(2),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(page1.withdrawals.len(), 2);
+
+    // Use the last hash as cursor for page 2
+    let cursor = page1.withdrawals.last().unwrap().withdraw_hash.clone();
+    let page2: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: Some(cursor.clone()),
+                limit: Some(2),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(page2.withdrawals.len(), 2);
+
+    // Page 3 should have 1 remaining
+    let cursor2 = page2.withdrawals.last().unwrap().withdraw_hash.clone();
+    let page3: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: Some(cursor2),
+                limit: Some(2),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(page3.withdrawals.len(), 1);
+
+    // Verify all 5 are unique
+    let mut all_hashes: Vec<Binary> = Vec::new();
+    for w in page1
+        .withdrawals
+        .iter()
+        .chain(page2.withdrawals.iter())
+        .chain(page3.withdrawals.iter())
+    {
+        assert!(
+            !all_hashes.contains(&w.withdraw_hash),
+            "Duplicate hash found"
+        );
+        all_hashes.push(w.withdraw_hash.clone());
+    }
+    assert_eq!(all_hashes.len(), 5);
+}
+
+#[test]
+fn test_pending_withdrawals_shows_approved_and_cancelled() {
+    let mut env = setup();
+
+    // Submit 3 withdrawals
+    let hash1 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 300, 0);
+    let _hash2 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 301, 0);
+    let hash3 = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 302, 0);
+
+    // Approve hash1
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: hash1.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Approve then cancel hash3
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: hash3.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    env.app
+        .execute_contract(
+            env.canceler.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawCancel {
+                withdraw_hash: hash3.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Query all
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(result.withdrawals.len(), 3);
+
+    // Find each by nonce and verify status
+    let w300 = result.withdrawals.iter().find(|w| w.nonce == 300).unwrap();
+    assert!(w300.approved, "nonce 300 should be approved");
+    assert!(!w300.cancelled, "nonce 300 should not be cancelled");
+    assert!(!w300.executed, "nonce 300 should not be executed");
+    assert!(
+        w300.cancel_window_remaining > 0,
+        "nonce 300 should have cancel window remaining"
+    );
+
+    let w301 = result.withdrawals.iter().find(|w| w.nonce == 301).unwrap();
+    assert!(!w301.approved, "nonce 301 should not be approved");
+    assert!(!w301.cancelled, "nonce 301 should not be cancelled");
+
+    let w302 = result.withdrawals.iter().find(|w| w.nonce == 302).unwrap();
+    assert!(w302.approved, "nonce 302 should be approved");
+    assert!(w302.cancelled, "nonce 302 should be cancelled");
+    assert_eq!(
+        w302.cancel_window_remaining, 0,
+        "cancelled entries should have 0 window remaining"
+    );
+}
+
+#[test]
+fn test_pending_withdrawals_max_limit_capped() {
+    let env = setup();
+
+    // Query with an absurdly high limit
+    let result: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: Some(9999),
+            },
+        )
+        .unwrap();
+
+    // Should succeed (just returns empty since no withdrawals)
+    assert!(result.withdrawals.is_empty());
+}
+
+#[test]
+fn test_pending_withdrawals_fields_match_single_query() {
+    let mut env = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut env,
+        "uluna",
+        1_000_000_000_000_000_000,
+        400,
+        500_000, // operator gas tip
+    );
+
+    // Approve it
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Query via single-item query
+    let single: PendingWithdrawResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdraw {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+        )
+        .unwrap();
+
+    // Query via list query
+    let list: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(list.withdrawals.len(), 1);
+    let entry = &list.withdrawals[0];
+
+    // Compare all fields
+    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert_eq!(entry.src_chain, single.src_chain);
+    assert_eq!(entry.src_account, single.src_account);
+    assert_eq!(entry.dest_account, single.dest_account);
+    assert_eq!(entry.token, single.token);
+    assert_eq!(entry.recipient, single.recipient);
+    assert_eq!(entry.amount, single.amount);
+    assert_eq!(entry.nonce, single.nonce);
+    assert_eq!(entry.src_decimals, single.src_decimals);
+    assert_eq!(entry.dest_decimals, single.dest_decimals);
+    assert_eq!(entry.operator_gas, single.operator_gas);
+    assert_eq!(entry.submitted_at, single.submitted_at);
+    assert_eq!(entry.approved_at, single.approved_at);
+    assert_eq!(entry.approved, single.approved);
+    assert_eq!(entry.cancelled, single.cancelled);
+    assert_eq!(entry.executed, single.executed);
+    assert_eq!(
+        entry.cancel_window_remaining,
+        single.cancel_window_remaining
+    );
 }

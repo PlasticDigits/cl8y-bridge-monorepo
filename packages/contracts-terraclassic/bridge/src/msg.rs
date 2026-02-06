@@ -406,6 +406,19 @@ pub enum QueryMsg {
     #[returns(PendingWithdrawResponse)]
     PendingWithdraw { withdraw_hash: Binary },
 
+    /// List pending withdrawals with cursor-based pagination
+    ///
+    /// Returns all pending withdrawal entries (regardless of status).
+    /// Operators use this to find unapproved submissions to approve.
+    /// Cancelers use this to find approved-but-not-executed entries to verify.
+    #[returns(PendingWithdrawalsResponse)]
+    PendingWithdrawals {
+        /// Cursor: the withdraw_hash of the last item from the previous page
+        start_after: Option<Binary>,
+        /// Max entries to return (default 10, max 30)
+        limit: Option<u32>,
+    },
+
     /// Compute withdraw hash without storing (for verification) - V1 legacy
     #[returns(ComputeHashResponse)]
     ComputeWithdrawHash {
@@ -667,6 +680,36 @@ impl Default for PendingWithdrawResponse {
             cancel_window_remaining: 0,
         }
     }
+}
+
+/// A single entry in the paginated pending withdrawals list
+#[cw_serde]
+pub struct PendingWithdrawalEntry {
+    /// The 32-byte withdraw hash (key in storage)
+    pub withdraw_hash: Binary,
+    pub src_chain: Binary,
+    pub src_account: Binary,
+    pub dest_account: Binary,
+    pub token: String,
+    pub recipient: Addr,
+    pub amount: Uint128,
+    pub nonce: u64,
+    pub src_decimals: u8,
+    pub dest_decimals: u8,
+    pub operator_gas: Uint128,
+    pub submitted_at: u64,
+    pub approved_at: u64,
+    pub approved: bool,
+    pub cancelled: bool,
+    pub executed: bool,
+    /// Seconds remaining in cancel window (0 if expired or not yet approved)
+    pub cancel_window_remaining: u64,
+}
+
+/// Response for the PendingWithdrawals paginated list query
+#[cw_serde]
+pub struct PendingWithdrawalsResponse {
+    pub withdrawals: Vec<PendingWithdrawalEntry>,
 }
 
 #[cw_serde]

@@ -418,10 +418,11 @@ pub struct TerraApprovalInfo {
     pub cancelled: bool,
 }
 
-/// Poll Terra bridge for approval creation
+/// Poll Terra bridge for a pending withdrawal matching the given nonce.
 ///
-/// Queries the Terra bridge contract for pending approvals matching the given nonce.
-/// Uses exponential backoff starting with fast polling and slowing down over time.
+/// Uses the `pending_withdrawals` paginated list query to discover entries,
+/// then matches by nonce. Uses exponential backoff starting with fast polling
+/// and slowing down over time.
 pub async fn poll_terra_for_approval(
     terra_client: &TerraClient,
     bridge_address: &str,
@@ -435,89 +436,115 @@ pub async fn poll_terra_for_approval(
     info!(
         nonce = nonce,
         timeout_secs = timeout.as_secs(),
-        "Polling Terra for approval creation"
+        "Polling Terra for pending withdrawal (nonce match)"
     );
 
     while start.elapsed() < timeout {
         attempt += 1;
 
-        // Query pending approvals from Terra bridge
-        let query = serde_json::json!({
-            "pending_approvals": {
-                "start_after": nonce.saturating_sub(1),
-                "limit": 10u32
-            }
-        });
+        // Paginate through all pending withdrawals looking for our nonce
+        let mut start_after: Option<String> = None;
+        let page_limit = 30u32;
 
-        match terra_client
-            .query_contract_cli::<serde_json::Value>(bridge_address, &query)
-            .await
-        {
-            Ok(result) => {
-                if let Some(approvals) = result.get("approvals").and_then(|a| a.as_array()) {
-                    for approval in approvals {
-                        let approval_nonce =
-                            approval.get("nonce").and_then(|n| n.as_u64()).unwrap_or(0);
+        loop {
+            let query = if let Some(ref cursor) = start_after {
+                serde_json::json!({
+                    "pending_withdrawals": {
+                        "start_after": cursor,
+                        "limit": page_limit
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "pending_withdrawals": {
+                        "limit": page_limit
+                    }
+                })
+            };
 
-                        if approval_nonce == nonce {
-                            let amount_str = approval
-                                .get("amount")
-                                .and_then(|a| a.as_str())
-                                .unwrap_or("0");
-                            let amount = U256::from_str_radix(amount_str, 10).unwrap_or(U256::ZERO);
+            match terra_client
+                .query_contract_cli::<serde_json::Value>(bridge_address, &query)
+                .await
+            {
+                Ok(result) => {
+                    if let Some(withdrawals) = result.get("withdrawals").and_then(|w| w.as_array())
+                    {
+                        for entry in withdrawals {
+                            let entry_nonce =
+                                entry.get("nonce").and_then(|n| n.as_u64()).unwrap_or(0);
 
-                            info!(
-                                nonce = nonce,
-                                attempt = attempt,
-                                elapsed_secs = start.elapsed().as_secs(),
-                                "Found Terra approval"
-                            );
+                            if entry_nonce == nonce {
+                                let amount_str =
+                                    entry.get("amount").and_then(|a| a.as_str()).unwrap_or("0");
+                                let amount =
+                                    U256::from_str_radix(amount_str, 10).unwrap_or(U256::ZERO);
 
-                            return Ok(TerraApprovalInfo {
-                                nonce,
-                                token: approval
-                                    .get("token")
-                                    .and_then(|t| t.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                recipient: approval
-                                    .get("recipient")
-                                    .and_then(|r| r.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                amount,
-                                approved_at: approval
-                                    .get("approved_at")
-                                    .and_then(|a| a.as_u64())
-                                    .unwrap_or(0),
-                                cancelled: approval
-                                    .get("cancelled")
-                                    .and_then(|c| c.as_bool())
-                                    .unwrap_or(false),
-                            });
+                                info!(
+                                    nonce = nonce,
+                                    attempt = attempt,
+                                    elapsed_secs = start.elapsed().as_secs(),
+                                    "Found Terra pending withdrawal"
+                                );
+
+                                return Ok(TerraApprovalInfo {
+                                    nonce,
+                                    token: entry
+                                        .get("token")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    recipient: entry
+                                        .get("recipient")
+                                        .and_then(|r| r.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    amount,
+                                    approved_at: entry
+                                        .get("approved_at")
+                                        .and_then(|a| a.as_u64())
+                                        .unwrap_or(0),
+                                    cancelled: entry
+                                        .get("cancelled")
+                                        .and_then(|c| c.as_bool())
+                                        .unwrap_or(false),
+                                });
+                            }
+                        }
+
+                        // If we got a full page, paginate to next page
+                        if withdrawals.len() == page_limit as usize {
+                            if let Some(last) = withdrawals.last() {
+                                start_after = last
+                                    .get("withdraw_hash")
+                                    .and_then(|h| h.as_str())
+                                    .map(|s| s.to_string());
+                                continue; // fetch next page
+                            }
                         }
                     }
-
-                    // Log progress periodically
-                    if attempt % 10 == 0 {
-                        debug!(
-                            nonce = nonce,
-                            attempt = attempt,
-                            elapsed_secs = start.elapsed().as_secs(),
-                            approvals_count = approvals.len(),
-                            "Still waiting for Terra approval"
-                        );
-                    }
+                }
+                Err(e) => {
+                    debug!(
+                        nonce = nonce,
+                        attempt = attempt,
+                        error = %e,
+                        "Terra query error (will retry)"
+                    );
                 }
             }
-            Err(e) => {
-                debug!(
-                    nonce = nonce,
-                    attempt = attempt,
-                    error = %e,
-                    "Terra query error (will retry)"
-                );
-            }
+
+            // No more pages to fetch for this attempt
+            break;
+        }
+
+        // Log progress periodically
+        if attempt % 10 == 0 {
+            debug!(
+                nonce = nonce,
+                attempt = attempt,
+                elapsed_secs = start.elapsed().as_secs(),
+                "Still waiting for Terra pending withdrawal"
+            );
         }
 
         tokio::time::sleep(poll_interval).await;
@@ -527,7 +554,7 @@ pub async fn poll_terra_for_approval(
     }
 
     Err(eyre::eyre!(
-        "Approval for nonce {} not found within {:?} ({} attempts)",
+        "Pending withdrawal for nonce {} not found within {:?} ({} attempts)",
         nonce,
         timeout,
         attempt

@@ -31,9 +31,10 @@ use crate::query::{
     query_compute_transfer_hash, query_compute_withdraw_hash, query_config, query_current_nonce,
     query_deposit_by_nonce, query_deposit_hash, query_fee_config, query_has_custom_fee,
     query_is_canceler, query_locked_balance, query_nonce_used, query_operators,
-    query_pending_admin, query_pending_withdraw, query_period_usage, query_rate_limit,
-    query_simulate_bridge, query_stats, query_status, query_token, query_token_dest_mapping,
-    query_token_type, query_tokens, query_transaction, query_verify_deposit, query_withdraw_delay,
+    query_pending_admin, query_pending_withdraw, query_pending_withdrawals, query_period_usage,
+    query_rate_limit, query_simulate_bridge, query_stats, query_status, query_token,
+    query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
+    query_verify_deposit, query_withdraw_delay,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -336,6 +337,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         // Withdrawal queries (V2)
         QueryMsg::PendingWithdraw { withdraw_hash } => {
             to_json_binary(&query_pending_withdraw(deps, env, withdraw_hash)?)
+        }
+        QueryMsg::PendingWithdrawals { start_after, limit } => {
+            to_json_binary(&query_pending_withdrawals(deps, env, start_after, limit)?)
         }
         QueryMsg::ComputeWithdrawHash {
             src_chain_key,

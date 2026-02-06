@@ -142,6 +142,18 @@ pub enum QueryMsg {
         withdraw_hash: String,
     },
 
+    /// V2: List pending withdrawals with cursor-based pagination
+    ///
+    /// Returns all pending withdrawal entries (regardless of status).
+    /// Operators use this to find unapproved submissions to approve.
+    /// Cancelers use this to find approved-but-not-executed entries to verify.
+    PendingWithdrawals {
+        /// Cursor: the withdraw_hash (base64) of the last item from the previous page
+        start_after: Option<String>,
+        /// Max entries to return (default 10, max 30)
+        limit: Option<u32>,
+    },
+
     /// Compute a withdraw hash from parameters (V1 - 32 byte chain keys)
     ComputeWithdrawHash {
         src_chain_key: String,
@@ -442,6 +454,51 @@ pub struct PendingWithdrawResponse {
     pub cancel_window_remaining: Option<u64>,
 }
 
+/// A single entry in the paginated pending withdrawals list (V2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingWithdrawalEntry {
+    /// The 32-byte withdraw hash as base64
+    pub withdraw_hash: String,
+    /// Source chain ID (4 bytes as base64)
+    pub src_chain: String,
+    /// Source account (32 bytes as base64)
+    pub src_account: String,
+    /// Destination account (32 bytes as base64)
+    pub dest_account: String,
+    /// Token denom or CW20 address
+    pub token: String,
+    /// Recipient address on this chain
+    pub recipient: String,
+    /// Amount to withdraw
+    pub amount: String,
+    /// Nonce from source chain
+    pub nonce: u64,
+    /// Source chain decimals
+    pub src_decimals: u8,
+    /// Destination chain decimals
+    pub dest_decimals: u8,
+    /// Operator gas cost
+    pub operator_gas: String,
+    /// Timestamp when submitted
+    pub submitted_at: u64,
+    /// Timestamp when approved (0 if not yet)
+    pub approved_at: u64,
+    /// Whether approved
+    pub approved: bool,
+    /// Whether cancelled
+    pub cancelled: bool,
+    /// Whether executed
+    pub executed: bool,
+    /// Seconds remaining in cancel window (0 if expired or not yet approved)
+    pub cancel_window_remaining: u64,
+}
+
+/// Response for the PendingWithdrawals paginated list query (V2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingWithdrawalsResponse {
+    pub withdrawals: Vec<PendingWithdrawalEntry>,
+}
+
 /// Response from ThisChainId query (V2)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThisChainIdResponse {
@@ -498,5 +555,13 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("pending_withdraw"));
+
+        let msg = QueryMsg::PendingWithdrawals {
+            start_after: None,
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("pending_withdrawals"));
+        assert!(json.contains("\"limit\":10"));
     }
 }

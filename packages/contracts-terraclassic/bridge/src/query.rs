@@ -16,9 +16,10 @@ use crate::msg::{
     ComputeHashResponse, ConfigResponse, DepositInfoResponse, FeeConfigResponse,
     HasCustomFeeResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
     NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse,
-    PeriodUsageResponse, RateLimitResponse, SimulationResponse, StatsResponse, StatusResponse,
-    TokenDestMappingResponse, TokenResponse, TokenTypeResponse, TokensResponse,
-    TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
+    PendingWithdrawalEntry, PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse,
+    SimulationResponse, StatsResponse, StatusResponse, TokenDestMappingResponse, TokenResponse,
+    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
+    WithdrawDelayResponse,
 };
 use crate::state::{
     CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
@@ -329,6 +330,63 @@ pub fn query_pending_withdraw(
         }
         None => Ok(PendingWithdrawResponse::default()),
     }
+}
+
+const DEFAULT_LIMIT: u32 = 10;
+const MAX_LIMIT: u32 = 30;
+
+/// List pending withdrawals with cursor-based pagination.
+///
+/// Returns all non-executed entries from `PENDING_WITHDRAWS`, ordered by hash.
+/// Operators use this to find unapproved submissions to approve.
+/// Cancelers use this to find approved-but-not-executed entries to verify.
+pub fn query_pending_withdrawals(
+    deps: Deps,
+    env: Env,
+    start_after: Option<Binary>,
+    limit: Option<u32>,
+) -> StdResult<PendingWithdrawalsResponse> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let start = start_after.as_ref().map(|b| Bound::exclusive(b.as_slice()));
+
+    let cancel_window = 300u64; // 5 minutes, matches withdraw.rs CANCEL_WINDOW
+
+    let withdrawals: Vec<PendingWithdrawalEntry> = PENDING_WITHDRAWS
+        .range(deps.storage, start, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let (hash, w) = item?;
+
+            let cancel_window_remaining = if w.approved && !w.cancelled {
+                let elapsed = env.block.time.seconds().saturating_sub(w.approved_at);
+                cancel_window.saturating_sub(elapsed)
+            } else {
+                0
+            };
+
+            Ok(PendingWithdrawalEntry {
+                withdraw_hash: Binary::from(hash),
+                src_chain: Binary::from(w.src_chain.to_vec()),
+                src_account: Binary::from(w.src_account.to_vec()),
+                dest_account: Binary::from(w.dest_account.to_vec()),
+                token: w.token,
+                recipient: w.recipient,
+                amount: w.amount,
+                nonce: w.nonce,
+                src_decimals: w.src_decimals,
+                dest_decimals: w.dest_decimals,
+                operator_gas: w.operator_gas,
+                submitted_at: w.submitted_at,
+                approved_at: w.approved_at,
+                approved: w.approved,
+                cancelled: w.cancelled,
+                executed: w.executed,
+                cancel_window_remaining,
+            })
+        })
+        .collect::<StdResult<_>>()?;
+
+    Ok(PendingWithdrawalsResponse { withdrawals })
 }
 
 /// Compute a withdraw hash from parameters (V1 legacy 6-field format).
