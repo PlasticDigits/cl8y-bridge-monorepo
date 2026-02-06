@@ -23,7 +23,8 @@ use tiny_keccak::{Hasher, Keccak};
 
 // Re-export address codec functions for convenience
 pub use crate::address_codec::{
-    decode_bech32_address, encode_bech32_address, encode_evm_address, parse_evm_address,
+    decode_bech32_address, decode_bech32_address_raw, encode_bech32_address, encode_evm_address,
+    parse_evm_address,
 };
 
 /// Compute keccak256 hash of data
@@ -165,15 +166,30 @@ pub fn bytes32_to_address(bytes: &[u8; 32]) -> [u8; 20] {
 
 /// Encode a Terra bech32 address to bytes32 for EVM contracts
 ///
-/// Decodes the bech32 to raw 20 bytes, then left-pads with zeros to 32 bytes.
+/// Supports both 20-byte wallet addresses and 32-byte contract (CW20) addresses.
+/// - 20-byte addresses are left-padded with zeros to 32 bytes.
+/// - 32-byte addresses are used directly.
+///
+/// This matches the Terra contract's `encode_terra_address` which uses
+/// `addr_canonicalize` and left-pads to 32 bytes.
 pub fn encode_terra_address_to_bytes32(addr: &str) -> Result<[u8; 32], String> {
-    let (raw_bytes, hrp) = decode_bech32_address(addr).map_err(|e| e.to_string())?;
+    let (raw_bytes, hrp) =
+        crate::address_codec::decode_bech32_address_raw(addr).map_err(|e| e.to_string())?;
 
     if hrp != "terra" {
         return Err(format!("Expected 'terra' prefix, got '{}'", hrp));
     }
 
-    Ok(address_to_bytes32(&raw_bytes))
+    let mut result = [0u8; 32];
+    if raw_bytes.len() == 32 {
+        result.copy_from_slice(&raw_bytes);
+    } else {
+        // Left-pad: 20-byte address goes in last 20 bytes
+        let start = 32 - raw_bytes.len();
+        result[start..].copy_from_slice(&raw_bytes);
+    }
+
+    Ok(result)
 }
 
 /// Decode bytes32 to a Terra bech32 address

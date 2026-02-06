@@ -287,6 +287,27 @@ pub fn decode_bech32_address(addr: &str) -> Result<([u8; 20], String)> {
     Ok((result, hrp))
 }
 
+/// Decode a bech32 address to raw bytes (variable length: 20 or 32 bytes)
+///
+/// Unlike [`decode_bech32_address`] which only accepts 20-byte addresses,
+/// this function supports both 20-byte (wallet) and 32-byte (contract) addresses.
+/// Returns (raw_bytes, hrp) where hrp is the human-readable prefix.
+pub fn decode_bech32_address_raw(addr: &str) -> Result<(Vec<u8>, String)> {
+    let (hrp, data, _variant) =
+        bech32::decode(addr).map_err(|e| eyre!("Invalid bech32 address: {}", e))?;
+
+    let bytes = Vec::<u8>::from_base32(&data).map_err(|e| eyre!("Invalid base32 data: {}", e))?;
+
+    if bytes.len() != 20 && bytes.len() != 32 {
+        return Err(eyre!(
+            "Invalid address length: expected 20 or 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+
+    Ok((bytes, hrp))
+}
+
 /// Encode raw 20 bytes to a bech32 address with given prefix
 pub fn encode_bech32_address(bytes: &[u8; 20], hrp: &str) -> Result<String> {
     let encoded = bech32::encode(hrp, bytes.to_base32(), Variant::Bech32)

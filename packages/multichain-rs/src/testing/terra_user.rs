@@ -299,15 +299,22 @@ impl TerraUser {
 // ============================================================================
 
 /// Convert Terra address to bytes32 (decode bech32, left-pad)
+///
+/// Supports both 20-byte wallet addresses and 32-byte contract addresses.
 pub fn terra_address_to_bytes32(address: &str) -> Result<[u8; 32]> {
-    let (raw, hrp) = crate::address_codec::decode_bech32_address(address)?;
+    let (raw, hrp) = crate::address_codec::decode_bech32_address_raw(address)?;
 
     if hrp != "terra" {
         return Err(eyre!("Expected 'terra' prefix, got '{}'", hrp));
     }
 
     let mut result = [0u8; 32];
-    result[12..].copy_from_slice(&raw);
+    if raw.len() == 32 {
+        result.copy_from_slice(&raw);
+    } else {
+        let start = 32 - raw.len();
+        result[start..].copy_from_slice(&raw);
+    }
     Ok(result)
 }
 
