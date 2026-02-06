@@ -17,10 +17,11 @@ help:
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
 	@echo "Building:"
-	@echo "  make build-evm      - Build EVM contracts"
-	@echo "  make build-terra    - Build Terra contracts"
-	@echo "  make build-operator - Build operator"
-	@echo "  make build          - Build all packages"
+	@echo "  make build-evm            - Build EVM contracts"
+	@echo "  make build-terra          - Build Terra contracts (cargo)"
+	@echo "  make build-terra-optimized - Build Terra WASM via Docker optimizer"
+	@echo "  make build-operator       - Build operator"
+	@echo "  make build                - Build all packages"
 	@echo ""
 	@echo "Formatting & Linting:"
 	@echo "  make fmt            - Format all packages (Rust + Solidity)"
@@ -42,7 +43,7 @@ help:
 	@echo "  make e2e-test-canceler  - Canceler fraud detection tests (bash)"
 	@echo ""
 	@echo "E2E Testing (Rust - Recommended):"
-	@echo "  make e2e-full-rust      - RECOMMENDED: Full atomic cycle (setup->test->teardown)"
+	@echo "  make e2e-full-rust      - RECOMMENDED: Build WASM + full atomic cycle (setup->test->teardown)"
 	@echo "  make e2e-full-quick     - Quick connectivity tests in full cycle"
 	@echo "  make e2e-setup-rust     - Start infrastructure only"
 	@echo "  make e2e-test-rust      - Run all E2E tests"
@@ -128,6 +129,25 @@ build-evm:
 
 build-terra:
 	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown
+
+build-terra-optimized:
+	@echo "Building optimized Terra WASM via Docker..."
+	docker run --rm -v "$$(pwd)/packages/contracts-terraclassic":/code \
+		--mount type=volume,source=cl8y_terra_cache,target=/target \
+		--mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
+		--entrypoint /bin/sh \
+		cosmwasm/workspace-optimizer:0.16.1 \
+		-c '\
+			set -e && \
+			echo "Rust: $$(rustc --version)" && \
+			cd /code && \
+			RUSTFLAGS="-C link-arg=-s" cargo build --release --lib --target wasm32-unknown-unknown --target-dir=/target --locked && \
+			mkdir -p artifacts && \
+			echo "Optimizing bridge.wasm ..." && \
+			wasm-opt -Os --signext-lowering /target/wasm32-unknown-unknown/release/bridge.wasm -o artifacts/bridge.wasm && \
+			cd artifacts && sha256sum -- *.wasm | tee checksums.txt \
+		'
+	@echo "✅ Optimized WASM written to packages/contracts-terraclassic/artifacts/"
 
 build-operator:
 	cd packages/operator && cargo build
@@ -345,7 +365,8 @@ e2e-status:
 	cd packages/e2e && cargo run --release -- status
 
 # Full E2E cycle: setup -> test -> teardown (atomic, teardown always runs)
-e2e-full-rust:
+# Builds optimized Terra WASM first so the latest contract code is deployed
+e2e-full-rust: build-terra-optimized
 	cd packages/e2e && cargo run --release -- full
 
 # Full E2E cycle with quick tests only (for faster CI)

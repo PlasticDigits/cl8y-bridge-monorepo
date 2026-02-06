@@ -411,7 +411,8 @@ impl TerraClient {
         info!("Storing WASM contract from: {}", wasm_path);
 
         // Submit transaction with broadcast-mode sync
-        // Use --fees instead of --gas-prices for Terra Classic compatibility
+        // Use --gas-prices instead of --fees so the fee scales with the gas estimate.
+        // WASM store transactions can require significant gas (5M+ for large contracts).
         let tx_output = self
             .exec_terrad(&[
                 "tx",
@@ -428,8 +429,8 @@ impl TerraClient {
                 "auto",
                 "--gas-adjustment",
                 "1.5",
-                "--fees",
-                "150000000uluna",
+                "--gas-prices",
+                "28.325uluna",
                 "--broadcast-mode",
                 "sync",
                 "-y",
@@ -439,6 +440,20 @@ impl TerraClient {
             .await?;
 
         debug!("Store code tx response: {}", tx_output.trim());
+
+        // Check for on-chain error (broadcast-mode sync returns code != 0 on failure)
+        if let Ok(tx_json) = serde_json::from_str::<serde_json::Value>(&tx_output) {
+            if let Some(code) = tx_json["code"].as_u64() {
+                if code != 0 {
+                    let raw_log = tx_json["raw_log"].as_str().unwrap_or("unknown error");
+                    return Err(eyre!(
+                        "Store code transaction failed (code {}): {}",
+                        code,
+                        raw_log
+                    ));
+                }
+            }
+        }
 
         // Wait for transaction to be included in a block
         // Terra Classic blocks are ~6 seconds, so wait longer for WASM store

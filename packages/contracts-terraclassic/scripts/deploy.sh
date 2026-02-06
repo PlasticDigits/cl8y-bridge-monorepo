@@ -193,14 +193,17 @@ main() {
     
     # Instantiate Bridge with initial configuration
     # Update these values for your deployment
+    # this_chain_id: base64-encoded 4-byte predetermined chain ID for this bridge instance
+    # Example: AAAAAQ== is [0,0,0,1] = chain ID 1
     BRIDGE_INIT="{
         \"admin\": \"$WALLET_ADDR\",
-        \"relayers\": [\"$WALLET_ADDR\"],
+        \"operators\": [\"$WALLET_ADDR\"],
         \"min_signatures\": 1,
         \"min_bridge_amount\": \"1000000\",
         \"max_bridge_amount\": \"1000000000000\",
         \"fee_bps\": 30,
-        \"fee_collector\": \"$WALLET_ADDR\"
+        \"fee_collector\": \"$WALLET_ADDR\",
+        \"this_chain_id\": \"AAAAAQ==\"
     }"
     # Remove whitespace for terrad
     BRIDGE_INIT=$(echo "$BRIDGE_INIT" | tr -d '\n' | tr -s ' ')

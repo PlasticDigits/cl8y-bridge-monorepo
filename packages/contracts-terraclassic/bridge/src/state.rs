@@ -260,8 +260,6 @@ pub const CHAINS: Map<&[u8], ChainConfig> = Map::new("chains_v2");
 /// Reverse lookup: identifier string → 4-byte chain ID
 pub const CHAIN_BY_IDENTIFIER: Map<&str, [u8; 4]> = Map::new("chain_by_ident");
 
-/// Deprecated: was auto-incrementing chain counter (removed in favor of predetermined chain IDs)
-
 /// Supported tokens configuration
 /// Key: token identifier, Value: TokenConfig
 pub const TOKENS: Map<String, TokenConfig> = Map::new("tokens");
