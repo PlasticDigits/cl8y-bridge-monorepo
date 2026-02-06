@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, FixedBytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::http::{Client, Http};
@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::contracts::evm_bridge::{Bridge, TokenRegistry};
 use crate::db::models::NewEvmDeposit;
 use crate::db::{get_last_evm_block, update_last_evm_block};
 use crate::types::ChainId;
@@ -27,6 +28,8 @@ use crate::types::ChainId;
 pub struct EvmWatcher {
     provider: RootProvider<Http<Client>>,
     bridge_address: Address,
+    /// TokenRegistry contract address (queried from Bridge on init)
+    token_registry_address: Address,
     chain_id: u64,
     /// This chain's 4-byte chain ID (V2)
     #[allow(dead_code)]
@@ -52,9 +55,25 @@ impl EvmWatcher {
         // Query this chain's ID from the contract if available, otherwise derive from chain_id
         let this_chain_id = ChainId::from_u32(config.this_chain_id.unwrap_or(1));
 
+        // Query TokenRegistry address from Bridge contract for dest token lookups
+        let bridge_contract = Bridge::new(bridge_address, &provider);
+        let token_registry_address = bridge_contract
+            .tokenRegistry()
+            .call()
+            .await
+            .map(|r| r._0)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to query TokenRegistry address from Bridge, dest token lookups will fail"
+                );
+                Address::ZERO
+            });
+
         tracing::info!(
             chain_id = config.chain_id,
             this_chain_id = %this_chain_id,
+            token_registry = %token_registry_address,
             use_v2_events = use_v2_events,
             "EVM watcher initialized"
         );
@@ -62,6 +81,7 @@ impl EvmWatcher {
         Ok(Self {
             provider,
             bridge_address,
+            token_registry_address,
             chain_id: config.chain_id,
             this_chain_id,
             finality_blocks: config.finality_blocks,
@@ -142,7 +162,7 @@ impl EvmWatcher {
 
             // Parse the deposit log based on version
             let parse_result = if self.use_v2_events {
-                self.parse_deposit_log_v2(&log)
+                self.parse_deposit_log_v2(&log).await
             } else {
                 self.parse_deposit_log(&log)
             };
@@ -266,7 +286,7 @@ impl EvmWatcher {
     ///     uint256 fee
     /// );
     /// ```
-    fn parse_deposit_log_v2(&self, log: &Log) -> Result<NewEvmDeposit> {
+    async fn parse_deposit_log_v2(&self, log: &Log) -> Result<NewEvmDeposit> {
         // Indexed topics (V2):
         // topics[0] = event signature
         // topics[1] = destChain (bytes4, left-padded to 32 bytes)
@@ -337,10 +357,38 @@ impl EvmWatcher {
         // fee: uint256 (for informational purposes)
         let _fee = U256::from_be_slice(&data[128..160]);
 
-        // Get dest token from token registry (would need contract query)
-        // For now, encode the source token address as dest token
-        let mut dest_token_address = [0u8; 32];
-        dest_token_address[12..32].copy_from_slice(token.as_slice());
+        // Query the actual dest token from the TokenRegistry contract
+        // This is critical for hash consistency: the EVM Bridge uses getDestToken(token, destChain)
+        // when computing the deposit hash, so we must use the same value.
+        let dest_token_address: [u8; 32] = if self.token_registry_address != Address::ZERO {
+            let token_registry = TokenRegistry::new(self.token_registry_address, &self.provider);
+            let dest_chain_bytes4: FixedBytes<4> = FixedBytes::from(dest_chain_id.0);
+            match token_registry
+                .getDestToken(token, dest_chain_bytes4)
+                .call()
+                .await
+            {
+                Ok(result) => result.destToken.into(),
+                Err(e) => {
+                    tracing::warn!(
+                        token = %token,
+                        dest_chain = %hex::encode(dest_chain_id.0),
+                        error = %e,
+                        "Failed to query getDestToken, falling back to keccak256 of source token"
+                    );
+                    // Fallback: use source token address left-padded (legacy behavior)
+                    let mut fallback = [0u8; 32];
+                    fallback[12..32].copy_from_slice(token.as_slice());
+                    fallback
+                }
+            }
+        } else {
+            // No TokenRegistry available - use source token address as fallback
+            tracing::warn!("TokenRegistry not available, using source token address as dest_token");
+            let mut fallback = [0u8; 32];
+            fallback[12..32].copy_from_slice(token.as_slice());
+            fallback
+        };
 
         let tx_hash = log
             .transaction_hash

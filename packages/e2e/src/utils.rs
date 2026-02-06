@@ -129,9 +129,9 @@ where
 
 /// Encode a Terra address (bech32) as bytes32 for EVM
 ///
-/// Terra addresses are encoded as bytes32 by copying the bytes and padding
-/// with zeros on the right. This is useful for encoding addresses in
-/// cross-chain messages.
+/// Uses the unified encoding from multichain-rs: bech32 decode → raw 20 bytes → left-pad to 32 bytes.
+/// This matches the Terra contract's `encode_terra_address(deps, &addr)` which uses
+/// `addr_canonicalize` → left-pad, ensuring consistent hash computation across chains.
 ///
 /// # Arguments
 /// * `address` - Terra address in bech32 format
@@ -144,39 +144,23 @@ where
 /// # Ok::<(), eyre::Error>(())
 /// ```
 pub fn encode_terra_address(address: &str) -> Result<B256> {
-    let bytes = address.as_bytes();
-    if bytes.len() > 32 {
-        eyre::bail!("Terra address too long: {} bytes", bytes.len());
-    }
-    let mut result = [0u8; 32];
-    result[..bytes.len()].copy_from_slice(bytes);
-    Ok(B256::from(result))
+    let raw = multichain_rs::hash::encode_terra_address_to_bytes32(address)
+        .map_err(|e| eyre::eyre!("Failed to encode Terra address: {}", e))?;
+    Ok(B256::from(raw))
 }
 
 /// Decode bytes32 back to Terra address
 ///
-/// Extracts the non-zero bytes from a bytes32 value and returns them as a
-/// string. This is the inverse operation of `encode_terra_address`.
+/// Uses the unified decoding from multichain-rs: extracts the left-padded 20-byte
+/// address from bytes32 and encodes it as a bech32 Terra address.
+/// This is the inverse of `encode_terra_address`.
 ///
 /// # Arguments
-/// * `bytes` - 32-byte representation of a Terra address
-///
-/// # Example
-/// ```no_run
-/// # use alloy::primitives::B256;
-/// # use crate::utils::decode_terra_address;
-/// let bytes = B256::from([116, 114, 97, 110, 97, 49, 120, 52, 54, 114, 113, 97, 121, 52, 100, 51, 99, 115, 115, 113, 56, 103, 120, 120, 118, 113, 122, 56, 120, 116, 54, 110, 119, 108, 122, 52, 116, 100, 50, 48, 107, 51, 56, 118, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-/// let addr = decode_terra_address(&bytes)?;
-/// # Ok::<(), eyre::Error>(())
-/// ```
+/// * `bytes` - 32-byte representation of a Terra address (left-padded)
 pub fn decode_terra_address(bytes: &B256) -> Result<String> {
-    let trimmed = bytes
-        .as_slice()
-        .iter()
-        .take_while(|&&b| b != 0)
-        .copied()
-        .collect::<Vec<_>>();
-    String::from_utf8(trimmed).map_err(|e| eyre::eyre!("Invalid UTF-8 in address: {}", e))
+    let raw: [u8; 32] = bytes.0;
+    multichain_rs::hash::decode_bytes32_to_terra_address(&raw)
+        .map_err(|e| eyre::eyre!("Failed to decode Terra address: {}", e))
 }
 
 /// Write environment variables to a .env file

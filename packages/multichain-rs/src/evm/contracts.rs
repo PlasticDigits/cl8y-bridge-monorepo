@@ -113,6 +113,12 @@ sol! {
         /// Check if address is a canceler
         function isCanceler(address account) external view returns (bool);
 
+        /// Get the TokenRegistry contract address
+        function tokenRegistry() external view returns (address);
+
+        /// Get the ChainRegistry contract address
+        function chainRegistry() external view returns (address);
+
         // ========================================================================
         // Events (V2)
         // ========================================================================

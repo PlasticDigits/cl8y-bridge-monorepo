@@ -384,13 +384,15 @@ pub(crate) async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 4]> {
     query_chain_id_by_identifier(config, &identifier).await
 }
 
-/// Encode Terra address as bytes32 (right-padded hex)
+/// Encode Terra address as bytes32 using bech32 decode + left-pad
+///
+/// Uses the unified encoding from multichain-rs to ensure hash consistency
+/// across EVM deposits, Terra WithdrawSubmit, and operator hash computation.
+/// The bech32 address is decoded to raw 20 bytes, then left-padded to 32 bytes.
 pub(crate) fn encode_terra_address(address: &str) -> [u8; 32] {
-    let mut result = [0u8; 32];
-    let addr_bytes = address.as_bytes();
-    let len = std::cmp::min(addr_bytes.len(), 32);
-    result[..len].copy_from_slice(&addr_bytes[..len]);
-    result
+    multichain_rs::hash::encode_terra_address_to_bytes32(address).unwrap_or_else(|e| {
+        panic!("Failed to encode Terra address '{}': {}", address, e);
+    })
 }
 
 /// Approve ERC20 token spend

@@ -189,13 +189,15 @@ pub async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 4]> {
     Ok(chain_id)
 }
 
-/// Encode Terra address as bytes32 (right-padded hex)
+/// Encode Terra address as bytes32 using bech32 decode + left-pad
+///
+/// Uses the unified encoding from multichain-rs to ensure hash consistency
+/// across EVM deposits, Terra WithdrawSubmit, and operator hash computation.
+/// The bech32 address is decoded to raw 20 bytes, then left-padded to 32 bytes.
 pub fn encode_terra_address(address: &str) -> [u8; 32] {
-    let mut result = [0u8; 32];
-    let addr_bytes = address.as_bytes();
-    let len = std::cmp::min(addr_bytes.len(), 32);
-    result[..len].copy_from_slice(&addr_bytes[..len]);
-    result
+    multichain_rs::hash::encode_terra_address_to_bytes32(address).unwrap_or_else(|e| {
+        panic!("Failed to encode Terra address '{}': {}", address, e);
+    })
 }
 
 /// Approve ERC20 token spend
@@ -980,8 +982,14 @@ mod tests {
     fn test_encode_terra_address() {
         let address = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
         let encoded = encode_terra_address(address);
-        // The function truncates to 32 bytes, so only first 32 chars are stored
-        assert_eq!(&encoded[..32], &address.as_bytes()[..32]);
+        // Should be bech32-decoded raw 20 bytes, left-padded to 32 bytes
+        // First 12 bytes should be zero-padding
+        assert_eq!(&encoded[..12], &[0u8; 12]);
+        // Last 20 bytes should be the raw address bytes (non-zero)
+        assert_ne!(&encoded[12..32], &[0u8; 20]);
+        // Same address should produce same encoding
+        let encoded2 = encode_terra_address(address);
+        assert_eq!(encoded, encoded2);
     }
 
     #[test]

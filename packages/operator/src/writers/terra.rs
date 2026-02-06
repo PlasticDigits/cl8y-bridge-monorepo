@@ -21,7 +21,7 @@ use crate::contracts::terra_bridge::{
     build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
 };
 use crate::db::{self, EvmDeposit, NewRelease};
-use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash, parse_evm_address};
+use crate::hash::{bytes32_to_hex, compute_transfer_hash};
 use crate::terra_client::TerraClient;
 use crate::types::ChainId;
 
@@ -354,16 +354,16 @@ impl TerraWriter {
             .parse()
             .map_err(|e| eyre!("Failed to parse amount: {}", e))?;
 
-        // Encode token address as bytes32 for V2 hash computation
-        let dest_token: [u8; 32] = if deposit.token.starts_with("0x") || deposit.token.len() == 40 {
-            // Parse EVM address string to bytes20, then pad to bytes32
-            let raw_addr = parse_evm_address(&deposit.token)
-                .map_err(|e| eyre!("Failed to parse token address: {}", e))?;
-            address_to_bytes32(&raw_addr)
-        } else {
-            // Native denom - use keccak256 of the denom string
-            crate::hash::keccak256(deposit.token.as_bytes())
-        };
+        // Use the dest_token_address from the DB (queried from EVM TokenRegistry during watch)
+        // This matches the destToken used in the EVM Bridge's deposit hash computation:
+        //   bytes32 destToken = tokenRegistry.getDestToken(token, destChain)
+        // Using the unified value ensures hash consistency across chains.
+        let dest_token: [u8; 32] = deposit.dest_token_address.clone().try_into().map_err(|_| {
+            eyre!(
+                "Invalid dest_token_address length: expected 32 bytes, got {}",
+                deposit.dest_token_address.len()
+            )
+        })?;
 
         // Source account (EVM depositor) encoded as bytes32
         let src_account: [u8; 32] = if let Some(ref sa) = deposit.src_account {

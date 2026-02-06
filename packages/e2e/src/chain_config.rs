@@ -779,24 +779,29 @@ async fn is_token_dest_chain_registered(
     Ok(dest_token != B256::ZERO)
 }
 
-/// Encode a Terra address (or native denom) as bytes32
+/// Encode a Terra token (native denom or CW20 address) as bytes32
 ///
-/// For short denoms (like "uluna"), encodes as left-padded bytes.
-/// For longer addresses (CW20 contract addresses), uses keccak256 hash
-/// since Terra bech32 addresses are too long to fit in 32 bytes.
+/// Uses the unified encoding from multichain-rs to match the Terra contract's
+/// `encode_token_address(deps, token)` function:
+/// - CW20 addresses (start with "terra1"): bech32 decode → 20 raw bytes → left-pad to 32 bytes
+///   (matches Terra's `addr_canonicalize → encode_terra_address`)
+/// - Native denoms (like "uluna"): `keccak256(denom_bytes)`
+///   (matches Terra's `keccak256(token.as_bytes())`)
+///
+/// This ensures the EVM TokenRegistry's `destToken` matches the hash computed
+/// during Terra's `WithdrawSubmit`, which is critical for cross-chain verification.
 pub fn encode_terra_token_address(token: &str) -> B256 {
-    use alloy::primitives::keccak256;
-
-    let token_bytes = token.as_bytes();
-
-    if token_bytes.len() <= 32 {
-        // Short denoms can be encoded directly
-        let mut bytes = [0u8; 32];
-        bytes[..token_bytes.len()].copy_from_slice(token_bytes);
-        B256::from_slice(&bytes)
+    if token.starts_with("terra1") {
+        // CW20 contract address - bech32 decode to raw 20 bytes, left-pad to 32
+        // Matches Terra contract's encode_token_address when addr_validate succeeds
+        let bytes32 = multichain_rs::hash::encode_terra_address_to_bytes32(token)
+            .unwrap_or_else(|e| panic!("Failed to encode CW20 address '{}': {}", token, e));
+        B256::from_slice(&bytes32)
     } else {
-        // Long addresses (CW20 contracts) are hashed to fit in 32 bytes
-        keccak256(token_bytes)
+        // Native denom - keccak256 of the denom string
+        // Matches Terra contract's encode_token_address for native tokens
+        let hash = multichain_rs::hash::keccak256(token.as_bytes());
+        B256::from_slice(&hash)
     }
 }
 
@@ -949,10 +954,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_terra_token_address() {
+    fn test_encode_terra_token_address_native_denom() {
         let uluna = encode_terra_token_address("uluna");
-        // "uluna" should be encoded as bytes
-        assert_eq!(&uluna.as_slice()[..5], b"uluna");
+        // Should be keccak256("uluna"), matching Terra contract's encode_token_address
+        let expected = multichain_rs::hash::keccak256(b"uluna");
+        assert_eq!(uluna.as_slice(), &expected);
+    }
+
+    #[test]
+    fn test_encode_terra_token_address_native_denoms() {
+        // Verify encoding matches multichain-rs keccak256 for native denoms
+        for denom in &[
+            "uluna",
+            "uusd",
+            "ibc/0EF15DF2F02480ADE0BB6E85D9EBB5DAEA2836D3860E9F97F9AADE4F57A31AA0",
+        ] {
+            let encoded = encode_terra_token_address(denom);
+            let expected = multichain_rs::hash::keccak256(denom.as_bytes());
+            assert_eq!(
+                encoded.as_slice(),
+                &expected,
+                "Token encoding mismatch for '{}'",
+                denom
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_terra_token_address_cw20() {
+        // CW20 addresses should be bech32-decoded and left-padded, matching
+        // Terra contract's encode_terra_address (canonicalize + left-pad)
+        let cw20 = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
+        let encoded = encode_terra_token_address(cw20);
+        let expected = multichain_rs::hash::encode_terra_address_to_bytes32(cw20).unwrap();
+        assert_eq!(encoded.as_slice(), &expected);
+        // First 12 bytes should be zero-padding
+        assert_eq!(&encoded.as_slice()[..12], &[0u8; 12]);
     }
 
     #[test]
