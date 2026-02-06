@@ -19,9 +19,9 @@ use crate::hash::{
     bytes32_to_hex, compute_transfer_hash, encode_terra_address, encode_token_address,
 };
 use crate::state::{
-    PendingWithdraw, RateLimitWindow, TokenType, CANCELERS, CONFIG, LOCKED_BALANCES, OPERATORS,
-    PENDING_WITHDRAWS, RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS,
-    WITHDRAW_NONCE_USED,
+    PendingWithdraw, RateLimitWindow, TokenType, CANCELERS, CHAINS, CONFIG, LOCKED_BALANCES,
+    OPERATORS, PENDING_WITHDRAWS, RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS,
+    THIS_CHAIN_ID, TOKENS, TOKEN_SRC_MAPPINGS, WITHDRAW_NONCE_USED,
 };
 
 /// Default cancel window: 5 minutes (matches EVM)
@@ -86,11 +86,34 @@ pub fn execute_withdraw_submit(
                 token: token.clone(),
             })?;
 
+    // Validate source chain is registered
+    CHAINS
+        .may_load(deps.storage, &src_chain_bytes)?
+        .ok_or(ContractError::ChainNotRegistered {
+            chain_id: format!("0x{}", hex::encode(src_chain_bytes)),
+        })?;
+
     // Compute destination chain (this chain)
     let dest_chain = THIS_CHAIN_ID.load(deps.storage)?;
 
     // Encode token for hash computation
     let token_bytes32 = encode_token_address(deps.as_ref(), &token)?;
+
+    // Validate incoming token mapping exists for this source chain
+    let src_chain_key = hex::encode(src_chain_bytes);
+    let src_token_key = hex::encode(token_bytes32);
+    let src_mapping = TOKEN_SRC_MAPPINGS
+        .may_load(deps.storage, (&src_chain_key, &src_token_key))?
+        .ok_or(ContractError::TokenNotMappedForChain {
+            chain_id: format!("0x{}", src_chain_key),
+            token: token.clone(),
+        })?;
+    if !src_mapping.enabled {
+        return Err(ContractError::TokenNotMappedForChain {
+            chain_id: format!("0x{}", src_chain_key),
+            token: token.clone(),
+        });
+    }
 
     // Compute withdraw hash (same hash format as the deposit on source chain)
     let withdraw_hash = compute_transfer_hash(
@@ -130,7 +153,7 @@ pub fn execute_withdraw_submit(
         recipient: recipient.clone(),
         amount,
         nonce,
-        src_decimals: token_config.evm_decimals,
+        src_decimals: src_mapping.src_decimals,
         dest_decimals: token_config.terra_decimals,
         operator_gas,
         submitted_at: env.block.time.seconds(),

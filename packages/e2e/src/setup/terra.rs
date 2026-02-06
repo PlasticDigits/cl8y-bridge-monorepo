@@ -165,6 +165,67 @@ impl E2eSetup {
             }
         }
 
+        // Wait for chain registration to be confirmed
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+        // Step 5: Add uluna token
+        let add_token_msg = serde_json::json!({
+            "add_token": {
+                "token": "uluna",
+                "is_native": true,
+                "token_type": "lock_unlock",
+                "evm_token_address": "0x0000000000000000000000000000000000000000",
+                "terra_decimals": 6,
+                "evm_decimals": 18
+            }
+        });
+
+        match terra
+            .execute_contract(&bridge_address, &add_token_msg, None)
+            .await
+        {
+            Ok(tx_hash) => {
+                info!("uluna token added to Terra bridge, tx: {}", tx_hash);
+            }
+            Err(e) => {
+                warn!("Failed to add uluna token (may already exist): {}", e);
+            }
+        }
+
+        // Wait for token addition to be confirmed
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+        // Step 6: Register incoming token mapping (EVM → Terra)
+        // Maps the EVM representation of uluna (keccak256("uluna")) back to local "uluna"
+        let src_token_bytes: [u8; 32] = {
+            use multichain_rs::hash::keccak256;
+            keccak256(b"uluna")
+        };
+        let src_token_b64 = base64::engine::general_purpose::STANDARD.encode(src_token_bytes);
+        let set_incoming_msg = serde_json::json!({
+            "set_incoming_token_mapping": {
+                "src_chain": evm_chain_id_b64,
+                "src_token": src_token_b64,
+                "local_token": "uluna",
+                "src_decimals": 18
+            }
+        });
+
+        match terra
+            .execute_contract(&bridge_address, &set_incoming_msg, None)
+            .await
+        {
+            Ok(tx_hash) => {
+                info!(
+                    "Incoming token mapping registered (EVM uluna → Terra uluna), tx: {}",
+                    tx_hash
+                );
+            }
+            Err(e) => {
+                warn!("Failed to register incoming token mapping: {}", e);
+            }
+        }
+
         info!("Terra bridge deployment complete: {}", bridge_address);
         Ok(Some(bridge_address))
     }

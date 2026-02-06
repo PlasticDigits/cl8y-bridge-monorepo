@@ -22,9 +22,9 @@ use cosmwasm_std::Binary;
 
 use crate::hash::{hex_to_bytes32, keccak256};
 use crate::state::{
-    ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenType, CANCELERS, CHAINS,
-    CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
-    TOKEN_DEST_MAPPINGS, WITHDRAW_DELAY,
+    ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenSrcMapping, TokenType,
+    CANCELERS, CHAINS, CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
+    TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -427,6 +427,116 @@ pub fn execute_set_token_destination(
         .add_attribute("dest_chain", format!("0x{}", dest_chain_key))
         .add_attribute("dest_token", dest_token)
         .add_attribute("dest_decimals", dest_decimals.to_string()))
+}
+
+// ============================================================================
+// Incoming Token Mappings
+// ============================================================================
+
+/// Set an incoming token mapping (source chain token → local token).
+///
+/// This is the reverse of `SetTokenDestination`: given a source chain and
+/// the token representation on that chain, map it to a local Terra denom.
+/// Used by `WithdrawSubmit` to validate the incoming token is registered.
+pub fn execute_set_incoming_token_mapping(
+    deps: DepsMut,
+    info: MessageInfo,
+    src_chain: Binary,
+    src_token: Binary,
+    local_token: String,
+    src_decimals: u8,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    // Validate src_chain is exactly 4 bytes
+    if src_chain.len() != 4 {
+        return Err(ContractError::InvalidHashLength {
+            got: src_chain.len(),
+        });
+    }
+    let src_chain_bytes: [u8; 4] = [src_chain[0], src_chain[1], src_chain[2], src_chain[3]];
+
+    // Validate source chain is registered
+    CHAINS
+        .may_load(deps.storage, &src_chain_bytes)?
+        .ok_or(ContractError::InvalidAddress {
+            reason: format!(
+                "Source chain 0x{} not registered",
+                hex::encode(src_chain_bytes)
+            ),
+        })?;
+
+    // Validate src_token is exactly 32 bytes
+    if src_token.len() != 32 {
+        return Err(ContractError::InvalidHashLength {
+            got: src_token.len(),
+        });
+    }
+
+    // Validate local_token exists in TOKENS
+    TOKENS.may_load(deps.storage, local_token.clone())?.ok_or(
+        ContractError::TokenNotSupported {
+            token: local_token.clone(),
+        },
+    )?;
+
+    let src_chain_key = hex::encode(src_chain_bytes);
+    let src_token_key = hex::encode(src_token.as_slice());
+
+    let mapping = TokenSrcMapping {
+        local_token: local_token.clone(),
+        src_decimals,
+        enabled: true,
+    };
+
+    TOKEN_SRC_MAPPINGS.save(deps.storage, (&src_chain_key, &src_token_key), &mapping)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_incoming_token_mapping")
+        .add_attribute("src_chain", format!("0x{}", src_chain_key))
+        .add_attribute("src_token", format!("0x{}", src_token_key))
+        .add_attribute("local_token", local_token)
+        .add_attribute("src_decimals", src_decimals.to_string()))
+}
+
+/// Remove an incoming token mapping.
+pub fn execute_remove_incoming_token_mapping(
+    deps: DepsMut,
+    info: MessageInfo,
+    src_chain: Binary,
+    src_token: Binary,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    // Validate src_chain is exactly 4 bytes
+    if src_chain.len() != 4 {
+        return Err(ContractError::InvalidHashLength {
+            got: src_chain.len(),
+        });
+    }
+
+    // Validate src_token is exactly 32 bytes
+    if src_token.len() != 32 {
+        return Err(ContractError::InvalidHashLength {
+            got: src_token.len(),
+        });
+    }
+
+    let src_chain_key = hex::encode(&src_chain[..4]);
+    let src_token_key = hex::encode(src_token.as_slice());
+
+    TOKEN_SRC_MAPPINGS.remove(deps.storage, (&src_chain_key, &src_token_key));
+
+    Ok(Response::new()
+        .add_attribute("action", "remove_incoming_token_mapping")
+        .add_attribute("src_chain", format!("0x{}", src_chain_key))
+        .add_attribute("src_token", format!("0x{}", src_token_key)))
 }
 
 // ============================================================================

@@ -220,13 +220,23 @@ pub fn decode_terra_address(deps: Deps, bytes: &[u8; 32]) -> StdResult<Addr> {
     deps.api.addr_humanize(&canonical)
 }
 
+/// Minimum length for a valid bech32 contract address.
+///
+/// Real Terra/Cosmos addresses are bech32-encoded and at least 44 characters
+/// (e.g. "terra1..."). Native denoms like "uluna", "uusd" are much shorter.
+/// We use this threshold to distinguish CW20 contract addresses from native denoms,
+/// which avoids relying on `addr_validate` (which accepts any string in mock tests).
+const MIN_CW20_ADDRESS_LENGTH: usize = 20;
+
 /// Encode a token denom/address as 32 bytes
 ///
-/// For native denoms: Returns keccak256 hash of the denom string
-/// For CW20: Canonicalizes the address and left-pads to 32 bytes
+/// For native denoms (short strings): Returns keccak256 hash of the denom string
+/// For CW20 addresses (long strings): Canonicalizes the address and left-pads to 32 bytes
 pub fn encode_token_address(deps: Deps, token: &str) -> StdResult<[u8; 32]> {
-    // Try to validate as address first
-    if let Ok(addr) = deps.api.addr_validate(token) {
+    // Native denoms are short strings (e.g. "uluna", "uusd", "ibc/...").
+    // CW20 contract addresses are bech32-encoded and always 44+ characters.
+    if token.len() >= MIN_CW20_ADDRESS_LENGTH && deps.api.addr_validate(token).is_ok() {
+        let addr = deps.api.addr_validate(token)?;
         encode_terra_address(deps, &addr)
     } else {
         // Native denom - hash the string

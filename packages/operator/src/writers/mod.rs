@@ -43,7 +43,7 @@ impl WriterManager {
     /// Create a new writer manager
     pub async fn new(config: &crate::config::Config, db: PgPool) -> Result<Self> {
         let evm_writer = EvmWriter::new(&config.evm, &config.fees, db.clone()).await?;
-        let terra_writer = TerraWriter::new(&config.terra, db).await?;
+        let terra_writer = TerraWriter::new(&config.terra, &config.evm, db).await?;
 
         Ok(Self {
             evm_writer,

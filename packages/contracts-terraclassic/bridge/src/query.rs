@@ -14,18 +14,18 @@ use crate::hash::compute_transfer_id;
 use crate::msg::{
     AccountFeeResponse, CalculateFeeResponse, CancelersResponse, ChainResponse, ChainsResponse,
     ComputeHashResponse, ConfigResponse, DepositInfoResponse, FeeConfigResponse,
-    HasCustomFeeResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
-    NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse,
-    PendingWithdrawalEntry, PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse,
-    SimulationResponse, StatsResponse, StatusResponse, TokenDestMappingResponse, TokenResponse,
-    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
-    WithdrawDelayResponse,
+    HasCustomFeeResponse, IncomingTokenMappingResponse, IncomingTokenMappingsResponse,
+    IsCancelerResponse, LockedBalanceResponse, NonceResponse, NonceUsedResponse, OperatorsResponse,
+    PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
+    PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse, SimulationResponse,
+    StatsResponse, StatusResponse, TokenDestMappingResponse, TokenResponse, TokenTypeResponse,
+    TokensResponse, TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
 };
 use crate::state::{
     CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
     OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS, RATE_LIMITS,
-    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, TOKENS, TOKEN_DEST_MAPPINGS, TRANSACTIONS, USED_NONCES,
-    WITHDRAW_DELAY,
+    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, TOKENS, TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS,
+    TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -765,4 +765,79 @@ pub fn query_token_dest_mapping(
         dest_token: Binary::from(m.dest_token.to_vec()),
         dest_decimals: m.dest_decimals,
     }))
+}
+
+// ============================================================================
+// Incoming Token Registry Queries
+// ============================================================================
+
+/// Query a single incoming token mapping by source chain and token.
+pub fn query_incoming_token_mapping(
+    deps: Deps,
+    src_chain: Binary,
+    src_token: Binary,
+) -> StdResult<Option<IncomingTokenMappingResponse>> {
+    if src_chain.len() != 4 {
+        return Err(StdError::generic_err("src_chain must be 4 bytes"));
+    }
+    if src_token.len() != 32 {
+        return Err(StdError::generic_err("src_token must be 32 bytes"));
+    }
+
+    let src_chain_key = hex::encode(&src_chain);
+    let src_token_key = hex::encode(&src_token);
+
+    let mapping = TOKEN_SRC_MAPPINGS.may_load(deps.storage, (&src_chain_key, &src_token_key))?;
+
+    Ok(mapping.map(|m| IncomingTokenMappingResponse {
+        src_chain,
+        src_token,
+        local_token: m.local_token,
+        src_decimals: m.src_decimals,
+        enabled: m.enabled,
+    }))
+}
+
+/// List all incoming token mappings (paginated).
+///
+/// Pagination cursor uses a composite key: "src_chain_hex:src_token_hex"
+pub fn query_incoming_token_mappings(
+    deps: Deps,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<IncomingTokenMappingsResponse> {
+    let limit = limit.unwrap_or(30).min(100) as usize;
+
+    // Parse cursor into owned strings for the bound
+    let start_pair: Option<(String, String)> = start_after.and_then(|cursor| {
+        let parts: Vec<&str> = cursor.split(':').collect();
+        if parts.len() == 2 {
+            Some((parts[0].to_string(), parts[1].to_string()))
+        } else {
+            None
+        }
+    });
+
+    let min_bound: Option<Bound<(&str, &str)>> = start_pair
+        .as_ref()
+        .map(|(c, t)| Bound::exclusive((c.as_str(), t.as_str())));
+
+    let mappings: Vec<IncomingTokenMappingResponse> = TOKEN_SRC_MAPPINGS
+        .range(deps.storage, min_bound, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let ((chain_hex, token_hex), mapping) = item?;
+            let chain_bytes = hex::decode(&chain_hex).unwrap_or_default();
+            let token_bytes = hex::decode(&token_hex).unwrap_or_default();
+            Ok(IncomingTokenMappingResponse {
+                src_chain: Binary::from(chain_bytes),
+                src_token: Binary::from(token_bytes),
+                local_token: mapping.local_token,
+                src_decimals: mapping.src_decimals,
+                enabled: mapping.enabled,
+            })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(IncomingTokenMappingsResponse { mappings })
 }

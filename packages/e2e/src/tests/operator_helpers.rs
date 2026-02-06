@@ -122,6 +122,46 @@ pub async fn query_deposit_nonce(config: &E2eConfig) -> Result<u64> {
     Ok(nonce)
 }
 
+/// Query the EVM Bridge's `calculateFee(address depositor, uint256 amount)` view function.
+///
+/// Returns the fee amount that will be deducted from a deposit of `amount` by `depositor`.
+/// The net amount deposited (and stored in the hash) is `amount - fee`.
+pub async fn calculate_evm_fee(
+    config: &E2eConfig,
+    depositor: Address,
+    amount: u128,
+) -> Result<u128> {
+    let client = reqwest::Client::new();
+
+    // calculateFee(address,uint256)
+    let sel = selector("calculateFee(address,uint256)");
+    let depositor_padded = format!("{:0>64}", hex::encode(depositor.as_slice()));
+    let amount_padded = format!("{:064x}", amount);
+    let call_data = format!("0x{}{}{}", sel, depositor_padded, amount_padded);
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+    let hex_result = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result from calculateFee"))?;
+
+    let fee = u128::from_str_radix(hex_result.trim_start_matches("0x"), 16)?;
+    Ok(fee)
+}
+
 /// Get Terra chain ID (bytes4) from ChainRegistry using identifier "terraclassic_{chain_id}"
 ///
 /// Uses computeIdentifierHash + getChainIdFromHash to look up the bytes4 chain ID.

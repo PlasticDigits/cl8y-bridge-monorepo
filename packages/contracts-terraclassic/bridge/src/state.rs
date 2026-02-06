@@ -329,7 +329,26 @@ pub const RATE_LIMITS: Map<&str, RateLimitConfig> = Map::new("rate_limits");
 /// Key: token identifier, Value: RateLimitWindow
 pub const RATE_WINDOWS: Map<&str, RateLimitWindow> = Map::new("rate_windows");
 
-/// Token destination chain mappings
-/// Key: (token_identifier, dest_chain_id as string), Value: TokenDestMapping
+/// Token destination chain mappings (outgoing: local token → dest chain)
+/// Key: (token_identifier, dest_chain_id_hex), Value: TokenDestMapping
 pub const TOKEN_DEST_MAPPINGS: Map<(&str, &str), TokenDestMapping> =
     Map::new("token_dest_mappings");
+
+/// Incoming token mappings (incoming: source chain token → local token)
+/// Key: (src_chain_id_hex, src_token_bytes32_hex), Value: TokenSrcMapping
+///
+/// This mirrors the EVM TokenRegistry's getDestToken but in reverse:
+/// given a source chain and token representation, look up the local Terra denom.
+/// Used by WithdrawSubmit to validate the incoming token is registered.
+pub const TOKEN_SRC_MAPPINGS: Map<(&str, &str), TokenSrcMapping> = Map::new("token_src_mappings");
+
+/// Source chain token mapping to local Terra token
+#[cw_serde]
+pub struct TokenSrcMapping {
+    /// Local token identifier (e.g., "uluna")
+    pub local_token: String,
+    /// Token decimals on the source chain
+    pub src_decimals: u8,
+    /// Whether this mapping is enabled
+    pub enabled: bool,
+}

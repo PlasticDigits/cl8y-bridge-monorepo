@@ -129,6 +129,23 @@ fn setup() -> TestEnv {
     )
     .unwrap();
 
+    // Register incoming token mapping (BSC → uluna)
+    // Native denoms are keccak256-hashed (encode_token_address uses string length
+    // to distinguish native denoms from CW20 addresses)
+    let src_token_bytes = bridge::hash::keccak256(b"uluna");
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetIncomingTokenMapping {
+            src_chain: Binary::from(vec![0, 0, 0, 2]),
+            src_token: Binary::from(src_token_bytes.to_vec()),
+            local_token: "uluna".to_string(),
+            src_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
     TestEnv {
         app,
         contract_addr,
@@ -140,7 +157,8 @@ fn setup() -> TestEnv {
 }
 
 fn create_src_chain() -> Binary {
-    Binary::from(56u32.to_be_bytes().to_vec())
+    // Must match the chain ID registered in setup() for BSC
+    Binary::from(vec![0, 0, 0, 2])
 }
 
 fn create_src_account() -> Binary {
@@ -905,6 +923,22 @@ fn test_execute_unlock_wrong_token_type_rejected() {
                         .to_string(),
                 terra_decimals: 6,
                 evm_decimals: 18,
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Register incoming token mapping for mintable_token
+    let mintable_src_token = bridge::hash::keccak256(b"mintable_token");
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::SetIncomingTokenMapping {
+                src_chain: create_src_chain(),
+                src_token: Binary::from(mintable_src_token.to_vec()),
+                local_token: "mintable_token".to_string(),
+                src_decimals: 18,
             },
             &[],
         )

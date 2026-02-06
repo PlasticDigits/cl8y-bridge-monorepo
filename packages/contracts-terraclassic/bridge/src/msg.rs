@@ -227,7 +227,7 @@ pub enum ExecuteMsg {
         token_type: Option<String>,
     },
 
-    /// Set destination chain token mapping
+    /// Set destination chain token mapping (outgoing: local token → dest chain)
     SetTokenDestination {
         /// Local token identifier
         token: String,
@@ -237,6 +237,29 @@ pub enum ExecuteMsg {
         dest_token: String,
         /// Destination token decimals
         dest_decimals: u8,
+    },
+
+    /// Set incoming token mapping (incoming: source chain token → local token)
+    ///
+    /// Registers a mapping so the contract can validate during WithdrawSubmit
+    /// that the specified token is expected from the given source chain.
+    SetIncomingTokenMapping {
+        /// Source chain ID (4 bytes)
+        src_chain: Binary,
+        /// Token bytes32 on the source chain (32 bytes)
+        src_token: Binary,
+        /// Local Terra token denom (e.g., "uluna")
+        local_token: String,
+        /// Token decimals on the source chain
+        src_decimals: u8,
+    },
+
+    /// Remove an incoming token mapping
+    RemoveIncomingTokenMapping {
+        /// Source chain ID (4 bytes)
+        src_chain: Binary,
+        /// Token bytes32 on the source chain (32 bytes)
+        src_token: Binary,
     },
 
     // ========================================================================
@@ -520,9 +543,26 @@ pub enum QueryMsg {
     #[returns(TokenTypeResponse)]
     TokenType { token: String },
 
-    /// Get token destination mapping
+    /// Get token destination mapping (outgoing)
     #[returns(Option<TokenDestMappingResponse>)]
     TokenDestMapping { token: String, dest_chain: Binary },
+
+    /// Get incoming token mapping (source chain token → local token)
+    #[returns(Option<IncomingTokenMappingResponse>)]
+    IncomingTokenMapping {
+        /// Source chain ID (4 bytes)
+        src_chain: Binary,
+        /// Token bytes32 on the source chain (32 bytes)
+        src_token: Binary,
+    },
+
+    /// List all incoming token mappings (paginated)
+    #[returns(IncomingTokenMappingsResponse)]
+    IncomingTokenMappings {
+        /// Pagination cursor: hex-encoded composite key "src_chain_hex:src_token_hex"
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
 }
 
 // ============================================================================
@@ -828,4 +868,23 @@ pub struct TokenDestMappingResponse {
     pub dest_chain: Binary,
     pub dest_token: Binary,
     pub dest_decimals: u8,
+}
+
+#[cw_serde]
+pub struct IncomingTokenMappingResponse {
+    /// Source chain ID (4 bytes)
+    pub src_chain: Binary,
+    /// Source token bytes32 (32 bytes)
+    pub src_token: Binary,
+    /// Local Terra denom
+    pub local_token: String,
+    /// Token decimals on the source chain
+    pub src_decimals: u8,
+    /// Whether this mapping is enabled
+    pub enabled: bool,
+}
+
+#[cw_serde]
+pub struct IncomingTokenMappingsResponse {
+    pub mappings: Vec<IncomingTokenMappingResponse>,
 }

@@ -111,6 +111,26 @@ pub enum ExecuteMsgV2 {
         /// The withdraw hash (32 bytes as base64)
         withdraw_hash: String,
     },
+
+    /// Set incoming token mapping (source chain token → local token)
+    SetIncomingTokenMapping {
+        /// Source chain ID (4 bytes as base64)
+        src_chain: String,
+        /// Token bytes32 on the source chain (32 bytes as base64)
+        src_token: String,
+        /// Local Terra denom (e.g., "uluna")
+        local_token: String,
+        /// Token decimals on the source chain
+        src_decimals: u8,
+    },
+
+    /// Remove an incoming token mapping
+    RemoveIncomingTokenMapping {
+        /// Source chain ID (4 bytes as base64)
+        src_chain: String,
+        /// Token bytes32 on the source chain (32 bytes as base64)
+        src_token: String,
+    },
 }
 
 // ============================================================================
@@ -206,6 +226,22 @@ pub enum QueryMsg {
 
     /// V2: Check if an address is a canceler
     IsCanceler { address: String },
+
+    /// Get incoming token mapping (source chain token → local token)
+    IncomingTokenMapping {
+        /// Source chain ID (4 bytes as base64)
+        src_chain: String,
+        /// Token bytes32 on source chain (32 bytes as base64)
+        src_token: String,
+    },
+
+    /// List all incoming token mappings (paginated)
+    IncomingTokenMappings {
+        /// Pagination cursor: "src_chain_hex:src_token_hex"
+        start_after: Option<String>,
+        /// Max entries to return (default 30, max 100)
+        limit: Option<u32>,
+    },
 }
 
 // ============================================================================
@@ -516,6 +552,67 @@ pub struct IsOperatorResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IsCancelerResponse {
     pub is_canceler: bool,
+}
+
+/// Response for a single incoming token mapping query
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomingTokenMappingResponse {
+    /// Source chain ID (4 bytes as base64)
+    pub src_chain: String,
+    /// Source token bytes32 (32 bytes as base64)
+    pub src_token: String,
+    /// Local Terra denom
+    pub local_token: String,
+    /// Token decimals on the source chain
+    pub src_decimals: u8,
+    /// Whether this mapping is enabled
+    pub enabled: bool,
+}
+
+/// Response for the paginated incoming token mappings query
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomingTokenMappingsResponse {
+    pub mappings: Vec<IncomingTokenMappingResponse>,
+}
+
+// ============================================================================
+// V2 Incoming Token Registry Message Builders
+// ============================================================================
+
+/// Build a SetIncomingTokenMapping message (V2)
+///
+/// Registers a mapping from a source chain token to a local Terra denom.
+#[allow(dead_code)]
+pub fn build_set_incoming_token_mapping_msg_v2(
+    src_chain: [u8; 4],
+    src_token: [u8; 32],
+    local_token: &str,
+    src_decimals: u8,
+) -> ExecuteMsgV2 {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    ExecuteMsgV2::SetIncomingTokenMapping {
+        src_chain: encoder.encode(src_chain),
+        src_token: encoder.encode(src_token),
+        local_token: local_token.to_string(),
+        src_decimals,
+    }
+}
+
+/// Build a RemoveIncomingTokenMapping message (V2)
+#[allow(dead_code)]
+pub fn build_remove_incoming_token_mapping_msg_v2(
+    src_chain: [u8; 4],
+    src_token: [u8; 32],
+) -> ExecuteMsgV2 {
+    use base64::Engine;
+    let encoder = base64::engine::general_purpose::STANDARD;
+
+    ExecuteMsgV2::RemoveIncomingTokenMapping {
+        src_chain: encoder.encode(src_chain),
+        src_token: encoder.encode(src_token),
+    }
 }
 
 #[cfg(test)]

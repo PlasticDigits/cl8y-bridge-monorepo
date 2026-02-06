@@ -2,26 +2,31 @@
 //!
 //! Implements the watchtower pattern for incoming transfers to Terra.
 //!
-//! ## V2 Flow (User-initiated)
-//! 1. User calls WithdrawSubmit on Terra (pays gas)
-//! 2. Operator calls WithdrawApprove with just the hash
-//! 3. Cancelers can cancel during the cancel window
-//! 4. Anyone can call WithdrawExecuteUnlock/Mint after window
+//! ## V2 Flow (Hash-matching, no recomputation)
+//! 1. User calls WithdrawSubmit on Terra (pays gas, hash stored on-chain)
+//! 2. Operator polls PendingWithdrawals on Terra for unapproved entries
+//! 3. Operator verifies each hash against EVM Bridge's getDeposit(hash)
+//! 4. If deposit exists on EVM, operator calls WithdrawApprove(hash) on Terra
+//! 5. Cancelers can cancel during the cancel window
+//! 6. Anyone can call WithdrawExecuteUnlock/Mint after window
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use alloy::primitives::{Address, FixedBytes};
+use alloy::providers::ProviderBuilder;
 use eyre::{eyre, Result, WrapErr};
 use reqwest::Client;
 use sqlx::PgPool;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::config::TerraConfig;
+use crate::config::{EvmConfig, TerraConfig};
+use crate::contracts::evm_bridge::Bridge as EvmBridge;
 use crate::contracts::terra_bridge::{
     build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
 };
-use crate::db::{self, EvmDeposit, NewRelease};
-use crate::hash::{bytes32_to_hex, compute_transfer_hash};
+use crate::hash::bytes32_to_hex;
 use crate::terra_client::TerraClient;
 use crate::types::ChainId;
 
@@ -40,15 +45,17 @@ struct PendingExecution {
 }
 
 /// Terra transaction writer for submitting approvals and executions
+///
+/// Uses hash-matching: polls Terra PendingWithdrawals, verifies against EVM
+/// Bridge deposits, and approves by hash. No hash recomputation needed.
 pub struct TerraWriter {
-    #[allow(dead_code)]
     lcd_url: String,
     #[allow(dead_code)]
     chain_id: String,
     contract_address: String,
-    #[allow(dead_code)]
     client: Client,
     terra_client: TerraClient,
+    #[allow(dead_code)]
     db: PgPool,
     /// Cancel window in seconds
     cancel_window: u64,
@@ -58,12 +65,26 @@ pub struct TerraWriter {
     /// Pending approvals awaiting execution
     pending_executions: HashMap<[u8; 32], PendingExecution>,
     /// This chain's 4-byte chain ID (V2)
+    #[allow(dead_code)]
     this_chain_id: ChainId,
+    /// EVM RPC URL for cross-chain deposit verification
+    evm_rpc_url: String,
+    /// EVM Bridge contract address for deposit verification
+    evm_bridge_address: Address,
+    /// Set of hashes we've already approved (avoid duplicate approvals)
+    approved_hashes: HashMap<[u8; 32], Instant>,
 }
 
 impl TerraWriter {
     /// Create a new Terra writer
-    pub async fn new(terra_config: &TerraConfig, db: PgPool) -> Result<Self> {
+    ///
+    /// Requires both Terra and EVM config: the operator verifies deposits
+    /// on the EVM Bridge before approving withdrawals on Terra.
+    pub async fn new(
+        terra_config: &TerraConfig,
+        evm_config: &EvmConfig,
+        db: PgPool,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -77,11 +98,9 @@ impl TerraWriter {
         )?;
 
         // Get this chain's ID (V2)
-        // Default chain IDs: 4 = terraclassic_columbus-5, 5 = terraclassic_localterra
         let this_chain_id = if let Some(id) = terra_config.this_chain_id {
             ChainId::from_u32(id)
         } else {
-            // Try to query from contract
             match Self::query_this_chain_id(
                 &client,
                 &terra_config.lcd_url,
@@ -92,11 +111,10 @@ impl TerraWriter {
                 Ok(id) => id,
                 Err(e) => {
                     warn!(error = %e, "Failed to query chain ID from contract, using default");
-                    // Default based on chain_id string
                     if terra_config.chain_id == "localterra" {
-                        ChainId::from_u32(5) // terraclassic_localterra
+                        ChainId::from_u32(5)
                     } else {
-                        ChainId::from_u32(4) // terraclassic_columbus-5
+                        ChainId::from_u32(4)
                     }
                 }
             }
@@ -108,11 +126,16 @@ impl TerraWriter {
                 .await
                 .unwrap_or(60);
 
+        // Parse EVM bridge address
+        let evm_bridge_address =
+            Address::from_str(&evm_config.bridge_address).wrap_err("Invalid EVM bridge address")?;
+
         info!(
             delay_seconds = cancel_window,
             operator_address = %terra_client.address,
             this_chain_id = %this_chain_id.to_hex(),
-            "Terra writer initialized (V2)"
+            evm_bridge = %evm_bridge_address,
+            "Terra writer initialized (V2 hash-matching)"
         );
 
         Ok(Self {
@@ -126,8 +149,319 @@ impl TerraWriter {
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
             pending_executions: HashMap::new(),
             this_chain_id,
+            evm_rpc_url: evm_config.rpc_url.clone(),
+            evm_bridge_address,
+            approved_hashes: HashMap::new(),
         })
     }
+
+    // ========================================================================
+    // Main Processing Loop
+    // ========================================================================
+
+    /// Process pending withdrawals using hash-matching
+    ///
+    /// 1. Check if any pending executions are ready (cancel window elapsed)
+    /// 2. Poll Terra PendingWithdrawals for unapproved entries
+    /// 3. For each unapproved entry, verify the deposit exists on EVM
+    /// 4. If verified, call WithdrawApprove(hash) on Terra
+    pub async fn process_pending(&mut self) -> Result<()> {
+        // First, check if any pending executions are ready
+        self.process_pending_executions().await?;
+
+        // Then poll Terra for unapproved withdrawals and verify against EVM
+        self.poll_and_approve().await?;
+
+        // Clean up old approved hashes (older than 1 hour)
+        let cutoff = Instant::now() - Duration::from_secs(3600);
+        self.approved_hashes.retain(|_, t| *t > cutoff);
+
+        Ok(())
+    }
+
+    /// Poll Terra PendingWithdrawals and approve verified entries
+    async fn poll_and_approve(&mut self) -> Result<()> {
+        let mut start_after: Option<String> = None;
+        let page_limit = 30u32;
+
+        loop {
+            // Query Terra for pending withdrawals (paginated)
+            let query = if let Some(ref cursor) = start_after {
+                serde_json::json!({
+                    "pending_withdrawals": {
+                        "start_after": cursor,
+                        "limit": page_limit
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "pending_withdrawals": {
+                        "limit": page_limit
+                    }
+                })
+            };
+
+            let query_b64 = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                serde_json::to_string(&query)?,
+            );
+
+            let url = format!(
+                "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+                self.lcd_url, self.contract_address, query_b64
+            );
+
+            let response: serde_json::Value = match self.client.get(&url).send().await {
+                Ok(resp) => resp.json().await.unwrap_or_default(),
+                Err(e) => {
+                    warn!(error = %e, "Failed to query Terra PendingWithdrawals");
+                    return Ok(());
+                }
+            };
+
+            let withdrawals = match response["data"]["withdrawals"].as_array() {
+                Some(arr) => arr.clone(),
+                None => {
+                    debug!("No pending withdrawals data in response");
+                    return Ok(());
+                }
+            };
+
+            if withdrawals.is_empty() {
+                break;
+            }
+
+            let mut last_hash: Option<String> = None;
+
+            for entry in &withdrawals {
+                let approved = entry["approved"].as_bool().unwrap_or(false);
+                let cancelled = entry["cancelled"].as_bool().unwrap_or(false);
+                let executed = entry["executed"].as_bool().unwrap_or(false);
+
+                // Only process unapproved, non-cancelled, non-executed entries
+                if approved || cancelled || executed {
+                    // Track the hash for pagination cursor
+                    if let Some(h) = entry["withdraw_hash"].as_str() {
+                        last_hash = Some(h.to_string());
+                    }
+                    continue;
+                }
+
+                // Extract withdraw_hash (base64 encoded)
+                let hash_b64 = match entry["withdraw_hash"].as_str() {
+                    Some(h) => h,
+                    None => continue,
+                };
+
+                last_hash = Some(hash_b64.to_string());
+
+                let hash_bytes = match base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    hash_b64,
+                ) {
+                    Ok(b) if b.len() == 32 => {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&b);
+                        arr
+                    }
+                    _ => {
+                        warn!(hash = hash_b64, "Invalid withdraw_hash format");
+                        continue;
+                    }
+                };
+
+                // Skip if we've already approved this hash
+                if self.approved_hashes.contains_key(&hash_bytes) {
+                    continue;
+                }
+
+                // Verify the deposit exists on EVM
+                match self.verify_evm_deposit(&hash_bytes).await {
+                    Ok(true) => {
+                        // Deposit verified — approve on Terra
+                        let nonce = entry["nonce"].as_u64().unwrap_or(0);
+                        info!(
+                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            nonce = nonce,
+                            "Verified EVM deposit, submitting WithdrawApprove"
+                        );
+
+                        match self.submit_approve(&hash_bytes).await {
+                            Ok(tx_hash) => {
+                                info!(
+                                    tx_hash = %tx_hash,
+                                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                                    "WithdrawApprove submitted successfully"
+                                );
+
+                                // Track for auto-execution after cancel window
+                                self.pending_executions.insert(
+                                    hash_bytes,
+                                    PendingExecution {
+                                        withdraw_hash: hash_bytes,
+                                        approved_at: Instant::now(),
+                                        delay_seconds: self.cancel_window,
+                                        attempts: 0,
+                                    },
+                                );
+
+                                // Remember we approved this hash
+                                self.approved_hashes.insert(hash_bytes, Instant::now());
+                            }
+                            Err(e) => {
+                                warn!(
+                                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                                    error = %e,
+                                    "Failed to submit WithdrawApprove, will retry"
+                                );
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        // No matching EVM deposit — skip (may not have been detected yet)
+                        debug!(
+                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            "No matching EVM deposit found, skipping"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            error = %e,
+                            "Failed to query EVM deposit, skipping"
+                        );
+                    }
+                }
+            }
+
+            // If we got fewer than page_limit results, we're done
+            if withdrawals.len() < page_limit as usize {
+                break;
+            }
+
+            // Set cursor for next page
+            start_after = last_hash;
+            if start_after.is_none() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // EVM Deposit Verification
+    // ========================================================================
+
+    /// Verify that a deposit with the given hash exists on the EVM Bridge
+    ///
+    /// Queries `getDeposit(hash)` on the EVM Bridge contract and checks
+    /// if the returned record has a non-zero timestamp (indicating it exists).
+    async fn verify_evm_deposit(&self, withdraw_hash: &[u8; 32]) -> Result<bool> {
+        let provider = ProviderBuilder::new()
+            .on_http(self.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+
+        let contract = EvmBridge::new(self.evm_bridge_address, &provider);
+        let hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+
+        let result = contract.getDeposit(hash_fixed).call().await?;
+
+        // A deposit exists if its timestamp is non-zero
+        let exists = result.timestamp != alloy::primitives::U256::ZERO;
+
+        if exists {
+            debug!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                nonce = result.nonce,
+                token = %result.token,
+                amount = %result.amount,
+                "EVM deposit verified"
+            );
+        }
+
+        Ok(exists)
+    }
+
+    // ========================================================================
+    // Terra Transaction Submission
+    // ========================================================================
+
+    /// Submit WithdrawApprove(hash) on Terra
+    async fn submit_approve(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
+        let msg = build_withdraw_approve_msg_v2(*withdraw_hash);
+
+        let msg_json = serde_json::to_string(&msg)?;
+        debug!(msg = %msg_json, "WithdrawApprove message (V2)");
+
+        let tx_hash = self
+            .terra_client
+            .execute_contract(&self.contract_address, &msg, vec![])
+            .await
+            .map_err(|e| eyre!("Failed to execute WithdrawApprove: {}", e))?;
+
+        Ok(tx_hash)
+    }
+
+    /// Submit WithdrawExecuteUnlock on Terra (after cancel window)
+    async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
+        let msg = build_withdraw_execute_unlock_msg_v2(withdraw_hash);
+
+        let msg_json = serde_json::to_string(&msg)?;
+        debug!(msg = %msg_json, "WithdrawExecuteUnlock message (V2)");
+
+        let tx_hash = self
+            .terra_client
+            .execute_contract(&self.contract_address, &msg, vec![])
+            .await
+            .map_err(|e| eyre!("Failed to execute WithdrawExecuteUnlock: {}", e))?;
+
+        Ok(tx_hash)
+    }
+
+    // ========================================================================
+    // Pending Execution Management
+    // ========================================================================
+
+    /// Process pending executions (after cancel window has elapsed)
+    async fn process_pending_executions(&mut self) -> Result<()> {
+        let now = Instant::now();
+        let mut to_remove = Vec::new();
+
+        for (hash, pending) in &self.pending_executions {
+            let elapsed = now.duration_since(pending.approved_at);
+
+            if elapsed.as_secs() >= pending.delay_seconds {
+                match self.submit_execute_withdraw(*hash).await {
+                    Ok(tx_hash) => {
+                        info!(
+                            withdraw_hash = %bytes32_to_hex(hash),
+                            tx_hash = %tx_hash,
+                            "Successfully executed withdrawal"
+                        );
+                        to_remove.push(*hash);
+                    }
+                    Err(e) => {
+                        warn!(
+                            withdraw_hash = %bytes32_to_hex(hash),
+                            error = %e,
+                            attempt = pending.attempts + 1,
+                            "Failed to execute withdrawal, will retry"
+                        );
+                    }
+                }
+            }
+        }
+
+        for hash in to_remove {
+            self.pending_executions.remove(&hash);
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Contract Queries
+    // ========================================================================
 
     /// Query the cancel window from the contract (V2)
     async fn query_cancel_window(client: &Client, lcd_url: &str, contract: &str) -> Result<u64> {
@@ -147,7 +481,6 @@ impl TerraWriter {
 
         let response: serde_json::Value = client.get(&url).send().await?.json().await?;
 
-        // Try V2 field name first, fall back to V1 field name
         let delay = response["data"]["cancel_window_seconds"]
             .as_u64()
             .or_else(|| response["data"]["delay_seconds"].as_u64())
@@ -178,7 +511,6 @@ impl TerraWriter {
 
         let response: serde_json::Value = client.get(&url).send().await?.json().await?;
 
-        // Chain ID is returned as base64-encoded 4 bytes
         let chain_id_b64 = response["data"]["chain_id"]
             .as_str()
             .ok_or_else(|| eyre!("Invalid chain ID response"))?;
@@ -198,327 +530,9 @@ impl TerraWriter {
         Ok(ChainId::from_bytes(bytes))
     }
 
-    /// Process pending EVM deposits and create approvals
-    pub async fn process_pending(&mut self) -> Result<()> {
-        // First, check if any pending executions are ready
-        self.process_pending_executions().await?;
-
-        // Then process new deposits (only those destined for Cosmos/Terra)
-        let deposits = db::get_pending_evm_deposits_for_cosmos(&self.db).await?;
-
-        for deposit in deposits {
-            if let Err(e) = self.process_deposit(&deposit).await {
-                error!(
-                    deposit_id = deposit.id,
-                    error = %e,
-                    "Failed to process EVM deposit"
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process pending executions (after cancel window has elapsed)
-    async fn process_pending_executions(&mut self) -> Result<()> {
-        let now = Instant::now();
-        let mut to_remove = Vec::new();
-
-        for (hash, pending) in &self.pending_executions {
-            let elapsed = now.duration_since(pending.approved_at);
-
-            if elapsed.as_secs() >= pending.delay_seconds {
-                // Delay has elapsed, try to execute
-                match self.submit_execute_withdraw(*hash).await {
-                    Ok(tx_hash) => {
-                        info!(
-                            withdraw_hash = %bytes32_to_hex(hash),
-                            tx_hash = %tx_hash,
-                            "Successfully executed withdrawal"
-                        );
-                        to_remove.push(*hash);
-                    }
-                    Err(e) => {
-                        warn!(
-                            withdraw_hash = %bytes32_to_hex(hash),
-                            error = %e,
-                            attempt = pending.attempts + 1,
-                            "Failed to execute withdrawal, will retry"
-                        );
-                        // Don't remove - will retry on next cycle
-                    }
-                }
-            }
-        }
-
-        // Remove successfully executed
-        for hash in to_remove {
-            self.pending_executions.remove(&hash);
-        }
-
-        Ok(())
-    }
-
-    /// Process a single EVM deposit
-    async fn process_deposit(&mut self, deposit: &EvmDeposit) -> Result<()> {
-        // Source chain ID (4-byte V2 format)
-        let src_chain_id = ChainId::from_u32(deposit.chain_id as u32);
-
-        // Check if release already exists
-        if db::release_exists(&self.db, src_chain_id.as_bytes(), deposit.nonce).await? {
-            db::update_evm_deposit_status(&self.db, deposit.id, "processed").await?;
-            return Ok(());
-        }
-
-        // Decode destination account from bytes
-        let recipient = self.decode_terra_address(&deposit.dest_account)?;
-
-        // Create release record
-        let new_release = NewRelease {
-            src_chain_key: src_chain_id.as_bytes().to_vec(),
-            nonce: deposit.nonce,
-            sender: format!("0x{}", hex::encode(&deposit.token)),
-            recipient: recipient.clone(),
-            token: deposit.token.clone(),
-            amount: deposit.amount.clone(),
-            source_chain_id: deposit.chain_id,
-        };
-
-        let release_id = db::insert_release(&self.db, &new_release).await?;
-        info!(
-            release_id = release_id,
-            nonce = deposit.nonce,
-            "Created release for EVM deposit"
-        );
-
-        // Submit WithdrawApprove to Terra
-        match self
-            .submit_approve_withdraw(deposit, &recipient, &src_chain_id)
-            .await
-        {
-            Ok((tx_hash, withdraw_hash)) => {
-                info!(
-                    release_id = release_id,
-                    tx_hash = %tx_hash,
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                    "Submitted WithdrawApprove transaction"
-                );
-
-                // Track for auto-execution
-                self.pending_executions.insert(
-                    withdraw_hash,
-                    PendingExecution {
-                        withdraw_hash,
-                        approved_at: Instant::now(),
-                        delay_seconds: self.cancel_window,
-                        attempts: 0,
-                    },
-                );
-
-                db::update_evm_deposit_status(&self.db, deposit.id, "approved").await?;
-                db::update_release_submitted(&self.db, release_id, &tx_hash).await?;
-            }
-            Err(e) => {
-                warn!(
-                    release_id = release_id,
-                    error = %e,
-                    "Failed to submit WithdrawApprove, will retry"
-                );
-                db::update_release_failed(&self.db, release_id, &e.to_string()).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Submit a WithdrawApprove transaction to Terra (V2)
-    ///
-    /// In V2, the user already called WithdrawSubmit. Operator just approves the hash.
-    async fn submit_approve_withdraw(
-        &self,
-        deposit: &EvmDeposit,
-        _recipient: &str,
-        src_chain_id: &ChainId,
-    ) -> Result<(String, [u8; 32])> {
-        // Get destination account as 32 bytes (universal address format)
-        let dest_account: [u8; 32] = deposit.dest_account.clone().try_into().map_err(|_| {
-            eyre!(
-                "Invalid dest_account length: expected 32 bytes, got {}",
-                deposit.dest_account.len()
-            )
-        })?;
-
-        // Parse amount
-        let amount: u128 = deposit
-            .amount
-            .parse()
-            .map_err(|e| eyre!("Failed to parse amount: {}", e))?;
-
-        // Use the dest_token_address from the DB (queried from EVM TokenRegistry during watch)
-        // This matches the destToken used in the EVM Bridge's deposit hash computation:
-        //   bytes32 destToken = tokenRegistry.getDestToken(token, destChain)
-        // Using the unified value ensures hash consistency across chains.
-        let dest_token: [u8; 32] = deposit.dest_token_address.clone().try_into().map_err(|_| {
-            eyre!(
-                "Invalid dest_token_address length: expected 32 bytes, got {}",
-                deposit.dest_token_address.len()
-            )
-        })?;
-
-        // Source account (EVM depositor) encoded as bytes32
-        let src_account: [u8; 32] = if let Some(ref sa) = deposit.src_account {
-            sa.clone().try_into().unwrap_or([0u8; 32])
-        } else {
-            // Fallback: zero account if src_account not yet available in DB
-            tracing::warn!("EvmDeposit missing src_account, using zero bytes");
-            [0u8; 32]
-        };
-
-        // Compute unified transfer hash using V2 format (7-field)
-        let withdraw_hash = compute_transfer_hash(
-            src_chain_id.as_bytes(),
-            self.this_chain_id.as_bytes(),
-            &src_account,
-            &dest_account,
-            &dest_token,
-            amount,
-            deposit.nonce as u64,
-        );
-
-        debug!(
-            src_chain_id = %src_chain_id.to_hex(),
-            dest_chain_id = %self.this_chain_id.to_hex(),
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-            "Computed V2 withdraw hash"
-        );
-
-        // Build the message (V2 - just the hash)
-        let msg = build_withdraw_approve_msg_v2(withdraw_hash);
-
-        // Serialize to JSON for logging
-        let msg_json = serde_json::to_string(&msg)?;
-        debug!(msg = %msg_json, "WithdrawApprove message (V2)");
-
-        // Sign and broadcast the transaction
-        let tx_hash = self
-            .terra_client
-            .execute_contract(&self.contract_address, &msg, vec![])
-            .await
-            .map_err(|e| eyre!("Failed to execute WithdrawApprove: {}", e))?;
-
-        Ok((tx_hash, withdraw_hash))
-    }
-
-    /// Submit a WithdrawExecuteUnlock transaction to Terra (V2)
-    ///
-    /// For lock/unlock tokens. Use WithdrawExecuteMint for mintable tokens.
-    async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
-        // Default to unlock mode
-        // TODO: Query token type to determine if we should use mint mode
-        let msg = build_withdraw_execute_unlock_msg_v2(withdraw_hash);
-
-        // Serialize to JSON for logging
-        let msg_json = serde_json::to_string(&msg)?;
-        debug!(msg = %msg_json, "WithdrawExecuteUnlock message (V2)");
-
-        // Sign and broadcast the transaction
-        let tx_hash = self
-            .terra_client
-            .execute_contract(&self.contract_address, &msg, vec![])
-            .await
-            .map_err(|e| eyre!("Failed to execute WithdrawExecuteUnlock: {}", e))?;
-
-        Ok(tx_hash)
-    }
-
-    /// Decode Terra address from bytes32
-    ///
-    /// Supports three formats:
-    /// 1. V2 Universal Address: [chain_type(4) | raw_address(20) | reserved(8)]
-    ///    - Chain type 0x00000002 = Cosmos/Terra
-    /// 2. Raw 20-byte address (left-padded with zeros in bytes32) - decoded to bech32
-    /// 3. Legacy ASCII format (UTF-8 bytes of "terra1..." string) - used as-is
-    fn decode_terra_address(&self, bytes: &[u8]) -> Result<String> {
-        if bytes.len() != 32 {
-            return Err(eyre!(
-                "Invalid address length: expected 32 bytes, got {}",
-                bytes.len()
-            ));
-        }
-
-        // Check for V2 universal address format
-        // Chain type is in first 4 bytes (big-endian)
-        let chain_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-
-        if chain_type == 2 {
-            // V2 Cosmos/Terra address format
-            // Raw address is in bytes 4-23
-            let mut raw_address = [0u8; 20];
-            raw_address.copy_from_slice(&bytes[4..24]);
-
-            // Encode as bech32 Terra address
-            match crate::hash::encode_bech32_address(&raw_address, "terra") {
-                Ok(addr) => {
-                    tracing::debug!(
-                        chain_type = chain_type,
-                        raw_hex = hex::encode(raw_address),
-                        bech32 = %addr,
-                        "Decoded V2 universal address to Terra address"
-                    );
-                    return Ok(addr);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        raw_hex = hex::encode(bytes),
-                        "Failed to decode V2 address, trying other formats"
-                    );
-                }
-            }
-        }
-
-        // Try raw 20-byte address (left-padded with zeros in bytes32)
-        // Check if first 12 bytes are zeros (indicating left-padded raw address)
-        if bytes[..12].iter().all(|&b| b == 0) {
-            // Extract raw 20 bytes and encode as bech32
-            match crate::hash::decode_bytes32_to_terra_address(bytes) {
-                Ok(addr) => {
-                    tracing::debug!(
-                        raw_hex = hex::encode(&bytes[12..32]),
-                        bech32 = %addr,
-                        "Decoded raw bytes to Terra address"
-                    );
-                    return Ok(addr);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        raw_hex = hex::encode(bytes),
-                        "Failed to decode as raw address, trying legacy format"
-                    );
-                }
-            }
-        }
-
-        // Try to decode as UTF-8 string (legacy format)
-        if let Ok(s) = String::from_utf8(bytes.to_vec()) {
-            let s = s.trim_end_matches('\0');
-            if s.starts_with("terra") && s.len() == 44 {
-                tracing::debug!(
-                    address = %s,
-                    "Decoded legacy ASCII Terra address"
-                );
-                return Ok(s.to_string());
-            }
-        }
-
-        Err(eyre!(
-            "Unable to decode Terra address from bytes: {} (len={}). \
-             Expected V2 universal address, raw 20-byte address, or ASCII bech32 string.",
-            hex::encode(bytes),
-            bytes.len()
-        ))
-    }
+    // ========================================================================
+    // Utility
+    // ========================================================================
 
     /// Get count of pending executions
     #[allow(dead_code)]

@@ -171,6 +171,15 @@ pub enum ContractError {
     },
 
     // ========================================================================
+    // Chain/Token Validation Errors
+    // ========================================================================
+    #[error("Source chain not registered: {chain_id}")]
+    ChainNotRegistered { chain_id: String },
+
+    #[error("Token not mapped for source chain: chain={chain_id}, token={token}")]
+    TokenNotMappedForChain { chain_id: String, token: String },
+
+    // ========================================================================
     // Validation Errors
     // ========================================================================
     #[error("Invalid hash length: expected 32 bytes, got {got}")]

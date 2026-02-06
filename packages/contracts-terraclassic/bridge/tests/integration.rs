@@ -121,13 +121,28 @@ fn setup() -> (App, Addr, Addr, Addr) {
     )
     .unwrap();
 
+    // Register incoming token mapping (BSC → uluna)
+    let src_token_bytes = bridge::hash::keccak256(b"uluna");
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetIncomingTokenMapping {
+            src_chain: Binary::from(vec![0, 0, 0, 2]),
+            src_token: Binary::from(src_token_bytes.to_vec()),
+            local_token: "uluna".to_string(),
+            src_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
     (app, contract_addr, operator, user)
 }
 
-/// Create a 4-byte source chain ID (e.g., BSC chain id 56)
+/// Create a 4-byte source chain ID matching the registered BSC chain
 fn create_test_src_chain() -> Binary {
-    let bytes: [u8; 4] = 56u32.to_be_bytes();
-    Binary::from(bytes.to_vec())
+    // Must match the chain_id registered in setup() for BSC
+    Binary::from(vec![0, 0, 0, 2])
 }
 
 /// Create a test source account (EVM depositor, 32 bytes)

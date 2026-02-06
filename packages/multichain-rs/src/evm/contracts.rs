@@ -101,6 +101,18 @@ sol! {
             bool executed
         );
 
+        /// Get deposit record by hash (returns zero struct if not found)
+        function getDeposit(bytes32 depositHash) external view returns (
+            bytes4 destChain,
+            bytes32 srcAccount,
+            bytes32 destAccount,
+            address token,
+            uint256 amount,
+            uint64 nonce,
+            uint256 fee,
+            uint256 timestamp
+        );
+
         /// Get this chain's registered chain ID
         function getThisChainId() external view returns (bytes4);
 

@@ -23,9 +23,9 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::operator_helpers::{
-    approve_erc20, encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
-    poll_terra_for_approval, query_cancel_window, query_deposit_nonce, submit_withdraw_on_terra,
-    verify_token_setup, DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT,
+    approve_erc20, calculate_evm_fee, encode_terra_address, execute_deposit, get_erc20_balance,
+    get_terra_chain_key, poll_terra_for_approval, query_cancel_window, query_deposit_nonce,
+    submit_withdraw_on_terra, verify_token_setup, DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT,
     WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
@@ -236,7 +236,32 @@ pub async fn test_operator_live_deposit_detection(
     //
     // In V2, the user must call WithdrawSubmit on the destination chain (Terra)
     // before the operator can approve it. This creates the entry in PENDING_WITHDRAWS.
+    //
+    // IMPORTANT: The amount must be the post-fee amount (netAmount) from the EVM deposit.
+    // The EVM Bridge deducts fees on deposit and uses netAmount in the hash.
+    // The Terra WithdrawSubmit must use the same amount to produce a matching hash.
     let evm_chain_id: [u8; 4] = [0, 0, 0, 1]; // EVM predetermined chain ID
+
+    // Calculate the net amount (post-fee) that was stored in the EVM deposit hash
+    let fee_amount = match calculate_evm_fee(config, test_account, transfer_amount).await {
+        Ok(fee) => {
+            info!(
+                "EVM fee for deposit: {} ({}bps)",
+                fee,
+                fee * 10000 / transfer_amount
+            );
+            fee
+        }
+        Err(e) => {
+            warn!("Failed to query EVM fee, assuming 0: {}", e);
+            0
+        }
+    };
+    let net_amount = transfer_amount - fee_amount;
+    info!(
+        "Post-fee net amount: {} (deposit={}, fee={})",
+        net_amount, transfer_amount, fee_amount
+    );
 
     // Encode the EVM test account as a 32-byte source account
     let mut src_account_bytes32 = [0u8; 32];
@@ -244,7 +269,7 @@ pub async fn test_operator_live_deposit_detection(
 
     info!(
         "Submitting WithdrawSubmit on Terra: nonce={}, token=uluna, amount={}",
-        nonce_after, transfer_amount
+        nonce_after, net_amount
     );
 
     match submit_withdraw_on_terra(
@@ -254,7 +279,7 @@ pub async fn test_operator_live_deposit_detection(
         src_account_bytes32,
         "uluna",
         terra_recipient,
-        transfer_amount,
+        net_amount,
         nonce_after,
     )
     .await
