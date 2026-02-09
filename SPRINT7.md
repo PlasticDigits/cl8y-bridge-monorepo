@@ -440,7 +440,7 @@ make e2e-test --full
 
 ### Reference Projects
 
-- `@golbinhunt/cosmes` implementation: `/home/answorld/repos/ustr-cmm/frontend/src`
+- `@golbinhunt/cosmes` implementation: ustr-cmm frontend (external reference)
 - Working Terra wallet pattern: ustr-cmm frontend
 
 ---

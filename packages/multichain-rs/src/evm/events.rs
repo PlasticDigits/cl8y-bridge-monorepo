@@ -5,14 +5,21 @@
 use crate::types::{ChainId, EvmAddress};
 use alloy::primitives::{Address, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// V2 Deposit event data
+///
+/// V2 Event: Deposit(bytes4 indexed destChain, bytes32 indexed destAccount,
+///                    bytes32 srcAccount, address token, uint256 amount,
+///                    uint64 nonce, uint256 fee)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepositEvent {
     /// Destination chain ID (4 bytes)
     pub dest_chain: ChainId,
     /// Destination account (32 bytes universal address)
     pub dest_account: [u8; 32],
+    /// Source account (32 bytes universal address) — V2 non-indexed field
+    pub src_account: [u8; 32],
     /// Source token address
     pub token: EvmAddress,
     /// Amount deposited
@@ -34,6 +41,7 @@ impl DepositEvent {
     pub fn from_log(
         dest_chain: FixedBytes<4>,
         dest_account: FixedBytes<32>,
+        src_account: [u8; 32],
         token: Address,
         amount: U256,
         nonce: u64,
@@ -45,10 +53,17 @@ impl DepositEvent {
         Self {
             dest_chain: ChainId::from_bytes(dest_chain.0),
             dest_account: dest_account.0,
+            src_account,
             token: EvmAddress(token.0 .0),
-            amount: amount.try_into().unwrap_or(u128::MAX),
+            amount: amount.try_into().unwrap_or_else(|_| {
+                warn!(amount = %amount, "Deposit amount exceeds u128::MAX, clamping");
+                u128::MAX
+            }),
             nonce,
-            fee: fee.try_into().unwrap_or(u128::MAX),
+            fee: fee.try_into().unwrap_or_else(|_| {
+                warn!(fee = %fee, "Deposit fee exceeds u128::MAX, clamping");
+                u128::MAX
+            }),
             block_number,
             tx_hash: tx_hash.0,
             log_index,
@@ -96,9 +111,15 @@ impl WithdrawSubmitEvent {
             withdraw_hash: withdraw_hash.0,
             src_chain: ChainId::from_bytes(src_chain.0),
             token: EvmAddress(token.0 .0),
-            amount: amount.try_into().unwrap_or(u128::MAX),
+            amount: amount.try_into().unwrap_or_else(|_| {
+                warn!(amount = %amount, "WithdrawSubmit amount exceeds u128::MAX, clamping");
+                u128::MAX
+            }),
             nonce,
-            operator_gas: operator_gas.try_into().unwrap_or(u128::MAX),
+            operator_gas: operator_gas.try_into().unwrap_or_else(|_| {
+                warn!(operator_gas = %operator_gas, "WithdrawSubmit operator_gas exceeds u128::MAX, clamping");
+                u128::MAX
+            }),
             block_number,
             tx_hash: tx_hash.0,
             log_index,
@@ -200,7 +221,10 @@ impl WithdrawExecuteEvent {
         Self {
             withdraw_hash: withdraw_hash.0,
             recipient: EvmAddress(recipient.0 .0),
-            amount: amount.try_into().unwrap_or(u128::MAX),
+            amount: amount.try_into().unwrap_or_else(|_| {
+                warn!(amount = %amount, "WithdrawExecute amount exceeds u128::MAX, clamping");
+                u128::MAX
+            }),
             block_number,
             tx_hash: tx_hash.0,
             log_index,
@@ -267,9 +291,11 @@ mod tests {
 
     #[test]
     fn test_deposit_event_creation() {
+        let src_acc = [0xABu8; 32];
         let event = DepositEvent::from_log(
             FixedBytes([0, 0, 0, 1]),
             FixedBytes([0u8; 32]),
+            src_acc,
             Address::ZERO,
             U256::from(1000000),
             1,
@@ -280,6 +306,7 @@ mod tests {
         );
 
         assert_eq!(event.dest_chain.to_u32(), 1);
+        assert_eq!(event.src_account, src_acc);
         assert_eq!(event.amount, 1000000);
         assert_eq!(event.nonce, 1);
         assert_eq!(event.fee, 1000);

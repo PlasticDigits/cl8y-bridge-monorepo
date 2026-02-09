@@ -130,11 +130,14 @@ impl E2eSetup {
         output.is_ok_and(|o| o.status.success())
     }
 
-    /// Clean up any existing E2E containers and files
+    /// Clean up any existing E2E containers, processes, volumes, and files
     pub async fn cleanup_existing(&self) -> Result<()> {
         info!("Cleaning up existing E2E containers and files");
 
-        // Stop and remove Docker Compose services
+        // Kill any stale operator/canceler processes from previous runs
+        self.kill_stale_services().await;
+
+        // Stop and remove Docker Compose services + volumes for a clean DB state
         self.docker.down(true).await?;
 
         // Remove broadcast file
@@ -144,15 +147,52 @@ impl E2eSetup {
             info!("Removed broadcast directory");
         }
 
-        // Remove .env.e2e file
-        let env_path = self.project_root.join(".env.e2e");
-        if env_path.exists() {
-            std::fs::remove_file(&env_path)?;
-            info!("Removed .env.e2e file");
+        // Remove stale files from previous runs
+        for filename in &[
+            ".env.e2e",
+            ".operator.log",
+            ".canceler.log",
+            ".operator.pid",
+            ".canceler.pid",
+        ] {
+            let path = self.project_root.join(filename);
+            if path.exists() {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    warn!("Failed to remove {}: {}", filename, e);
+                } else {
+                    info!("Removed {}", filename);
+                }
+            }
         }
 
         info!("Cleanup completed");
         Ok(())
+    }
+
+    /// Kill any stale operator/canceler processes left over from previous runs
+    async fn kill_stale_services(&self) {
+        for process_name in &["cl8y-relayer", "cl8y-canceler"] {
+            let output = std::process::Command::new("pgrep")
+                .args(["-f", process_name])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    for pid_str in stdout.lines() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            info!("Killing stale {} process (PID {})", process_name, pid);
+                            let _ = std::process::Command::new("kill")
+                                .args(["-9", &pid.to_string()])
+                                .output();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Brief wait for processes to die
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
     /// Start all Docker services with E2E profile
@@ -455,6 +495,65 @@ impl E2eSetup {
                             "CW20 token {} registered on Terra bridge, tx: {}",
                             addr, tx_hash
                         );
+
+                        // Wait for add_token tx to confirm
+                        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+
+                        // Register incoming token mapping for CW20 (EVM → Terra)
+                        // This is required for withdraw_submit to succeed with CW20 tokens.
+                        // The src_token must match how encode_token_address encodes the CW20 address.
+                        // For CW20 addresses (bech32 "terra1..."), this is bech32-decode → left-pad to 32 bytes.
+                        let cw20_src_token =
+                            match multichain_rs::hash::encode_terra_address_to_bytes32(addr) {
+                                Ok(bytes32) => base64::Engine::encode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    bytes32,
+                                ),
+                                Err(e) => {
+                                    warn!("Failed to encode CW20 address to bytes32: {}", e);
+                                    // Fallback: use keccak256 of the address string
+                                    let hash = multichain_rs::hash::keccak256(addr.as_bytes());
+                                    base64::Engine::encode(
+                                        &base64::engine::general_purpose::STANDARD,
+                                        hash,
+                                    )
+                                }
+                            };
+
+                        // Get the EVM chain ID in base64 for the incoming mapping
+                        // Use chain ID 1 (EVM default) — this must match the chain ID
+                        // registered on the EVM side for this Anvil instance
+                        let evm_chain_id_bytes = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            1u32.to_be_bytes(),
+                        );
+
+                        let set_cw20_incoming_msg = serde_json::json!({
+                            "set_incoming_token_mapping": {
+                                "src_chain": evm_chain_id_bytes,
+                                "src_token": cw20_src_token,
+                                "local_token": addr,
+                                "src_decimals": 18
+                            }
+                        });
+
+                        match terra
+                            .execute_contract(bridge_addr, &set_cw20_incoming_msg, None)
+                            .await
+                        {
+                            Ok(tx_hash) => {
+                                info!(
+                                    "CW20 incoming token mapping registered for {}, tx: {}",
+                                    addr, tx_hash
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to register CW20 incoming mapping for {}: {}",
+                                    addr, e
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to register CW20 on Terra bridge: {}", e);

@@ -42,6 +42,24 @@ impl Default for EvmChainConfig {
     }
 }
 
+impl EvmChainConfig {
+    /// Convert to the standard EvmConfig format.
+    ///
+    /// Requires the shared private key from MultiEvmConfig since
+    /// individual chain configs don't store it.
+    pub fn to_evm_config(&self, private_key: &str) -> crate::config::EvmConfig {
+        crate::config::EvmConfig {
+            rpc_url: self.rpc_url.clone(),
+            chain_id: self.chain_id,
+            bridge_address: self.bridge_address.clone(),
+            private_key: private_key.to_string(),
+            finality_blocks: self.finality_blocks,
+            this_chain_id: Some(self.this_chain_id.to_u32()),
+            use_v2_events: Some(true),
+        }
+    }
+}
+
 /// Multi-EVM configuration manager
 #[derive(Debug, Clone)]
 pub struct MultiEvmConfig {

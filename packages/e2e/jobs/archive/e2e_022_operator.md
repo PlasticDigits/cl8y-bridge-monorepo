@@ -118,11 +118,11 @@ pub async fn test_operator_startup(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "operator_startup";
 
-    // Get project root from config or use default
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
+    // Get project root dynamically
+    let project_root = find_project_root();
     
     // Create service manager
-    let manager = ServiceManager::new(project_root);
+    let manager = ServiceManager::new(&project_root);
 
     // Check initial state
     let was_running = manager.is_operator_running();

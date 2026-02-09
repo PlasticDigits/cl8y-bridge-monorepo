@@ -10,11 +10,10 @@
 //! - Test accounts with appropriate permissions
 
 use crate::evm::AnvilTimeClient;
-use crate::services::ServiceManager;
+use crate::services::{find_project_root, ServiceManager};
 use crate::transfer_helpers::skip_withdrawal_delay;
 use crate::{E2eConfig, TestResult};
 use alloy::primitives::B256;
-use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -53,8 +52,8 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
     info!("Starting live canceler fraud detection test");
 
     // Step 1: Verify canceler service is running
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_canceler_running() && !check_canceler_health().await {
         return TestResult::skip(name, "Canceler service is not running - start it first");
@@ -142,22 +141,51 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
     // Step 6: Wait for canceler to detect and cancel
     info!("Waiting for canceler to detect and cancel fraudulent approval...");
     let poll_start = Instant::now();
+    let mut last_log = Instant::now();
 
     while poll_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
-        if let Ok(true) = is_approval_cancelled(config, fraud_result.withdraw_hash).await {
-            info!(
-                "Fraudulent approval cancelled in {:?}",
-                poll_start.elapsed()
-            );
-            return TestResult::pass(name, start.elapsed());
+        match is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+            Ok(true) => {
+                info!(
+                    "Fraudulent approval cancelled in {:?}",
+                    poll_start.elapsed()
+                );
+                return TestResult::pass(name, start.elapsed());
+            }
+            Ok(false) => {
+                if last_log.elapsed() > Duration::from_secs(10) {
+                    info!(
+                        "Still waiting for cancellation... elapsed={:?}, remaining={:?}, withdrawHash=0x{}",
+                        poll_start.elapsed(),
+                        FRAUD_DETECTION_TIMEOUT.saturating_sub(poll_start.elapsed()),
+                        hex::encode(&fraud_result.withdraw_hash.as_slice()[..8])
+                    );
+                    last_log = Instant::now();
+                }
+            }
+            Err(e) => {
+                info!("Error checking cancellation status: {}", e);
+            }
         }
         tokio::time::sleep(CANCELLATION_POLL_INTERVAL).await;
+    }
+
+    // Dump diagnostic info on timeout
+    info!(
+        "TIMEOUT DIAGNOSTIC: Canceler did not cancel within {:?}. \
+         Checking withdrawal status for final state...",
+        FRAUD_DETECTION_TIMEOUT
+    );
+    match is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+        Ok(cancelled) => info!("  Final cancelled status: {}", cancelled),
+        Err(e) => info!("  Could not check final status: {}", e),
     }
 
     TestResult::fail(
         name,
         format!(
-            "Canceler did not cancel fraudulent approval within {:?}",
+            "Canceler did not cancel fraudulent approval within {:?}. \
+             Verify EVM_V2_CHAIN_ID and TERRA_V2_CHAIN_ID are set correctly.",
             FRAUD_DETECTION_TIMEOUT
         ),
         start.elapsed(),
@@ -211,8 +239,8 @@ pub async fn test_cancelled_approval_blocks_withdrawal(config: &E2eConfig) -> Te
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Wait for canceler or cancel directly
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
     let canceler_running = manager.is_canceler_running() || check_canceler_health().await;
 
     if canceler_running {
@@ -260,8 +288,8 @@ pub async fn test_canceler_concurrent_fraud_handling(config: &E2eConfig) -> Test
 
     info!("Testing canceler concurrent fraud handling");
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_canceler_running() && !check_canceler_health().await {
         return TestResult::skip(name, "Canceler service is not running");
@@ -338,8 +366,8 @@ pub async fn test_canceler_restart_fraud_detection(config: &E2eConfig) -> TestRe
 
     info!("Testing canceler fraud detection after restart");
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_canceler_running() && !check_canceler_health().await {
         return TestResult::skip(name, "Canceler service is not running");
@@ -400,17 +428,18 @@ pub async fn test_canceler_evm_source_fraud_detection(config: &E2eConfig) -> Tes
 
     info!("Testing canceler EVM→EVM fraud detection");
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_canceler_running() && !check_canceler_health().await {
         return TestResult::skip(name, "Canceler service is not running");
     }
 
-    // Use registered EVM chain ID (0x00000002) — the bytes4 ID, not the native chain ID
+    // Use registered EVM chain ID (0x00000001) — the bytes4 ID from ChainRegistry
+    // EVM = 0x00000001, Terra = 0x00000002 in local setup
     let evm_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]); // registered EVM chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered EVM chain
         bytes
     });
     info!(
@@ -467,17 +496,18 @@ pub async fn test_canceler_terra_source_fraud_detection(config: &E2eConfig) -> T
 
     info!("Testing canceler Terra→EVM fraud detection");
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_canceler_running() && !check_canceler_health().await {
         return TestResult::skip(name, "Canceler service is not running");
     }
 
-    // Use registered Terra chain ID (0x00000001) — the bytes4 ID assigned by ChainRegistry
+    // Use registered Terra chain ID (0x00000002) — the bytes4 ID from ChainRegistry
+    // EVM = 0x00000001, Terra = 0x00000002 in local setup
     let terra_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]); // registered Terra chain
         bytes
     });
     info!(

@@ -31,7 +31,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
-use tracing::{debug, info};
+#[allow(unused_imports)]
+use tracing::{debug, error, info, warn};
+
+/// Find the monorepo root by traversing upward from the current directory,
+/// looking for `docker-compose.yml` as the root indicator.
+/// Falls back to the current directory if the marker file is not found.
+pub fn find_project_root() -> PathBuf {
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut current = start.clone();
+    for _ in 0..5 {
+        if current.join("docker-compose.yml").exists() {
+            return current;
+        }
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    start
+}
 
 /// PID file names
 const OPERATOR_PID_FILE: &str = ".e2e-operator.pid";
@@ -454,6 +474,8 @@ impl ServiceManager {
                 "FEE_RECIPIENT".to_string(),
                 format!("{}", config.test_accounts.evm_address),
             ),
+            // API port — avoid conflict with LocalTerra gRPC (9090) and gRPC-web (9091)
+            ("OPERATOR_API_PORT".to_string(), "9092".to_string()),
             (
                 "RUST_LOG".to_string(),
                 "info,cl8y_relayer=debug".to_string(),
@@ -537,6 +559,10 @@ impl ServiceManager {
                 "RUST_LOG".to_string(),
                 "info,cl8y_canceler=debug".to_string(),
             ),
+            // V2 chain IDs from ChainRegistry (critical for fraud detection!)
+            // EVM chain gets 0x00000001, Terra chain gets 0x00000002 in local setup
+            ("EVM_V2_CHAIN_ID".to_string(), "0x00000001".to_string()),
+            ("TERRA_V2_CHAIN_ID".to_string(), "0x00000002".to_string()),
         ];
 
         // Add Terra mnemonic if available
@@ -564,14 +590,43 @@ impl ServiceManager {
             // Check if process is still running
             if let Some(pid) = self.read_pid_file(OPERATOR_PID_FILE) {
                 if !self.is_process_running(pid) {
+                    // Dump operator log tail for diagnosis
+                    let log_path = self.project_root.join("operator.log");
+                    if log_path.exists() {
+                        if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+                            let last_lines: Vec<&str> =
+                                log_content.lines().rev().take(30).collect();
+                            error!(
+                                "Operator process died. Last 30 log lines:\n{}",
+                                last_lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+                            );
+                        }
+                    }
                     return Err(eyre!("Operator process died unexpectedly"));
                 }
             }
 
-            // TODO: Add health check endpoint query when operator supports it
-            // For now, just give it time to start
+            // Try operator health endpoint on port 9092 (avoiding LocalTerra gRPC 9090 + gRPC-web 9091)
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap_or_default();
+            match client.get("http://localhost:9092/health").send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Operator health check passed");
+                    return Ok(());
+                }
+                Ok(resp) => {
+                    debug!("Operator health returned status: {}", resp.status());
+                }
+                Err(_) => {
+                    // Health endpoint not ready yet; fall through to timed check
+                }
+            }
+
+            // Fallback: if process is alive for 5s, consider it healthy
             if start.elapsed() > Duration::from_secs(5) {
-                debug!("Operator appears to be running (no health endpoint yet)");
+                debug!("Operator process alive for 5s (health endpoint may not be exposed)");
                 return Ok(());
             }
 

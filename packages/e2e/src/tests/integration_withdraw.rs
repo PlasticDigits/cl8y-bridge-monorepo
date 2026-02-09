@@ -13,9 +13,9 @@ use tracing::{debug, info, warn};
 
 /// Execute a real Terra → EVM transfer with balance verification
 ///
-/// This test performs an actual token lock from Terra to EVM:
+/// This test performs an actual native token deposit from Terra to EVM:
 /// 1. Gets initial Terra balance
-/// 2. Executes lock on Terra bridge
+/// 2. Executes DepositNative on Terra bridge
 /// 3. Verifies Terra balance decreased
 /// 4. Skips time on Anvil for watchtower delay
 /// 5. Optionally waits for operator to process
@@ -38,14 +38,15 @@ pub async fn test_real_terra_to_evm_transfer(
     };
 
     let terra_client = TerraClient::new(&config.terra);
-    // Terra bridge expects 64-char hex (32 bytes) for recipient
-    // EVM address is 20 bytes, left-pad with zeros to make 32 bytes
-    let evm_addr_hex = hex::encode(config.test_accounts.evm_address.as_slice());
-    let evm_recipient = format!("{:0>64}", evm_addr_hex);
+    // EVM address left-padded to 32 bytes (universal address format)
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(config.test_accounts.evm_address.as_slice());
 
     info!(
-        "Testing Terra → EVM transfer: {} {} to {}",
-        amount, denom, evm_recipient
+        "Testing Terra → EVM transfer: {} {} to 0x{}",
+        amount,
+        denom,
+        hex::encode(&dest_account[12..32])
     );
 
     // Step 1: Get initial Terra balance
@@ -77,14 +78,15 @@ pub async fn test_real_terra_to_evm_transfer(
         );
     }
 
-    // Step 2: Execute lock on Terra bridge
-    let evm_chain_id = config.evm.chain_id;
+    // Step 2: Execute DepositNative on Terra bridge
+    // EVM chain's registered 4-byte chain ID (set during setup in terra.rs)
+    let evm_dest_chain: [u8; 4] = [0, 0, 0, 1];
     match terra_client
-        .lock_tokens(&terra_bridge, evm_chain_id, &evm_recipient, amount, denom)
+        .deposit_native_tokens(&terra_bridge, evm_dest_chain, dest_account, amount, denom)
         .await
     {
         Ok(tx_hash) => {
-            info!("Lock transaction: {}", tx_hash);
+            info!("DepositNative transaction: {}", tx_hash);
 
             // Wait for transaction confirmation
             match terra_client
@@ -95,16 +97,19 @@ pub async fn test_real_terra_to_evm_transfer(
                     if !result.success {
                         return TestResult::fail(
                             name,
-                            format!("Lock transaction failed: {}", result.raw_log),
+                            format!("DepositNative transaction failed: {}", result.raw_log),
                             start.elapsed(),
                         );
                     }
-                    info!("Lock transaction confirmed at height {}", result.height);
+                    info!(
+                        "DepositNative transaction confirmed at height {}",
+                        result.height
+                    );
                 }
                 Err(e) => {
                     return TestResult::fail(
                         name,
-                        format!("Failed to confirm lock transaction: {}", e),
+                        format!("Failed to confirm DepositNative transaction: {}", e),
                         start.elapsed(),
                     );
                 }
@@ -113,7 +118,7 @@ pub async fn test_real_terra_to_evm_transfer(
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to execute lock: {}", e),
+                format!("Failed to execute DepositNative: {}", e),
                 start.elapsed(),
             );
         }
@@ -128,13 +133,13 @@ pub async fn test_real_terra_to_evm_transfer(
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to get Terra balance after lock: {}", e),
+                format!("Failed to get Terra balance after deposit: {}", e),
                 start.elapsed(),
             );
         }
     };
 
-    // Account for gas fees - balance should decrease by at least the locked amount
+    // Account for gas fees - balance should decrease by at least the deposited amount
     if balance_before - balance_after < amount {
         warn!(
             "Balance decrease less than expected (may include fees): {} -> {}",
@@ -161,7 +166,7 @@ pub async fn test_real_terra_to_evm_transfer(
     }
 
     // Note: Full verification would require checking EVM approval/release
-    // This requires operator to be running and processing the lock
+    // This requires operator to be running and processing the deposit
 
     TestResult::pass(name, start.elapsed())
 }
@@ -194,10 +199,10 @@ pub async fn test_terra_to_evm_with_verification(
         U256::ZERO
     };
 
-    // Step 2: Execute Terra lock
-    let lock_result = test_real_terra_to_evm_transfer(config, amount, denom).await;
-    if lock_result.is_fail() {
-        return lock_result;
+    // Step 2: Execute Terra DepositNative
+    let deposit_result = test_real_terra_to_evm_transfer(config, amount, denom).await;
+    if deposit_result.is_fail() {
+        return deposit_result;
     }
 
     // Step 3: Skip time for watchtower delay
@@ -206,7 +211,7 @@ pub async fn test_terra_to_evm_with_verification(
     }
 
     // Step 4: Wait for operator to process
-    info!("Waiting for operator to process lock...");
+    info!("Waiting for operator to process deposit...");
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Step 5: Check EVM balance increased

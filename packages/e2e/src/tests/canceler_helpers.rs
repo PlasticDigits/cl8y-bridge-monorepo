@@ -332,10 +332,22 @@ pub async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> e
 
     let approved = bytes.get(10 * 32 + 31).copied().unwrap_or(0) != 0;
     let cancelled = bytes.get(11 * 32 + 31).copied().unwrap_or(0) != 0;
+    let executed = bytes.get(12 * 32 + 31).copied().unwrap_or(0) != 0;
+
+    // Extract nonce (slot 6, uint64 at end of 32-byte word)
+    let nonce_bytes = &bytes[6 * 32..7 * 32];
+    let nonce = u64::from_be_bytes(nonce_bytes[24..32].try_into().unwrap_or([0; 8]));
+
+    // Extract srcChain (slot 0, bytes4 at start of 32-byte word)
+    let src_chain = &bytes[0..4];
 
     debug!(
-        "Withdrawal status: approved={}, cancelled={}",
-        approved, cancelled
+        "Withdrawal status: approved={}, cancelled={}, executed={}, nonce={}, srcChain=0x{}",
+        approved,
+        cancelled,
+        executed,
+        nonce,
+        hex::encode(src_chain)
     );
 
     Ok(cancelled)

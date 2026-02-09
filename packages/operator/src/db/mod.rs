@@ -33,8 +33,9 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
     let row = sqlx::query(
         r#"
         INSERT INTO evm_deposits (chain_id, tx_hash, log_index, nonce, dest_chain_key, 
-            dest_token_address, dest_account, token, amount, block_number, block_hash, dest_chain_type)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11, $12)
+            dest_token_address, dest_account, token, amount, block_number, block_hash, 
+            dest_chain_type, src_account, src_v2_chain_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11, $12, $13, $14)
         RETURNING id
         "#,
     )
@@ -50,6 +51,8 @@ pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Resul
     .bind(deposit.block_number)
     .bind(&deposit.block_hash)
     .bind(&deposit.dest_chain_type)
+    .bind(&deposit.src_account)
+    .bind(&deposit.src_v2_chain_id)
     .fetch_one(pool)
     .await
     .wrap_err("Failed to insert EVM deposit")?;
@@ -63,7 +66,7 @@ pub async fn get_pending_evm_deposits(pool: &PgPool) -> Result<Vec<EvmDeposit>> 
     let rows = sqlx::query_as::<_, EvmDeposit>(
         r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
                   dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
-                  created_at, updated_at, dest_chain_id, dest_chain_type 
+                  created_at, updated_at, dest_chain_id, dest_chain_type, src_account, src_v2_chain_id 
            FROM evm_deposits WHERE status = 'pending'"#,
     )
     .fetch_all(pool)
@@ -83,7 +86,7 @@ pub async fn get_pending_evm_deposits_for_cosmos(pool: &PgPool) -> Result<Vec<Ev
     let rows = sqlx::query_as::<_, EvmDeposit>(
         r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
                   dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
-                  created_at, updated_at, dest_chain_id, dest_chain_type 
+                  created_at, updated_at, dest_chain_id, dest_chain_type, src_account, src_v2_chain_id 
            FROM evm_deposits WHERE status = 'pending' AND dest_chain_type = 'cosmos'"#,
     )
     .fetch_all(pool)
@@ -103,7 +106,7 @@ pub async fn get_pending_evm_deposits_for_evm(pool: &PgPool) -> Result<Vec<EvmDe
     let rows = sqlx::query_as::<_, EvmDeposit>(
         r#"SELECT id, chain_id, tx_hash, log_index, nonce, dest_chain_key, dest_token_address, 
                   dest_account, token, amount::TEXT as amount, block_number, block_hash, status, 
-                  created_at, updated_at, dest_chain_id, dest_chain_type 
+                  created_at, updated_at, dest_chain_id, dest_chain_type, src_account, src_v2_chain_id 
            FROM evm_deposits WHERE status = 'pending' AND dest_chain_type = 'evm'"#,
     )
     .fetch_all(pool)
@@ -222,12 +225,87 @@ pub async fn terra_deposit_exists(pool: &PgPool, tx_hash: &str, nonce: i64) -> R
 
 /// Insert a new approval
 pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i64> {
+    use tracing::{debug, warn};
+
+    // Pre-validate fields that have VARCHAR limits in the schema
+    if approval.token.len() > 42 {
+        warn!(
+            token_len = approval.token.len(),
+            token = %approval.token,
+            "Approval token exceeds VARCHAR(42) limit, truncating to 42 chars"
+        );
+    }
+    if approval.recipient.len() > 42 {
+        warn!(
+            recipient_len = approval.recipient.len(),
+            recipient = %approval.recipient,
+            "Approval recipient exceeds VARCHAR(42) limit, truncating to 42 chars"
+        );
+    }
+    if let Some(ref fr) = approval.fee_recipient {
+        if fr.len() > 42 {
+            warn!(
+                fee_recipient_len = fr.len(),
+                fee_recipient = %fr,
+                "Approval fee_recipient exceeds VARCHAR(42) limit, truncating to 42 chars"
+            );
+        }
+    }
+
+    debug!(
+        src_chain_key = %hex::encode(&approval.src_chain_key),
+        nonce = approval.nonce,
+        dest_chain_id = approval.dest_chain_id,
+        withdraw_hash = %hex::encode(&approval.withdraw_hash),
+        token = %approval.token,
+        recipient = %approval.recipient,
+        amount = %approval.amount,
+        fee = %approval.fee,
+        fee_recipient = ?approval.fee_recipient,
+        "Inserting approval into database"
+    );
+
+    // Truncate fields to fit VARCHAR(42) — prevents silent DB errors
+    let token = if approval.token.len() > 42 {
+        &approval.token[..42]
+    } else {
+        &approval.token
+    };
+    let recipient = if approval.recipient.len() > 42 {
+        &approval.recipient[..42]
+    } else {
+        &approval.recipient
+    };
+    let fee_recipient = approval.fee_recipient.as_ref().map(|fr| {
+        if fr.len() > 42 {
+            &fr[..42]
+        } else {
+            fr.as_str()
+        }
+    });
+
     // Note: amount and fee are stored as NUMERIC(78,0) in the database, so we cast the text values
+    // Use ON CONFLICT to handle duplicate inserts gracefully:
+    // - Stale DB from previous run (volumes not wiped)
+    // - Previous attempt that was marked 'failed' (e.g., withdrawSubmit not called yet)
+    // The upsert resets a failed approval to 'pending' with fresh data so it can be retried.
     let row = sqlx::query(
         r#"
         INSERT INTO approvals (src_chain_key, nonce, dest_chain_id, withdraw_hash, token, recipient, 
             amount, fee, fee_recipient, deduct_from_amount)
         VALUES ($1, $2, $3, $4, $5, $6, $7::NUMERIC, $8::NUMERIC, $9, $10)
+        ON CONFLICT (src_chain_key, nonce, dest_chain_id) DO UPDATE SET
+            withdraw_hash = EXCLUDED.withdraw_hash,
+            token = EXCLUDED.token,
+            recipient = EXCLUDED.recipient,
+            amount = EXCLUDED.amount,
+            fee = EXCLUDED.fee,
+            fee_recipient = EXCLUDED.fee_recipient,
+            deduct_from_amount = EXCLUDED.deduct_from_amount,
+            status = 'pending',
+            error_message = NULL,
+            attempts = 0,
+            updated_at = NOW()
         RETURNING id
         "#,
     )
@@ -235,15 +313,45 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
     .bind(approval.nonce)
     .bind(approval.dest_chain_id)
     .bind(&approval.withdraw_hash)
-    .bind(&approval.token)
-    .bind(&approval.recipient)
+    .bind(token)
+    .bind(recipient)
     .bind(&approval.amount)
     .bind(&approval.fee)
-    .bind(&approval.fee_recipient)
+    .bind(fee_recipient)
     .bind(approval.deduct_from_amount)
     .fetch_one(pool)
     .await
-    .wrap_err("Failed to insert approval")?;
+    .map_err(|e| {
+        // Log the full sqlx error for diagnostics
+        error!(
+            error = %e,
+            error_debug = ?e,
+            src_chain_key = %hex::encode(&approval.src_chain_key),
+            nonce = approval.nonce,
+            dest_chain_id = approval.dest_chain_id,
+            withdraw_hash_len = approval.withdraw_hash.len(),
+            token = %token,
+            token_len = token.len(),
+            recipient = %recipient,
+            recipient_len = recipient.len(),
+            amount = %approval.amount,
+            fee = %approval.fee,
+            "Database error inserting approval"
+        );
+        e
+    })
+    .wrap_err_with(|| {
+        format!(
+            "Failed to insert approval (src_chain_key={}, nonce={}, dest_chain_id={}, \
+             withdraw_hash_len={}, token_len={}, recipient_len={})",
+            hex::encode(&approval.src_chain_key),
+            approval.nonce,
+            approval.dest_chain_id,
+            approval.withdraw_hash.len(),
+            token.len(),
+            recipient.len(),
+        )
+    })?;
 
     Ok(row.get("id"))
 }
@@ -312,7 +420,11 @@ pub async fn update_approval_failed(pool: &PgPool, id: i64, error: &str) -> Resu
     Ok(())
 }
 
-/// Check if approval exists for (src_chain_key, nonce)
+/// Check if a non-failed approval exists for (src_chain_key, nonce, dest_chain_id).
+///
+/// Only considers approvals that are NOT in 'failed' or 'rejected' status.
+/// This prevents prematurely marking deposits as "processed" when a previous
+/// approval attempt failed (e.g., due to withdrawSubmit not being called yet).
 pub async fn approval_exists(
     pool: &PgPool,
     src_chain_key: &[u8],
@@ -320,7 +432,11 @@ pub async fn approval_exists(
     dest_chain_id: i64,
 ) -> Result<bool> {
     let row: (bool,) = sqlx::query_as(
-        r#"SELECT EXISTS(SELECT 1 FROM approvals WHERE src_chain_key = $1 AND nonce = $2 AND dest_chain_id = $3)"#,
+        r#"SELECT EXISTS(
+            SELECT 1 FROM approvals
+            WHERE src_chain_key = $1 AND nonce = $2 AND dest_chain_id = $3
+              AND status NOT IN ('failed', 'rejected')
+        )"#,
     )
     .bind(src_chain_key)
     .bind(nonce)

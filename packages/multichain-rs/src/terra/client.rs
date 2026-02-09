@@ -302,7 +302,7 @@ impl TerraClient {
         let coins: Vec<Coin> = funds
             .iter()
             .map(|(denom, amount)| Coin {
-                denom: denom.parse().unwrap(),
+                denom: denom.parse().expect("invalid coin denom"),
                 amount: *amount,
             })
             .collect();

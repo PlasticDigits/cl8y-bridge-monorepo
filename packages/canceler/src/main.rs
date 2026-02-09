@@ -27,22 +27,14 @@
 //! - GET /healthz - Liveness probe
 //! - GET /readyz - Readiness probe
 
-mod config;
-mod evm_client;
-mod hash;
-mod server;
-mod terra_client;
-mod verifier;
-mod watcher;
-
 use std::sync::Arc;
 
 use alloy::signers::local::PrivateKeySigner;
-use config::Config;
-use server::{CancelerStats, Metrics, SharedMetrics, SharedStats};
+use canceler::config::Config;
+use canceler::server::{self, CancelerStats, Metrics, SharedMetrics, SharedStats};
+use canceler::watcher::CancelerWatcher;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use watcher::CancelerWatcher;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;

@@ -16,6 +16,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Deployment Guide](./docs/deployment.md) | Production deployment |
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
+| [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
 | [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
 
 ## Packages
@@ -95,6 +96,44 @@ SKIP_INTEGRATION=true npm run test:run
 # Full tests (requires LocalTerra + Anvil running)
 npm run test:run
 ```
+
+## Cross-Chain Hash Parity
+
+Every cross-chain transfer produces a canonical **transfer hash** that must be identical whether computed on the source chain (deposit) or destination chain (withdrawal). This is the foundation of the bridge's security model -- cancelers verify transfers by comparing hashes across chains.
+
+### Transfer Hash (V2, 7-Field)
+
+```
+keccak256(abi.encode(srcChain, destChain, srcAccount, destAccount, token, amount, nonce))
+```
+
+The hash is computed identically in Solidity (`HashLib.computeTransferHash`), Rust (`multichain-rs::compute_transfer_hash`), and CosmWasm (`bridge::hash::compute_transfer_hash`).
+
+### Token Encoding Rules
+
+| Token Type | Encoding | Example |
+|-----------|----------|---------|
+| ERC20 address | Left-padded to 32 bytes: `bytes32(uint256(uint160(addr)))` | `0x0000...aabb` |
+| CW20 address | Bech32-decode → 20 bytes → left-padded to 32 | `terra1abc...` → `0x0000...` |
+| Native denom | `keccak256(denom_bytes)` | `keccak256("uluna")` |
+
+**Critical rules:**
+- The `token` field is **always the destination token**, not the source token
+- The `amount` is **always net (post-fee)**, not the gross deposit amount
+- Addresses are **always left-padded** (20-byte address in positions 12..31)
+- Chain IDs are **4-byte big-endian, left-aligned** in 32 bytes
+
+### Parity Test Coverage
+
+Hash parity is verified across all four codebases with unit tests covering every chain/token combination:
+
+| Route | Token Types Tested |
+|-------|-------------------|
+| EVM → EVM | ERC20 |
+| EVM → Terra Classic | Native (uluna), CW20 |
+| Terra Classic → EVM | Native (uluna) → ERC20, CW20 → ERC20 |
+
+See the full [Cross-Chain Hash Parity documentation](./docs/crosschain-parity.md) for encoding details, implementation locations, and common pitfalls.
 
 ### Quick Test Commands
 

@@ -508,4 +508,554 @@ mod tests {
         let from_function = cosmos_chain_key("columbus-5");
         assert_eq!(from_helper, from_function);
     }
+
+    // ================================================================
+    // Cross-Chain Token Encoding Parity Tests
+    // (uluna native ↔ ERC20 and CW20 ↔ ERC20)
+    // ================================================================
+
+    /// Verify keccak256("uluna") matches the known cross-chain value.
+    /// Both Solidity keccak256(abi.encodePacked("uluna")) and Rust keccak256(b"uluna")
+    /// must produce this exact value for hashes to match across chains.
+    #[test]
+    fn test_uluna_native_token_encoding_cross_chain() {
+        let uluna_bytes32 = keccak256(b"uluna");
+        assert_eq!(
+            bytes32_to_hex(&uluna_bytes32),
+            "0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da",
+            "keccak256('uluna') must match Solidity and Rust operator implementations"
+        );
+    }
+
+    /// Verify encode_token_address produces keccak256("uluna") for native denom "uluna".
+    /// Uses cosmwasm mock deps to test the contract-side encoding path.
+    #[test]
+    fn test_encode_token_address_uluna_native() {
+        let deps = cosmwasm_std::testing::mock_dependencies();
+
+        let encoded = encode_token_address(deps.as_ref(), "uluna").unwrap();
+        let expected = keccak256(b"uluna");
+
+        assert_eq!(
+            encoded, expected,
+            "encode_token_address('uluna') must produce keccak256('uluna')"
+        );
+        assert_eq!(
+            bytes32_to_hex(&encoded),
+            "0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da"
+        );
+    }
+
+    /// Verify encode_token_address produces keccak256("uusd") for native denom "uusd".
+    #[test]
+    fn test_encode_token_address_uusd_native() {
+        let deps = cosmwasm_std::testing::mock_dependencies();
+
+        let encoded = encode_token_address(deps.as_ref(), "uusd").unwrap();
+        let expected = keccak256(b"uusd");
+
+        assert_eq!(
+            encoded, expected,
+            "encode_token_address('uusd') must produce keccak256('uusd')"
+        );
+    }
+
+    /// Verify that uluna and uusd produce different token encodings.
+    #[test]
+    fn test_encode_token_address_different_native_denoms() {
+        let deps = cosmwasm_std::testing::mock_dependencies();
+
+        let uluna = encode_token_address(deps.as_ref(), "uluna").unwrap();
+        let uusd = encode_token_address(deps.as_ref(), "uusd").unwrap();
+
+        assert_ne!(
+            uluna, uusd,
+            "Different native denoms must produce different encodings"
+        );
+    }
+
+    /// EVM → Terra transfer hash with native uluna.
+    /// Cross-chain parity: must match Solidity and Rust operator hash.
+    #[test]
+    fn test_transfer_hash_evm_to_terra_uluna() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+
+        // EVM depositor: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 as bytes32
+        let mut src_account = [0u8; 32];
+        src_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        // Terra recipient: terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v as bytes32
+        let dest_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        // Token: native uluna = keccak256("uluna")
+        let token = keccak256(b"uluna");
+
+        let hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            1_000_000,
+            1,
+        );
+
+        // Must match Solidity and Rust multichain-rs output
+        assert_eq!(
+            bytes32_to_hex(&hash),
+            "0xfae09dfb97ff9f54f146b78d461f05956b8e57714dc1ff756f4b293720c22336",
+            "EVM->Terra uluna hash must match Solidity and Rust"
+        );
+    }
+
+    /// Terra → EVM transfer hash with native uluna.
+    #[test]
+    fn test_transfer_hash_terra_to_evm_uluna() {
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+
+        let src_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let mut dest_account = [0u8; 32];
+        dest_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        let token = keccak256(b"uluna");
+
+        let hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            1_000_000,
+            1,
+        );
+
+        assert_eq!(
+            bytes32_to_hex(&hash),
+            "0xf2ee2cf947c1d90b12a4fdb93ddfafb32895b3eb8586b69c15d7bd935247f3ee",
+            "Terra->EVM uluna hash must match Solidity and Rust"
+        );
+    }
+
+    /// EVM → Terra transfer hash with CW20 token.
+    #[test]
+    fn test_transfer_hash_evm_to_terra_cw20() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+
+        let mut src_account = [0u8; 32];
+        src_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        // CW20 address bytes32 (same as token in this test case)
+        let cw20_bytes32 =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &src_account,
+            &cw20_bytes32,
+            &cw20_bytes32,
+            1_000_000,
+            1,
+        );
+
+        assert_eq!(
+            bytes32_to_hex(&hash),
+            "0xf9737e3f6928b01ce2088caab2694eef79dd51ba42bcf177f01aad2fa6c7a4c6",
+            "EVM->Terra CW20 hash must match Solidity and Rust"
+        );
+    }
+
+    /// Terra → EVM transfer hash with CW20 token.
+    #[test]
+    fn test_transfer_hash_terra_to_evm_cw20() {
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+
+        let cw20_bytes32 =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let mut dest_account = [0u8; 32];
+        dest_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        let hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &cw20_bytes32,
+            &dest_account,
+            &cw20_bytes32,
+            1_000_000,
+            1,
+        );
+
+        assert_eq!(
+            bytes32_to_hex(&hash),
+            "0xb8179fbc5a9f62e1b750c327fe0921600b1ce312585801f644604f8363a4dafa",
+            "Terra->EVM CW20 hash must match Solidity and Rust"
+        );
+    }
+
+    /// Verify uluna vs CW20 token encoding produces different transfer hashes.
+    /// This is the root cause of "terra approval not found within timeout".
+    #[test]
+    fn test_uluna_vs_cw20_hash_mismatch() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let src = [0xABu8; 32];
+        let dest = [0xCDu8; 32];
+
+        let token_uluna = keccak256(b"uluna");
+        let token_cw20 =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        assert_ne!(
+            token_uluna, token_cw20,
+            "uluna hash and CW20 bytes32 must be different token encodings"
+        );
+
+        let hash_uluna = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &src,
+            &dest,
+            &token_uluna,
+            1_000_000,
+            1,
+        );
+        let hash_cw20 = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &src,
+            &dest,
+            &token_cw20,
+            1_000_000,
+            1,
+        );
+
+        assert_ne!(
+            hash_uluna, hash_cw20,
+            "Using keccak256('uluna') vs CW20 bytes32 MUST produce different hashes. \
+             This mismatch causes 'terra approval not found within timeout'."
+        );
+    }
+
+    /// Direction matters: EVM→Terra and Terra→EVM produce different hashes for uluna.
+    #[test]
+    fn test_direction_matters_uluna() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+
+        let mut evm_account = [0u8; 32];
+        evm_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+        let terra_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+        let token = keccak256(b"uluna");
+
+        let evm_to_terra = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &evm_account,
+            &terra_account,
+            &token,
+            1_000_000,
+            1,
+        );
+        let terra_to_evm = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &terra_account,
+            &evm_account,
+            &token,
+            1_000_000,
+            1,
+        );
+
+        assert_ne!(
+            evm_to_terra, terra_to_evm,
+            "EVM->Terra and Terra->EVM must produce different hashes"
+        );
+    }
+
+    // ================================================================
+    // Deposit ↔ Withdraw Hash Parity Tests
+    //
+    // Deposit side (source chain) and withdraw side (dest chain) must
+    // produce the SAME hash for the same transfer parameters.
+    // Token = destination token address in all cases.
+    // Expected values verified against Solidity and Rust multichain-rs.
+    // ================================================================
+
+    /// EVM → EVM: ERC20 deposit == withdraw
+    #[test]
+    fn test_deposit_withdraw_match_evm_to_evm_erc20() {
+        let src_chain: [u8; 4] = [0, 0, 0, 1];
+        let dest_chain: [u8; 4] = [0, 0, 0, 56];
+
+        let mut src_account = [0u8; 32];
+        src_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        let mut dest_account = [0u8; 32];
+        dest_account[12..32].copy_from_slice(&[
+            0x70, 0x99, 0x79, 0x70, 0xC5, 0x18, 0x12, 0xdc, 0x3A, 0x01, 0x0C, 0x7d, 0x01, 0xb5,
+            0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xC8,
+        ]);
+
+        let mut dest_token = [0u8; 32];
+        dest_token[12..32].copy_from_slice(&[
+            0x5F, 0xbD, 0xB2, 0x31, 0x56, 0x78, 0xaf, 0xec, 0xb3, 0x67, 0xf0, 0x32, 0xd9, 0x3F,
+            0x64, 0x2f, 0x64, 0x18, 0x0a, 0xa3,
+        ]);
+
+        let deposit_hash = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &dest_token,
+            1_000_000_000_000_000_000,
+            42,
+        );
+        let withdraw_hash = compute_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &dest_token,
+            1_000_000_000_000_000_000,
+            42,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "EVM→EVM ERC20: deposit must equal withdraw"
+        );
+        assert_eq!(
+            bytes32_to_hex(&deposit_hash),
+            "0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54",
+            "Must match Solidity and Rust"
+        );
+    }
+
+    /// EVM → Terra: native uluna deposit == withdraw
+    #[test]
+    fn test_deposit_withdraw_match_evm_to_terra_native() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+
+        let mut evm_account = [0u8; 32];
+        evm_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+        let terra_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let token = keccak256(b"uluna");
+
+        let deposit_hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &evm_account,
+            &terra_account,
+            &token,
+            995_000,
+            1,
+        );
+        let withdraw_hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &evm_account,
+            &terra_account,
+            &token,
+            995_000,
+            1,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "EVM→Terra native uluna: deposit must equal withdraw"
+        );
+        assert_eq!(
+            bytes32_to_hex(&deposit_hash),
+            "0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453",
+            "Must match Solidity and Rust"
+        );
+    }
+
+    /// EVM → Terra: CW20 deposit == withdraw
+    #[test]
+    fn test_deposit_withdraw_match_evm_to_terra_cw20() {
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+
+        let mut evm_account = [0u8; 32];
+        evm_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+        let cw20_bytes32 =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let deposit_hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &evm_account,
+            &cw20_bytes32,
+            &cw20_bytes32,
+            1_000_000,
+            5,
+        );
+        let withdraw_hash = compute_transfer_hash(
+            &evm_chain,
+            &terra_chain,
+            &evm_account,
+            &cw20_bytes32,
+            &cw20_bytes32,
+            1_000_000,
+            5,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "EVM→Terra CW20: deposit must equal withdraw"
+        );
+        assert_eq!(
+            bytes32_to_hex(&deposit_hash),
+            "0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b",
+            "Must match Solidity and Rust"
+        );
+    }
+
+    /// Terra → EVM: native uluna source → ERC20 dest, deposit == withdraw
+    #[test]
+    fn test_deposit_withdraw_match_terra_to_evm_native_erc20() {
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+
+        let terra_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+        let mut evm_account = [0u8; 32];
+        evm_account[12..32].copy_from_slice(&[
+            0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72,
+            0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        ]);
+
+        let mut erc20_token = [0u8; 32];
+        erc20_token[12..32].copy_from_slice(&[
+            0x5F, 0xbD, 0xB2, 0x31, 0x56, 0x78, 0xaf, 0xec, 0xb3, 0x67, 0xf0, 0x32, 0xd9, 0x3F,
+            0x64, 0x2f, 0x64, 0x18, 0x0a, 0xa3,
+        ]);
+
+        let deposit_hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &terra_account,
+            &evm_account,
+            &erc20_token,
+            500_000,
+            3,
+        );
+        let withdraw_hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &terra_account,
+            &evm_account,
+            &erc20_token,
+            500_000,
+            3,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "Terra→EVM native→ERC20: deposit must equal withdraw"
+        );
+        assert_eq!(
+            bytes32_to_hex(&deposit_hash),
+            "0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438",
+            "Must match Solidity and Rust"
+        );
+    }
+
+    /// Terra → EVM: CW20 source → ERC20 dest, deposit == withdraw
+    #[test]
+    fn test_deposit_withdraw_match_terra_to_evm_cw20_erc20() {
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let evm_chain: [u8; 4] = [0, 0, 0, 1];
+
+        let terra_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+        let mut evm_account = [0u8; 32];
+        evm_account[12..32].copy_from_slice(&[
+            0x70, 0x99, 0x79, 0x70, 0xC5, 0x18, 0x12, 0xdc, 0x3A, 0x01, 0x0C, 0x7d, 0x01, 0xb5,
+            0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xC8,
+        ]);
+
+        let mut erc20_token = [0u8; 32];
+        erc20_token[12..32].copy_from_slice(&[
+            0xe7, 0xf1, 0x72, 0x5E, 0x77, 0x34, 0xCE, 0x28, 0x8F, 0x83, 0x67, 0xe1, 0xBb, 0x14,
+            0x3E, 0x90, 0xbb, 0x3F, 0x05, 0x12,
+        ]);
+
+        let deposit_hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &terra_account,
+            &evm_account,
+            &erc20_token,
+            2_500_000,
+            7,
+        );
+        let withdraw_hash = compute_transfer_hash(
+            &terra_chain,
+            &evm_chain,
+            &terra_account,
+            &evm_account,
+            &erc20_token,
+            2_500_000,
+            7,
+        );
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "Terra→EVM CW20→ERC20: deposit must equal withdraw"
+        );
+        assert_eq!(
+            bytes32_to_hex(&deposit_hash),
+            "0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab",
+            "Must match Solidity and Rust"
+        );
+    }
 }

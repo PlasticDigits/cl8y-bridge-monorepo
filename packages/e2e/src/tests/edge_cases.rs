@@ -3,8 +3,8 @@
 //! This module contains tests for edge case handling, error conditions,
 //! and observability features like metrics and structured logging.
 
+use crate::services::find_project_root;
 use crate::{E2eConfig, ServiceManager, TestResult};
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Test canceler restart recovery.
@@ -16,11 +16,11 @@ pub async fn test_canceler_restart_recovery(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "canceler_restart_recovery";
 
-    // Get project root from config or use default
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
+    // Get project root dynamically
+    let project_root = find_project_root();
 
     // Create service manager
-    let manager = ServiceManager::new(project_root);
+    let manager = ServiceManager::new(&project_root);
 
     // Check current canceler status
     let is_running = manager.is_canceler_running();
@@ -235,10 +235,11 @@ pub async fn test_metrics_endpoint(_config: &E2eConfig) -> TestResult {
 
     // Metrics endpoint is typically on the operator or canceler port
     // Get ports from environment or use defaults
+    // Operator API port — default 9092 to avoid LocalTerra gRPC (9090) and gRPC-web (9091)
     let operator_metrics_port: u16 = std::env::var("OPERATOR_METRICS_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(9090);
+        .unwrap_or(9092);
     let canceler_health_port: u16 = std::env::var("CANCELER_HEALTH_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -321,11 +322,11 @@ pub async fn test_structured_logging(_config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "structured_logging";
 
-    // Get project root from config or use default
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
+    // Get project root dynamically
+    let project_root = find_project_root();
 
     // Create service manager
-    let manager = ServiceManager::new(project_root);
+    let manager = ServiceManager::new(&project_root);
 
     // Check if operator or canceler is running
     let operator_running = manager.is_operator_running();

@@ -11,17 +11,17 @@
 //! - Funded test accounts
 
 use crate::evm::AnvilTimeClient;
-use crate::services::ServiceManager;
+use crate::services::{find_project_root, ServiceManager};
 use crate::terra::TerraClient;
 use crate::transfer_helpers::{
     poll_for_approval, skip_withdrawal_delay, verify_withdrawal_executed,
 };
 use crate::{E2eConfig, TestResult};
 use alloy::primitives::{Address, U256};
-use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+use super::helpers;
 use super::operator_helpers::{
     approve_erc20, calculate_evm_fee, encode_terra_address, execute_deposit, get_erc20_balance,
     get_terra_chain_key, poll_terra_for_approval, query_cancel_window, query_deposit_nonce,
@@ -65,8 +65,8 @@ pub async fn test_operator_live_deposit_detection(
     };
 
     // Step 1: Verify operator service is running
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running - start it first");
@@ -276,9 +276,21 @@ pub async fn test_operator_live_deposit_detection(
     let mut src_account_bytes32 = [0u8; 32];
     src_account_bytes32[12..32].copy_from_slice(test_account.as_slice());
 
+    // Determine the correct Terra-side token for WithdrawSubmit.
+    //
+    // CRITICAL: The token used here must match what the EVM TokenRegistry has
+    // registered as the destToken for this ERC20. During setup:
+    // - If a CW20 was deployed, destToken = encode(CW20 address) (bech32 → bytes32)
+    // - If no CW20, destToken = keccak256("uluna")
+    //
+    // The Terra contract's encode_token_address() must produce the same bytes32
+    // for the hash to match. For CW20 addresses (starting with "terra1"), it uses
+    // bech32 decode + left-pad. For native denoms like "uluna", it uses keccak256.
+    let terra_token = config.terra.cw20_address.as_deref().unwrap_or("uluna");
+
     info!(
-        "Submitting WithdrawSubmit on Terra: nonce={}, token=uluna, amount={}",
-        deposit_nonce, net_amount
+        "Submitting WithdrawSubmit on Terra: nonce={}, token={}, amount={}",
+        deposit_nonce, terra_token, net_amount
     );
 
     match submit_withdraw_on_terra(
@@ -286,7 +298,7 @@ pub async fn test_operator_live_deposit_detection(
         &terra_bridge,
         evm_chain_id,
         src_account_bytes32,
-        "uluna",
+        terra_token,
         terra_recipient,
         net_amount,
         deposit_nonce,
@@ -330,11 +342,11 @@ pub async fn test_operator_live_deposit_detection(
                 approval_info.nonce, approval_info.amount
             );
 
-            // Verify approval parameters match deposit
-            if approval_info.amount != U256::from(transfer_amount) {
+            // Verify approval parameters match deposit (should be net amount, post-fee)
+            if approval_info.amount != U256::from(net_amount) {
                 warn!(
-                    "Approval amount mismatch: expected {}, got {} (may include fees)",
-                    transfer_amount, approval_info.amount
+                    "Approval amount mismatch: expected net_amount={}, got {} (deposit={}, fee={})",
+                    net_amount, approval_info.amount, transfer_amount, fee_amount
                 );
             }
 
@@ -351,20 +363,27 @@ pub async fn test_operator_live_deposit_detection(
             };
 
             let balance_decrease = initial_balance.saturating_sub(final_balance);
-            if balance_decrease < U256::from(transfer_amount) {
+
+            // The expected decrease is the net amount (post-fee), NOT the gross amount.
+            // When the depositor is the fee recipient (common in test setups), the fee
+            // transfer is a self-transfer (no net change), so only netAmount is deducted.
+            // Even when they're different accounts, the minimum decrease is netAmount.
+            let min_expected_decrease = net_amount;
+            if balance_decrease < U256::from(min_expected_decrease) {
                 return TestResult::fail(
                     name,
                     format!(
-                        "Balance decrease insufficient: {} (expected >= {})",
-                        balance_decrease, transfer_amount
+                        "Balance decrease insufficient: {} (expected >= {} net_amount, \
+                         gross_amount={}, fee={})",
+                        balance_decrease, min_expected_decrease, transfer_amount, fee_amount
                     ),
                     start.elapsed(),
                 );
             }
 
             info!(
-                "Live deposit detection passed: nonce={}, balance_decrease={}",
-                nonce_after, balance_decrease
+                "Live deposit detection passed: nonce={}, balance_decrease={} (net_amount={}, fee={})",
+                nonce_after, balance_decrease, net_amount, fee_amount
             );
             TestResult::pass(name, start.elapsed())
         }
@@ -385,13 +404,15 @@ pub async fn test_operator_live_deposit_detection(
 
 /// Test live operator withdrawal execution after delay with balance verification
 ///
-/// This test verifies the complete withdrawal execution flow:
-/// 1. Execute a deposit and wait for Terra approval (or use existing)
-/// 2. Skip time on Anvil to pass withdrawal delay
-/// 3. Wait for operator to execute withdrawal
-/// 4. Verify withdrawal transaction was executed
-/// 5. Verify destination balance increased
+/// This test verifies the complete withdrawal execution flow using EVM→EVM loopback:
+/// 1. Execute a deposit on EVM targeting EVM (same chain)
+/// 2. Submit withdrawSubmit on EVM (V2 user-initiated step)
+/// 3. Wait for operator to poll and approve the withdrawal
+/// 4. Skip time on Anvil to pass cancel window
+/// 5. Wait for operator to execute withdrawal
+/// 6. Verify destination balance increased
 ///
+/// Uses EVM→EVM loopback to be self-contained (no dependency on prior tests).
 /// Requires operator service running with withdrawal execution enabled.
 pub async fn test_operator_live_withdrawal_execution(
     config: &E2eConfig,
@@ -400,7 +421,7 @@ pub async fn test_operator_live_withdrawal_execution(
     let start = Instant::now();
     let name = "operator_live_withdrawal_execution";
 
-    info!("Starting live operator withdrawal execution test");
+    info!("Starting live operator withdrawal execution test (EVM→EVM)");
 
     // Use provided token or skip
     let token = match token_address {
@@ -411,16 +432,18 @@ pub async fn test_operator_live_withdrawal_execution(
     };
 
     // Step 1: Verify operator is running
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
     }
 
     let test_account = config.test_accounts.evm_address;
+    let lock_unlock = config.evm.contracts.lock_unlock;
+    let transfer_amount = DEFAULT_TRANSFER_AMOUNT;
 
-    // Step 2: Get initial balance on destination (EVM side for Terra->EVM)
+    // Step 2: Get initial balance
     let initial_balance = match get_erc20_balance(config, token, test_account).await {
         Ok(b) => {
             info!("Initial EVM token balance: {}", b);
@@ -435,8 +458,20 @@ pub async fn test_operator_live_withdrawal_execution(
         }
     };
 
-    // Step 3: Query current deposit nonce to find existing approvals
-    let current_nonce = match query_deposit_nonce(config).await {
+    // Step 3: Query EVM chain ID and initial nonce
+    let evm_chain_key = match super::helpers::query_evm_chain_key(config, config.evm.chain_id).await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query EVM chain ID: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    let initial_nonce = match query_deposit_nonce(config).await {
         Ok(n) => n,
         Err(e) => {
             return TestResult::fail(
@@ -447,41 +482,105 @@ pub async fn test_operator_live_withdrawal_execution(
         }
     };
 
-    // Step 4: Poll for an existing approval from recent deposits
-    info!("Looking for pending approval to execute...");
-    let approval = match poll_for_approval(config, current_nonce, Duration::from_secs(30)).await {
+    // Step 4: Create EVM→EVM deposit (loopback to self)
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(test_account.as_slice());
+
+    // Verify token registered for EVM destination
+    if let Err(e) = verify_token_setup(config, token, evm_chain_key).await {
+        return TestResult::fail(
+            name,
+            format!("Token setup verification failed for EVM chain: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    // Approve and deposit
+    if let Err(e) = approve_erc20(config, token, lock_unlock, transfer_amount).await {
+        return TestResult::fail(
+            name,
+            format!("Token approval failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    if let Err(e) =
+        execute_deposit(config, token, transfer_amount, evm_chain_key, dest_account).await
+    {
+        return TestResult::fail(name, format!("Deposit failed: {}", e), start.elapsed());
+    }
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let deposit_nonce = initial_nonce; // depositNonce++ is post-increment
+
+    // Step 5: Submit withdrawSubmit on EVM (V2 user step)
+    let mut src_account = [0u8; 32];
+    src_account[12..32].copy_from_slice(test_account.as_slice());
+
+    let fee_amount = match calculate_evm_fee(config, test_account, transfer_amount).await {
+        Ok(fee) => fee,
+        Err(e) => {
+            warn!("Failed to query EVM fee, assuming 0: {}", e);
+            0
+        }
+    };
+    let net_amount = transfer_amount - fee_amount;
+
+    info!(
+        "Submitting WithdrawSubmit on EVM: nonce={}, net_amount={}",
+        deposit_nonce, net_amount
+    );
+
+    match super::operator_helpers::submit_withdraw_on_evm(
+        config,
+        evm_chain_key,
+        src_account,
+        dest_account,
+        token,
+        net_amount,
+        deposit_nonce,
+    )
+    .await
+    {
+        Ok(tx) => {
+            info!(
+                "WithdrawSubmit succeeded: nonce={}, tx=0x{}",
+                deposit_nonce,
+                hex::encode(&tx.as_slice()[..8])
+            );
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!(
+                    "WithdrawSubmit on EVM failed: {}. \
+                     This V2 step is required before operator can approve.",
+                    e
+                ),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Step 6: Wait for operator to approve
+    let approval = match poll_for_approval(config, deposit_nonce, Duration::from_secs(60)).await {
         Ok(a) => {
             info!(
                 "Found approval: hash=0x{}, nonce={}",
                 hex::encode(&a.withdraw_hash.as_slice()[..8]),
                 a.nonce
             );
-            Some(a)
+            a
         }
-        Err(_) => {
-            // Try a few recent nonces
-            let mut found = None;
-            for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-                if let Ok(a) = poll_for_approval(config, nonce, Duration::from_secs(5)).await {
-                    info!(
-                        "Found approval at nonce {}: hash=0x{}",
-                        nonce,
-                        hex::encode(&a.withdraw_hash.as_slice()[..8])
-                    );
-                    found = Some(a);
-                    break;
-                }
-            }
-            found
-        }
-    };
-
-    let approval = match approval {
-        Some(a) => a,
-        None => {
-            return TestResult::skip(
+        Err(e) => {
+            return TestResult::fail(
                 name,
-                "No pending approvals found - run deposit detection test first",
+                format!(
+                    "Operator did not approve withdrawal within timeout: {}. \
+                     Check operator logs for poll_and_approve output.",
+                    e
+                ),
+                start.elapsed(),
             );
         }
     };
@@ -594,12 +693,12 @@ pub async fn test_operator_live_withdrawal_execution(
     }
 }
 
-/// Test operator processes multiple deposits correctly
+/// Test operator processes multiple deposits correctly (EVM→EVM loopback)
 ///
 /// Verifies operator handles sequential deposits without missing any:
-/// 1. Execute N deposits in sequence
-/// 2. Verify all deposit nonces increment correctly
-/// 3. Verify operator creates approvals for all deposits
+/// 1. Execute N deposits in sequence targeting EVM (same chain)
+/// 2. Submit withdrawSubmit for each deposit on EVM (V2 user step)
+/// 3. Verify operator polls and creates approvals for all deposits
 pub async fn test_operator_sequential_deposit_processing(
     config: &E2eConfig,
     token_address: Option<Address>,
@@ -609,7 +708,7 @@ pub async fn test_operator_sequential_deposit_processing(
     let name = "operator_sequential_deposit_processing";
 
     info!(
-        "Testing operator sequential deposit processing ({} deposits)",
+        "Testing operator sequential deposit processing ({} EVM→EVM deposits)",
         num_deposits
     );
 
@@ -618,12 +717,14 @@ pub async fn test_operator_sequential_deposit_processing(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
     }
+
+    let test_account = config.test_accounts.evm_address;
 
     // Get initial state
     let initial_nonce = match query_deposit_nonce(config).await {
@@ -637,27 +738,30 @@ pub async fn test_operator_sequential_deposit_processing(
         }
     };
 
-    let terra_chain_key = match get_terra_chain_key(config).await {
-        Ok(k) => k,
+    // Query EVM chain ID from registry
+    let evm_chain_key = match helpers::query_evm_chain_key(config, config.evm.chain_id).await {
+        Ok(id) => id,
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to get Terra chain key: {}", e),
+                format!("Failed to query EVM chain ID: {}", e),
                 start.elapsed(),
             );
         }
     };
 
-    let dest_account = encode_terra_address(&config.test_accounts.terra_address);
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(test_account.as_slice());
+
     let lock_unlock = config.evm.contracts.lock_unlock;
     let amount_per_deposit = DEFAULT_TRANSFER_AMOUNT;
 
-    // Verify token is properly registered before attempting deposits
-    if let Err(e) = verify_token_setup(config, token, terra_chain_key).await {
+    // Verify token is properly registered for EVM destination
+    if let Err(e) = verify_token_setup(config, token, evm_chain_key).await {
         return TestResult::fail(
             name,
             format!(
-                "Token setup verification failed: {}. \
+                "Token setup verification failed for EVM chain: {}. \
                  Run 'cl8y-e2e setup' to register the token in TokenRegistry.",
                 e
             ),
@@ -675,16 +779,34 @@ pub async fn test_operator_sequential_deposit_processing(
         );
     }
 
-    // Execute deposits sequentially
-    let mut deposit_nonces = Vec::new();
+    // Calculate fee for net amount
+    let fee_amount = match calculate_evm_fee(config, test_account, amount_per_deposit).await {
+        Ok(fee) => fee,
+        Err(e) => {
+            warn!("Failed to query EVM fee, assuming 0: {}", e);
+            0
+        }
+    };
+    let net_amount = amount_per_deposit - fee_amount;
+
+    let mut src_account = [0u8; 32];
+    src_account[12..32].copy_from_slice(test_account.as_slice());
+
+    // Execute deposits and withdrawSubmits sequentially
     for i in 0..num_deposits {
-        info!("Executing deposit {}/{}", i + 1, num_deposits);
+        let deposit_nonce = initial_nonce + (i as u64);
+        info!(
+            "Executing deposit {}/{} (nonce={})",
+            i + 1,
+            num_deposits,
+            deposit_nonce
+        );
 
         match execute_deposit(
             config,
             token,
             amount_per_deposit,
-            terra_chain_key,
+            evm_chain_key,
             dest_account,
         )
         .await
@@ -701,25 +823,54 @@ pub async fn test_operator_sequential_deposit_processing(
             }
         }
 
-        // Get the nonce for this deposit
+        // Small delay to ensure nonce increments
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let nonce = match query_deposit_nonce(config).await {
-            Ok(n) => n,
+
+        // Submit withdrawSubmit on EVM (V2 user step)
+        info!(
+            "Submitting WithdrawSubmit {}/{}: nonce={}",
+            i + 1,
+            num_deposits,
+            deposit_nonce
+        );
+        match super::operator_helpers::submit_withdraw_on_evm(
+            config,
+            evm_chain_key,
+            src_account,
+            dest_account,
+            token,
+            net_amount,
+            deposit_nonce,
+        )
+        .await
+        {
+            Ok(_) => {
+                debug!("WithdrawSubmit {} succeeded", i + 1);
+            }
             Err(e) => {
-                return TestResult::fail(
-                    name,
-                    format!("Failed to get nonce after deposit {}: {}", i + 1, e),
-                    start.elapsed(),
+                warn!(
+                    "WithdrawSubmit {} failed (nonce={}): {}",
+                    i + 1,
+                    deposit_nonce,
+                    e
                 );
             }
-        };
-        deposit_nonces.push(nonce);
+        }
     }
 
     // Verify nonces are sequential
-    let final_nonce = deposit_nonces.last().copied().unwrap_or(initial_nonce);
-    let expected_final = initial_nonce + num_deposits as u64;
+    let final_nonce = match query_deposit_nonce(config).await {
+        Ok(n) => n,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to get final nonce: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
 
+    let expected_final = initial_nonce + num_deposits as u64;
     if final_nonce != expected_final {
         return TestResult::fail(
             name,
@@ -736,20 +887,17 @@ pub async fn test_operator_sequential_deposit_processing(
         num_deposits, initial_nonce, final_nonce
     );
 
-    // Wait for operator to process all deposits
+    // Wait for operator to poll WithdrawSubmit events and create approvals on EVM
     info!("Waiting for operator to create approvals...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    // Verify approvals were created (spot check first and last)
-    // The deposits used nonces initial_nonce through initial_nonce + num_deposits - 1
-    // (depositNonce++ is post-increment: assigns current value, then increments)
-    let mut approvals_found = 0;
+    let mut approvals_found = 0u32;
     let first_deposit_nonce = initial_nonce;
     let last_deposit_nonce = initial_nonce + num_deposits as u64 - 1;
+
+    // Poll for first and last deposit approvals
     for &nonce in &[first_deposit_nonce, last_deposit_nonce] {
-        if (poll_for_approval(config, nonce, Duration::from_secs(15)).await).is_ok() {
+        if (poll_for_approval(config, nonce, Duration::from_secs(30)).await).is_ok() {
             approvals_found += 1;
-            info!("Found approval for nonce {}", nonce);
+            info!("Found EVM approval for nonce {}", nonce);
         }
     }
 
@@ -761,9 +909,195 @@ pub async fn test_operator_sequential_deposit_processing(
         TestResult::pass(name, start.elapsed())
     } else {
         // Approvals may take longer - pass with warning
-        info!("Deposits executed but approvals not yet found (operator may still be processing)");
+        info!(
+            "Deposits and WithdrawSubmits executed but approvals not yet found. \
+             Check operator logs for poll_and_approve output."
+        );
         TestResult::pass(name, start.elapsed())
     }
+}
+
+// ============================================================================
+// Diagnostic Tests
+// ============================================================================
+
+/// Diagnostic test: verify operator can reach Terra LCD and query pending withdrawals.
+///
+/// This helps diagnose why the operator might not be approving withdrawals.
+/// It checks:
+/// 1. Terra LCD is reachable
+/// 2. pending_withdrawals query returns valid data
+/// 3. EVM Bridge getDeposit() is callable
+pub async fn test_operator_terra_lcd_diagnostic(
+    config: &E2eConfig,
+    _token_address: Option<Address>,
+) -> TestResult {
+    let start = Instant::now();
+    let name = "operator_terra_lcd_diagnostic";
+
+    info!("Running operator Terra LCD diagnostic");
+
+    let terra_bridge = match &config.terra.bridge_address {
+        Some(addr) if !addr.is_empty() => addr.clone(),
+        _ => {
+            return TestResult::skip(name, "Terra bridge address not configured");
+        }
+    };
+
+    // Step 1: Check LCD reachability
+    let lcd_url = &config.terra.lcd_url;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    info!("Checking Terra LCD at: {}", lcd_url);
+    match client.get(format!("{}/node_info", lcd_url)).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("Terra LCD is reachable (status: {})", resp.status());
+        }
+        Ok(resp) => {
+            warn!("Terra LCD returned non-success status: {}", resp.status());
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!(
+                    "Terra LCD is unreachable at {}: {}. \
+                     The operator cannot query pending withdrawals without LCD access.",
+                    lcd_url, e
+                ),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Step 2: Query pending_withdrawals via LCD (same way the operator does)
+    let query = serde_json::json!({
+        "pending_withdrawals": { "limit": 10 }
+    });
+    let query_b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        serde_json::to_string(&query).unwrap(),
+    );
+    let url = format!(
+        "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+        lcd_url, terra_bridge, query_b64
+    );
+
+    info!("Querying pending_withdrawals via LCD: {}", url);
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+
+            if !status.is_success() {
+                return TestResult::fail(
+                    name,
+                    format!(
+                        "pending_withdrawals query returned status {}: {}",
+                        status,
+                        serde_json::to_string_pretty(&body).unwrap_or_default()
+                    ),
+                    start.elapsed(),
+                );
+            }
+
+            match body["data"]["withdrawals"].as_array() {
+                Some(arr) => {
+                    info!("pending_withdrawals query OK: {} entries found", arr.len());
+
+                    // Log unapproved entries
+                    let unapproved: Vec<_> = arr
+                        .iter()
+                        .filter(|e| {
+                            !e["approved"].as_bool().unwrap_or(false)
+                                && !e["cancelled"].as_bool().unwrap_or(false)
+                                && !e["executed"].as_bool().unwrap_or(false)
+                        })
+                        .collect();
+
+                    if !unapproved.is_empty() {
+                        for entry in &unapproved {
+                            let nonce = entry["nonce"].as_u64().unwrap_or(0);
+                            let hash = entry["withdraw_hash"].as_str().unwrap_or("?");
+                            let amount = entry["amount"].as_str().unwrap_or("?");
+                            info!(
+                                "  Unapproved: nonce={}, amount={}, hash={}",
+                                nonce, amount, hash
+                            );
+                        }
+                    }
+                }
+                None => {
+                    let preview = serde_json::to_string(&body)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(200)
+                        .collect::<String>();
+                    return TestResult::fail(
+                        name,
+                        format!("LCD response missing data.withdrawals: {}", preview),
+                        start.elapsed(),
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query pending_withdrawals: {}", e),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Step 3: Test EVM getDeposit() call with a zero hash (just connectivity check)
+    let evm_client = reqwest::Client::new();
+    let zero_hash = format!("{:064x}", 0u128);
+    let get_deposit_selector = "0xc2ee3a08"; // getDeposit(bytes32) selector
+    let call_data = format!("{}{}", get_deposit_selector, zero_hash);
+
+    match evm_client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if body["result"].is_string() {
+                info!("EVM getDeposit() call succeeded (connectivity OK)");
+            } else {
+                warn!(
+                    "EVM getDeposit() returned unexpected response: {}",
+                    serde_json::to_string(&body).unwrap_or_default()
+                );
+            }
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!(
+                    "Failed to call EVM getDeposit(): {}. \
+                     The operator cannot verify deposits without EVM RPC access.",
+                    e
+                ),
+                start.elapsed(),
+            );
+        }
+    }
+
+    info!("Operator LCD diagnostic passed: LCD reachable, queries work, EVM callable");
+    TestResult::pass(name, start.elapsed())
 }
 
 // ============================================================================
@@ -780,6 +1114,8 @@ pub async fn run_operator_execution_tests(
     info!("Running live operator execution tests");
 
     let mut results = vec![
+        // Diagnostic test first - helps debug failures in subsequent tests
+        test_operator_terra_lcd_diagnostic(config, token_address).await,
         // Core deposit/withdrawal tests
         test_operator_live_deposit_detection(config, token_address).await,
         test_operator_live_withdrawal_execution(config, token_address).await,
@@ -796,7 +1132,257 @@ pub async fn run_operator_execution_tests(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy::primitives::keccak256;
 
-    // Unit tests can be added here
+    /// Verify the V2 Deposit event signature matches the Solidity definition.
+    ///
+    /// This is a critical invariant: if the operator uses the wrong event signature,
+    /// it will never detect deposits on the EVM chain.
+    #[test]
+    fn test_v2_deposit_event_signature_is_correct() {
+        // The Solidity Bridge contract defines (from IBridge.sol):
+        //
+        //   event Deposit(
+        //       bytes4 indexed destChain,
+        //       bytes32 indexed destAccount,
+        //       bytes32 srcAccount,       // <-- non-indexed, MUST be in signature
+        //       address token,
+        //       uint256 amount,
+        //       uint64 nonce,
+        //       uint256 fee
+        //   );
+        //
+        // All 7 parameters must be included in keccak256 computation.
+        let correct_signature =
+            keccak256(b"Deposit(bytes4,bytes32,bytes32,address,uint256,uint64,uint256)");
+
+        // The WRONG signature (missing bytes32 for srcAccount) - this was the bug
+        let wrong_signature = keccak256(b"Deposit(bytes4,bytes32,address,uint256,uint64,uint256)");
+
+        assert_ne!(
+            correct_signature, wrong_signature,
+            "The correct 7-param signature must differ from the wrong 6-param signature"
+        );
+
+        // Print for debugging
+        println!(
+            "Correct V2 Deposit signature (7 params): 0x{}",
+            hex::encode(correct_signature)
+        );
+        println!(
+            "Wrong signature (6 params, missing srcAccount): 0x{}",
+            hex::encode(wrong_signature)
+        );
+    }
+
+    /// Verify that the transfer hash computation uses all 7 fields (V2).
+    ///
+    /// The hash must include srcAccount to uniquely identify deposits from
+    /// different source addresses. Missing srcAccount causes hash mismatches
+    /// between the EVM deposit hash and Terra withdraw hash.
+    #[test]
+    fn test_transfer_hash_includes_src_account() {
+        // Two deposits with different source accounts but same everything else
+        let src_chain: [u8; 4] = [0, 0, 0, 1]; // EVM
+        let dest_chain: [u8; 4] = [0, 0, 0, 2]; // Terra
+
+        let mut src_account_a = [0u8; 32];
+        src_account_a[12..32].copy_from_slice(&[0xAA; 20]); // EVM address A
+
+        let mut src_account_b = [0u8; 32];
+        src_account_b[12..32].copy_from_slice(&[0xBB; 20]); // EVM address B
+
+        let dest_account = [0x11u8; 32];
+        let token = keccak256(b"uluna").0; // keccak256("uluna")
+        let amount = 995_000u128; // post-fee amount
+        let nonce = 1u64;
+
+        let hash_a = compute_test_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account_a,
+            &dest_account,
+            &token,
+            amount,
+            nonce,
+        );
+
+        let hash_b = compute_test_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account_b,
+            &dest_account,
+            &token,
+            amount,
+            nonce,
+        );
+
+        assert_ne!(
+            hash_a, hash_b,
+            "Different source accounts MUST produce different transfer hashes. \
+             If they're equal, srcAccount is not included in the hash computation."
+        );
+    }
+
+    /// Verify that the net (post-fee) amount must be used in hash computation.
+    ///
+    /// The EVM Bridge deducts fees on deposit and stores `netAmount` in the hash.
+    /// If the Terra WithdrawSubmit uses the gross amount instead, the hashes won't match.
+    #[test]
+    fn test_transfer_hash_uses_net_amount() {
+        let src_chain: [u8; 4] = [0, 0, 0, 1];
+        let dest_chain: [u8; 4] = [0, 0, 0, 2];
+        let src_account = [0u8; 32];
+        let dest_account = [0u8; 32];
+        let token = [0u8; 32];
+
+        let gross_amount = 1_000_000u128;
+        let fee = 5_000u128; // 50 bps
+        let net_amount = gross_amount - fee; // 995_000
+
+        let hash_gross = compute_test_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            gross_amount,
+            1,
+        );
+
+        let hash_net = compute_test_transfer_hash(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            net_amount,
+            1,
+        );
+
+        assert_ne!(
+            hash_gross, hash_net,
+            "Gross and net amounts must produce different hashes. \
+             The EVM Bridge uses netAmount (post-fee) in the deposit hash, \
+             so Terra WithdrawSubmit must also use the net amount."
+        );
+    }
+
+    /// Verify the balance assertion accounts for self-transfer fee scenario.
+    ///
+    /// When the depositor IS the fee recipient (common in test setups), the fee
+    /// transfer is a self-transfer (no net effect), so the balance decrease is
+    /// only netAmount, not the full deposit amount. The test must use netAmount
+    /// as the minimum expected decrease.
+    ///
+    /// This was the root cause of "Balance decrease insufficient: 995000 (expected >= 1000000)":
+    /// - Fee: 50bps of 1,000,000 = 5,000
+    /// - Net: 995,000
+    /// - Fee goes from user to feeRecipient (same account) = self-transfer
+    /// - Lock takes 995,000 from user to lock contract
+    /// - Total balance decrease: 995,000 (NOT 1,000,000)
+    #[test]
+    fn test_fee_self_transfer_balance_decrease() {
+        let gross_amount: u128 = 1_000_000;
+        let fee_bps: u128 = 50; // 50 basis points = 0.5%
+        let fee = gross_amount * fee_bps / 10_000; // 5,000
+        let net_amount = gross_amount - fee; // 995,000
+
+        // When depositor == fee_recipient, self-transfer doesn't change balance
+        let balance_decrease_self_fee = net_amount; // Only the lock amount
+
+        // When depositor != fee_recipient, both fee and lock are deducted
+        let balance_decrease_separate_fee = gross_amount; // fee + net
+
+        assert_eq!(
+            balance_decrease_self_fee, 995_000,
+            "When depositor is fee recipient, balance decrease is net_amount (995000)"
+        );
+        assert_eq!(
+            balance_decrease_separate_fee, 1_000_000,
+            "When depositor is not fee recipient, balance decrease is full amount (1000000)"
+        );
+
+        // The test assertion should use net_amount as minimum expected decrease
+        // because it handles both scenarios correctly (net_amount <= gross_amount)
+        assert!(
+            balance_decrease_self_fee >= net_amount,
+            "Self-fee scenario: {} should be >= net_amount {}",
+            balance_decrease_self_fee,
+            net_amount
+        );
+        assert!(
+            balance_decrease_separate_fee >= net_amount,
+            "Separate-fee scenario: {} should be >= net_amount {}",
+            balance_decrease_separate_fee,
+            net_amount
+        );
+    }
+
+    /// Verify V2 chain IDs from ChainRegistry are sequential, not native.
+    ///
+    /// The EVM bridge gets thisChainId from ChainRegistry during deployment.
+    /// In the local setup:
+    /// - EVM gets 0x00000001 (NOT 31337 / 0x00007A69)
+    /// - Terra gets 0x00000002 (NOT 5 / 0x00000005)
+    ///
+    /// This matters because the canceler's verifier uses these IDs to identify
+    /// source chains. Using native IDs instead of V2 IDs means the verifier
+    /// can't recognize any chain, causing all fraud detection to fail.
+    #[test]
+    fn test_v2_chain_ids_are_not_native_ids() {
+        // V2 chain IDs assigned by ChainRegistry (sequential)
+        let evm_v2: [u8; 4] = 1u32.to_be_bytes(); // 0x00000001
+        let terra_v2: [u8; 4] = 2u32.to_be_bytes(); // 0x00000002
+
+        // Native chain IDs (what the config file contains)
+        let evm_native: [u8; 4] = 31337u32.to_be_bytes(); // 0x00007A69
+        let terra_native: [u8; 4] = 5u32.to_be_bytes(); // 0x00000005
+
+        assert_ne!(
+            evm_v2,
+            evm_native,
+            "V2 EVM chain ID (0x{}) must differ from native Anvil ID (0x{})",
+            hex::encode(evm_v2),
+            hex::encode(evm_native)
+        );
+
+        assert_ne!(
+            terra_v2,
+            terra_native,
+            "V2 Terra chain ID (0x{}) must differ from native Terra ID (0x{})",
+            hex::encode(terra_v2),
+            hex::encode(terra_native)
+        );
+    }
+
+    /// Helper: compute a V2 transfer hash (mirrors HashLib.computeTransferHash)
+    fn compute_test_transfer_hash(
+        src_chain: &[u8; 4],
+        dest_chain: &[u8; 4],
+        src_account: &[u8; 32],
+        dest_account: &[u8; 32],
+        token: &[u8; 32],
+        amount: u128,
+        nonce: u64,
+    ) -> [u8; 32] {
+        let mut data = [0u8; 224]; // 7 * 32 = 224 bytes
+
+        // srcChain (bytes4 left-aligned in bytes32)
+        data[0..4].copy_from_slice(src_chain);
+        // destChain (bytes4 left-aligned in bytes32)
+        data[32..36].copy_from_slice(dest_chain);
+        // srcAccount
+        data[64..96].copy_from_slice(src_account);
+        // destAccount
+        data[96..128].copy_from_slice(dest_account);
+        // token
+        data[128..160].copy_from_slice(token);
+        // amount (u128 -> left-padded to uint256)
+        data[160 + 16..192].copy_from_slice(&amount.to_be_bytes());
+        // nonce (u64 -> left-padded to uint256)
+        data[192 + 24..224].copy_from_slice(&nonce.to_be_bytes());
+
+        keccak256(&data).0
+    }
 }

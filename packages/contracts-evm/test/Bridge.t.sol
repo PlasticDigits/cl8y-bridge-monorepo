@@ -630,8 +630,13 @@ contract BridgeTest is Test {
             uint64 expectedNonce = initialNonce + uint64(i); // NOT initialNonce + i + 1
             bytes32 hash = keccak256(
                 abi.encode(
-                    bytes32(thisChainId), bytes32(destChainId), srcAccount, destAccount,
-                    destToken, netAmount, uint256(expectedNonce)
+                    bytes32(thisChainId),
+                    bytes32(destChainId),
+                    srcAccount,
+                    destAccount,
+                    destToken,
+                    netAmount,
+                    uint256(expectedNonce)
                 )
             );
             IBridge.DepositRecord memory record = bridge.getDeposit(hash);
@@ -647,8 +652,13 @@ contract BridgeTest is Test {
             uint64 wrongNonce = initialNonce + uint64(batchSize); // = 4, no deposit exists here
             bytes32 wrongHash = keccak256(
                 abi.encode(
-                    bytes32(thisChainId), bytes32(destChainId), srcAccount, destAccount,
-                    destToken, netAmount, uint256(wrongNonce)
+                    bytes32(thisChainId),
+                    bytes32(destChainId),
+                    srcAccount,
+                    destAccount,
+                    destToken,
+                    netAmount,
+                    uint256(wrongNonce)
                 )
             );
             IBridge.DepositRecord memory wrongRecord = bridge.getDeposit(wrongHash);
@@ -730,6 +740,79 @@ contract BridgeTest is Test {
         vm.prank(operator);
         vm.expectRevert();
         bridge.upgradeToAndCall(address(newImplementation), "");
+    }
+
+    // ============================================================================
+    // Fee Recipient = Depositor Tests (Category D verification)
+    //
+    // When feeRecipient == depositor, fees are transferred back to the depositor,
+    // so the net balance decrease is (amount - fee), not the full amount.
+    // ============================================================================
+
+    /// @notice When fee recipient IS the depositor, the depositor's balance
+    /// decreases by (amount - fee), not the full amount, because the fee
+    /// is transferred back to them.
+    function test_DepositERC20_FeeRecipientIsSelf() public {
+        // Set fee recipient to the user (depositor) — this is the bug scenario
+        vm.prank(operator);
+        bridge.setFeeParams(50, 10, 100e18, address(0), user);
+
+        uint256 balanceBefore = token.balanceOf(user);
+
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        uint256 balanceAfter = token.balanceOf(user);
+        uint256 fee = bridge.calculateFee(user, 100 ether); // 0.5% = 0.5 ether
+
+        // When fee recipient == depositor:
+        // User pays 100 ether total (fee + net locked in bridge)
+        // But receives fee back → net decrease = amount - fee
+        uint256 actualDecrease = balanceBefore - balanceAfter;
+        uint256 expectedDecrease = 100 ether - fee; // 99.5 ether
+
+        assertEq(
+            actualDecrease, expectedDecrease, "When feeRecipient = depositor, balance decrease should be (amount - fee)"
+        );
+    }
+
+    /// @notice When fee recipient is a DIFFERENT address from the depositor,
+    /// the depositor's balance decreases by the full amount.
+    function test_DepositERC20_FeeRecipientIsDifferent() public {
+        // Fee recipient is a separate address (the normal case)
+        address separateFeeRecipient = address(0xFEE);
+
+        vm.prank(operator);
+        bridge.setFeeParams(50, 10, 100e18, address(0), separateFeeRecipient);
+
+        uint256 balanceBefore = token.balanceOf(user);
+        uint256 feeRecipientBalanceBefore = token.balanceOf(separateFeeRecipient);
+
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        uint256 balanceAfter = token.balanceOf(user);
+        uint256 feeRecipientBalanceAfter = token.balanceOf(separateFeeRecipient);
+        uint256 fee = bridge.calculateFee(user, 100 ether); // 0.5% = 0.5 ether
+
+        // When fee recipient != depositor:
+        // User pays full amount (fee goes to separate address)
+        uint256 actualDecrease = balanceBefore - balanceAfter;
+        assertEq(
+            actualDecrease, 100 ether, "When feeRecipient != depositor, balance decrease should be the full amount"
+        );
+
+        // Fee recipient should have received the fee
+        uint256 feeRecipientIncrease = feeRecipientBalanceAfter - feeRecipientBalanceBefore;
+        assertEq(feeRecipientIncrease, fee, "Fee recipient should receive the fee amount");
     }
 
     // ============================================================================

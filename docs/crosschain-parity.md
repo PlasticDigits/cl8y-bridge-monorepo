@@ -1,34 +1,225 @@
-# Cross-Chain Parity Requirements
+# Cross-Chain Hash Parity
 
-This document defines what security parity means for CL8Y Bridge and specifies the target state for Terra Classic to achieve equivalent security guarantees with EVM.
+This document defines how CL8Y Bridge maintains hash parity across chains so that deposits on one chain can be cryptographically verified against withdrawals on another. It covers the V2 unified transfer hash, token encoding rules, address encoding, and the test coverage that validates parity across all four codebases.
 
-## Definition of Parity
+## Overview
 
-**Cross-chain parity** means that transfers in both directions (EVM → Terra and Terra → EVM) have equivalent security guarantees:
-
-1. **Same verification mechanism**: Canonical hash enables verification against source chain
-2. **Same security layers**: Delay window, canceler network, rate limiting
-3. **Same attack resistance**: Both chains protect against the same threat vectors
-4. **Bidirectional verification**: Cancelers can verify transfers in either direction
+Every cross-chain transfer produces a single canonical **transfer hash** that is identical whether computed on the source chain (as a "deposit hash") or the destination chain (as a "withdraw hash"). This hash is the primary key for cross-chain verification: cancelers compare the hash stored at the deposit source against the hash stored at the withdrawal destination.
 
 ```mermaid
 flowchart LR
-    subgraph EVM["EVM Chain"]
-        EVMDeposit[Deposit Hash Storage]
-        EVMWithdraw[Withdraw Approval]
-        EVMCancel[Cancel Mechanism]
+    subgraph Source["Source Chain"]
+        Deposit["Deposit<br/>compute_transfer_hash(...)"]
     end
-    
-    subgraph Terra["Terra Classic"]
-        TerraDeposit[Deposit Hash Storage]
-        TerraWithdraw[Withdraw Approval]
-        TerraCancel[Cancel Mechanism]
+    subgraph Dest["Destination Chain"]
+        Withdraw["Withdrawal<br/>compute_transfer_hash(...)"]
     end
-    
-    EVMDeposit <-->|Same hash formula| TerraWithdraw
-    TerraDeposit <-->|Same hash formula| EVMWithdraw
-    EVMCancel <-->|Same security model| TerraCancel
+    Deposit -- "same hash" --- Withdraw
 ```
+
+**Key invariant**: `deposit_hash == withdraw_hash` for the same transfer, regardless of which chains are involved (EVM↔EVM, EVM↔Terra, Terra↔EVM).
+
+---
+
+## V2 Transfer Hash (7-Field Unified)
+
+Both deposits and withdrawals use the same 7-field keccak256 hash:
+
+```solidity
+// Solidity (HashLib.sol)
+bytes32 transferHash = keccak256(abi.encode(
+    bytes32(srcChain),    // 4-byte chain ID, left-aligned in 32 bytes
+    bytes32(destChain),   // 4-byte chain ID, left-aligned in 32 bytes
+    srcAccount,           // bytes32 - depositor address
+    destAccount,          // bytes32 - recipient address
+    token,                // bytes32 - DESTINATION token (always)
+    amount,               // uint256 - NET amount (post-fee)
+    uint256(nonce)        // uint256 - deposit nonce from source chain
+));
+```
+
+```rust
+// Rust (multichain-rs/src/hash.rs)
+fn compute_transfer_hash(
+    src_chain: &[u8; 4],      // 4-byte chain ID
+    dest_chain: &[u8; 4],     // 4-byte chain ID
+    src_account: &[u8; 32],   // depositor address
+    dest_account: &[u8; 32],  // recipient address
+    token: &[u8; 32],         // DESTINATION token (always)
+    amount: u128,              // NET amount (post-fee)
+    nonce: u64,                // deposit nonce from source chain
+) -> [u8; 32]
+```
+
+The ABI encoding produces a fixed 224-byte buffer (7 x 32 bytes) that is then keccak256-hashed.
+
+### Deposit vs Withdraw: Same Hash, Different Perspective
+
+On deposit (source chain):
+- `srcChain` = this chain's ID
+- `srcAccount` = msg.sender (depositor)
+- `destChain`, `destAccount`, `token` = from user-provided parameters
+
+On withdrawal (destination chain):
+- `srcChain`, `srcAccount` = from the original deposit
+- `destChain` = this chain's ID
+- `destAccount` = recipient
+- `token` = destination token address
+
+Since all seven parameters are identical, the hash is identical.
+
+---
+
+## Token Encoding
+
+The `token` field in the transfer hash is **always the destination token** encoded as `bytes32`. The encoding depends on the token type:
+
+### ERC20 Addresses (EVM)
+
+```
+bytes32(uint256(uint160(address)))
+```
+
+The 20-byte address is placed in the **last 20 bytes** (positions 12..31), with the first 12 bytes as zeros.
+
+```
+Positions: [0..11: 0x00] [12..31: address bytes]
+Example:   0x000000000000000000000000aabbccdd...eeff
+```
+
+### Native Denoms (Terra Classic)
+
+Native denominations like `"uluna"` and `"uusd"` are encoded as:
+
+```
+keccak256(denom_string_as_bytes)
+```
+
+Example: `keccak256("uluna")` → `0x02ba7fc7bf3e0a68f6f3a37987aa6b4e36ed3cfd1e58cf0b8e54f82e8b864a41`
+
+### CW20 Token Addresses (Terra Classic)
+
+CW20 contract addresses (bech32 format like `"terra1qg5ega6dykkxc307y25pecuufrjkxkaggmx2n8"`) are encoded by:
+
+1. Bech32-decode to get the raw 20-byte canonical address
+2. Left-pad with zeros to 32 bytes (address in positions 12..31)
+
+```
+Positions: [0..11: 0x00] [12..31: canonical bytes from bech32 decode]
+```
+
+This matches the EVM `bytes32(uint256(uint160(...)))` format.
+
+### Token Encoding Summary
+
+| Token Type | Encoding | Positions |
+|-----------|----------|-----------|
+| ERC20 address | `bytes32(uint256(uint160(address)))` | 12..31 |
+| CW20 address | bech32 decode → left-pad to 32 | 12..31 |
+| Native denom | `keccak256(denom.as_bytes())` | full 32 bytes |
+
+### Critical Rule: Token Is Always the Destination Token
+
+The `token` parameter in the transfer hash is **always** the token address on the **destination** chain, not the source chain. This is enforced by:
+
+- **EVM deposit**: `destToken = tokenRegistry.getDestToken(sourceToken, destChain)`
+- **Terra deposit**: `dest_token_address` from the token configuration's `evm_token_address`
+- **EVM withdrawSubmit**: User passes the local token address
+- **Terra withdrawSubmit**: User passes the local token string
+
+---
+
+## Address Encoding
+
+All addresses are encoded as `bytes32` (left-padded with zeros):
+
+### EVM Addresses
+
+```
+bytes32(uint256(uint160(evmAddress)))
+```
+
+20-byte address in positions 12..31:
+
+```
+[0x00 * 12] [20 bytes of address]
+```
+
+### Terra Bech32 Addresses
+
+1. Bech32-decode `"terra1..."` to get the 20-byte canonical address
+2. Left-pad with zeros to 32 bytes
+
+```
+[0x00 * 12] [20 bytes from bech32 decode]
+```
+
+This is the same layout as EVM addresses, ensuring consistent encoding.
+
+---
+
+## Chain ID Encoding
+
+Chain IDs are 4-byte big-endian unsigned integers, **left-aligned** in the 32-byte slot:
+
+```
+Positions: [0..3: chain_id bytes] [4..31: 0x00]
+```
+
+Examples:
+- Chain ID 1 (Ethereum): `[0x00, 0x00, 0x00, 0x01, 0x00 * 28]`
+- Chain ID 56 (BSC): `[0x00, 0x00, 0x00, 0x38, 0x00 * 28]`
+- Chain ID 5 (LocalTerra): `[0x00, 0x00, 0x00, 0x05, 0x00 * 28]`
+
+---
+
+## Amount: Always Net (Post-Fee)
+
+The `amount` field in the hash is **always the net amount after fee deduction**:
+
+- **EVM deposit**: `netAmount = amount - fee`; hash uses `netAmount`
+- **Terra deposit**: `net_amount = amount - fee_amount`; hash uses `net_amount`
+- **Withdrawal**: User passes the net amount received from the deposit event
+
+This ensures the deposit hash and withdrawal hash use the same amount value.
+
+---
+
+## Implementation Locations
+
+The hash computation is implemented identically in four codebases:
+
+| Codebase | File | Function |
+|----------|------|----------|
+| Solidity (EVM) | `contracts-evm/src/lib/HashLib.sol` | `computeTransferHash()` |
+| Rust (shared library) | `multichain-rs/src/hash.rs` | `compute_transfer_hash()` |
+| CosmWasm (Terra) | `contracts-terraclassic/bridge/src/hash.rs` | `compute_transfer_hash()` |
+| Operator/Canceler | Via `multichain-rs` dependency | `compute_transfer_hash()` |
+
+All four must produce identical output for the same input.
+
+---
+
+## Operator and Canceler Hash Usage
+
+### Operator
+
+The operator approves withdrawals using transfer hashes:
+
+- **Terra Writer (EVM→Terra)**: Uses hash-matching. Reads the `withdraw_hash` stored on-chain by the user's `withdrawSubmit` call, verifies it against the EVM `getDeposit(hash)` record, and approves by hash. **No hash recomputation needed.**
+
+- **EVM Writer (Terra→EVM)**: Computes the transfer hash from Terra deposit data to call `withdrawApprove(hash)` on EVM. The hash must match the pending withdrawal submitted by the user via `withdrawSubmit`.
+
+### Canceler
+
+The canceler verifies approvals by:
+
+1. Observing `WithdrawApprove` events on destination chains
+2. Querying the full withdrawal parameters from the destination contract
+3. Recomputing the hash from those parameters using `compute_transfer_hash`
+4. Verifying the recomputed hash matches the claimed `withdraw_hash`
+5. Querying the source chain to verify the deposit exists with the same hash
+6. Cancelling if no matching deposit is found (fraud detection)
 
 ---
 
@@ -36,470 +227,187 @@ flowchart LR
 
 ### P1: Hash Computation Parity
 
-**Requirement**: Both chains compute identical hashes from identical inputs.
+Both chains compute identical hashes from identical inputs.
 
-| Component | EVM | Terra Classic |
-|-----------|-----|---------------|
-| Algorithm | keccak256 | keccak256 |
-| Encoding | abi.encode (32-byte slots) | Matching byte layout |
-| Address format | 20 bytes, left-padded to 32 | 20 bytes canonical, left-padded to 32 |
-| Amount format | uint256, big-endian | u128, left-padded to 32 bytes BE |
-| Nonce format | uint256, big-endian | u64, left-padded to 32 bytes BE |
-
-**Verification Test**:
-```
-Given: srcChainKey, destChainKey, destToken, destAccount, amount, nonce
-EVM: computeTransferId(inputs) → hash_evm
-Terra: compute_transfer_id(inputs) → hash_terra
-Required: hash_evm == hash_terra
-```
+| Component | EVM (Solidity) | Terra (Rust/CosmWasm) |
+|-----------|---------------|----------------------|
+| Algorithm | keccak256 | keccak256 (tiny_keccak) |
+| Encoding | `abi.encode` (32-byte slots) | Matching byte layout |
+| Chain ID | bytes4 left-aligned in bytes32 | `[u8; 4]` left-aligned in `[u8; 32]` |
+| Address | left-padded to bytes32 | left-padded to `[u8; 32]` |
+| Amount | uint256, big-endian | u128, left-padded to 32 bytes BE |
+| Nonce | uint256, big-endian | u64, left-padded to 32 bytes BE |
+| Token | bytes32 (dest token) | `[u8; 32]` (dest token) |
 
 ### P2: Delay Window Parity
-
-**Requirement**: Both chains enforce the same delay period before withdrawal execution.
 
 | Aspect | EVM | Terra Classic |
 |--------|-----|---------------|
 | Default delay | 5 minutes | 5 minutes |
 | Configurable | Yes (admin) | Yes (admin) |
-| Reset on reenable | Yes | Yes |
 | Timer precision | Block timestamp | Block timestamp |
 
 ### P3: Cancel Mechanism Parity
 
-**Requirement**: Both chains support cancellation by authorized cancelers during the delay window.
-
 | Aspect | EVM | Terra Classic |
 |--------|-----|---------------|
-| Cancel function | `cancelWithdrawApproval(hash)` | `CancelWithdrawApproval { withdraw_hash }` |
+| Cancel function | `withdrawCancel(hash)` | `withdraw_cancel { withdraw_hash }` |
 | Authorization | CANCELER role | Canceler in CANCELERS map |
 | Effect | Sets `cancelled = true` | Sets `cancelled = true` |
-| Timing | Anytime before execution | Anytime before execution |
 
-### P4: Reenable Mechanism Parity
-
-**Requirement**: Both chains allow admin to restore cancelled approvals.
+### P4: Nonce Tracking Parity
 
 | Aspect | EVM | Terra Classic |
 |--------|-----|---------------|
-| Reenable function | `reenableWithdrawApproval(hash)` | `ReenableWithdrawApproval { withdraw_hash }` |
-| Authorization | Admin role | Admin only |
-| Effect | Clears cancelled, resets timer | Clears cancelled, resets timer |
+| Storage | `depositNonce` counter | `OUTGOING_NONCE` counter |
+| Per-chain | Single global counter | Single global counter |
+| Used in hash | Yes (7th field) | Yes (7th field) |
 
-### P5: Nonce Tracking Parity
-
-**Requirement**: Both chains track nonces per source chain to prevent duplicates.
+### P5: Deposit Hash Storage Parity
 
 | Aspect | EVM | Terra Classic |
 |--------|-----|---------------|
-| Storage | `_withdrawNonceUsed[srcChainKey][nonce]` | `WITHDRAW_NONCE_USED[(src_chain_key, nonce)]` |
-| Key format | (bytes32, uint256) | ([u8; 32], u64) |
-| Check | During approveWithdraw | During ApproveWithdraw |
-
-### P6: Deposit Hash Storage Parity
-
-**Requirement**: Both chains store deposit hashes for cross-chain verification.
-
-| Aspect | EVM | Terra Classic |
-|--------|-----|---------------|
-| Storage | `_depositHashes` set | `DEPOSIT_HASHES` map |
-| Query | `getDepositFromHash(hash)` | `DepositHash { nonce }` |
+| Storage | `deposits[hash]` mapping | `DEPOSIT_HASHES` map |
+| Query | `getDeposit(hash)` | `deposit_hash { nonce }` |
 | Purpose | Cancelers verify Terra→EVM | Cancelers verify EVM→Terra |
-
-### P7: Rate Limiting Parity
-
-**Requirement**: Both chains enforce per-token rate limits.
-
-| Aspect | EVM | Terra Classic |
-|--------|-----|---------------|
-| Per-transaction limit | TokenRateLimit guard | Rate limit check in execute |
-| Per-period limit | TokenRateLimit guard | Rate limit check in execute |
-| Configuration | Per-token | Per-token |
 
 ---
 
-## Target State: Terra Classic
+## Test Coverage
 
-### New Messages
+Cross-chain hash parity is verified by unit tests across all four codebases. Each test computes the transfer hash independently and asserts identical results against hardcoded reference values.
 
-```rust
-// Execute messages
-pub enum ExecuteMsg {
-    // ... existing messages ...
-    
-    /// Approve a withdrawal (replaces Release, called by operator)
-    ApproveWithdraw {
-        src_chain_key: Binary,      // 32 bytes
-        token: String,
-        recipient: String,
-        dest_account: Binary,       // 32 bytes (for hash computation)
-        amount: Uint128,
-        nonce: u64,
-        fee: Uint128,
-        fee_recipient: String,
-        deduct_from_amount: bool,
-    },
-    
-    /// Execute a withdrawal after delay (called by user or operator)
-    ExecuteWithdraw {
-        withdraw_hash: Binary,      // 32-byte transferId
-    },
-    
-    /// Cancel a pending withdrawal approval (called by canceler)
-    CancelWithdrawApproval {
-        withdraw_hash: Binary,
-    },
-    
-    /// Reenable a cancelled approval (called by admin)
-    ReenableWithdrawApproval {
-        withdraw_hash: Binary,
-    },
-    
-    /// Add a canceler address (admin only)
-    AddCanceler {
-        address: String,
-    },
-    
-    /// Remove a canceler address (admin only)
-    RemoveCanceler {
-        address: String,
-    },
-    
-    /// Set the withdrawal delay (admin only)
-    SetWithdrawDelay {
-        delay_seconds: u64,
-    },
-    
-    /// Set rate limit for a token (admin only)
-    SetRateLimit {
-        token: String,
-        max_per_transaction: Uint128,
-        max_per_period: Uint128,
-        period_duration: u64,
-    },
-}
+### Test Matrix
+
+| Route | Token Type | Solidity | Rust (multichain-rs) | Operator | Terra Contract |
+|-------|-----------|----------|---------------------|----------|---------------|
+| EVM→EVM | ERC20 | `test_DepositWithdraw_EvmToEvm_Erc20` | `test_deposit_withdraw_match_evm_to_evm_erc20` | `test_deposit_withdraw_match_evm_to_evm_erc20` | -- |
+| EVM→Terra | Native (uluna) | `test_DepositWithdraw_EvmToTerra_Uluna` | `test_deposit_withdraw_match_evm_to_terra_uluna` | `test_deposit_withdraw_match_evm_to_terra_uluna` | `test_deposit_withdraw_match_evm_to_terra_uluna` |
+| EVM→Terra | CW20 | `test_DepositWithdraw_EvmToTerra_Cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` |
+| Terra→EVM | Native (uluna)→ERC20 | `test_DepositWithdraw_TerraToEvm_UlunaErc20` | `test_deposit_withdraw_match_terra_to_evm_uluna` | `test_deposit_withdraw_match_terra_to_evm_uluna` | `test_deposit_withdraw_match_terra_to_evm_uluna` |
+| Terra→EVM | CW20→ERC20 | `test_DepositWithdraw_TerraToEvm_Cw20Erc20` | `test_deposit_withdraw_match_terra_to_evm_cw20` | `test_deposit_withdraw_match_terra_to_evm_cw20` | `test_deposit_withdraw_match_terra_to_evm_cw20` |
+
+### Running the Tests
+
+```bash
+# Solidity (38 tests including 5 deposit/withdraw parity)
+cd packages/contracts-evm && forge test --match-contract HashLibTest -v
+
+# Rust shared library (18 tests including 5 deposit/withdraw parity)
+cd packages/multichain-rs && cargo test hash::tests
+
+# Operator integration tests (29 tests including 5 deposit/withdraw parity)
+cd packages/operator && cargo test hash_parity
+
+# Terra contract (tests including 5 deposit/withdraw parity)
+cd packages/contracts-terraclassic/bridge && cargo test --lib hash::tests
 ```
 
-### New Queries
+### What the Tests Verify
 
-```rust
-pub enum QueryMsg {
-    // ... existing queries ...
-    
-    /// Get withdrawal approval by hash
-    WithdrawApproval {
-        withdraw_hash: Binary,
-    },
-    
-    /// Compute withdraw hash without storing (for verification)
-    ComputeWithdrawHash {
-        src_chain_key: Binary,
-        dest_chain_key: Binary,
-        dest_token_address: Binary,
-        dest_account: Binary,
-        amount: Uint128,
-        nonce: u64,
-    },
-    
-    /// Get deposit hash for an outgoing transfer
-    DepositHash {
-        nonce: u64,
-    },
-    
-    /// List all cancelers
-    Cancelers {},
-    
-    /// Get current withdraw delay
-    WithdrawDelay {},
-    
-    /// Get rate limit config for a token
-    RateLimit {
-        token: String,
-    },
-}
-```
+1. **Token encoding**: ERC20 addresses, CW20 addresses, and native denoms produce the correct `bytes32` encoding
+2. **Address encoding**: EVM and Terra addresses are correctly left-padded to `bytes32`
+3. **Hash consistency**: The same parameters produce identical hashes across Solidity, Rust, and CosmWasm
+4. **Deposit/withdraw parity**: For each route and token type, `deposit_hash == withdraw_hash`
+5. **Cross-codebase parity**: Hardcoded reference hashes match across all four codebases
 
-### New State
+---
 
-```rust
-use cw_storage_plus::{Item, Map};
+## Common Pitfalls
 
-/// Withdrawal approval tracking
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct WithdrawApproval {
-    pub src_chain_key: [u8; 32],
-    pub token: String,
-    pub recipient: Addr,
-    pub dest_account: [u8; 32],
-    pub amount: Uint128,
-    pub nonce: u64,
-    pub fee: Uint128,
-    pub fee_recipient: Addr,
-    pub approved_at: Timestamp,
-    pub is_approved: bool,
-    pub deduct_from_amount: bool,
-    pub cancelled: bool,
-    pub executed: bool,
-}
+These are the most common sources of hash mismatch, based on bugs caught during development:
 
-/// Deposit info for outgoing transfers
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct DepositInfo {
-    pub dest_chain_key: [u8; 32],
-    pub dest_token_address: [u8; 32],
-    pub dest_account: [u8; 32],
-    pub amount: Uint128,
-    pub nonce: u64,
-    pub deposited_at: Timestamp,
-}
+### 1. Using Source Token Instead of Destination Token
 
-/// Rate limit configuration
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct RateLimitConfig {
-    pub max_per_transaction: Uint128,
-    pub max_per_period: Uint128,
-    pub period_duration: u64,
-}
+The `token` field must be the **destination** token. On EVM, the bridge calls `tokenRegistry.getDestToken(sourceToken, destChain)`. On Terra, the deposit handler looks up the `evm_token_address` from the token configuration.
 
-// State items
-pub const WITHDRAW_DELAY: Item<u64> = Item::new("withdraw_delay");
+**Wrong**: Using the deposited token address directly
+**Right**: Looking up the registered destination token for the target chain
 
-// State maps
-pub const WITHDRAW_APPROVALS: Map<&[u8], WithdrawApproval> = Map::new("withdraw_approvals");
-pub const WITHDRAW_NONCE_USED: Map<(&[u8], u64), bool> = Map::new("withdraw_nonce_used");
-pub const DEPOSIT_HASHES: Map<&[u8], DepositInfo> = Map::new("deposit_hashes");
-pub const CANCELERS: Map<&Addr, bool> = Map::new("cancelers");
-pub const RATE_LIMITS: Map<&str, RateLimitConfig> = Map::new("rate_limits");
-pub const PERIOD_TOTALS: Map<(&str, u64), Uint128> = Map::new("period_totals");
-```
+### 2. Using Gross Amount Instead of Net Amount
 
-### Configuration Updates
+The hash must use the **post-fee** amount. Both the EVM and Terra contracts deduct fees before computing the hash.
 
-```rust
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct Config {
-    // ... existing fields ...
-    
-    /// Withdrawal delay in seconds (default: 300 = 5 minutes)
-    pub withdraw_delay: u64,
-}
+**Wrong**: `hash(amount)` where `amount` is the user's deposited value
+**Right**: `hash(amount - fee)` using the net value after fee deduction
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            // ... existing defaults ...
-            withdraw_delay: 300,
-        }
-    }
-}
-```
+### 3. Wrong Address Encoding
+
+Terra addresses must be bech32-decoded to canonical bytes and left-padded. A common mistake is encoding them with a chain-type prefix or placing the bytes at the wrong positions.
+
+**Wrong**: `[chain_type(4 bytes), address(20 bytes), zeros(8 bytes)]` (positions 0..23)
+**Right**: `[zeros(12 bytes), address(20 bytes)]` (positions 12..31)
+
+### 4. Wrong Token Type for Native Denoms
+
+Native denominations like `"uluna"` use `keccak256("uluna")` which produces a full 32-byte hash. CW20 addresses use bech32-decode + left-pad. Mixing these up produces different `bytes32` values for the same conceptual token.
+
+### 5. Wrong ABI Function Signature
+
+When querying the EVM bridge for withdrawal data, the function signature must exactly match the contract. The auto-generated getter for `mapping(bytes32 => PendingWithdraw) public pendingWithdraws` returns all struct fields in order. Using `getPendingWithdraw(bytes32)` is the explicit alternative. Wrong signatures cause ABI decoding errors where returned fields are misaligned.
 
 ---
 
 ## Verification Flows
 
-### EVM → Terra Verification
-
-Cancelers on Terra Classic verify approvals against EVM deposits:
+### Canceler: EVM → Terra Verification
 
 ```mermaid
 sequenceDiagram
     participant Canceler
     participant Terra as Terra Bridge
     participant EVM as EVM Bridge
-    
-    Terra-->>Canceler: WithdrawApproved(hash, srcChainKey=EVM, ...)
-    
-    Canceler->>EVM: getDepositFromHash(hash)
-    
+
+    Terra-->>Canceler: WithdrawApprove event (hash)
+    Canceler->>Terra: getPendingWithdraw(hash)
+    Terra-->>Canceler: Parameters (srcChain, srcAccount, destAccount, token, amount, nonce)
+    Canceler->>Canceler: Recompute hash from parameters
+    Canceler->>Canceler: Verify computed hash == claimed hash
+
+    Canceler->>EVM: getDeposit(hash)
+
     alt Deposit Found
-        EVM-->>Canceler: DepositInfo{amount, recipient, ...}
-        Canceler->>Canceler: Compare with approval params
-        
-        alt Parameters Match
-            Note over Canceler: Approval valid, no action
-        else Parameters Mismatch
-            Canceler->>Terra: CancelWithdrawApproval(hash)
-        end
+        EVM-->>Canceler: DepositRecord (non-zero timestamp)
+        Note over Canceler: Approval valid, no action
     else Deposit Not Found
-        EVM-->>Canceler: null
-        Canceler->>Terra: CancelWithdrawApproval(hash)
+        EVM-->>Canceler: Empty record (zero timestamp)
+        Canceler->>Terra: withdrawCancel(hash)
     end
 ```
 
-### Terra → EVM Verification
-
-Cancelers on EVM verify approvals against Terra deposits:
+### Canceler: Terra → EVM Verification
 
 ```mermaid
 sequenceDiagram
     participant Canceler
     participant EVM as EVM Bridge
     participant Terra as Terra Bridge
-    
-    EVM-->>Canceler: WithdrawApproved(hash, srcChainKey=Terra, ...)
-    
-    Canceler->>Terra: DepositHash{nonce}
-    
+
+    EVM-->>Canceler: WithdrawApprove event (hash)
+    Canceler->>EVM: getPendingWithdraw(hash)
+    EVM-->>Canceler: PendingWithdraw struct (all fields)
+    Canceler->>Canceler: Recompute hash from parameters
+    Canceler->>Canceler: Verify computed hash == claimed hash
+
+    Canceler->>Terra: deposit_hash { nonce }
+
     alt Deposit Found
-        Terra-->>Canceler: DepositInfo{amount, recipient, ...}
-        Canceler->>Canceler: Compare with approval params
-        
-        alt Parameters Match
-            Note over Canceler: Approval valid, no action
-        else Parameters Mismatch
-            Canceler->>EVM: cancelWithdrawApproval(hash)
-        end
+        Terra-->>Canceler: DepositInfo (matching hash)
+        Note over Canceler: Approval valid, no action
     else Deposit Not Found
-        Terra-->>Canceler: null
-        Canceler->>EVM: cancelWithdrawApproval(hash)
+        Terra-->>Canceler: Not found
+        Canceler->>EVM: withdrawCancel(hash)
     end
 ```
-
----
-
-## Chain Key Computation
-
-Both chains must compute chain keys identically.
-
-### EVM Chain Key
-
-```solidity
-// EVM
-function getChainKeyEVM(uint256 chainId) public pure returns (bytes32) {
-    return keccak256(abi.encode("EVM", chainId));
-}
-```
-
-```rust
-// Terra
-fn evm_chain_key(chain_id: u64) -> [u8; 32] {
-    let mut data = Vec::new();
-    // "EVM" as bytes, padded to 32 bytes
-    let mut evm_bytes = [0u8; 32];
-    evm_bytes[29..32].copy_from_slice(b"EVM");
-    data.extend_from_slice(&evm_bytes);
-    // chain_id as uint256
-    let mut chain_id_bytes = [0u8; 32];
-    chain_id_bytes[24..].copy_from_slice(&chain_id.to_be_bytes());
-    data.extend_from_slice(&chain_id_bytes);
-    keccak256(&data)
-}
-```
-
-### Cosmos Chain Key
-
-```solidity
-// EVM
-function getChainKeyCosmos(string memory chainId, string memory prefix) public pure returns (bytes32) {
-    return keccak256(abi.encode("COSMOS", chainId, prefix));
-}
-```
-
-```rust
-// Terra
-fn cosmos_chain_key(chain_id: &str, prefix: &str) -> [u8; 32] {
-    // Match Solidity's abi.encode for strings
-    // This includes length prefix and padding
-    keccak256(&abi_encode_cosmos_key(chain_id, prefix))
-}
-```
-
----
-
-## Keccak256 Implementation
-
-**Decision**: Use cosmwasm-crypto if available, otherwise tiny-keccak.
-
-### Option 1: cosmwasm-crypto (Preferred)
-
-```toml
-[dependencies]
-cosmwasm-crypto = "1.5"
-```
-
-```rust
-use cosmwasm_crypto::keccak256;
-
-fn compute_hash(data: &[u8]) -> [u8; 32] {
-    keccak256(data)
-}
-```
-
-### Option 2: tiny-keccak (Fallback)
-
-```toml
-[dependencies]
-tiny-keccak = { version = "2.0", features = ["keccak"] }
-```
-
-```rust
-use tiny_keccak::{Hasher, Keccak};
-
-fn keccak256(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Keccak::v256();
-    hasher.update(data);
-    let mut output = [0u8; 32];
-    hasher.finalize(&mut output);
-    output
-}
-```
-
----
-
-## Parity Verification Checklist
-
-Before deployment, verify:
-
-- [ ] **Hash Parity**: Same inputs produce same hash on both chains
-- [ ] **Delay Parity**: Same delay period configured
-- [ ] **Cancel Parity**: Cancelers can cancel on both chains
-- [ ] **Reenable Parity**: Admin can reenable on both chains
-- [ ] **Nonce Parity**: Per-source-chain nonce tracking works
-- [ ] **Rate Limit Parity**: Limits enforced on both chains
-- [ ] **Query Parity**: Verification queries work bidirectionally
-
-### Test Vectors
-
-Generate from EVM and verify on Terra:
-
-```json
-{
-  "test_vectors": [
-    {
-      "inputs": {
-        "srcChainKey": "0x1234...",
-        "destChainKey": "0x5678...",
-        "destTokenAddress": "0xabcd...",
-        "destAccount": "0xef01...",
-        "amount": "1000000000000000000",
-        "nonce": 42
-      },
-      "expected_hash": "0x9876..."
-    }
-  ]
-}
-```
-
----
-
-## Implementation Decisions Summary
-
-| Question | Decision |
-|----------|----------|
-| Deprecate `Release`? | Yes, fully deprecate (not on mainnet) |
-| Initial cancelers? | Team-operated only for launch |
-| Default withdraw delay? | 5 minutes (match EVM) |
-| Include rate limiting? | Yes, in this implementation |
-| Keccak implementation? | cosmwasm-crypto if available, else tiny-keccak |
-| Store deposit hashes? | Yes, full parity |
-| Address encoding? | Cosmos canonical bytes (20), left-padded to 32 |
 
 ---
 
 ## Related Documentation
 
-- [Security Model](./security-model.md) - Watchtower pattern explanation
-- [Gap Analysis](./gap-analysis-terraclassic.md) - Current gaps and risks
-- [EVM Contracts](./contracts-evm.md) - Reference implementation
-- [Terra Classic Contracts](./contracts-terraclassic.md) - Implementation target
+- [System Architecture](./architecture.md) - Component overview
+- [Security Model](./security-model.md) - Watchtower pattern and roles
+- [Crosschain Transfer Flows](./crosschain-flows.md) - Step-by-step transfer diagrams
+- [EVM Contracts](./contracts-evm.md) - Solidity contract details
+- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm contract details
+- [Operator](./operator.md) - Operator service documentation
+- [Canceler Network](./canceler-network.md) - Canceler node setup

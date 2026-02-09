@@ -23,14 +23,18 @@ use crate::hash::bytes32_to_hex;
 /// Terra derivation path
 const TERRA_DERIVATION_PATH: &str = "m/44'/330'/0'/0/0";
 
-/// Cancel message for Terra contract
+/// Cancel message for Terra contract (V2)
+///
+/// IMPORTANT: Must match the contract's ExecuteMsg::WithdrawCancel variant.
+/// CosmWasm serializes enum variants to snake_case, so `WithdrawCancel`
+/// becomes `withdraw_cancel` in JSON.
 #[derive(Debug, Clone, Serialize)]
-pub struct CancelWithdrawApprovalMsg {
-    pub cancel_withdraw_approval: CancelWithdrawApprovalInner,
+pub struct WithdrawCancelMsg {
+    pub withdraw_cancel: WithdrawCancelInner,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct CancelWithdrawApprovalInner {
+pub struct WithdrawCancelInner {
     pub withdraw_hash: String,
 }
 
@@ -151,11 +155,11 @@ impl TerraClient {
         })
     }
 
-    /// Cancel a withdraw approval on Terra
+    /// Cancel a pending withdrawal on Terra (V2: WithdrawCancel)
     pub async fn cancel_withdraw_approval(&self, withdraw_hash: [u8; 32]) -> Result<String> {
-        // Build the cancel message
-        let msg = CancelWithdrawApprovalMsg {
-            cancel_withdraw_approval: CancelWithdrawApprovalInner {
+        // Build the cancel message — matches ExecuteMsg::WithdrawCancel
+        let msg = WithdrawCancelMsg {
+            withdraw_cancel: WithdrawCancelInner {
                 withdraw_hash: base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     withdraw_hash,
@@ -163,9 +167,10 @@ impl TerraClient {
             },
         };
 
-        debug!(
+        info!(
             withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-            "Submitting CancelWithdrawApproval to Terra"
+            contract = %self.contract_address,
+            "Submitting WithdrawCancel to Terra"
         );
 
         // Get account info
@@ -298,10 +303,11 @@ impl TerraClient {
         Err(eyre!("Broadcast failed: {}", body))
     }
 
-    /// Check if an approval can be cancelled
+    /// Check if a withdrawal can be cancelled (V2: QueryMsg::PendingWithdraw)
     pub async fn can_cancel(&self, withdraw_hash: [u8; 32]) -> Result<bool> {
+        // Query matches QueryMsg::PendingWithdraw { withdraw_hash: Binary }
         let query = serde_json::json!({
-            "withdraw_approval": {
+            "pending_withdraw": {
                 "withdraw_hash": base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     withdraw_hash,
@@ -319,18 +325,48 @@ impl TerraClient {
             self.lcd_url, self.contract_address, query_b64
         );
 
+        debug!(
+            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            url = %url,
+            "Querying Terra pending withdrawal for cancellability"
+        );
+
         match self.client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let json: serde_json::Value = resp.json().await?;
 
                 let exists = json["data"]["exists"].as_bool().unwrap_or(false);
+                let approved = json["data"]["approved"].as_bool().unwrap_or(false);
                 let cancelled = json["data"]["cancelled"].as_bool().unwrap_or(false);
                 let executed = json["data"]["executed"].as_bool().unwrap_or(false);
 
-                Ok(exists && !cancelled && !executed)
+                let cancellable = exists && approved && !cancelled && !executed;
+
+                debug!(
+                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    exists, approved, cancelled, executed, cancellable,
+                    "Terra withdrawal cancellability check result"
+                );
+
+                Ok(cancellable)
             }
-            _ => {
-                warn!("Could not query approval status");
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                warn!(
+                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    status = %status,
+                    body = %body,
+                    "Terra pending_withdraw query failed"
+                );
+                Ok(false)
+            }
+            Err(e) => {
+                warn!(
+                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    error = %e,
+                    "Could not query Terra pending withdrawal"
+                );
                 Ok(false)
             }
         }

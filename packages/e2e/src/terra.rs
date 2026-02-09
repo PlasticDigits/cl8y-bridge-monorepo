@@ -39,14 +39,9 @@ pub struct TxResult {
     pub raw_log: String,
 }
 
-/// Pending approval on Terra bridge
-#[derive(Debug, Clone, Deserialize)]
-pub struct PendingApproval {
-    pub withdraw_hash: String,
-    pub recipient: String,
-    pub amount: String,
-    pub created_at: u64,
-}
+// Note: PendingApproval struct was removed — the V2 contract uses
+// PendingWithdrawals (query) / PendingWithdrawResponse (response).
+// Use get_pending_withdrawals() which returns raw JSON.
 
 /// Terra chain client for E2E testing
 pub struct TerraClient {
@@ -245,6 +240,14 @@ impl TerraClient {
             .text()
             .await
             .map_err(|e| eyre!("Failed to read response: {}", e))?;
+
+        // Log the raw REST query result for debugging
+        let preview: String = response_text.chars().take(500).collect();
+        info!(
+            "Contract REST query result for {}: {}",
+            contract_address, preview
+        );
+
         serde_json::from_str(&response_text)
             .map_err(|e| eyre!("Failed to parse query response: {}", e))
     }
@@ -283,6 +286,17 @@ impl TerraClient {
                 output
             )
         })?;
+
+        // Log the raw query result for debugging
+        let preview = serde_json::to_string(&response)
+            .unwrap_or_default()
+            .chars()
+            .take(500)
+            .collect::<String>();
+        info!(
+            "Contract query result for {}: {}",
+            contract_address, preview
+        );
 
         // The actual data is in the "data" field
         if let Some(data) = response.get("data") {
@@ -741,26 +755,38 @@ impl TerraClient {
         Err(eyre!("Timeout waiting for transaction confirmation"))
     }
 
-    /// Lock tokens on Terra bridge (for cross-chain transfer)
-    pub async fn lock_tokens(
+    /// Deposit native tokens on Terra bridge for cross-chain transfer (V2 API)
+    ///
+    /// Sends `DepositNative { dest_chain, dest_account }` with the tokens
+    /// attached as funds. The tokens are locked on Terra for bridging.
+    ///
+    /// # Arguments
+    /// * `bridge_address` - Terra bridge contract address
+    /// * `dest_chain` - Destination chain's registered 4-byte chain ID (e.g., `[0,0,0,1]` for EVM)
+    /// * `dest_account` - Destination account as 32-byte universal address
+    /// * `amount` - Amount in smallest denomination
+    /// * `denom` - Native token denom (e.g., "uluna")
+    pub async fn deposit_native_tokens(
         &self,
         bridge_address: &str,
-        dest_chain_id: u64,
-        recipient: &str,
+        dest_chain: [u8; 4],
+        dest_account: [u8; 32],
         amount: u128,
         denom: &str,
     ) -> Result<String> {
+        use base64::Engine;
+        let encoder = base64::engine::general_purpose::STANDARD;
+
         info!(
-            "Locking tokens on Terra bridge: {} {} -> {}",
-            amount, denom, recipient
+            "Depositing native tokens on Terra bridge: {} {} -> dest_chain=0x{}, dest_account=0x{}...",
+            amount, denom, hex::encode(dest_chain), hex::encode(&dest_account[..8])
         );
 
-        // The Lock message only expects dest_chain_id and recipient.
-        // The tokens to lock are sent as attached funds via --amount flag.
+        // V2 DepositNative message: dest_chain and dest_account are base64-encoded Binary
         let msg = serde_json::json!({
-            "lock": {
-                "dest_chain_id": dest_chain_id,
-                "recipient": recipient
+            "deposit_native": {
+                "dest_chain": encoder.encode(dest_chain),
+                "dest_account": encoder.encode(dest_account)
             }
         });
 
@@ -768,16 +794,19 @@ impl TerraClient {
             .await
     }
 
-    /// Query pending approvals on Terra bridge
-    pub async fn get_pending_approvals(
+    /// Query pending withdrawals on Terra bridge (V2 API)
+    ///
+    /// Returns the raw JSON response from the `pending_withdrawals` query.
+    /// Use this to inspect withdrawal entries, check approval status, etc.
+    pub async fn get_pending_withdrawals(
         &self,
         bridge_address: &str,
         limit: u32,
-    ) -> Result<Vec<PendingApproval>> {
-        info!("Querying pending approvals on Terra bridge");
+    ) -> Result<serde_json::Value> {
+        info!("Querying pending withdrawals on Terra bridge");
 
         let query = serde_json::json!({
-            "pending_approvals": {
+            "pending_withdrawals": {
                 "limit": limit
             }
         });
@@ -785,7 +814,7 @@ impl TerraClient {
         self.query_contract(bridge_address, &query).await
     }
 
-    /// Query withdraw delay from Terra bridge
+    /// Query withdraw delay from Terra bridge (V2 API)
     pub async fn get_withdraw_delay(&self, bridge_address: &str) -> Result<u64> {
         info!("Querying withdraw delay from Terra bridge");
 
@@ -795,7 +824,7 @@ impl TerraClient {
 
         let result: WithdrawDelayResponse = self.query_contract(bridge_address, &query).await?;
 
-        Ok(result.delay)
+        Ok(result.delay_seconds)
     }
 }
 
@@ -899,5 +928,5 @@ struct Attribute {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct WithdrawDelayResponse {
-    delay: u64,
+    delay_seconds: u64,
 }

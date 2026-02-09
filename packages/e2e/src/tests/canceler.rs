@@ -3,8 +3,8 @@
 //! This module contains tests for the canceler service including fraud detection,
 //! health endpoints, concurrent approval handling, and RPC failure resilience.
 
+use crate::services::find_project_root;
 use crate::{E2eConfig, ServiceManager, TestResult};
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Verify operator fee collection during transfers.
@@ -86,11 +86,11 @@ pub async fn test_canceler_autonomous_detection(config: &E2eConfig) -> TestResul
     let start = Instant::now();
     let name = "canceler_autonomous_detection";
 
-    // Get project root from config or use default
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
+    // Get project root dynamically
+    let project_root = find_project_root();
 
     // Create service manager
-    let manager = ServiceManager::new(project_root);
+    let manager = ServiceManager::new(&project_root);
 
     // Check if canceler is running
     let canceler_running = manager.is_canceler_running();

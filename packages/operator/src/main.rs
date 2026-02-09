@@ -42,6 +42,16 @@ async fn async_main() -> eyre::Result<()> {
         "Configuration loaded"
     );
 
+    // Log multi-EVM configuration if present
+    if let Some(ref multi) = config.multi_evm {
+        let chain_ids = multi.chain_ids();
+        tracing::info!(
+            chains = chain_ids.len(),
+            chain_ids = ?chain_ids,
+            "Multi-EVM configuration loaded for EVM-to-EVM bridging"
+        );
+    }
+
     // Connect to database
     let db = db::create_pool(&config.database.url).await?;
     tracing::info!("Database connected");
@@ -76,7 +86,13 @@ async fn async_main() -> eyre::Result<()> {
     tracing::info!("Managers initialized, starting processing");
 
     // Start metrics/API server
-    let api_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 9090));
+    // Default port 9092 — avoids conflict with LocalTerra gRPC (9090) and gRPC-web (9091)
+    let api_port: u16 = std::env::var("OPERATOR_API_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9092);
+    let api_addr = std::net::SocketAddr::from(([0, 0, 0, 0], api_port));
+    tracing::info!(port = api_port, "Starting API server");
     let api_db = db.clone();
     tokio::spawn(async move {
         if let Err(e) = api::start_api_server(api_addr, api_db).await {

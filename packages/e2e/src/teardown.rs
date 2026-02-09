@@ -77,26 +77,37 @@ impl E2eTeardown {
     }
 
     /// Stop Docker services
+    ///
+    /// When `keep_volumes` is false, passes `-v` to `docker compose down` to remove
+    /// named volumes (postgres-data, localterra-data, terrad-keys) ensuring a clean
+    /// state for the next run.
     pub async fn stop_docker_services(&self, options: &TeardownOptions) -> Result<()> {
-        info!("Stopping Docker services");
+        info!(
+            "Stopping Docker services (keep_volumes={}, force={})",
+            options.keep_volumes, options.force
+        );
 
-        // Stop containers gracefully first
-        if !options.force {
-            self.docker.down(false).await?;
-        }
+        // Build the docker compose down args
+        let remove_volumes = !options.keep_volumes;
 
-        // Force stop if requested
         if options.force {
-            info!("Force stopping Docker services");
+            // Force mode: use --remove-orphans and -t 0 for immediate stop
+            let mut args = vec![
+                "compose",
+                "--profile",
+                "e2e",
+                "down",
+                "--remove-orphans",
+                "-t",
+                "0",
+            ];
+            if remove_volumes {
+                args.push("-v");
+            }
+
+            info!("Force stopping Docker services with args: {:?}", args);
             let output = Command::new("docker")
-                .args([
-                    "compose",
-                    "--profile",
-                    "e2e",
-                    "down",
-                    "-v",
-                    "--remove-orphans",
-                ])
+                .args(&args)
                 .current_dir(&self.project_root)
                 .output()?;
 
@@ -104,18 +115,35 @@ impl E2eTeardown {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 warn!("Force stop command failed: {}", stderr);
             }
+        } else {
+            // Graceful mode: pass remove_volumes to docker compose down
+            self.docker.down(remove_volumes).await?;
+        }
+
+        // If volumes were supposed to be removed, do a fallback cleanup of
+        // any remaining named volumes (in case docker compose down -v missed them)
+        if remove_volumes {
+            self.remove_named_volumes().await;
         }
 
         Ok(())
     }
 
-    /// Remove temporary files (.env.e2e, logs, etc.)
+    /// Remove temporary files (.env.e2e, logs, PID files, etc.)
     pub async fn cleanup_files(&self) -> Result<Vec<PathBuf>> {
         info!("Cleaning up temporary files");
 
         let mut removed = Vec::new();
         let temp_patterns = [
+            // Environment / config
             ".env.e2e",
+            // Service log files (appended across runs — must wipe for clean state)
+            ".operator.log",
+            ".canceler.log",
+            // PID files
+            ".operator.pid",
+            ".canceler.pid",
+            // Coverage / test output
             "logs/*.log",
             ".coverage",
             ".nyc_output",
@@ -137,27 +165,86 @@ impl E2eTeardown {
         Ok(removed)
     }
 
-    /// Remove Docker volumes
+    /// Remove Docker volumes (fallback if `docker compose down -v` didn't catch them)
+    ///
+    /// Docker Compose names volumes as `{project}_{volume}` where project defaults
+    /// to the directory name. For this monorepo, that's `cl8y-bridge-monorepo`.
     pub async fn remove_volumes(&self) -> Result<()> {
         info!("Removing Docker volumes");
+        self.remove_named_volumes().await;
+        Ok(())
+    }
 
+    /// Remove named Docker volumes by their actual Docker names.
+    ///
+    /// Docker Compose prefixes volume names with the project directory name.
+    /// We discover the correct prefix dynamically from `docker volume ls`.
+    async fn remove_named_volumes(&self) {
+        // The volume suffixes we care about (from docker-compose.yml)
+        let volume_suffixes = [
+            "postgres-data",
+            "localterra-data",
+            "terrad-keys",
+            "prometheus-data",
+            "grafana-data",
+        ];
+
+        // Discover actual volume names via `docker volume ls`
         let output = Command::new("docker")
-            .args([
-                "volume",
-                "rm",
-                "-f",
-                "e2e-postgres",
-                "e2e-localterra",
-                "e2e-operator-db",
-            ])
-            .output()?;
+            .args(["volume", "ls", "--format", "{{.Name}}"])
+            .output();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("Volume removal command failed: {}", stderr);
+        let volumes_to_remove: Vec<String> = match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout
+                    .lines()
+                    .filter(|name| volume_suffixes.iter().any(|suffix| name.ends_with(suffix)))
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+            _ => {
+                // Fallback to hardcoded names (project dir = cl8y-bridge-monorepo)
+                warn!("Could not list Docker volumes, using hardcoded names");
+                volume_suffixes
+                    .iter()
+                    .map(|s| format!("cl8y-bridge-monorepo_{}", s))
+                    .collect()
+            }
+        };
+
+        if volumes_to_remove.is_empty() {
+            info!("No E2E Docker volumes found to remove");
+            return;
         }
 
-        Ok(())
+        info!(
+            "Removing {} Docker volume(s): {:?}",
+            volumes_to_remove.len(),
+            volumes_to_remove
+        );
+
+        let mut args = vec!["volume", "rm", "-f"];
+        let refs: Vec<&str> = volumes_to_remove.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&refs);
+
+        let output = Command::new("docker").args(&args).output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                info!("Docker volumes removed successfully");
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // Volumes may already be gone — that's fine
+                if !stderr.contains("No such volume") {
+                    warn!("Volume removal returned non-zero: {}", stderr);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to run docker volume rm: {}", e);
+            }
+        }
     }
 
     /// Find orphaned processes that may interfere
@@ -337,13 +424,8 @@ impl E2eTeardown {
                 .collect()
         };
 
-        // Cleanup files
+        // Cleanup files (logs, PID files, env files)
         let files_removed = self.cleanup_files().await?;
-
-        // Remove volumes if not keeping them
-        if !options.keep_volumes {
-            let _ = self.remove_volumes().await;
-        }
 
         let duration = start.elapsed();
 
@@ -549,5 +631,8 @@ pub const E2E_PORTS: &[(u16, &str)] = &[
     (5433, "PostgreSQL"),
     (26657, "Terra RPC"),
     (1317, "Terra LCD"),
-    (9090, "API"),
+    (9090, "LocalTerra gRPC"),
+    (9091, "LocalTerra gRPC-web"),
+    (9092, "Operator API"),
+    (9099, "Canceler Health"),
 ];

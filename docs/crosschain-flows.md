@@ -179,19 +179,25 @@ bytes32 chainKey = keccak256(abi.encode("EVM", chainId));
 bytes32 chainKey = keccak256(abi.encode("COSMOS", chainId, addressPrefix));
 ```
 
-### Withdraw Hash
+### Transfer Hash (V2, 7-Field Unified)
 
-Used to identify and look up withdrawal approvals:
+Used to identify both deposits and withdrawals. The same hash is computed on both the source and destination chain:
 
 ```solidity
-bytes32 withdrawHash = keccak256(abi.encode(
-    srcChainKey,
-    token,
-    to,
-    amount,
-    nonce
+bytes32 transferHash = keccak256(abi.encode(
+    bytes32(srcChain),    // 4-byte chain ID, left-aligned in 32 bytes
+    bytes32(destChain),   // 4-byte chain ID, left-aligned in 32 bytes
+    srcAccount,           // bytes32 - depositor address (left-padded)
+    destAccount,          // bytes32 - recipient address (left-padded)
+    token,                // bytes32 - DESTINATION token (see encoding rules)
+    amount,               // uint256 - NET amount (post-fee)
+    uint256(nonce)        // uint256 - deposit nonce from source chain
 ));
 ```
+
+**Key rules**: The `token` is always the destination token. The `amount` is always post-fee.
+
+See [Cross-Chain Hash Parity](./crosschain-parity.md) for full encoding rules and test coverage.
 
 ## Fee Handling
 

@@ -38,6 +38,10 @@ pub struct EvmDeposit {
     /// Source account (depositor) encoded as 32-byte universal address (V2 hash fix)
     #[sqlx(default)]
     pub src_account: Option<Vec<u8>>,
+    /// V2 chain ID (4 bytes from ChainRegistry) — used for hash computation
+    /// This replaces the native chain_id for cross-chain hash matching.
+    #[sqlx(default)]
+    pub src_v2_chain_id: Option<Vec<u8>>,
 }
 
 /// For inserting new EVM deposits
@@ -58,6 +62,8 @@ pub struct NewEvmDeposit {
     pub dest_chain_type: String,
     /// Source account (depositor) encoded as 32-byte universal address (V2 hash fix)
     pub src_account: Vec<u8>,
+    /// V2 chain ID (4 bytes from ChainRegistry)
+    pub src_v2_chain_id: Vec<u8>,
 }
 
 /// Represents a deposit (lock) from Terra Classic

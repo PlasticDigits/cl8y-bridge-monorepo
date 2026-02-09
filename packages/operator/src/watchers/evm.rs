@@ -52,11 +52,32 @@ impl EvmWatcher {
         // Default to V2 events
         let use_v2_events = config.use_v2_events.unwrap_or(true);
 
-        // Query this chain's ID from the contract if available, otherwise derive from chain_id
-        let this_chain_id = ChainId::from_u32(config.this_chain_id.unwrap_or(1));
+        // Query this chain's V2 ID from the bridge contract, fall back to config
+        let bridge_contract = Bridge::new(bridge_address, &provider);
+        let this_chain_id = match bridge_contract.getThisChainId().call().await {
+            Ok(result) => {
+                let v2_id = ChainId::from_bytes(result._0.0);
+                tracing::info!(
+                    native_chain_id = config.chain_id,
+                    v2_chain_id = %v2_id,
+                    v2_hex = %format!("0x{}", hex::encode(v2_id.as_bytes())),
+                    "Queried V2 chain ID from bridge contract"
+                );
+                v2_id
+            }
+            Err(e) => {
+                let fallback = ChainId::from_u32(config.this_chain_id.unwrap_or(1));
+                tracing::warn!(
+                    error = %e,
+                    native_chain_id = config.chain_id,
+                    fallback_v2_id = %fallback,
+                    "Failed to query V2 chain ID from bridge, using config fallback"
+                );
+                fallback
+            }
+        };
 
         // Query TokenRegistry address from Bridge contract for dest token lookups
-        let bridge_contract = Bridge::new(bridge_address, &provider);
         let token_registry_address = bridge_contract
             .tokenRegistry()
             .call()
@@ -71,8 +92,9 @@ impl EvmWatcher {
             });
 
         tracing::info!(
-            chain_id = config.chain_id,
-            this_chain_id = %this_chain_id,
+            native_chain_id = config.chain_id,
+            v2_chain_id = %this_chain_id,
+            v2_chain_id_hex = %format!("0x{}", hex::encode(this_chain_id.as_bytes())),
             token_registry = %token_registry_address,
             use_v2_events = use_v2_events,
             "EVM watcher initialized"
@@ -149,6 +171,21 @@ impl EvmWatcher {
             Self::deposit_request_signature()
         };
 
+        if !logs.is_empty() {
+            tracing::debug!(
+                chain_id = self.chain_id,
+                log_count = logs.len(),
+                from_block,
+                to_block,
+                deposit_sig = %deposit_signature,
+                use_v2 = self.use_v2_events,
+                "Processing {} logs from blocks {}-{}",
+                logs.len(),
+                from_block,
+                to_block
+            );
+        }
+
         for log in logs {
             // Check if this is a Deposit/DepositRequest event
             let topics = log.topics();
@@ -157,6 +194,12 @@ impl EvmWatcher {
             }
 
             if topics[0] != deposit_signature {
+                tracing::debug!(
+                    actual_topic = %topics[0],
+                    expected_topic = %deposit_signature,
+                    tx_hash = ?log.transaction_hash,
+                    "Log topic does not match Deposit event signature, skipping"
+                );
                 continue;
             }
 
@@ -269,6 +312,7 @@ impl EvmWatcher {
             block_hash: format!("{:?}", block_hash),
             dest_chain_type,
             src_account: vec![0u8; 32], // V1 deposits don't include src_account
+            src_v2_chain_id: self.this_chain_id.as_bytes().to_vec(),
         })
     }
 
@@ -417,6 +461,7 @@ impl EvmWatcher {
             block_hash: format!("{:?}", block_hash),
             dest_chain_type,
             src_account,
+            src_v2_chain_id: self.this_chain_id.as_bytes().to_vec(),
         })
     }
 
@@ -508,8 +553,23 @@ impl EvmWatcher {
     }
 
     /// Compute the V2 Deposit event signature hash
+    ///
+    /// V2 event includes srcAccount (bytes32) as a non-indexed parameter:
+    /// ```solidity
+    /// event Deposit(
+    ///     bytes4 indexed destChain,
+    ///     bytes32 indexed destAccount,
+    ///     bytes32 srcAccount,      // non-indexed
+    ///     address token,           // non-indexed
+    ///     uint256 amount,          // non-indexed
+    ///     uint64 nonce,            // non-indexed
+    ///     uint256 fee              // non-indexed
+    /// );
+    /// ```
     fn deposit_v2_signature() -> B256 {
-        // keccak256("Deposit(bytes4,bytes32,address,uint256,uint64,uint256)")
-        alloy::primitives::keccak256(b"Deposit(bytes4,bytes32,address,uint256,uint64,uint256)")
+        // Must include all 7 parameters (both indexed and non-indexed) in the signature
+        alloy::primitives::keccak256(
+            b"Deposit(bytes4,bytes32,bytes32,address,uint256,uint64,uint256)",
+        )
     }
 }

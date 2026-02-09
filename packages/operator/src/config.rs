@@ -5,6 +5,8 @@ use serde::Deserialize;
 use std::env;
 use std::path::Path;
 
+use crate::multi_evm::MultiEvmConfig;
+
 /// Main configuration for the relayer
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -13,6 +15,11 @@ pub struct Config {
     pub terra: TerraConfig,
     pub relayer: RelayerConfig,
     pub fees: FeeConfig,
+    /// Optional multi-EVM chain configuration for EVM-to-EVM bridging.
+    /// When set, the operator can handle deposits between multiple EVM chains
+    /// (e.g., BSC→opBNB, ETH→Polygon). Loaded from EVM_CHAINS_COUNT env vars.
+    #[serde(skip)]
+    pub multi_evm: Option<MultiEvmConfig>,
 }
 
 /// Database configuration
@@ -191,12 +198,16 @@ impl Config {
                 .map_err(|_| eyre!("FEE_RECIPIENT environment variable is required"))?,
         };
 
+        // Load optional multi-EVM configuration (for EVM-to-EVM bridging)
+        let multi_evm = crate::multi_evm::load_from_env()?;
+
         let config = Config {
             database,
             evm,
             terra,
             relayer,
             fees,
+            multi_evm,
         };
 
         config.validate()?;
@@ -334,6 +345,7 @@ mod tests {
                 default_fee_bps: 30,
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
+            multi_evm: None,
         };
 
         // Valid config should pass
@@ -389,6 +401,7 @@ mod tests {
                 default_fee_bps: 30,
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
+            multi_evm: None,
         };
 
         // Valid fee BPS

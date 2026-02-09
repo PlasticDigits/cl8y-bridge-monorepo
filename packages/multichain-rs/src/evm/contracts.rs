@@ -33,7 +33,8 @@ sol! {
         // ========================================================================
 
         /// User submits a withdrawal request (requires operatorGas payment)
-        function withdrawSubmit(bytes4 srcChain, address token, uint256 amount, uint64 nonce) external payable;
+        /// Must include srcAccount and destAccount for hash computation
+        function withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce) external payable;
 
         /// Operator approves a pending withdrawal
         function withdrawApprove(bytes32 withdrawHash) external;
@@ -85,10 +86,14 @@ sol! {
         /// Get the cancel window duration in seconds
         function getCancelWindow() external view returns (uint256);
 
-        /// Get pending withdrawal info
+        /// Get pending withdrawal info (V2 PendingWithdraw struct)
+        ///
+        /// IMPORTANT: Must match the Solidity PendingWithdraw struct exactly,
+        /// including `destAccount` between `srcAccount` and `token`.
         function getPendingWithdraw(bytes32 withdrawHash) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
+            bytes32 destAccount,
             address token,
             address recipient,
             uint256 amount,
@@ -136,9 +141,11 @@ sol! {
         // ========================================================================
 
         /// Deposit event - emitted when tokens are deposited for bridging
+        /// V2: includes srcAccount (bytes32) as the first non-indexed field
         event Deposit(
             bytes4 indexed destChain,
             bytes32 indexed destAccount,
+            bytes32 srcAccount,
             address token,
             uint256 amount,
             uint64 nonce,
@@ -146,9 +153,12 @@ sol! {
         );
 
         /// Withdraw submit - user initiates withdrawal
+        /// Includes srcAccount and destAccount for full traceability
         event WithdrawSubmit(
             bytes32 indexed withdrawHash,
             bytes4 srcChain,
+            bytes32 srcAccount,
+            bytes32 destAccount,
             address token,
             uint256 amount,
             uint64 nonce,

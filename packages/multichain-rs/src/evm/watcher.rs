@@ -146,8 +146,11 @@ impl<P: Provider> EvmEventWatcher<P> {
         from_block: u64,
         to_block: u64,
     ) -> Result<Vec<DepositEvent>> {
-        let deposit_topic =
-            alloy::primitives::keccak256(b"Deposit(bytes4,bytes32,address,uint256,uint64,uint256)");
+        // V2 event: Deposit(bytes4 indexed, bytes32 indexed, bytes32, address, uint256, uint64, uint256)
+        // All 7 parameters must be included in the signature hash (both indexed and non-indexed)
+        let deposit_topic = alloy::primitives::keccak256(
+            b"Deposit(bytes4,bytes32,bytes32,address,uint256,uint64,uint256)",
+        );
 
         let filter = Filter::new()
             .address(self.bridge_address)
@@ -182,8 +185,9 @@ impl<P: Provider> EvmEventWatcher<P> {
         from_block: u64,
         to_block: u64,
     ) -> Result<Vec<WithdrawSubmitEvent>> {
+        // V2 WithdrawSubmit includes srcAccount and destAccount fields
         let topic = alloy::primitives::keccak256(
-            b"WithdrawSubmit(bytes32,bytes4,address,uint256,uint64,uint256)",
+            b"WithdrawSubmit(bytes32,bytes4,bytes32,bytes32,address,uint256,uint64,uint256)",
         );
 
         let filter = Filter::new()
@@ -291,10 +295,12 @@ impl<P: Provider> EvmEventWatcher<P> {
         let logs = self.get_bridge_logs(from_block, to_block).await?;
         let mut events = Vec::new();
 
-        let deposit_topic =
-            alloy::primitives::keccak256(b"Deposit(bytes4,bytes32,address,uint256,uint64,uint256)");
+        // V2 event signatures - all parameters included (indexed + non-indexed)
+        let deposit_topic = alloy::primitives::keccak256(
+            b"Deposit(bytes4,bytes32,bytes32,address,uint256,uint64,uint256)",
+        );
         let submit_topic = alloy::primitives::keccak256(
-            b"WithdrawSubmit(bytes32,bytes4,address,uint256,uint64,uint256)",
+            b"WithdrawSubmit(bytes32,bytes4,bytes32,bytes32,address,uint256,uint64,uint256)",
         );
         let approve_topic = alloy::primitives::keccak256(b"WithdrawApprove(bytes32)");
         let cancel_topic = alloy::primitives::keccak256(b"WithdrawCancel(bytes32,address)");
@@ -307,22 +313,56 @@ impl<P: Provider> EvmEventWatcher<P> {
             if topic0 == deposit_topic {
                 if let Some(e) = parse_deposit_log(log) {
                     events.push(BridgeEvent::Deposit(e));
+                } else {
+                    tracing::warn!(
+                        block = ?log.block_number,
+                        tx = ?log.transaction_hash,
+                        data_len = log.data().data.len(),
+                        topics = log.topics().len(),
+                        "Failed to parse Deposit event from log"
+                    );
                 }
             } else if topic0 == submit_topic {
                 if let Some(e) = parse_withdraw_submit_log(log) {
                     events.push(BridgeEvent::WithdrawSubmit(e));
+                } else {
+                    tracing::warn!(
+                        block = ?log.block_number,
+                        tx = ?log.transaction_hash,
+                        data_len = log.data().data.len(),
+                        topics = log.topics().len(),
+                        "Failed to parse WithdrawSubmit event from log"
+                    );
                 }
             } else if topic0 == approve_topic {
                 if let Some(e) = parse_withdraw_approve_log(log) {
                     events.push(BridgeEvent::WithdrawApprove(e));
+                } else {
+                    tracing::warn!(
+                        block = ?log.block_number,
+                        tx = ?log.transaction_hash,
+                        "Failed to parse WithdrawApprove event from log"
+                    );
                 }
             } else if topic0 == cancel_topic {
                 if let Some(e) = parse_withdraw_cancel_log(log) {
                     events.push(BridgeEvent::WithdrawCancel(e));
+                } else {
+                    tracing::warn!(
+                        block = ?log.block_number,
+                        tx = ?log.transaction_hash,
+                        "Failed to parse WithdrawCancel event from log"
+                    );
                 }
             } else if topic0 == execute_topic {
                 if let Some(e) = parse_withdraw_execute_log(log) {
                     events.push(BridgeEvent::WithdrawExecute(e));
+                } else {
+                    tracing::warn!(
+                        block = ?log.block_number,
+                        tx = ?log.transaction_hash,
+                        "Failed to parse WithdrawExecute event from log"
+                    );
                 }
             }
         }
@@ -513,7 +553,7 @@ impl<P: Provider> EvmEventWatcher<P> {
 
 /// Parse a V2 Deposit event from a raw log
 ///
-/// Event: Deposit(bytes4 indexed destChain, bytes32 indexed destAccount, address token, uint256 amount, uint64 nonce, uint256 fee)
+/// Event: Deposit(bytes4 indexed destChain, bytes32 indexed destAccount, bytes32 srcAccount, address token, uint256 amount, uint64 nonce, uint256 fee)
 pub fn parse_deposit_log(log: &alloy::rpc::types::Log) -> Option<DepositEvent> {
     let topics = log.topics();
     if topics.len() < 3 {
@@ -532,28 +572,38 @@ pub fn parse_deposit_log(log: &alloy::rpc::types::Log) -> Option<DepositEvent> {
     // topic[2] = destAccount (bytes32)
     let dest_account = topics[2];
 
-    // Decode data: token (address), amount (uint256), nonce (uint64), fee (uint256)
+    // Decode data fields (V2):
+    //   [0..32]    srcAccount  (bytes32)
+    //   [32..64]   token       (address, right-aligned in 32 bytes)
+    //   [64..96]   amount      (uint256)
+    //   [96..128]  nonce       (uint64, right-aligned in 32 bytes)
+    //   [128..160] fee         (uint256)
     let data = log.data().data.as_ref();
-    if data.len() < 128 {
+    if data.len() < 160 {
         return None;
     }
 
-    // token is in first 32 bytes (address is right-aligned in 32 bytes)
-    let token_bytes: [u8; 20] = data[12..32].try_into().ok()?;
+    // srcAccount is in first 32 bytes
+    let mut src_account = [0u8; 32];
+    src_account.copy_from_slice(&data[0..32]);
+
+    // token is in bytes 32..64 (address is right-aligned in 32 bytes)
+    let token_bytes: [u8; 20] = data[44..64].try_into().ok()?;
     let token = Address::from(token_bytes);
 
-    // amount is in bytes 32..64
-    let amount = U256::from_be_slice(&data[32..64]);
+    // amount is in bytes 64..96
+    let amount = U256::from_be_slice(&data[64..96]);
 
-    // nonce is in bytes 64..96 (uint64 right-aligned in 32 bytes)
-    let nonce = u64::from_be_bytes(data[88..96].try_into().ok()?);
+    // nonce is in bytes 96..128 (uint64 right-aligned in 32 bytes)
+    let nonce = u64::from_be_bytes(data[120..128].try_into().ok()?);
 
-    // fee is in bytes 96..128
-    let fee = U256::from_be_slice(&data[96..128]);
+    // fee is in bytes 128..160
+    let fee = U256::from_be_slice(&data[128..160]);
 
     Some(DepositEvent::from_log(
         FixedBytes(dest_chain),
         FixedBytes(dest_account.0),
+        src_account,
         token,
         amount,
         nonce,
@@ -566,7 +616,19 @@ pub fn parse_deposit_log(log: &alloy::rpc::types::Log) -> Option<DepositEvent> {
 
 /// Parse a V2 WithdrawSubmit event from a raw log
 ///
-/// Event: WithdrawSubmit(bytes32 indexed withdrawHash, bytes4 srcChain, address token, uint256 amount, uint64 nonce, uint256 operatorGas)
+/// Event: WithdrawSubmit(bytes32 indexed withdrawHash, bytes4 srcChain,
+///                       bytes32 srcAccount, bytes32 destAccount,
+///                       address token, uint256 amount, uint64 nonce,
+///                       uint256 operatorGas)
+///
+/// Data layout (7 non-indexed fields × 32 bytes = 224 bytes):
+///   [0..32]    srcChain    (bytes4, left-aligned)
+///   [32..64]   srcAccount  (bytes32)
+///   [64..96]   destAccount (bytes32)
+///   [96..128]  token       (address, right-aligned)
+///   [128..160] amount      (uint256)
+///   [160..192] nonce       (uint64, right-aligned)
+///   [192..224] operatorGas (uint256)
 pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<WithdrawSubmitEvent> {
     let topics = log.topics();
     if topics.len() < 2 {
@@ -580,9 +642,9 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     // topic[1] = withdrawHash (bytes32)
     let withdraw_hash = topics[1];
 
-    // Decode data: srcChain (bytes4), token (address), amount (uint256), nonce (uint64), operatorGas (uint256)
+    // V2 data has 7 non-indexed fields = 224 bytes
     let data = log.data().data.as_ref();
-    if data.len() < 160 {
+    if data.len() < 224 {
         return None;
     }
 
@@ -590,18 +652,22 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     let mut src_chain = [0u8; 4];
     src_chain.copy_from_slice(&data[..4]);
 
-    // token is in bytes 32..64 (address right-aligned)
-    let token_bytes: [u8; 20] = data[44..64].try_into().ok()?;
+    // srcAccount is in bytes 32..64 (bytes32)
+    // destAccount is in bytes 64..96 (bytes32)
+    // (Not stored in WithdrawSubmitEvent currently but parsed for completeness)
+
+    // token is in bytes 96..128 (address right-aligned)
+    let token_bytes: [u8; 20] = data[108..128].try_into().ok()?;
     let token = Address::from(token_bytes);
 
-    // amount is in bytes 64..96
-    let amount = U256::from_be_slice(&data[64..96]);
+    // amount is in bytes 128..160
+    let amount = U256::from_be_slice(&data[128..160]);
 
-    // nonce is in bytes 96..128 (uint64 right-aligned)
-    let nonce = u64::from_be_bytes(data[120..128].try_into().ok()?);
+    // nonce is in bytes 160..192 (uint64 right-aligned)
+    let nonce = u64::from_be_bytes(data[184..192].try_into().ok()?);
 
-    // operatorGas is in bytes 128..160
-    let operator_gas = U256::from_be_slice(&data[128..160]);
+    // operatorGas is in bytes 192..224
+    let operator_gas = U256::from_be_slice(&data[192..224]);
 
     Some(WithdrawSubmitEvent::from_log(
         FixedBytes(withdraw_hash.0),

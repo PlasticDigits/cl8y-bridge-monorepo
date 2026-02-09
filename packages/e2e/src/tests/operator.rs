@@ -3,8 +3,8 @@
 //! This module contains integration tests for the operator service,
 //! verifying deposit detection, approval creation, and withdrawal execution.
 
+use crate::services::find_project_root;
 use crate::{E2eConfig, ServiceManager, TestResult};
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Verify that Rust's compute_withdraw_hash function produces correct results
@@ -86,11 +86,11 @@ pub async fn test_operator_startup(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "operator_startup";
 
-    // Get project root from config or use default
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
+    // Get project root dynamically
+    let project_root = find_project_root();
 
     // Create service manager
-    let manager = ServiceManager::new(project_root);
+    let manager = ServiceManager::new(&project_root);
 
     // Check initial state
     let was_running = manager.is_operator_running();

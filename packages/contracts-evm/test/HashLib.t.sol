@@ -352,4 +352,272 @@ contract HashLibTest is Test {
         // Long string should still produce a valid hash
         assertTrue(chainKey != bytes32(0));
     }
+
+    // ============================================================================
+    // Cross-Chain Token Encoding Parity Tests (Solidity ↔ Rust)
+    // uluna native ↔ ERC20 and CW20 ↔ ERC20
+    // ============================================================================
+
+    /// @notice CW20 address bytes32 encoding - must match Rust's encode_terra_address_to_bytes32
+    /// terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v → bech32 decode → left-pad to 32 bytes
+    bytes32 constant CW20_TOKEN_BYTES32 = 0x00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d;
+
+    /// @notice EVM test address encoded as bytes32
+    bytes32 constant EVM_ACCOUNT = bytes32(uint256(uint160(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)));
+
+    /// @notice Terra test address (terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v) as bytes32
+    bytes32 constant TERRA_ACCOUNT = CW20_TOKEN_BYTES32;
+
+    /// @notice uluna native denom token encoding: keccak256("uluna")
+    bytes32 constant ULUNA_TOKEN = 0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da;
+
+    /// @notice Test EVM→Terra transfer hash with native uluna, cross-chain parity with Rust.
+    /// The expected hash value is computed by Rust multichain-rs compute_transfer_hash with
+    /// identical parameters. If this fails, hashes won't match and operator won't approve.
+    function test_TransferHash_EvmToTerra_Uluna_CrossChainParity() public pure {
+        bytes4 srcChain = bytes4(uint32(1)); // EVM
+        bytes4 destChain = bytes4(uint32(2)); // Terra
+
+        bytes32 hash =
+            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+
+        // Must match Rust: compute_transfer_hash([0,0,0,1], [0,0,0,2], evm_addr, terra_addr, keccak256("uluna"), 1_000_000, 1)
+        assertEq(
+            hash,
+            0xfae09dfb97ff9f54f146b78d461f05956b8e57714dc1ff756f4b293720c22336,
+            "EVM->Terra uluna hash must match Rust implementation"
+        );
+    }
+
+    /// @notice Test Terra→EVM transfer hash with native uluna, cross-chain parity with Rust.
+    function test_TransferHash_TerraToEvm_Uluna_CrossChainParity() public pure {
+        bytes4 srcChain = bytes4(uint32(2)); // Terra
+        bytes4 destChain = bytes4(uint32(1)); // EVM
+
+        bytes32 hash =
+            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+
+        // Must match Rust output
+        assertEq(
+            hash,
+            0xf2ee2cf947c1d90b12a4fdb93ddfafb32895b3eb8586b69c15d7bd935247f3ee,
+            "Terra->EVM uluna hash must match Rust implementation"
+        );
+    }
+
+    /// @notice Test EVM→Terra transfer hash with CW20 token, cross-chain parity with Rust.
+    function test_TransferHash_EvmToTerra_CW20_CrossChainParity() public pure {
+        bytes4 srcChain = bytes4(uint32(1)); // EVM
+        bytes4 destChain = bytes4(uint32(2)); // Terra
+
+        bytes32 hash = HashLib.computeTransferHash(
+            srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
+        );
+
+        // Must match Rust output
+        assertEq(
+            hash,
+            0xf9737e3f6928b01ce2088caab2694eef79dd51ba42bcf177f01aad2fa6c7a4c6,
+            "EVM->Terra CW20 hash must match Rust implementation"
+        );
+    }
+
+    /// @notice Test Terra→EVM transfer hash with CW20 token, cross-chain parity with Rust.
+    function test_TransferHash_TerraToEvm_CW20_CrossChainParity() public pure {
+        bytes4 srcChain = bytes4(uint32(2)); // Terra
+        bytes4 destChain = bytes4(uint32(1)); // EVM
+
+        bytes32 hash = HashLib.computeTransferHash(
+            srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
+        );
+
+        // Must match Rust output
+        assertEq(
+            hash,
+            0xb8179fbc5a9f62e1b750c327fe0921600b1ce312585801f644604f8363a4dafa,
+            "Terra->EVM CW20 hash must match Rust implementation"
+        );
+    }
+
+    /// @notice Verify uluna and CW20 produce DIFFERENT transfer hashes with identical params.
+    /// This is the root cause of the "terra approval not found" bug.
+    function test_Uluna_vs_CW20_HashMismatch() public pure {
+        bytes4 srcChain = bytes4(uint32(1));
+        bytes4 destChain = bytes4(uint32(2));
+        bytes32 srcAccount = bytes32(uint256(uint160(0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa)));
+        bytes32 destAccount = bytes32(uint256(uint160(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB)));
+
+        bytes32 hashUluna =
+            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, ULUNA_TOKEN, 1_000_000, 1);
+        bytes32 hashCw20 =
+            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, CW20_TOKEN_BYTES32, 1_000_000, 1);
+
+        assertTrue(
+            hashUluna != hashCw20,
+            "uluna and CW20 tokens MUST produce different hashes - mixing causes approval timeout"
+        );
+    }
+
+    /// @notice Verify uluna encoding: keccak256(abi.encodePacked("uluna")) == known constant.
+    function test_UlunaEncoding_MatchesConstant() public pure {
+        bytes32 computed = keccak256(abi.encodePacked("uluna"));
+        assertEq(computed, ULUNA_TOKEN, "Computed uluna hash must match constant");
+    }
+
+    /// @notice Verify CW20 bytes32 is a valid left-padded 20-byte address.
+    function test_CW20Encoding_IsLeftPadded20Bytes() public pure {
+        // First 12 bytes should be zero (left-padding)
+        assertEq(uint256(CW20_TOKEN_BYTES32) >> 160, 0, "First 12 bytes of CW20 encoding must be zero");
+        // The value should be non-zero (contains actual address bytes)
+        assertTrue(CW20_TOKEN_BYTES32 != bytes32(0), "CW20 encoding must not be all zeros");
+    }
+
+    /// @notice Verify EVM→Terra and Terra→EVM produce different hashes (asymmetric).
+    /// Swapping src/dest chains and accounts must change the hash.
+    function test_DirectionMatters_Uluna() public pure {
+        bytes4 evmChain = bytes4(uint32(1));
+        bytes4 terraChain = bytes4(uint32(2));
+
+        bytes32 evmToTerra =
+            HashLib.computeTransferHash(evmChain, terraChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+        bytes32 terraToEvm =
+            HashLib.computeTransferHash(terraChain, evmChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+
+        assertTrue(evmToTerra != terraToEvm, "EVM->Terra and Terra->EVM must produce different hashes");
+    }
+
+    /// @notice Verify EVM→Terra and Terra→EVM produce different hashes for CW20.
+    function test_DirectionMatters_CW20() public pure {
+        bytes4 evmChain = bytes4(uint32(1));
+        bytes4 terraChain = bytes4(uint32(2));
+
+        bytes32 evmToTerra = HashLib.computeTransferHash(
+            evmChain, terraChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
+        );
+        bytes32 terraToEvm = HashLib.computeTransferHash(
+            terraChain, evmChain, TERRA_ACCOUNT, EVM_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
+        );
+
+        assertTrue(evmToTerra != terraToEvm, "EVM->Terra and Terra->EVM must produce different hashes for CW20");
+    }
+
+    // ============================================================================
+    // Deposit ↔ Withdraw Hash Parity Tests
+    //
+    // The bridge computes the SAME hash on both sides of a transfer:
+    //   Deposit side (source chain): hash(srcChain, destChain, depositor, recipient, destToken, amount, nonce)
+    //   Withdraw side (dest chain):  hash(srcChain, destChain, depositor, recipient, destToken, amount, nonce)
+    //
+    // The `token` field is always the DESTINATION token address.
+    // These tests verify deposit_hash == withdraw_hash and match Rust output.
+    // ============================================================================
+
+    /// @notice Additional test addresses
+    bytes32 constant EVM_ACCOUNT_B = bytes32(uint256(uint160(0x70997970C51812dc3A010C7d01b50e0d17dc79C8)));
+    bytes32 constant ERC20_TOKEN_A = bytes32(uint256(uint160(0x5FbDB2315678afecb367f032d93F642f64180aa3)));
+    bytes32 constant ERC20_TOKEN_B = bytes32(uint256(uint160(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)));
+
+    /// @notice EVM→EVM: ERC20 deposit and withdraw hashes match.
+    /// Cross-chain parity with Rust multichain-rs.
+    function test_DepositWithdraw_EvmToEvm_ERC20() public pure {
+        bytes4 srcChain = bytes4(uint32(1));
+        bytes4 destChain = bytes4(uint32(56));
+
+        // Deposit hash (computed on source chain 1)
+        bytes32 depositHash =
+            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
+
+        // Withdraw hash (computed on dest chain 56 - same params)
+        bytes32 withdrawHash =
+            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
+
+        assertEq(depositHash, withdrawHash, "EVM->EVM ERC20: deposit must equal withdraw");
+        assertEq(
+            depositHash,
+            0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54,
+            "Must match Rust multichain-rs output"
+        );
+    }
+
+    /// @notice EVM→Terra: native uluna deposit and withdraw hashes match.
+    /// Token = keccak256("uluna") on both sides.
+    function test_DepositWithdraw_EvmToTerra_NativeUluna() public pure {
+        bytes4 srcChain = bytes4(uint32(1));
+        bytes4 destChain = bytes4(uint32(2));
+
+        bytes32 depositHash =
+            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
+
+        bytes32 withdrawHash =
+            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
+
+        assertEq(depositHash, withdrawHash, "EVM->Terra native: deposit must equal withdraw");
+        assertEq(
+            depositHash,
+            0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453,
+            "Must match Rust multichain-rs output"
+        );
+    }
+
+    /// @notice EVM→Terra: CW20 deposit and withdraw hashes match.
+    /// Token = CW20 address bech32-decoded, left-padded to bytes32.
+    function test_DepositWithdraw_EvmToTerra_CW20() public pure {
+        bytes4 srcChain = bytes4(uint32(1));
+        bytes4 destChain = bytes4(uint32(2));
+
+        bytes32 depositHash = HashLib.computeTransferHash(
+            srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 5
+        );
+
+        bytes32 withdrawHash = HashLib.computeTransferHash(
+            srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 5
+        );
+
+        assertEq(depositHash, withdrawHash, "EVM->Terra CW20: deposit must equal withdraw");
+        assertEq(
+            depositHash,
+            0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b,
+            "Must match Rust multichain-rs output"
+        );
+    }
+
+    /// @notice Terra→EVM: native uluna source → ERC20 dest, deposit and withdraw match.
+    /// Token = ERC20 address bytes32 (destination token on EVM).
+    function test_DepositWithdraw_TerraToEvm_NativeToERC20() public pure {
+        bytes4 srcChain = bytes4(uint32(2)); // Terra
+        bytes4 destChain = bytes4(uint32(1)); // EVM
+
+        bytes32 depositHash =
+            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
+
+        bytes32 withdrawHash =
+            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
+
+        assertEq(depositHash, withdrawHash, "Terra->EVM native->ERC20: deposit must equal withdraw");
+        assertEq(
+            depositHash,
+            0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438,
+            "Must match Rust multichain-rs output"
+        );
+    }
+
+    /// @notice Terra→EVM: CW20 source → ERC20 dest, deposit and withdraw match.
+    /// Token = ERC20 address bytes32 (destination token on EVM).
+    function test_DepositWithdraw_TerraToEvm_CW20ToERC20() public pure {
+        bytes4 srcChain = bytes4(uint32(2)); // Terra
+        bytes4 destChain = bytes4(uint32(1)); // EVM
+
+        bytes32 depositHash =
+            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
+
+        bytes32 withdrawHash =
+            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
+
+        assertEq(depositHash, withdrawHash, "Terra->EVM CW20->ERC20: deposit must equal withdraw");
+        assertEq(
+            depositHash,
+            0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab,
+            "Must match Rust multichain-rs output"
+        );
+    }
 }

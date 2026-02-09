@@ -97,7 +97,9 @@ impl TerraWriter {
             &terra_config.mnemonic,
         )?;
 
-        // Get this chain's ID (V2)
+        // Get this chain's V2 ID
+        // IMPORTANT: Must use the 4-byte ChainRegistry ID (e.g. 0x00000002),
+        // NOT the native chain ID or hardcoded values.
         let this_chain_id = if let Some(id) = terra_config.this_chain_id {
             ChainId::from_u32(id)
         } else {
@@ -108,14 +110,25 @@ impl TerraWriter {
             )
             .await
             {
-                Ok(id) => id,
+                Ok(id) => {
+                    info!(
+                        v2_chain_id = %id.to_hex(),
+                        "Queried V2 chain ID from Terra contract"
+                    );
+                    id
+                }
                 Err(e) => {
-                    warn!(error = %e, "Failed to query chain ID from contract, using default");
-                    if terra_config.chain_id == "localterra" {
-                        ChainId::from_u32(5)
-                    } else {
-                        ChainId::from_u32(4)
-                    }
+                    // Default to ChainRegistry ID 2 for Terra (matches local setup)
+                    // Previously used 5 (localterra native) or 4 (columbus-5) which were WRONG
+                    let default_id = ChainId::from_u32(2);
+                    warn!(
+                        error = %e,
+                        default_v2_id = %default_id.to_hex(),
+                        terra_chain_id = %terra_config.chain_id,
+                        "Failed to query chain ID from contract; using default V2 ID. \
+                         Set TERRA_THIS_CHAIN_ID explicitly if this is wrong."
+                    );
+                    default_id
                 }
             }
         };
@@ -183,6 +196,11 @@ impl TerraWriter {
     async fn poll_and_approve(&mut self) -> Result<()> {
         let mut start_after: Option<String> = None;
         let page_limit = 30u32;
+        let mut total_processed = 0u32;
+        let mut total_approved = 0u32;
+        let mut total_skipped_already_approved = 0u32;
+        let mut total_no_evm_deposit = 0u32;
+        let mut total_evm_errors = 0u32;
 
         loop {
             // Query Terra for pending withdrawals (paginated)
@@ -211,16 +229,39 @@ impl TerraWriter {
                 self.lcd_url, self.contract_address, query_b64
             );
 
+            debug!(
+                url = %url,
+                page_cursor = start_after.as_deref().unwrap_or("(first page)"),
+                "Querying Terra PendingWithdrawals via LCD"
+            );
+
             let response: serde_json::Value = match self.client.get(&url).send().await {
-                Ok(resp) => match resp.json().await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "Failed to parse Terra PendingWithdrawals response as JSON");
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let body = resp.text().await.unwrap_or_default();
+                        warn!(
+                            status = %status,
+                            body = %body,
+                            "Terra LCD returned non-success status for PendingWithdrawals"
+                        );
                         return Ok(());
                     }
-                },
+                    match resp.json().await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!(error = %e, "Failed to parse Terra PendingWithdrawals response as JSON");
+                            return Ok(());
+                        }
+                    }
+                }
                 Err(e) => {
-                    warn!(error = %e, "Failed to query Terra PendingWithdrawals");
+                    warn!(
+                        error = %e,
+                        lcd_url = %self.lcd_url,
+                        contract = %self.contract_address,
+                        "Failed to query Terra PendingWithdrawals (LCD unreachable?)"
+                    );
                     return Ok(());
                 }
             };
@@ -228,10 +269,20 @@ impl TerraWriter {
             let withdrawals = match response["data"]["withdrawals"].as_array() {
                 Some(arr) => arr.clone(),
                 None => {
-                    // Log at info level so it's always visible
-                    info!(
+                    // Enhanced diagnostic: log full response structure for debugging
+                    let response_preview = serde_json::to_string(&response)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(500)
+                        .collect::<String>();
+                    warn!(
                         response_keys = ?response.as_object().map(|o| o.keys().collect::<Vec<_>>()),
-                        "No pending withdrawals data in LCD response (data.withdrawals missing)"
+                        response_preview = %response_preview,
+                        lcd_url = %self.lcd_url,
+                        contract = %self.contract_address,
+                        "No pending withdrawals data in LCD response. \
+                         Expected response[\"data\"][\"withdrawals\"] array. \
+                         Check LCD URL and contract address are correct."
                     );
                     return Ok(());
                 }
@@ -242,7 +293,7 @@ impl TerraWriter {
                 break;
             }
 
-            // Count unapproved entries for logging
+            // Count entries by status for logging
             let unapproved_count = withdrawals
                 .iter()
                 .filter(|e| {
@@ -255,15 +306,18 @@ impl TerraWriter {
             info!(
                 total = withdrawals.len(),
                 unapproved = unapproved_count,
+                page_cursor = start_after.as_deref().unwrap_or("(first page)"),
                 "Polled Terra PendingWithdrawals"
             );
 
             let mut last_hash: Option<String> = None;
 
             for entry in &withdrawals {
+                total_processed += 1;
                 let approved = entry["approved"].as_bool().unwrap_or(false);
                 let cancelled = entry["cancelled"].as_bool().unwrap_or(false);
                 let executed = entry["executed"].as_bool().unwrap_or(false);
+                let nonce = entry["nonce"].as_u64().unwrap_or(0);
 
                 // Only process unapproved, non-cancelled, non-executed entries
                 if approved || cancelled || executed {
@@ -271,13 +325,27 @@ impl TerraWriter {
                     if let Some(h) = entry["withdraw_hash"].as_str() {
                         last_hash = Some(h.to_string());
                     }
+                    debug!(
+                        nonce = nonce,
+                        approved = approved,
+                        cancelled = cancelled,
+                        executed = executed,
+                        "Skipping already-processed withdrawal entry"
+                    );
                     continue;
                 }
 
                 // Extract withdraw_hash (base64 encoded)
                 let hash_b64 = match entry["withdraw_hash"].as_str() {
                     Some(h) => h,
-                    None => continue,
+                    None => {
+                        warn!(
+                            nonce = nonce,
+                            entry = %serde_json::to_string(entry).unwrap_or_default(),
+                            "Withdrawal entry missing withdraw_hash field"
+                        );
+                        continue;
+                    }
                 };
 
                 last_hash = Some(hash_b64.to_string());
@@ -291,34 +359,70 @@ impl TerraWriter {
                         arr.copy_from_slice(&b);
                         arr
                     }
-                    _ => {
-                        warn!(hash = hash_b64, "Invalid withdraw_hash format");
+                    Ok(b) => {
+                        warn!(
+                            hash_b64 = hash_b64,
+                            decoded_len = b.len(),
+                            nonce = nonce,
+                            "Invalid withdraw_hash: decoded to {} bytes (expected 32)",
+                            b.len()
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!(
+                            hash_b64 = hash_b64,
+                            nonce = nonce,
+                            error = %e,
+                            "Failed to base64-decode withdraw_hash"
+                        );
                         continue;
                     }
                 };
 
                 // Skip if we've already approved this hash
                 if self.approved_hashes.contains_key(&hash_bytes) {
+                    total_skipped_already_approved += 1;
+                    debug!(
+                        withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                        nonce = nonce,
+                        "Skipping already-approved hash (in cache)"
+                    );
                     continue;
                 }
+
+                // Log the entry details for debugging
+                let amount = entry["amount"].as_str().unwrap_or("?");
+                let token = entry["token"].as_str().unwrap_or("?");
+                let recipient = entry["recipient"].as_str().unwrap_or("?");
+                info!(
+                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                    nonce = nonce,
+                    amount = amount,
+                    token = token,
+                    recipient = recipient,
+                    "Processing unapproved withdrawal, verifying EVM deposit..."
+                );
 
                 // Verify the deposit exists on EVM
                 match self.verify_evm_deposit(&hash_bytes).await {
                     Ok(true) => {
                         // Deposit verified — approve on Terra
-                        let nonce = entry["nonce"].as_u64().unwrap_or(0);
                         info!(
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
-                            "Verified EVM deposit, submitting WithdrawApprove"
+                            evm_bridge = %self.evm_bridge_address,
+                            "EVM deposit verified, submitting WithdrawApprove on Terra"
                         );
 
                         match self.submit_approve(&hash_bytes).await {
                             Ok(tx_hash) => {
+                                total_approved += 1;
                                 info!(
                                     tx_hash = %tx_hash,
                                     withdraw_hash = %bytes32_to_hex(&hash_bytes),
-                                    "WithdrawApprove submitted successfully"
+                                    nonce = nonce,
+                                    "WithdrawApprove submitted successfully on Terra"
                                 );
 
                                 // Track for auto-execution after cancel window
@@ -338,24 +442,42 @@ impl TerraWriter {
                             Err(e) => {
                                 warn!(
                                     withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                                    nonce = nonce,
                                     error = %e,
-                                    "Failed to submit WithdrawApprove, will retry"
+                                    operator_address = %self.terra_client.address,
+                                    contract = %self.contract_address,
+                                    "Failed to submit WithdrawApprove on Terra. \
+                                     Check: (1) operator is registered on Terra bridge, \
+                                     (2) account has sufficient gas, \
+                                     (3) withdrawal not already approved."
                                 );
                             }
                         }
                     }
                     Ok(false) => {
-                        // No matching EVM deposit — skip (may not have been detected yet)
-                        debug!(
+                        total_no_evm_deposit += 1;
+                        // Log at info level (not debug) to make it visible
+                        info!(
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
-                            "No matching EVM deposit found, skipping"
+                            nonce = nonce,
+                            evm_bridge = %self.evm_bridge_address,
+                            evm_rpc = %self.evm_rpc_url,
+                            "No matching EVM deposit found for withdraw hash. \
+                             This withdrawal cannot be approved until the deposit is confirmed on EVM. \
+                             Possible causes: (1) hash mismatch between chains, \
+                             (2) deposit not yet finalized, (3) wrong EVM bridge address."
                         );
                     }
                     Err(e) => {
+                        total_evm_errors += 1;
                         warn!(
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            nonce = nonce,
                             error = %e,
-                            "Failed to query EVM deposit, skipping"
+                            evm_rpc = %self.evm_rpc_url,
+                            evm_bridge = %self.evm_bridge_address,
+                            "Failed to query EVM deposit (RPC error). \
+                             Will retry on next poll cycle."
                         );
                     }
                 }
@@ -373,6 +495,19 @@ impl TerraWriter {
             }
         }
 
+        // Summary log for the poll cycle
+        if total_processed > 0 {
+            info!(
+                total_processed = total_processed,
+                total_approved = total_approved,
+                skipped_already_approved = total_skipped_already_approved,
+                no_evm_deposit = total_no_evm_deposit,
+                evm_errors = total_evm_errors,
+                pending_executions = self.pending_executions.len(),
+                "Terra poll cycle complete"
+            );
+        }
+
         Ok(())
     }
 
@@ -385,24 +520,55 @@ impl TerraWriter {
     /// Queries `getDeposit(hash)` on the EVM Bridge contract and checks
     /// if the returned record has a non-zero timestamp (indicating it exists).
     async fn verify_evm_deposit(&self, withdraw_hash: &[u8; 32]) -> Result<bool> {
+        debug!(
+            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            evm_rpc = %self.evm_rpc_url,
+            evm_bridge = %self.evm_bridge_address,
+            "Querying EVM Bridge.getDeposit() to verify deposit exists"
+        );
+
         let provider = ProviderBuilder::new()
             .on_http(self.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
 
         let contract = EvmBridge::new(self.evm_bridge_address, &provider);
         let hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
 
-        let result = contract.getDeposit(hash_fixed).call().await?;
+        let result = match contract.getDeposit(hash_fixed).call().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                    error = %e,
+                    evm_rpc = %self.evm_rpc_url,
+                    evm_bridge = %self.evm_bridge_address,
+                    "EVM getDeposit() call failed. Possible causes: \
+                     (1) EVM RPC unreachable, (2) wrong bridge address, \
+                     (3) contract not deployed at address."
+                );
+                return Err(e.into());
+            }
+        };
 
         // A deposit exists if its timestamp is non-zero
         let exists = result.timestamp != alloy::primitives::U256::ZERO;
 
         if exists {
-            debug!(
+            info!(
                 withdraw_hash = %bytes32_to_hex(withdraw_hash),
                 nonce = result.nonce,
                 token = %result.token,
                 amount = %result.amount,
-                "EVM deposit verified"
+                timestamp = %result.timestamp,
+                dest_chain = %result.destChain,
+                "EVM deposit verified: deposit record found on-chain"
+            );
+        } else {
+            info!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                evm_bridge = %self.evm_bridge_address,
+                "EVM deposit NOT found: getDeposit() returned zero timestamp. \
+                 The deposit hash on Terra does not match any deposit record on EVM. \
+                 Check hash computation parity between chains."
             );
         }
 

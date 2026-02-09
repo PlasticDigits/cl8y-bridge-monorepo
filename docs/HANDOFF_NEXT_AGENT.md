@@ -7,6 +7,16 @@ You are continuing a bridge architecture overhaul for a cross-chain bridge (EVM 
 **What's done:** EVM contracts (100%), multichain-rs shared library (100%), operator (100%), canceler (100%).
 **What's remaining:** Terra contract V2 alignment, fee system integration, E2E test files, and LOC refactoring.
 
+**Important references:**
+- [E2E Failure Analysis & Fixes](./HANDOFF_E2E_FAILURES.md) — Root cause analysis and fix log for all E2E failures. Includes two sessions of comprehensive audits covering ABI mismatches, V2 chain ID confusion, port conflicts, wrong-chain polling, and byte offset bugs across all packages.
+- [Cross-Chain Hash Parity](./crosschain-parity.md) — Token encoding, hash computation parity between EVM and Terra.
+
+**Key conventions established during audit:**
+- Operator API port: **9091** (not 9090 — avoids LocalTerra gRPC conflict). Configurable via `OPERATOR_API_PORT` env var.
+- Canceler health port: **9099**. Configurable via `HEALTH_PORT` env var.
+- V2 approval direction rule: EVM→Terra deposits are approved on **Terra**; Terra→EVM and EVM→EVM deposits are approved on **EVM**. Use `poll_terra_for_approval()` vs `poll_for_approval()` accordingly.
+- V2 Deposit event nonce: at data offset `[120..128]` (uint64 right-aligned in slot `[96..128]`), NOT `[88..96]`.
+
 ---
 
 ## Code Quality Rules (ENFORCED)

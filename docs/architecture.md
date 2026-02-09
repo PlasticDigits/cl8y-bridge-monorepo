@@ -171,15 +171,23 @@ The core security mechanism:
 
 ### Canonical Hash Verification
 
-Transfers are identified by deterministic hashes computed from:
-- Source chain key
-- Destination chain key  
-- Token address
-- Recipient address
-- Amount
-- Nonce
+Transfers are identified by a deterministic 7-field keccak256 hash:
 
-This enables cancelers to verify approvals against source chain deposits with cryptographic certainty.
+```
+transferHash = keccak256(abi.encode(
+    srcChain, destChain, srcAccount, destAccount, token, amount, nonce
+))
+```
+
+The **same hash** is computed on both the source chain (deposit) and destination chain (withdrawal), enabling cancelers to verify approvals against source chain deposits with cryptographic certainty.
+
+Critical encoding rules:
+- `token` is always the **destination** token address
+- `amount` is always **post-fee** (net)
+- Addresses are **left-padded** to 32 bytes
+- Chain IDs are **4-byte big-endian, left-aligned** in 32 bytes
+
+See [Cross-Chain Hash Parity](./crosschain-parity.md) for full token encoding rules, implementation locations, and test coverage.
 
 ### Defense in Depth
 

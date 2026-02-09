@@ -234,13 +234,16 @@ impl EvmUser {
 
     /// Submit a withdrawal on the destination EVM chain
     ///
-    /// Calls `bridge.withdrawSubmit(srcChain, token, amount, nonce)` with operator gas
+    /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce)`
+    /// with operator gas payment.
     pub async fn withdraw_submit(
         &self,
         rpc_url: &str,
         chain_id: u64,
         bridge_address: Address,
         src_chain: [u8; 4],
+        src_account: [u8; 32],
+        dest_account: [u8; 32],
         token_address: Address,
         amount: U256,
         nonce: u64,
@@ -252,7 +255,14 @@ impl EvmUser {
         let bridge = Bridge::new(bridge_address, signer.provider());
 
         let call = bridge
-            .withdrawSubmit(FixedBytes(src_chain), token_address, amount, nonce)
+            .withdrawSubmit(
+                FixedBytes(src_chain),
+                FixedBytes(src_account),
+                FixedBytes(dest_account),
+                token_address,
+                amount,
+                nonce,
+            )
             .value(operator_gas);
 
         let pending_tx = call

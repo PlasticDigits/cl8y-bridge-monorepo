@@ -22,10 +22,13 @@ sol! {
     }
 
     /// Chain Registry contract ABI (V2 - uses bytes4 chain IDs)
+    ///
+    /// IMPORTANT: registerChain takes (string, bytes4) and returns nothing.
+    /// The caller specifies the chain ID (e.g., bytes4(uint32(1))).
     #[derive(Debug)]
     #[sol(rpc)]
     contract IChainRegistry {
-        function registerChain(string calldata identifier) external returns (bytes4 chainId);
+        function registerChain(string calldata identifier, bytes4 chainId) external;
         function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash);
         function getChainIdFromHash(bytes32 hash) external view returns (bytes4 chainId);
         function isChainRegistered(bytes4 chainId) external view returns (bool registered);
@@ -364,8 +367,18 @@ pub async fn register_cosmw_chain(
         return Ok(existing_id);
     }
 
-    // Register chain
-    let _result = cr.registerChain(identifier.clone()).send().await?;
+    // Register chain with predetermined ID (V2: caller specifies the bytes4 chain ID)
+    // Terra gets ID 2 (0x00000002) by convention in local setup
+    let predetermined_id = alloy::primitives::FixedBytes::from([0u8, 0, 0, 2]);
+    info!(
+        "Registering chain with predetermined ID: 0x{}",
+        hex::encode(predetermined_id)
+    );
+
+    let _result = cr
+        .registerChain(identifier.clone(), predetermined_id)
+        .send()
+        .await?;
 
     // Wait for transaction confirmation
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;

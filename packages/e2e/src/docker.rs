@@ -51,22 +51,26 @@ impl DockerCompose {
     }
 
     /// Stop and remove Docker Compose services
-    /// Equivalent to: docker compose --profile e2e down -v --remove-orphans
+    ///
+    /// When `remove_volumes` is true, passes `-v` to remove named volumes
+    /// (postgres-data, localterra-data, terrad-keys, etc.) for a fully clean state.
+    /// Always passes `--remove-orphans` to clean up stale containers.
     pub async fn down(&self, remove_volumes: bool) -> Result<()> {
-        info!("Stopping Docker Compose services");
+        info!(
+            "Stopping Docker Compose services (remove_volumes={})",
+            remove_volumes
+        );
 
-        let args = if remove_volumes {
-            vec![
-                "compose",
-                "--profile",
-                &self.profile,
-                "down",
-                "-v",
-                "--remove-orphans",
-            ]
-        } else {
-            vec!["compose", "--profile", &self.profile, "down"]
-        };
+        let mut args = vec![
+            "compose",
+            "--profile",
+            &self.profile,
+            "down",
+            "--remove-orphans",
+        ];
+        if remove_volumes {
+            args.push("-v");
+        }
 
         let output = std::process::Command::new("docker")
             .args(&args)
@@ -78,7 +82,14 @@ impl DockerCompose {
             return Err(eyre!("Failed to stop Docker Compose: {}", stderr));
         }
 
-        info!("Docker Compose services stopped successfully");
+        info!(
+            "Docker Compose services stopped successfully{}",
+            if remove_volumes {
+                " (volumes removed)"
+            } else {
+                ""
+            }
+        );
         Ok(())
     }
 

@@ -57,21 +57,28 @@ sol! {
             bytes32 indexed withdrawHash
         );
 
-        /// Get pending withdrawal info
-        function withdrawals(bytes32 withdrawHash) external view returns (
+        /// Get pending withdrawal info (matches IBridge.PendingWithdraw struct)
+        function getPendingWithdraw(bytes32 withdrawHash) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
-            bytes32 token,
-            uint128 amount,
+            bytes32 destAccount,
+            address token,
+            address recipient,
+            uint256 amount,
             uint64 nonce,
-            uint64 submittedAt,
-            uint64 approvedAt,
+            uint256 operatorGas,
+            uint256 submittedAt,
+            uint256 approvedAt,
+            bool approved,
             bool cancelled,
             bool executed
         );
 
         /// Get cancel window
-        function getCancelWindow() external view returns (uint64);
+        function getCancelWindow() external view returns (uint256);
+
+        /// Get this chain's registered V2 chain ID (bytes4)
+        function getThisChainId() external view returns (bytes4 chainId);
     }
 }
 
@@ -99,13 +106,18 @@ pub struct CancelerWatcher {
 
 impl CancelerWatcher {
     pub async fn new(config: &Config, stats: SharedStats, metrics: SharedMetrics) -> Result<Self> {
-        let verifier = ApprovalVerifier::new(
+        // Use V2 chain IDs from config if available, otherwise try to query the bridge
+        let (evm_v2, terra_v2) = Self::resolve_v2_chain_ids(config).await;
+
+        let verifier = ApprovalVerifier::with_v2_chain_ids(
             &config.evm_rpc_url,
             &config.evm_bridge_address,
             config.evm_chain_id,
             &config.terra_lcd_url,
             &config.terra_bridge_address,
             &config.terra_chain_id,
+            evm_v2,
+            terra_v2,
         );
 
         let evm_client = EvmClient::new(
@@ -121,8 +133,17 @@ impl CancelerWatcher {
             &config.terra_mnemonic,
         )?;
 
-        // Compute this chain's 4-byte ID
-        let this_chain_id = (config.evm_chain_id as u32).to_be_bytes();
+        // Use V2 chain ID from config or query from bridge contract
+        let (evm_v2, _terra_v2) = Self::resolve_v2_chain_ids(config).await;
+        let this_chain_id = evm_v2.unwrap_or_else(|| {
+            let fallback = 1u32.to_be_bytes(); // 0x00000001
+            warn!(
+                native_chain_id = config.evm_chain_id,
+                fallback = %hex::encode(fallback),
+                "Could not resolve EVM V2 chain ID, using 0x00000001 as fallback"
+            );
+            fallback
+        });
 
         // Initialize stats with canceler ID
         {
@@ -151,6 +172,55 @@ impl CancelerWatcher {
             stats,
             metrics,
         })
+    }
+
+    /// Resolve V2 chain IDs: use config if set, otherwise query the EVM bridge contract.
+    ///
+    /// The EVM bridge exposes `getThisChainId()` which returns the V2 bytes4 chain ID
+    /// that was registered in ChainRegistry during deployment.
+    async fn resolve_v2_chain_ids(config: &Config) -> (Option<[u8; 4]>, Option<[u8; 4]>) {
+        let mut evm_v2 = config.evm_v2_chain_id;
+        let terra_v2 = config.terra_v2_chain_id;
+
+        // If EVM V2 chain ID not configured, query the bridge contract
+        if evm_v2.is_none() {
+            match Self::query_bridge_this_chain_id(config).await {
+                Ok(id) => {
+                    info!(
+                        chain_id = %hex::encode(id),
+                        "Queried EVM bridge getThisChainId() — using as EVM V2 chain ID"
+                    );
+                    evm_v2 = Some(id);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to query getThisChainId() from EVM bridge. \
+                         Set EVM_V2_CHAIN_ID env var to the registered bytes4 chain ID."
+                    );
+                }
+            }
+        }
+
+        (evm_v2, terra_v2)
+    }
+
+    /// Query `getThisChainId()` from the EVM bridge contract to get its V2 chain ID.
+    async fn query_bridge_this_chain_id(config: &Config) -> Result<[u8; 4]> {
+        let provider = ProviderBuilder::new()
+            .on_http(config.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+
+        let bridge_address =
+            Address::from_str(&config.evm_bridge_address).wrap_err("Invalid EVM bridge address")?;
+
+        let contract = Bridge::new(bridge_address, &provider);
+        let result = contract
+            .getThisChainId()
+            .call()
+            .await
+            .map_err(|e| eyre!("getThisChainId() call failed: {}", e))?;
+
+        Ok(result.chainId.0)
     }
 
     /// Main run loop
@@ -320,9 +390,9 @@ impl CancelerWatcher {
                 "Processing EVM approval event"
             );
 
-            // Query withdrawal details from contract
+            // Query withdrawal details from contract using getPendingWithdraw
             let withdrawal_info = contract
-                .withdrawals(FixedBytes::from(withdraw_hash))
+                .getPendingWithdraw(FixedBytes::from(withdraw_hash))
                 .call()
                 .await;
 
@@ -339,12 +409,19 @@ impl CancelerWatcher {
                     }
 
                     // Get cancel window
-                    let cancel_window = contract
+                    let cancel_window: u64 = contract
                         .getCancelWindow()
                         .call()
                         .await
-                        .map(|w| w._0)
+                        .map(|w| {
+                            let val: u64 = w._0.try_into().unwrap_or(300);
+                            val
+                        })
                         .unwrap_or(300);
+
+                    // Convert token address to bytes32 (left-padded)
+                    let mut token_bytes32 = [0u8; 32];
+                    token_bytes32[12..32].copy_from_slice(info.token.as_slice());
 
                     // Create a pending approval for verification
                     let approval = PendingApproval {
@@ -352,19 +429,33 @@ impl CancelerWatcher {
                         src_chain_id: info.srcChain.0,
                         dest_chain_id: self.this_chain_id,
                         src_account: info.srcAccount.0,
-                        dest_token: info.token.0,
-                        dest_account: info.srcAccount.0,
-                        amount: info.amount,
+                        dest_token: token_bytes32,
+                        dest_account: info.destAccount.0,
+                        amount: info.amount.try_into().unwrap_or_else(|_| {
+                            warn!(
+                                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                                amount = %info.amount,
+                                "Approval amount exceeds u128::MAX, clamping"
+                            );
+                            u128::MAX
+                        }),
                         nonce: info.nonce,
-                        approved_at_timestamp: info.approvedAt,
+                        approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
                         cancel_window,
                     };
 
-                    // Verify and potentially cancel
+                    // Detailed diagnostic before verification
                     info!(
                         withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                        src_chain_id = %format!("0x{}", hex::encode(info.srcChain.0)),
+                        dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id)),
                         nonce = approval.nonce,
                         amount = approval.amount,
+                        cancel_window_secs = cancel_window,
+                        approved_at = approval.approved_at_timestamp,
+                        token = %format!("0x{}", hex::encode(info.token.as_slice())),
+                        src_account = %format!("0x{}", hex::encode(&info.srcAccount.0[..8])),
+                        dest_account = %format!("0x{}", hex::encode(&info.destAccount.0[..8])),
                         "Calling verify_and_cancel for EVM approval"
                     );
 
@@ -504,8 +595,10 @@ impl CancelerWatcher {
                         let dest_chain_id =
                             self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
                         let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
-                        let dest_account =
+                        let src_account =
                             self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
+                        let dest_account =
+                            self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
 
                         let amount: u128 = withdrawal_json["amount"]
                             .as_str()
@@ -531,7 +624,7 @@ impl CancelerWatcher {
                             withdraw_hash,
                             src_chain_id,
                             dest_chain_id,
-                            src_account: [0u8; 32], // Terra source not decoded yet
+                            src_account,
                             dest_token,
                             dest_account,
                             amount,
@@ -610,13 +703,23 @@ impl CancelerWatcher {
             return Ok(());
         }
 
+        info!(
+            hash = %bytes32_to_hex(&approval.withdraw_hash),
+            src_chain = %hex::encode(approval.src_chain_id),
+            dest_chain = %hex::encode(approval.dest_chain_id),
+            nonce = approval.nonce,
+            amount = approval.amount,
+            "Verifying approval against source chain"
+        );
+
         let result = self.verifier.verify(approval).await?;
 
         match result {
             VerificationResult::Valid => {
                 info!(
                     hash = %bytes32_to_hex(&approval.withdraw_hash),
-                    "Approval verified as VALID"
+                    nonce = approval.nonce,
+                    "Approval verified as VALID — deposit found on source chain"
                 );
                 self.verified_hashes.insert(approval.withdraw_hash);
 
@@ -631,7 +734,9 @@ impl CancelerWatcher {
                 warn!(
                     hash = %bytes32_to_hex(&approval.withdraw_hash),
                     reason = %reason,
-                    "Approval is INVALID - submitting cancellation"
+                    nonce = approval.nonce,
+                    src_chain = %hex::encode(approval.src_chain_id),
+                    "FRAUD DETECTED — Approval is INVALID, submitting cancellation"
                 );
 
                 // Update stats and metrics for invalid detection

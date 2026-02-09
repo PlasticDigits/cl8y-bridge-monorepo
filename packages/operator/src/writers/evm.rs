@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
@@ -28,7 +28,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{EvmConfig, FeeConfig};
 use crate::contracts::evm_bridge::Bridge;
-use crate::db::{self, NewApproval, TerraDeposit};
+use crate::db::{self, EvmDeposit, NewApproval, TerraDeposit};
 use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash};
 use crate::types::{ChainId, EvmAddress};
 
@@ -46,6 +46,13 @@ struct PendingExecution {
 }
 
 /// EVM transaction writer for submitting withdrawal approvals
+///
+/// Operates in two modes:
+/// 1. **Poll-and-approve (V2)**: Polls WithdrawSubmit events on this EVM chain,
+///    verifies deposits on the source chain, and calls withdrawApprove.
+///    This handles BOTH Terra→EVM and EVM→EVM transfers uniformly.
+/// 2. **Auto-execution**: After the cancel window, automatically calls
+///    withdrawExecuteUnlock/Mint to complete the transfer.
 pub struct EvmWriter {
     rpc_url: String,
     bridge_address: Address,
@@ -60,6 +67,10 @@ pub struct EvmWriter {
     cancel_window: u64,
     /// Pending approvals awaiting execution
     pending_executions: HashMap<[u8; 32], PendingExecution>,
+    /// Last block polled for WithdrawSubmit events
+    last_polled_block: u64,
+    /// Hashes already approved by this operator (avoid re-processing)
+    approved_hashes: HashMap<[u8; 32], Instant>,
 }
 
 impl EvmWriter {
@@ -76,13 +87,39 @@ impl EvmWriter {
             .parse()
             .wrap_err("Invalid private key")?;
 
-        // V2 configuration - required
-        let this_chain_id = ChainId::from_u32(evm_config.this_chain_id.unwrap_or(1));
+        // V2 chain ID — query from bridge contract, fall back to config
+        let provider =
+            ProviderBuilder::new().on_http(evm_config.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        let bridge_contract = Bridge::new(bridge_address, &provider);
+        let this_chain_id = match bridge_contract.getThisChainId().call().await {
+            Ok(result) => {
+                let v2_id = ChainId::from_bytes(result._0.0);
+                info!(
+                    native_chain_id = evm_config.chain_id,
+                    v2_chain_id = %v2_id,
+                    v2_hex = %format!("0x{}", hex::encode(v2_id.as_bytes())),
+                    "EVM writer: queried V2 chain ID from bridge contract"
+                );
+                v2_id
+            }
+            Err(e) => {
+                let fallback = ChainId::from_u32(evm_config.this_chain_id.unwrap_or(1));
+                warn!(
+                    error = %e,
+                    native_chain_id = evm_config.chain_id,
+                    fallback_v2_id = %fallback,
+                    "EVM writer: failed to query V2 chain ID, using config fallback. \
+                     Set THIS_CHAIN_ID explicitly if this is wrong."
+                );
+                fallback
+            }
+        };
 
         info!(
             operator_address = %signer.address(),
-            chain_id = evm_config.chain_id,
-            this_chain_id = %this_chain_id,
+            native_chain_id = evm_config.chain_id,
+            v2_chain_id = %this_chain_id,
+            v2_hex = %format!("0x{}", hex::encode(this_chain_id.as_bytes())),
             bridge_address = %bridge_address,
             "EVM writer initialized (V2)"
         );
@@ -105,6 +142,8 @@ impl EvmWriter {
             db,
             cancel_window,
             pending_executions: HashMap::new(),
+            last_polled_block: 0,
+            approved_hashes: HashMap::new(),
         })
     }
 
@@ -118,25 +157,301 @@ impl EvmWriter {
         Ok(window._0.try_into().unwrap_or(300))
     }
 
-    /// Process pending Terra deposits and create approvals
+    /// Process pending withdrawals on this EVM chain (V2 poll-and-approve)
+    ///
+    /// This is the main processing loop for the EVM writer. It:
+    /// 1. Checks if any approved withdrawals are ready for execution
+    /// 2. Polls WithdrawSubmit events on this EVM chain
+    /// 3. For each unapproved withdrawal, verifies the deposit on the source chain
+    /// 4. If verified, calls withdrawApprove(hash) on this chain
+    ///
+    /// This handles BOTH Terra→EVM and EVM→EVM transfers uniformly —
+    /// any WithdrawSubmit event on this chain gets verified and approved.
     pub async fn process_pending(&mut self) -> Result<()> {
         // First, check if any pending executions are ready
         self.process_pending_executions().await?;
 
-        // Then process new deposits
-        let deposits = db::get_pending_terra_deposits(&self.db).await?;
+        // Clean up old approved hashes (older than 1 hour)
+        let cutoff = Instant::now() - std::time::Duration::from_secs(3600);
+        self.approved_hashes.retain(|_, t| *t > cutoff);
 
-        for deposit in deposits {
-            if let Err(e) = self.process_deposit(&deposit).await {
-                error!(
-                    deposit_id = deposit.id,
-                    error = %e,
-                    "Failed to process Terra deposit"
+        // Poll for WithdrawSubmit events and approve verified ones
+        self.poll_and_approve().await?;
+
+        Ok(())
+    }
+
+    /// Poll EVM bridge for WithdrawSubmit events and approve verified withdrawals
+    ///
+    /// Mirrors the Terra writer's poll_and_approve: scans for pending withdrawals
+    /// on this chain, verifies each against the source chain, and approves.
+    async fn poll_and_approve(&mut self) -> Result<()> {
+        // Create provider
+        let provider =
+            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        // Get current block
+        let current_block = provider
+            .get_block_number()
+            .await
+            .map_err(|e| eyre!("Failed to get block number: {}", e))?;
+
+        // Detect chain reset (e.g., Anvil restart)
+        if current_block < self.last_polled_block {
+            warn!(
+                current_block = current_block,
+                last_polled = self.last_polled_block,
+                "Chain reset detected — resetting polling state"
+            );
+            self.last_polled_block = 0;
+            self.approved_hashes.clear();
+        }
+
+        // Don't query if no new blocks
+        if current_block <= self.last_polled_block {
+            return Ok(());
+        }
+
+        let from_block = if self.last_polled_block == 0 {
+            0
+        } else {
+            self.last_polled_block + 1
+        };
+        let to_block = current_block;
+
+        let contract = Bridge::new(self.bridge_address, &provider);
+
+        // Query WithdrawSubmit events
+        let filter = contract
+            .WithdrawSubmit_filter()
+            .from_block(from_block)
+            .to_block(to_block);
+
+        let logs = match filter.query().await {
+            Ok(logs) => logs,
+            Err(e) => {
+                warn!(error = %e, "Failed to query WithdrawSubmit events");
+                return Ok(());
+            }
+        };
+
+        if !logs.is_empty() {
+            info!(
+                from_block = from_block,
+                to_block = to_block,
+                count = logs.len(),
+                "Found WithdrawSubmit events to process"
+            );
+        }
+
+        for (event, _log) in &logs {
+            let withdraw_hash: [u8; 32] = event.withdrawHash.0;
+
+            // Skip if already approved by us
+            if self.approved_hashes.contains_key(&withdraw_hash) {
+                continue;
+            }
+
+            // Query full withdrawal details
+            let pending = match contract
+                .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+                .call()
+                .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        "Failed to query getPendingWithdraw, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            // Skip already-approved, cancelled, or executed withdrawals
+            if pending.approved {
+                self.approved_hashes.insert(withdraw_hash, Instant::now());
+                continue;
+            }
+            if pending.cancelled || pending.executed {
+                continue;
+            }
+
+            let src_chain_id = pending.srcChain.0;
+            let nonce = pending.nonce;
+            let amount: u128 = pending.amount.try_into().unwrap_or_else(|_| {
+                warn!(amount = %pending.amount, "Amount exceeds u128::MAX, clamping");
+                u128::MAX
+            });
+
+            info!(
+                hash = %bytes32_to_hex(&withdraw_hash),
+                src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                nonce = nonce,
+                amount = amount,
+                token = %pending.token,
+                "Processing unapproved WithdrawSubmit — verifying deposit on source chain"
+            );
+
+            // Verify deposit on the source chain using getDeposit(hash)
+            // For both Terra→EVM and EVM→EVM, the deposit hash = withdraw hash
+            // because both use the same 7-field compute_transfer_hash.
+            let deposit_verified = match self
+                .verify_deposit_on_source(&withdraw_hash, &src_chain_id)
+                .await
+            {
+                Ok(verified) => verified,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                        "Failed to verify deposit on source chain, will retry"
+                    );
+                    continue;
+                }
+            };
+
+            if !deposit_verified {
+                debug!(
+                    hash = %bytes32_to_hex(&withdraw_hash),
+                    src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                    "No verified deposit found on source chain, skipping (will retry next cycle)"
                 );
+                continue;
+            }
+
+            // Deposit verified — submit withdrawApprove
+            info!(
+                hash = %bytes32_to_hex(&withdraw_hash),
+                nonce = nonce,
+                "Deposit verified on source chain, submitting withdrawApprove"
+            );
+
+            match self.submit_withdraw_approve(&withdraw_hash).await {
+                Ok(tx_hash) => {
+                    info!(
+                        tx_hash = %tx_hash,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        nonce = nonce,
+                        "WithdrawApprove submitted successfully"
+                    );
+
+                    self.approved_hashes.insert(withdraw_hash, Instant::now());
+
+                    // Track for auto-execution after cancel window
+                    self.pending_executions.insert(
+                        withdraw_hash,
+                        PendingExecution {
+                            withdraw_hash,
+                            approved_at: Instant::now(),
+                            delay_seconds: self.cancel_window,
+                            attempts: 0,
+                        },
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        "Failed to submit withdrawApprove, will retry next cycle"
+                    );
+                }
             }
         }
 
+        // Update last polled block
+        self.last_polled_block = to_block;
+
         Ok(())
+    }
+
+    /// Verify a deposit exists on the source chain
+    ///
+    /// For EVM source chains: calls getDeposit(hash) on this chain's bridge
+    /// (in local setup, source and dest are the same Anvil chain).
+    /// For Terra source chains: queries Terra LCD for deposit verification.
+    ///
+    /// Returns true if deposit is verified, false if not found.
+    async fn verify_deposit_on_source(
+        &self,
+        withdraw_hash: &[u8; 32],
+        src_chain_id: &[u8; 4],
+    ) -> Result<bool> {
+        // For now, verify on the same EVM chain (local single-chain setup).
+        // In multi-chain production, this would route to the source chain's RPC.
+        // TODO: Add Terra verification and multi-EVM routing
+
+        let provider =
+            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        let contract = Bridge::new(self.bridge_address, &provider);
+
+        let deposit_hash = FixedBytes::from(*withdraw_hash);
+        match contract.getDeposit(deposit_hash).call().await {
+            Ok(deposit) => {
+                // timestamp == 0 means no deposit record
+                if deposit.timestamp.is_zero() {
+                    debug!(
+                        hash = %bytes32_to_hex(withdraw_hash),
+                        src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                        "No deposit found on source chain (timestamp=0)"
+                    );
+                    return Ok(false);
+                }
+
+                info!(
+                    hash = %bytes32_to_hex(withdraw_hash),
+                    nonce = deposit.nonce,
+                    amount = %deposit.amount,
+                    dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
+                    "Deposit verified on source chain"
+                );
+                Ok(true)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    hash = %bytes32_to_hex(withdraw_hash),
+                    "Failed to query getDeposit on source chain"
+                );
+                Err(eyre!("Failed to verify deposit: {}", e))
+            }
+        }
+    }
+
+    /// Submit a withdrawApprove transaction
+    async fn submit_withdraw_approve(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
+        let wallet = EthereumWallet::from(self.signer.clone());
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        let contract = Bridge::new(self.bridge_address, &provider);
+        let withdraw_hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+
+        let call = contract.withdrawApprove(withdraw_hash_fixed);
+
+        let pending_tx = call
+            .send()
+            .await
+            .map_err(|e| eyre!("Failed to send withdrawApprove tx: {}", e))?;
+
+        let tx_hash = *pending_tx.tx_hash();
+        info!(tx_hash = %tx_hash, "withdrawApprove tx sent, waiting for confirmation");
+
+        let receipt = pending_tx
+            .get_receipt()
+            .await
+            .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
+
+        if !receipt.status() {
+            return Err(eyre!("withdrawApprove transaction reverted"));
+        }
+
+        Ok(format!("0x{:x}", tx_hash))
     }
 
     /// Process pending executions (after cancel window has elapsed)
@@ -180,22 +495,28 @@ impl EvmWriter {
 
     /// Process a single Terra deposit
     async fn process_deposit(&mut self, deposit: &TerraDeposit) -> Result<()> {
-        // Source chain is Terra Classic
-        // Use the 4-byte chain ID from the deposit or derive from the dest_chain_id
-        let src_chain_id = if deposit.dest_chain_id == 31337 {
-            // Localterra - use a predefined chain ID (e.g., 5)
-            ChainId::from_u32(5)
-        } else {
-            // Columbus-5 mainnet - use a predefined chain ID (e.g., 4)
-            ChainId::from_u32(4)
-        };
+        // Source chain is Terra Classic — use the V2 chain ID.
+        // In the local setup, Terra is registered as chain ID 2 in ChainRegistry.
+        // Previously used native chain IDs (5 for localterra, 4 for columbus-5) which were WRONG.
+        // TODO: Query from ChainRegistry or make configurable via TERRA_V2_CHAIN_ID env var
+        let src_chain_id = ChainId::from_u32(2);
+
+        debug!(
+            deposit_id = deposit.id,
+            src_chain_id_hex = %format!("0x{}", hex::encode(src_chain_id.as_bytes())),
+            dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id.as_bytes())),
+            nonce = deposit.nonce,
+            amount = %deposit.amount,
+            "Processing Terra→EVM deposit"
+        );
 
         // Check if approval already exists
+        // Use V2 chain ID (self.this_chain_id) — must match what we INSERT into approvals
         if db::approval_exists(
             &self.db,
             src_chain_id.as_bytes(),
             deposit.nonce,
-            self.chain_id as i64,
+            self.this_chain_id.to_u32() as i64,
         )
         .await?
         {
@@ -216,11 +537,14 @@ impl EvmWriter {
         let mut token_bytes32 = [0u8; 32];
         token_bytes32[12..32].copy_from_slice(&token.0);
 
-        // Source account (Terra sender encoded as universal address)
+        // Source account (Terra sender encoded as left-padded bytes32)
+        // Must match the encoding used by the Terra bridge contract: bech32-decode
+        // the address to get the 20-byte canonical address, then left-pad to 32 bytes
+        // so the address occupies positions [12..32].
         let mut src_account = [0u8; 32];
-        src_account[0..4].copy_from_slice(&[0, 0, 0, 2]); // Cosmos chain type
         if let Ok((raw, _)) = crate::hash::decode_bech32_address(&deposit.sender) {
-            src_account[4..24].copy_from_slice(&raw);
+            let start = 32 - raw.len();
+            src_account[start..32].copy_from_slice(&raw);
         }
 
         // Parse amount
@@ -250,7 +574,7 @@ impl EvmWriter {
         let new_approval = NewApproval {
             src_chain_key: src_chain_id.as_bytes().to_vec(),
             nonce: deposit.nonce,
-            dest_chain_id: self.chain_id as i64,
+            dest_chain_id: self.this_chain_id.to_u32() as i64,
             withdraw_hash: withdraw_hash.to_vec(),
             token: token_for_approval,
             recipient: recipient_for_approval,
@@ -311,15 +635,20 @@ impl EvmWriter {
     ///
     /// In V2, the user has already submitted the withdrawal request.
     /// The operator just needs to approve it by hash.
+    ///
+    /// Pre-flight checks:
+    /// 1. Verify `withdrawSubmit` has been called (submittedAt != 0)
+    /// 2. Verify the withdrawal is not already approved
     async fn submit_approval(
         &self,
         deposit: &TerraDeposit,
         _src_chain_id: &ChainId,
         withdraw_hash: &[u8; 32],
     ) -> Result<String> {
-        // Build provider with signer
+        // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
@@ -327,6 +656,43 @@ impl EvmWriter {
 
         // Create V2 contract instance
         let contract = Bridge::new(self.bridge_address, &provider);
+
+        // Pre-flight: verify the withdrawal has been submitted by the user
+        let pending = contract
+            .getPendingWithdraw(withdraw_hash_fixed)
+            .call()
+            .await
+            .map_err(|e| {
+                eyre!(
+                    "Pre-flight getPendingWithdraw failed for {}: {}",
+                    bytes32_to_hex(withdraw_hash),
+                    e
+                )
+            })?;
+
+        if pending.submittedAt.is_zero() {
+            return Err(eyre!(
+                "WithdrawSubmit not yet called for {} (submittedAt=0). \
+                 User must call withdrawSubmit before operator can approve.",
+                bytes32_to_hex(withdraw_hash)
+            ));
+        }
+
+        if pending.approved {
+            info!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                "Withdrawal already approved, skipping"
+            );
+            return Err(eyre!("Already approved"));
+        }
+
+        info!(
+            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            submitted_at = %pending.submittedAt,
+            nonce = pending.nonce,
+            amount = %pending.amount,
+            "Pre-flight passed (Terra→EVM): withdrawal exists, submitting withdrawApprove"
+        );
 
         debug!(
             withdraw_hash = %bytes32_to_hex(withdraw_hash),
@@ -364,9 +730,10 @@ impl EvmWriter {
     /// or withdrawExecuteMint for mintable tokens.
     /// For now, we default to unlock mode.
     async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
-        // Build provider with signer
+        // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
@@ -402,9 +769,309 @@ impl EvmWriter {
         Ok(format!("0x{:x}", tx_hash))
     }
 
+    /// Process pending EVM deposits destined for this EVM chain (EVM→EVM path).
+    ///
+    /// This method handles the critical EVM-to-EVM transfer path (e.g., BSC→opBNB,
+    /// ETH→Polygon). The EVM watcher already classifies and stores these deposits
+    /// with `dest_chain_type = 'evm'` in the database.
+    ///
+    /// Flow:
+    /// 1. Query DB for pending EVM deposits with dest_chain_type = 'evm'
+    /// 2. For each deposit, verify it exists on the source EVM chain
+    /// 3. Compute the transfer hash using the source chain's 4-byte ID
+    /// 4. Submit withdrawApprove(hash) on this (destination) chain's bridge contract
+    /// 5. Mark deposit as processed
+    pub async fn process_evm_to_evm_pending(&mut self) -> Result<()> {
+        // First, check if any pending executions are ready
+        self.process_pending_executions().await?;
+
+        // Query EVM deposits destined for EVM chains
+        let deposits = db::get_pending_evm_deposits_for_evm(&self.db).await?;
+
+        if !deposits.is_empty() {
+            info!(count = deposits.len(), "Processing EVM→EVM deposits");
+        }
+
+        for deposit in deposits {
+            if let Err(e) = self.process_evm_deposit(&deposit).await {
+                error!(
+                    deposit_id = deposit.id,
+                    error = %e,
+                    error_chain = ?e,
+                    "Failed to process EVM→EVM deposit"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a single EVM→EVM deposit
+    ///
+    /// Verifies the deposit exists on the source chain and submits
+    /// withdrawApprove on the destination chain.
+    async fn process_evm_deposit(&mut self, deposit: &EvmDeposit) -> Result<()> {
+        // Extract the source chain's V2 4-byte ID
+        // Use the V2 chain ID stored by the watcher (queried from bridge contract).
+        // Falls back to native chain ID conversion if V2 ID not available.
+        let src_chain_id = if let Some(ref v2_bytes) = deposit.src_v2_chain_id {
+            if v2_bytes.len() >= 4 {
+                let mut id = [0u8; 4];
+                id.copy_from_slice(&v2_bytes[..4]);
+                crate::types::ChainId::from_bytes(id)
+            } else {
+                warn!(
+                    deposit_id = deposit.id,
+                    v2_len = v2_bytes.len(),
+                    "src_v2_chain_id is shorter than 4 bytes, falling back to native"
+                );
+                crate::types::ChainId::from_u32(deposit.chain_id as u32)
+            }
+        } else {
+            // Legacy: no V2 chain ID stored, use native (may be wrong!)
+            warn!(
+                deposit_id = deposit.id,
+                native_chain_id = deposit.chain_id,
+                "No V2 chain ID stored for deposit, falling back to native chain ID as u32"
+            );
+            crate::types::ChainId::from_u32(deposit.chain_id as u32)
+        };
+
+        debug!(
+            deposit_id = deposit.id,
+            native_chain_id = deposit.chain_id,
+            v2_src_chain_id = %format!("0x{}", hex::encode(src_chain_id.as_bytes())),
+            v2_dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id.as_bytes())),
+            nonce = deposit.nonce,
+            amount = %deposit.amount,
+            "Processing EVM→EVM deposit"
+        );
+
+        // Check if approval already exists (use V2 chain ID for dest)
+        if db::approval_exists(
+            &self.db,
+            src_chain_id.as_bytes(),
+            deposit.nonce,
+            self.this_chain_id.to_u32() as i64,
+        )
+        .await?
+        {
+            db::update_evm_deposit_status(&self.db, deposit.id, "processed").await?;
+            return Ok(());
+        }
+
+        // Parse source account (the depositor on source EVM chain)
+        let mut src_account = [0u8; 32];
+        if let Some(ref src_acc) = deposit.src_account {
+            if src_acc.len() >= 32 {
+                src_account.copy_from_slice(&src_acc[..32]);
+            } else if !src_acc.is_empty() {
+                warn!(
+                    deposit_id = deposit.id,
+                    src_account_len = src_acc.len(),
+                    "src_account is shorter than 32 bytes, left-padding"
+                );
+                let start = 32 - src_acc.len();
+                src_account[start..32].copy_from_slice(src_acc);
+            }
+        }
+
+        // Warn if src_account is all zeros (will cause hash mismatch)
+        if src_account.iter().all(|&b| b == 0) {
+            warn!(
+                deposit_id = deposit.id,
+                nonce = deposit.nonce,
+                "src_account is all zeros — hash will likely not match the on-chain deposit hash. \
+                 This may indicate a V1 deposit or missing src_account extraction."
+            );
+        }
+
+        // Parse destination account
+        let mut dest_account = [0u8; 32];
+        if deposit.dest_account.len() >= 32 {
+            dest_account.copy_from_slice(&deposit.dest_account[..32]);
+        }
+
+        // Parse destination token (bytes32)
+        let mut token_bytes32 = [0u8; 32];
+        if deposit.dest_token_address.len() >= 32 {
+            token_bytes32.copy_from_slice(&deposit.dest_token_address[..32]);
+        }
+
+        // Parse amount
+        let amount: u128 = deposit
+            .amount
+            .parse()
+            .map_err(|_| eyre!("Invalid amount: {}", deposit.amount))?;
+
+        // Compute the unified transfer hash (7-field V2 format)
+        let withdraw_hash = compute_transfer_hash(
+            src_chain_id.as_bytes(),
+            self.this_chain_id.as_bytes(),
+            &src_account,
+            &dest_account,
+            &token_bytes32,
+            amount,
+            deposit.nonce as u64,
+        );
+
+        // Calculate fee
+        let fee = self.calculate_fee(&deposit.amount);
+
+        // Format token and recipient for the approval record
+        // Always extract the last 20 bytes (EVM address) from the 32-byte representation.
+        // The first 12 bytes may be zero-padding (standard) or contain chain type prefix
+        // (universal address format). Either way, the EVM address is in the last 20 bytes.
+        let token_hex = format!("0x{}", hex::encode(&token_bytes32[12..32]));
+
+        // Extract recipient from dest_account (last 20 bytes for EVM)
+        let recipient_hex = format!("0x{}", hex::encode(&dest_account[12..32]));
+
+        let new_approval = db::NewApproval {
+            src_chain_key: src_chain_id.as_bytes().to_vec(),
+            nonce: deposit.nonce,
+            dest_chain_id: self.this_chain_id.to_u32() as i64,
+            withdraw_hash: withdraw_hash.to_vec(),
+            token: token_hex,
+            recipient: recipient_hex,
+            amount: deposit.amount.clone(),
+            fee: fee.to_string(),
+            fee_recipient: Some(format!("0x{:x}", self.fee_recipient)),
+            deduct_from_amount: false,
+        };
+
+        let approval_id = db::insert_approval(&self.db, &new_approval).await?;
+        info!(
+            approval_id = approval_id,
+            nonce = deposit.nonce,
+            src_chain_id = %src_chain_id,
+            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            "Created approval for EVM→EVM deposit"
+        );
+
+        // Submit withdrawApprove on this (destination) EVM chain
+        match self.submit_evm_to_evm_approval(&withdraw_hash).await {
+            Ok(tx_hash) => {
+                info!(
+                    approval_id = approval_id,
+                    tx_hash = %tx_hash,
+                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    "Submitted EVM→EVM approval transaction"
+                );
+
+                // Track for auto-execution after cancel window
+                self.pending_executions.insert(
+                    withdraw_hash,
+                    PendingExecution {
+                        withdraw_hash,
+                        approved_at: Instant::now(),
+                        delay_seconds: self.cancel_window,
+                        attempts: 0,
+                    },
+                );
+
+                db::update_evm_deposit_status(&self.db, deposit.id, "approved").await?;
+                db::update_approval_submitted(&self.db, approval_id, &tx_hash).await?;
+            }
+            Err(e) => {
+                warn!(
+                    approval_id = approval_id,
+                    error = %e,
+                    "Failed to submit EVM→EVM approval, will retry"
+                );
+                db::update_approval_failed(&self.db, approval_id, &e.to_string()).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Submit a withdrawApprove transaction for an EVM→EVM transfer
+    ///
+    /// Pre-flight: checks that `withdrawSubmit` has already been called for
+    /// this hash (i.e., `submittedAt != 0`). If not, the approval would revert
+    /// on-chain, so we bail early with a retriable error.
+    async fn submit_evm_to_evm_approval(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
+        // Build provider with signer and recommended fillers (gas, nonce, fees)
+        let wallet = EthereumWallet::from(self.signer.clone());
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        let withdraw_hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+
+        let contract = Bridge::new(self.bridge_address, &provider);
+
+        // Pre-flight: verify the withdrawal has been submitted by the user
+        let pending = contract
+            .getPendingWithdraw(withdraw_hash_fixed)
+            .call()
+            .await
+            .map_err(|e| {
+                eyre!(
+                    "Pre-flight getPendingWithdraw failed for {}: {}",
+                    bytes32_to_hex(withdraw_hash),
+                    e
+                )
+            })?;
+
+        if pending.submittedAt.is_zero() {
+            return Err(eyre!(
+                "WithdrawSubmit not yet called for {} (submittedAt=0). \
+                 User must call withdrawSubmit before operator can approve.",
+                bytes32_to_hex(withdraw_hash)
+            ));
+        }
+
+        if pending.approved {
+            info!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                "Withdrawal already approved, skipping"
+            );
+            return Err(eyre!("Already approved"));
+        }
+
+        info!(
+            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            submitted_at = %pending.submittedAt,
+            nonce = pending.nonce,
+            amount = %pending.amount,
+            "Pre-flight passed: withdrawal exists, submitting withdrawApprove"
+        );
+
+        let call = contract.withdrawApprove(withdraw_hash_fixed);
+
+        let pending_tx = call
+            .send()
+            .await
+            .map_err(|e| eyre!("Failed to send EVM→EVM approval tx: {}", e))?;
+
+        let tx_hash = *pending_tx.tx_hash();
+        info!(tx_hash = %tx_hash, "EVM→EVM approval tx sent, waiting for confirmation");
+
+        let receipt = pending_tx
+            .get_receipt()
+            .await
+            .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
+
+        if !receipt.status() {
+            return Err(eyre!("EVM→EVM approval transaction reverted"));
+        }
+
+        Ok(format!("0x{:x}", tx_hash))
+    }
+
     /// Calculate fee based on amount
     fn calculate_fee(&self, amount: &str) -> U256 {
-        let amount_u256 = U256::from_str(amount).unwrap_or(U256::ZERO);
+        let amount_u256 = U256::from_str(amount).unwrap_or_else(|e| {
+            warn!(
+                amount = amount,
+                error = %e,
+                "Failed to parse amount for fee calculation, using zero"
+            );
+            U256::ZERO
+        });
         amount_u256 * U256::from(self.default_fee_bps) / U256::from(10000u64)
     }
 

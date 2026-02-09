@@ -671,6 +671,123 @@ fn test_withdraw_submit_blocked_after_mapping_removal() {
 }
 
 #[test]
+/// Test that a CW20 token requires its own incoming token mapping.
+///
+/// This is the root cause of Category B (operator_live_deposit_detection failure):
+/// the e2e setup only registered incoming mapping for uluna, not the CW20 token.
+/// When withdraw_submit is called with the CW20, it fails with TokenNotMappedForChain.
+fn test_withdraw_submit_cw20_requires_incoming_mapping() {
+    let mut env = setup();
+
+    // Simulate a CW20 address (this is a mock, we just use a different token string)
+    let cw20_addr = "terra1cw20mockaddressxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    // Register CW20 as a token on the bridge
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::AddToken {
+                token: cw20_addr.to_string(),
+                is_native: false,
+                token_type: None,
+                evm_token_address: "0x0000000000000000000000000000000000000000".to_string(),
+                terra_decimals: 6,
+                evm_decimals: 18,
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Register incoming mapping for uluna (but NOT for CW20)
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::SetIncomingTokenMapping {
+                src_chain: evm_chain_id(),
+                src_token: uluna_src_token(),
+                local_token: "uluna".to_string(),
+                src_decimals: 18,
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Try to withdraw with CW20 → should FAIL because no incoming mapping exists
+    let res = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawSubmit {
+            src_chain: evm_chain_id(),
+            src_account: make_src_account(),
+            token: cw20_addr.to_string(),
+            recipient: env.user.to_string(),
+            amount: Uint128::from(1_000_000u128),
+            nonce: 1,
+        },
+        &[],
+    );
+
+    assert!(
+        res.is_err(),
+        "WithdrawSubmit with CW20 should fail without incoming token mapping"
+    );
+    let err = res.unwrap_err();
+    assert!(
+        err.root_cause()
+            .to_string()
+            .contains("Token not mapped for source chain"),
+        "Expected TokenNotMappedForChain error, got: {}",
+        err.root_cause()
+    );
+
+    // Now register the incoming mapping for CW20
+    // The src_token must match what the contract's `encode_token_address` produces.
+    // In mock, addr_validate accepts any string ≥20 chars, so CW20-like addresses
+    // go through the canonicalize+left-pad path (not keccak256).
+    // We use mock_dependencies to replicate the exact encoding the contract uses.
+    let mock_deps = cosmwasm_std::testing::mock_dependencies();
+    let cw20_encoded = bridge::hash::encode_token_address(mock_deps.as_ref(), cw20_addr).unwrap();
+    let cw20_src_token = Binary::from(cw20_encoded.to_vec());
+
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::SetIncomingTokenMapping {
+                src_chain: evm_chain_id(),
+                src_token: cw20_src_token,
+                local_token: cw20_addr.to_string(),
+                src_decimals: 18,
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Now retry → should succeed
+    let res = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawSubmit {
+            src_chain: evm_chain_id(),
+            src_account: make_src_account(),
+            token: cw20_addr.to_string(),
+            recipient: env.user.to_string(),
+            amount: Uint128::from(1_000_000u128),
+            nonce: 1,
+        },
+        &[],
+    );
+
+    assert!(
+        res.is_ok(),
+        "WithdrawSubmit should succeed after adding CW20 incoming mapping: {:?}",
+        res.err()
+    );
+}
+
+#[test]
 fn test_withdraw_submit_uses_src_decimals_from_mapping() {
     let mut env = setup();
 

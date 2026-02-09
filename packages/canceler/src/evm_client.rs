@@ -29,25 +29,36 @@ use tracing::{debug, info};
 use crate::hash::bytes32_to_hex;
 
 sol! {
-    /// CL8YBridge contract interface for cancellation
+    /// Bridge contract interface for cancellation (V2)
+    ///
+    /// IMPORTANT: Function names must exactly match the Solidity contract:
+    /// - `withdrawCancel` (NOT `cancelWithdrawApproval`)
+    /// - `getPendingWithdraw` (NOT `getWithdrawApproval`)
+    /// - `getCancelWindow` (NOT `withdrawDelay`)
     #[sol(rpc)]
     contract CL8YBridge {
-        /// Cancel a previously approved withdrawal
-        function cancelWithdrawApproval(bytes32 withdrawHash) external;
+        /// Cancel a pending withdrawal (V2: onlyCanceler)
+        function withdrawCancel(bytes32 withdrawHash) external;
 
-        /// Get approval info for a given withdraw hash
-        function getWithdrawApproval(bytes32 withdrawHash) external view returns (
-            uint256 fee,
-            address feeRecipient,
-            uint64 approvedAt,
-            bool isApproved,
-            bool deductFromAmount,
+        /// Get pending withdrawal info (V2: PendingWithdraw struct)
+        function getPendingWithdraw(bytes32 withdrawHash) external view returns (
+            bytes4 srcChain,
+            bytes32 srcAccount,
+            bytes32 destAccount,
+            address token,
+            address recipient,
+            uint256 amount,
+            uint64 nonce,
+            uint256 operatorGas,
+            uint256 submittedAt,
+            uint256 approvedAt,
+            bool approved,
             bool cancelled,
             bool executed
         );
 
-        /// Query the withdraw delay in seconds
-        function withdrawDelay() external view returns (uint256);
+        /// Query the cancel window in seconds (V2)
+        function getCancelWindow() external view returns (uint256);
     }
 }
 
@@ -90,30 +101,36 @@ impl EvmClient {
 
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
-        // First check if the approval exists and is not already cancelled/executed
-        let approval = contract
-            .getWithdrawApproval(FixedBytes::from(withdraw_hash))
+        // First check if the withdrawal exists and is cancellable
+        let pending = contract
+            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
             .call()
             .await
-            .map_err(|e| eyre!("Failed to get approval: {}", e))?;
+            .map_err(|e| eyre!("Failed to query pending withdrawal: {}", e))?;
 
-        if !approval.isApproved {
-            return Err(eyre!("Approval does not exist"));
+        if pending.submittedAt.is_zero() {
+            return Err(eyre!("Withdrawal does not exist (submittedAt=0)"));
         }
-        if approval.cancelled {
-            return Err(eyre!("Approval already cancelled"));
+        if !pending.approved {
+            return Err(eyre!("Withdrawal not yet approved"));
         }
-        if approval.executed {
-            return Err(eyre!("Approval already executed"));
+        if pending.cancelled {
+            return Err(eyre!("Withdrawal already cancelled"));
+        }
+        if pending.executed {
+            return Err(eyre!("Withdrawal already executed"));
         }
 
-        debug!(
+        info!(
             withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-            "Submitting cancelWithdrawApproval"
+            nonce = pending.nonce,
+            amount = %pending.amount,
+            approved_at = %pending.approvedAt,
+            "Submitting withdrawCancel transaction"
         );
 
         // Submit cancel transaction
-        let call = contract.cancelWithdrawApproval(FixedBytes::from(withdraw_hash));
+        let call = contract.withdrawCancel(FixedBytes::from(withdraw_hash));
 
         let pending_tx = call
             .send()
@@ -142,7 +159,7 @@ impl EvmClient {
         Ok(format!("0x{:x}", tx_hash))
     }
 
-    /// Check if an approval can be cancelled (exists, not cancelled, not executed)
+    /// Check if a withdrawal can be cancelled (submitted, approved, not cancelled, not executed)
     pub async fn can_cancel(&self, withdraw_hash: [u8; 32]) -> Result<bool> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
@@ -152,13 +169,28 @@ impl EvmClient {
 
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
-        let approval = contract
-            .getWithdrawApproval(FixedBytes::from(withdraw_hash))
+        let pending = contract
+            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
             .call()
             .await
-            .map_err(|e| eyre!("Failed to get approval: {}", e))?;
+            .map_err(|e| eyre!("Failed to query pending withdrawal: {}", e))?;
 
-        Ok(approval.isApproved && !approval.cancelled && !approval.executed)
+        let cancellable = !pending.submittedAt.is_zero()
+            && pending.approved
+            && !pending.cancelled
+            && !pending.executed;
+
+        debug!(
+            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            submitted_at = %pending.submittedAt,
+            approved = pending.approved,
+            cancelled = pending.cancelled,
+            executed = pending.executed,
+            cancellable = cancellable,
+            "Checked cancellability of withdrawal"
+        );
+
+        Ok(cancellable)
     }
 
     /// Get the canceler's address

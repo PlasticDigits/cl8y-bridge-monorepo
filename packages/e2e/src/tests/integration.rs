@@ -379,18 +379,26 @@ pub async fn test_full_transfer_cycle(
 
     // Step 8: Poll for operator to create approval
     // The deposit used nonce_before as its nonce (depositNonce++ is post-increment)
+    //
+    // NOTE: This is an EVM→Terra deposit. In V2, the operator creates approvals
+    // on the DESTINATION chain (Terra). poll_for_approval() queries EVM, so it
+    // won't find EVM→Terra approvals. We try anyway for EVM→EVM compatibility,
+    // but expect this to time out for EVM→Terra flows.
     let deposit_nonce = nonce_before;
     info!("Waiting for operator to relay deposit...");
     let approval = match poll_for_approval(config, deposit_nonce, DEFAULT_POLL_TIMEOUT).await {
         Ok(a) => {
             info!(
-                "Approval received: hash=0x{}",
+                "Approval received on EVM: hash=0x{}",
                 hex::encode(&a.withdraw_hash.as_slice()[..8])
             );
             Some(a)
         }
         Err(e) => {
-            warn!("Approval not received (operator may not be running): {}", e);
+            warn!(
+                "EVM approval not found for deposit nonce {} (EVM→Terra approvals are on Terra): {}",
+                deposit_nonce, e
+            );
             None
         }
     };

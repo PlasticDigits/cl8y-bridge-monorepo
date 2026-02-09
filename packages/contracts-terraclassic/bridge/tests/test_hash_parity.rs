@@ -110,9 +110,8 @@ fn setup_with_e2e_chain_ids() -> TestEnv {
             token: "uluna".to_string(),
             is_native: true,
             token_type: None,
-            evm_token_address:
-                "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-                    .to_string(),
+            evm_token_address: "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
         },
@@ -180,8 +179,8 @@ fn test_withdraw_hash_internal_consistency() {
 
     // EVM depositor address (left-padded to 32 bytes, as HashLib.addressToBytes32 does)
     let evm_address: [u8; 20] = [
-        0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce,
-        0x6a, 0xB8, 0x82, 0x72, 0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72, 0x79,
+        0xcf, 0xfF, 0xb9, 0x22, 0x66,
     ];
     let mut src_account = [0u8; 32];
     src_account[12..32].copy_from_slice(&evm_address);
@@ -233,14 +232,29 @@ fn test_withdraw_hash_internal_consistency() {
 
     // Step 4: Verify the stored parameters match what we submitted
     assert_eq!(pending.nonce, nonce, "Stored nonce must match");
-    assert_eq!(pending.amount, Uint128::from(amount), "Stored amount must match");
+    assert_eq!(
+        pending.amount,
+        Uint128::from(amount),
+        "Stored amount must match"
+    );
     assert_eq!(pending.token, "uluna", "Stored token must match");
-    assert_eq!(pending.src_chain, Binary::from(evm_chain_id.to_vec()), "Stored src_chain must match");
-    assert_eq!(pending.src_account, Binary::from(src_account.to_vec()), "Stored src_account must match");
+    assert_eq!(
+        pending.src_chain,
+        Binary::from(evm_chain_id.to_vec()),
+        "Stored src_chain must match"
+    );
+    assert_eq!(
+        pending.src_account,
+        Binary::from(src_account.to_vec()),
+        "Stored src_account must match"
+    );
 
     // Step 5: Re-compute the hash using the contract's stored dest_account
     // (This is what the contract uses internally — it canonicalizes the address)
-    let stored_dest_account: [u8; 32] = pending.dest_account.to_vec().try_into()
+    let stored_dest_account: [u8; 32] = pending
+        .dest_account
+        .to_vec()
+        .try_into()
         .expect("dest_account should be 32 bytes");
 
     let token_hash = keccak256(b"uluna");
@@ -259,7 +273,8 @@ fn test_withdraw_hash_internal_consistency() {
     contract_hash.copy_from_slice(&contract_hash_bytes);
 
     assert_eq!(
-        contract_hash, recomputed_hash,
+        contract_hash,
+        recomputed_hash,
         "Contract's stored hash MUST match recomputed hash using the same parameters.\n\
          Contract hash:   {}\n\
          Recomputed hash: {}\n\
@@ -300,7 +315,8 @@ fn test_uluna_token_encoding_matches_evm() {
     let terra_token = keccak256(b"uluna");
 
     assert_eq!(
-        terra_token, evm_dest_token,
+        terra_token,
+        evm_dest_token,
         "Token encoding mismatch!\n\
          Terra keccak256(\"uluna\"): 0x{}\n\
          EVM keccak256(\"uluna\"): 0x{}\n\
@@ -363,13 +379,21 @@ fn test_pending_withdrawals_hash_format_for_operator() {
         )
         .unwrap();
 
-    assert_eq!(result.withdrawals.len(), 1, "Should have exactly 1 pending withdrawal");
+    assert_eq!(
+        result.withdrawals.len(),
+        1,
+        "Should have exactly 1 pending withdrawal"
+    );
 
     let entry = &result.withdrawals[0];
 
     // Verify the hash is in Binary format (which serializes as base64)
     let hash_bytes = entry.withdraw_hash.as_slice();
-    assert_eq!(hash_bytes.len(), 32, "Withdraw hash should be exactly 32 bytes");
+    assert_eq!(
+        hash_bytes.len(),
+        32,
+        "Withdraw hash should be exactly 32 bytes"
+    );
 
     // Verify the entry fields the operator checks
     assert!(!entry.approved, "Should not be approved yet");
@@ -440,7 +464,10 @@ fn test_simulated_operator_approve_flow() {
         )
         .unwrap();
 
-    assert!(!result.withdrawals.is_empty(), "Should have pending withdrawals");
+    assert!(
+        !result.withdrawals.is_empty(),
+        "Should have pending withdrawals"
+    );
 
     // Step 3: Find unapproved entry
     let unapproved: Vec<_> = result
@@ -449,7 +476,11 @@ fn test_simulated_operator_approve_flow() {
         .filter(|w| !w.approved && !w.cancelled && !w.executed)
         .collect();
 
-    assert_eq!(unapproved.len(), 1, "Should have exactly 1 unapproved entry");
+    assert_eq!(
+        unapproved.len(),
+        1,
+        "Should have exactly 1 unapproved entry"
+    );
     let entry = unapproved[0];
 
     // Step 4: Operator approves with the hash from the query
@@ -481,7 +512,10 @@ fn test_simulated_operator_approve_flow() {
         )
         .unwrap();
 
-    assert!(updated.approved, "Withdrawal should be approved after operator call");
+    assert!(
+        updated.approved,
+        "Withdrawal should be approved after operator call"
+    );
     assert!(updated.approved_at > 0, "approved_at should be set");
     assert!(!updated.cancelled, "Should not be cancelled");
     assert!(!updated.executed, "Should not be executed yet");
@@ -505,8 +539,8 @@ fn test_hash_parity_with_e2e_parameters() {
 
     // EVM depositor address (padded to 32 bytes like HashLib.addressToBytes32)
     let evm_address: [u8; 20] = [
-        0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce,
-        0x6a, 0xB8, 0x82, 0x72, 0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
+        0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce, 0x6a, 0xB8, 0x82, 0x72, 0x79,
+        0xcf, 0xfF, 0xb9, 0x22, 0x66,
     ];
     let mut src_account = [0u8; 32];
     src_account[12..32].copy_from_slice(&evm_address);
@@ -544,7 +578,8 @@ fn test_hash_parity_with_e2e_parameters() {
     );
 
     assert_eq!(
-        contract_hash, recomputed_hash,
+        contract_hash,
+        recomputed_hash,
         "Hash computation must be deterministic!\n\
          First:   {}\n\
          Second:  {}",
@@ -649,7 +684,8 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
     );
 
     assert_eq!(
-        contract_hash, expected_hash,
+        contract_hash,
+        expected_hash,
         "Contract must use THIS_CHAIN_ID (0x{}) as dest_chain in hash computation.\n\
          Contract hash: {}\n\
          Expected hash: {}",
@@ -765,7 +801,11 @@ fn test_withdraw_hash_base64_roundtrip() {
         hash_from_query,
         "Base64 round-trip should preserve the hash"
     );
-    assert_eq!(decoded_binary.len(), 32, "Decoded hash must be exactly 32 bytes");
+    assert_eq!(
+        decoded_binary.len(),
+        32,
+        "Decoded hash must be exactly 32 bytes"
+    );
 }
 
 /// Test multiple withdrawals with different parameters all produce unique hashes.

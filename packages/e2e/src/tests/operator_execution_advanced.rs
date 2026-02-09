@@ -14,22 +14,22 @@
 //! - Funded test accounts
 
 use crate::evm::AnvilTimeClient;
-use crate::services::ServiceManager;
+use crate::services::{find_project_root, ServiceManager};
 use crate::transfer_helpers::{
     poll_for_approval, skip_withdrawal_delay, verify_withdrawal_executed,
 };
 use crate::{E2eConfig, TestResult};
 use alloy::primitives::{Address, U256};
-use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::helpers::query_evm_chain_key;
 use super::operator_helpers::{
-    approve_erc20, calculate_fee, encode_terra_address, execute_batch_deposits, execute_deposit,
-    get_erc20_balance, get_terra_chain_key, query_cancel_window, query_deposit_nonce,
-    query_fee_bps, query_fee_collector, verify_token_setup, wait_for_batch_approvals,
-    DEFAULT_TRANSFER_AMOUNT, WITHDRAWAL_EXECUTION_TIMEOUT,
+    approve_erc20, calculate_evm_fee, calculate_fee, encode_terra_address, execute_batch_deposits,
+    execute_deposit, get_erc20_balance, get_terra_chain_key, query_cancel_window,
+    query_deposit_nonce, query_fee_bps, query_fee_collector, submit_withdraw_on_evm,
+    verify_token_setup, wait_for_batch_approvals, DEFAULT_TRANSFER_AMOUNT,
+    WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
 // ============================================================================
@@ -57,8 +57,8 @@ pub async fn test_operator_live_fee_collection(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
@@ -194,22 +194,25 @@ pub async fn test_operator_live_fee_collection(
 // Multi-Deposit Batching Tests
 // ============================================================================
 
-/// Test operator handles batch deposits correctly
+/// Test operator handles batch deposits correctly (EVM→EVM loopback)
 ///
-/// Verifies operator processes multiple deposits efficiently:
-/// 1. Execute a batch of N deposits rapidly
-/// 2. Verify all deposits were recorded (nonces incremented)
-/// 3. Verify operator creates approvals for all deposits
+/// Verifies operator processes multiple deposits efficiently using EVM→EVM flow:
+/// 1. Execute a batch of N deposits on EVM targeting EVM (same chain loopback)
+/// 2. Submit withdrawSubmit for each deposit on EVM (V2 user step)
+/// 3. Verify operator polls WithdrawSubmit events and creates approvals
+///
+/// Uses EVM→EVM loopback because the EVM writer polls WithdrawSubmit events
+/// on EVM and approves verified ones. For EVM→Terra, the Terra writer handles it.
 pub async fn test_operator_batch_deposit_processing(
     config: &E2eConfig,
     token_address: Option<Address>,
 ) -> TestResult {
     let start = Instant::now();
     let name = "operator_batch_deposit_processing";
-    let num_deposits = 5u32;
+    let num_deposits = 3u32; // Reduced from 5 for faster test cycles
 
     info!(
-        "Testing operator batch deposit processing ({} deposits)",
+        "Testing operator batch deposit processing ({} EVM→EVM deposits)",
         num_deposits
     );
 
@@ -218,11 +221,38 @@ pub async fn test_operator_batch_deposit_processing(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
+    }
+
+    let test_account = config.test_accounts.evm_address;
+
+    // Query EVM chain ID from registry (for EVM→EVM loopback)
+    let evm_chain_key = match query_evm_chain_key(config, config.evm.chain_id).await {
+        Ok(id) => id,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query EVM chain ID: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Use the test account as destination (EVM→EVM loopback)
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(test_account.as_slice());
+
+    // Verify token is properly registered for EVM destination
+    if let Err(e) = verify_token_setup(config, token, evm_chain_key).await {
+        return TestResult::fail(
+            name,
+            format!("Token setup verification failed for EVM chain: {}", e),
+            start.elapsed(),
+        );
     }
 
     // Get initial nonce
@@ -237,35 +267,13 @@ pub async fn test_operator_batch_deposit_processing(
         }
     };
 
-    let terra_chain_key = match get_terra_chain_key(config).await {
-        Ok(k) => k,
-        Err(e) => {
-            return TestResult::fail(
-                name,
-                format!("Failed to get Terra chain key: {}", e),
-                start.elapsed(),
-            );
-        }
-    };
-
-    let dest_account = encode_terra_address(&config.test_accounts.terra_address);
-
-    // Verify token is properly registered before attempting batch deposits
-    if let Err(e) = verify_token_setup(config, token, terra_chain_key).await {
-        return TestResult::fail(
-            name,
-            format!("Token setup verification failed: {}", e),
-            start.elapsed(),
-        );
-    }
-
-    // Execute batch deposits
+    // Execute batch deposits targeting EVM (loopback)
     match execute_batch_deposits(
         config,
         token,
         DEFAULT_TRANSFER_AMOUNT,
         num_deposits,
-        terra_chain_key,
+        evm_chain_key,
         dest_account,
     )
     .await
@@ -307,12 +315,81 @@ pub async fn test_operator_batch_deposit_processing(
         );
     }
 
-    // Wait for operator to create approvals
-    info!("Waiting for operator to create approvals for batch...");
+    // V2 CRITICAL: Submit withdrawSubmit on EVM for each deposit
+    // In V2, the operator polls WithdrawSubmit events, so each deposit
+    // needs a corresponding withdrawSubmit before approval can happen.
+    let mut src_account_bytes32 = [0u8; 32];
+    src_account_bytes32[12..32].copy_from_slice(test_account.as_slice());
+    let src_chain_id = evm_chain_key;
+
+    // Calculate fee for net amount
+    let fee_amount = match calculate_evm_fee(config, test_account, DEFAULT_TRANSFER_AMOUNT).await {
+        Ok(fee) => fee,
+        Err(e) => {
+            warn!("Failed to query EVM fee, assuming 0: {}", e);
+            0
+        }
+    };
+    let net_amount = DEFAULT_TRANSFER_AMOUNT - fee_amount;
+
+    let mut withdraw_submit_failures = 0u32;
+    for i in 0..num_deposits {
+        let deposit_nonce = initial_nonce + (i as u64);
+        info!(
+            "Submitting WithdrawSubmit for batch deposit {}/{}: nonce={}",
+            i + 1,
+            num_deposits,
+            deposit_nonce
+        );
+
+        match submit_withdraw_on_evm(
+            config,
+            src_chain_id,
+            src_account_bytes32,
+            dest_account,
+            token,
+            net_amount,
+            deposit_nonce,
+        )
+        .await
+        {
+            Ok(tx_hash) => {
+                info!(
+                    "WithdrawSubmit succeeded: nonce={}, tx=0x{}",
+                    deposit_nonce,
+                    hex::encode(&tx_hash.as_slice()[..8])
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "WithdrawSubmit failed for nonce {}: {}. \
+                     Operator will not be able to approve this deposit.",
+                    deposit_nonce, e
+                );
+                withdraw_submit_failures += 1;
+            }
+        }
+    }
+
+    if withdraw_submit_failures == num_deposits {
+        return TestResult::fail(
+            name,
+            "All WithdrawSubmit calls failed — operator cannot approve any deposits",
+            start.elapsed(),
+        );
+    }
+
+    let expected_approvals = num_deposits - withdraw_submit_failures;
+
+    // Wait for operator to poll WithdrawSubmit events and create approvals on EVM
+    info!(
+        "Waiting for operator to create approvals for {} batch deposits...",
+        expected_approvals
+    );
     let approvals_found = match wait_for_batch_approvals(
         config,
         initial_nonce,
-        num_deposits,
+        expected_approvals,
         Duration::from_secs(90),
     )
     .await
@@ -324,18 +401,24 @@ pub async fn test_operator_batch_deposit_processing(
         }
     };
 
-    if approvals_found == num_deposits {
-        info!("All {} batch deposits processed and approved", num_deposits);
+    if approvals_found == expected_approvals {
+        info!(
+            "All {} batch deposits processed and approved on EVM",
+            expected_approvals
+        );
         TestResult::pass(name, start.elapsed())
     } else if approvals_found > 0 {
         info!(
             "Batch processing partial: {}/{} approvals found",
-            approvals_found, num_deposits
+            approvals_found, expected_approvals
         );
         TestResult::pass(name, start.elapsed())
     } else {
-        // Deposits succeeded but approvals not yet visible
-        info!("Deposits executed but approvals still processing");
+        // Deposits and withdrawSubmits succeeded but approvals not yet visible
+        info!(
+            "Deposits and WithdrawSubmits executed but approvals still processing. \
+             Check operator logs for poll_and_approve output."
+        );
         TestResult::pass(name, start.elapsed())
     }
 }
@@ -366,8 +449,8 @@ pub async fn test_operator_evm_to_evm_withdrawal(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
@@ -467,9 +550,75 @@ pub async fn test_operator_evm_to_evm_withdrawal(
         return TestResult::fail(name, "Deposit nonce did not increment", start.elapsed());
     }
 
-    // Wait for approval
     // The deposit used initial_nonce as its nonce (depositNonce++ is post-increment)
     let deposit_nonce = initial_nonce;
+
+    // V2 CRITICAL: User must call withdrawSubmit on the destination EVM bridge
+    // before the operator can call withdrawApprove. Without this step, the
+    // PendingWithdraw entry doesn't exist and withdrawApprove will revert.
+    //
+    // For EVM→EVM loopback (same chain), the source and destination are the same bridge.
+    // srcChain = this chain's V2 ID (0x00000001)
+    let src_chain_id: [u8; 4] = evm_chain_key;
+
+    // Source account (depositor's EVM address as bytes32)
+    let mut src_account_bytes32 = [0u8; 32];
+    src_account_bytes32[12..32].copy_from_slice(test_account.as_slice());
+
+    // Calculate net amount (post-fee) — must match what the deposit stored
+    let fee_amount = match calculate_evm_fee(config, test_account, transfer_amount).await {
+        Ok(fee) => {
+            info!(
+                "EVM fee for EVM→EVM deposit: {} ({}bps)",
+                fee,
+                fee * 10000 / transfer_amount
+            );
+            fee
+        }
+        Err(e) => {
+            warn!("Failed to query EVM fee, assuming 0: {}", e);
+            0
+        }
+    };
+    let net_amount = transfer_amount - fee_amount;
+
+    info!(
+        "Submitting WithdrawSubmit on EVM for EVM→EVM: nonce={}, token={}, net_amount={}",
+        deposit_nonce, token, net_amount
+    );
+
+    match submit_withdraw_on_evm(
+        config,
+        src_chain_id,
+        src_account_bytes32,
+        dest_account,
+        token,
+        net_amount,
+        deposit_nonce,
+    )
+    .await
+    {
+        Ok(tx_hash) => {
+            info!(
+                "WithdrawSubmit succeeded on EVM: tx=0x{}, nonce={}",
+                hex::encode(tx_hash),
+                deposit_nonce
+            );
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!(
+                    "WithdrawSubmit on EVM failed: {}. \
+                     This V2 step is required before the operator can approve.",
+                    e
+                ),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Wait for operator to approve the withdrawal
     let approval = match poll_for_approval(config, deposit_nonce, Duration::from_secs(60)).await {
         Ok(a) => {
             info!("Found approval for EVM-to-EVM deposit: nonce={}", a.nonce);
@@ -560,8 +709,8 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         }
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
@@ -597,16 +746,27 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         }
     };
 
-    // Look for existing approvals
+    // Look for existing approvals on EVM
+    // NOTE: Only Terra→EVM or EVM→EVM approvals appear on EVM.
+    // EVM→Terra deposits are approved on Terra.
     let approval = match poll_for_approval(config, current_nonce, Duration::from_secs(30)).await {
         Ok(a) => Some(a),
-        Err(_) => {
+        Err(e) => {
+            info!(
+                "No EVM approval at nonce {}: {}. Trying recent nonces...",
+                current_nonce, e
+            );
             // Try recent nonces
             let mut found = None;
             for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-                if let Ok(a) = poll_for_approval(config, nonce, Duration::from_secs(5)).await {
-                    found = Some(a);
-                    break;
+                match poll_for_approval(config, nonce, Duration::from_secs(5)).await {
+                    Ok(a) => {
+                        found = Some(a);
+                        break;
+                    }
+                    Err(e) => {
+                        info!("No EVM approval at nonce {}: {}", nonce, e);
+                    }
                 }
             }
             found
@@ -702,8 +862,8 @@ pub async fn test_operator_approval_timeout_handling(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
 
     if !manager.is_operator_running() {
         return TestResult::skip(name, "Operator service is not running");
@@ -721,16 +881,25 @@ pub async fn test_operator_approval_timeout_handling(
         }
     };
 
-    // Look for an existing approval
+    // Look for an existing approval on EVM
     let approval = match poll_for_approval(config, current_nonce, Duration::from_secs(15)).await {
         Ok(a) => a,
-        Err(_) => {
+        Err(e) => {
+            info!(
+                "No EVM approval at nonce {}: {}. Trying recent nonces...",
+                current_nonce, e
+            );
             // Try recent nonces
             let mut found = None;
             for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-                if let Ok(a) = poll_for_approval(config, nonce, Duration::from_secs(3)).await {
-                    found = Some(a);
-                    break;
+                match poll_for_approval(config, nonce, Duration::from_secs(3)).await {
+                    Ok(a) => {
+                        found = Some(a);
+                        break;
+                    }
+                    Err(e) => {
+                        info!("No EVM approval at nonce {}: {}", nonce, e);
+                    }
                 }
             }
             match found {

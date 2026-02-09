@@ -26,7 +26,7 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
 
 - [Security Model](./security-model.md) - Watchtower pattern and trust model
 - [Gap Analysis](./gap-analysis-terraclassic.md) - Terra Classic security gap analysis
-- [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements between EVM and Terra
+- [Cross-Chain Hash Parity](./crosschain-parity.md) - Token encoding, hash computation, deposit/withdraw parity, and test coverage
 
 ### Technical Specifications
 
@@ -39,6 +39,10 @@ Welcome to the CL8Y Bridge documentation. This cross-chain bridge connects Terra
   - Integration tests with database
   - End-to-end (E2E) cross-chain transfer tests
   - CI/CD test configuration
+- [E2E Failure Analysis & Fixes](./HANDOFF_E2E_FAILURES.md) - Root cause analysis of E2E test failures including:
+  - ABI mismatches, port conflicts, wrong-chain polling, byte offset bugs
+  - Direction rules for V2 approval polling (EVM vs Terra)
+  - Cross-referenced manual ABI parsing audit (14 instances verified)
 
 ### Development
 

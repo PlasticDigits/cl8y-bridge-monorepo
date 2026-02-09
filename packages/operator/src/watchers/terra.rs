@@ -137,7 +137,10 @@ impl TerraWatcher {
         // Query block results to get transactions (kept for future use)
         let _block_results = self
             .rpc_client
-            .block_results(tendermint::block::Height::try_from(height).unwrap())
+            .block_results(
+                tendermint::block::Height::try_from(height)
+                    .map_err(|e| eyre::eyre!("Invalid block height {}: {}", height, e))?,
+            )
             .await
             .wrap_err("Failed to get block results")?;
 

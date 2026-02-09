@@ -5,6 +5,10 @@ edition = "2021"
 description = "Canceler node for CL8Y Bridge watchtower security pattern"
 license = "MIT"
 
+[lib]
+name = "canceler"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cl8y-canceler"
 path = "src/main.rs"

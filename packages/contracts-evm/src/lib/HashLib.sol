@@ -145,7 +145,9 @@ library HashLib {
         uint256 amount,
         uint64 nonce
     ) internal pure returns (bytes32 transferHash) {
-        bytes memory data = abi.encode(bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce));
+        bytes memory data = abi.encode(
+            bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
+        );
         // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(data);
     }

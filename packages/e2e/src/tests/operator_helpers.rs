@@ -3,13 +3,12 @@
 //! This module contains helper functions for operator deposit detection,
 //! withdrawal execution, fee verification, and batch processing tests.
 
-use crate::services::ServiceManager;
+use crate::services::{find_project_root, ServiceManager};
 use crate::terra::TerraClient;
 use crate::tests::helpers::{chain_id4_to_bytes32, selector};
 use crate::E2eConfig;
 use alloy::primitives::{Address, B256, U256};
 use eyre::Result;
-use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -53,15 +52,16 @@ pub const TERRA_POLL_INTERVAL: Duration = TERRA_POLL_INITIAL_INTERVAL;
 
 /// Check if operator service is running
 pub fn is_operator_running() -> bool {
-    let project_root = Path::new("/home/answorld/repos/cl8y-bridge-monorepo");
-    let manager = ServiceManager::new(project_root);
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
     manager.is_operator_running()
 }
 
 /// Check operator health endpoint (if available)
 pub async fn check_operator_health() -> bool {
     // Operator may have a health endpoint - try common ports
-    let health_ports = [9090, 9091, 9098];
+    // Default 9092 (operator API) — 9090/9091 conflict with LocalTerra gRPC/gRPC-web
+    let health_ports = [9092, 9098];
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -584,11 +584,43 @@ pub async fn poll_terra_for_approval(
                 Ok(result) => {
                     if let Some(withdrawals) = result.get("withdrawals").and_then(|w| w.as_array())
                     {
+                        // Log what the query returned
+                        let nonces: Vec<u64> = withdrawals
+                            .iter()
+                            .filter_map(|e| e.get("nonce").and_then(|n| n.as_u64()))
+                            .collect();
+                        let approved_flags: Vec<bool> = withdrawals
+                            .iter()
+                            .map(|e| e.get("approved").and_then(|a| a.as_bool()).unwrap_or(false))
+                            .collect();
+                        info!(
+                            nonce = nonce,
+                            attempt = attempt,
+                            total_entries = withdrawals.len(),
+                            ?nonces,
+                            ?approved_flags,
+                            cursor = ?start_after,
+                            "pending_withdrawals query returned"
+                        );
+
                         for entry in withdrawals {
                             let entry_nonce =
                                 entry.get("nonce").and_then(|n| n.as_u64()).unwrap_or(0);
 
                             if entry_nonce == nonce {
+                                // Log the full matching entry for diagnostics
+                                let entry_preview = serde_json::to_string(entry)
+                                    .unwrap_or_default()
+                                    .chars()
+                                    .take(500)
+                                    .collect::<String>();
+                                info!(
+                                    nonce = nonce,
+                                    attempt = attempt,
+                                    "Found matching withdrawal entry: {}",
+                                    entry_preview
+                                );
+
                                 let is_approved = entry
                                     .get("approved")
                                     .and_then(|a| a.as_bool())
@@ -655,10 +687,23 @@ pub async fn poll_terra_for_approval(
                                 continue; // fetch next page
                             }
                         }
+                    } else {
+                        // No "withdrawals" key in the response
+                        let result_preview = serde_json::to_string(&result)
+                            .unwrap_or_default()
+                            .chars()
+                            .take(300)
+                            .collect::<String>();
+                        warn!(
+                            nonce = nonce,
+                            attempt = attempt,
+                            "pending_withdrawals response missing 'withdrawals' key: {}",
+                            result_preview
+                        );
                     }
                 }
                 Err(e) => {
-                    debug!(
+                    warn!(
                         nonce = nonce,
                         attempt = attempt,
                         error = %e,
@@ -900,7 +945,103 @@ pub async fn execute_batch_deposits(
     Ok(tx_hashes)
 }
 
-/// Wait for multiple approvals to be created
+/// Submit `withdrawSubmit` on the EVM bridge contract (V2 user step for EVM→EVM).
+///
+/// In V2, the user (or test) must call `withdrawSubmit` on the destination chain
+/// before the operator can approve it. This creates the PendingWithdraw entry.
+///
+/// # Arguments
+/// * `config` - E2E configuration
+/// * `src_chain_id` - 4-byte source chain ID (from ChainRegistry)
+/// * `src_account` - Source account as bytes32 (depositor on source chain)
+/// * `dest_account` - Destination account as bytes32 (recipient)
+/// * `token` - Token address on destination chain
+/// * `amount` - Post-fee amount
+/// * `nonce` - Deposit nonce
+pub async fn submit_withdraw_on_evm(
+    config: &E2eConfig,
+    src_chain_id: [u8; 4],
+    src_account: [u8; 32],
+    dest_account: [u8; 32],
+    token: Address,
+    amount: u128,
+    nonce: u64,
+) -> Result<B256> {
+    let client = reqwest::Client::new();
+
+    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce)
+    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
+    let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_id));
+    let src_account_hex = hex::encode(src_account);
+    let dest_account_hex = hex::encode(dest_account);
+    let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
+    let amount_padded = format!("{:064x}", amount);
+    let nonce_padded = format!("{:064x}", nonce);
+
+    let call_data = format!(
+        "0x{}{}{}{}{}{}{}",
+        sel,
+        src_chain_padded,
+        src_account_hex,
+        dest_account_hex,
+        token_padded,
+        amount_padded,
+        nonce_padded
+    );
+
+    info!(
+        nonce = nonce,
+        token = %token,
+        amount = amount,
+        src_chain = hex::encode(src_chain_id),
+        "Submitting WithdrawSubmit on EVM bridge (V2 user step)"
+    );
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_sendTransaction",
+            "params": [{
+                "from": format!("{}", config.test_accounts.evm_address),
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": call_data,
+                "gas": "0x200000"
+            }],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+
+    if let Some(error) = body.get("error") {
+        return Err(eyre::eyre!("EVM withdrawSubmit failed: {}", error));
+    }
+
+    let tx_hex = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No tx hash in EVM withdrawSubmit response"))?;
+
+    let tx_hash = B256::from_slice(&hex::decode(tx_hex.trim_start_matches("0x"))?);
+
+    info!(
+        nonce = nonce,
+        tx_hash = %hex::encode(tx_hash),
+        "WithdrawSubmit transaction submitted on EVM"
+    );
+
+    // Wait for confirmation
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok(tx_hash)
+}
+
+/// Wait for multiple approvals to be created on the **EVM** bridge.
+///
+/// **IMPORTANT**: This function polls the EVM bridge for `WithdrawApprove` events.
+/// It only works for flows where the approval is created on EVM (e.g., Terra→EVM or EVM→EVM).
+/// For EVM→Terra deposits, the approval is created on Terra — use `poll_terra_for_approval()` instead.
 ///
 /// `start_nonce` is the value of `depositNonce()` BEFORE the batch started.
 /// The deposits use nonces `start_nonce`, `start_nonce + 1`, ..., `start_nonce + num_approvals - 1`
@@ -916,6 +1057,18 @@ pub async fn wait_for_batch_approvals(
     let start = Instant::now();
     let mut found = 0u32;
 
+    info!(
+        start_nonce = start_nonce,
+        num_approvals = num_approvals,
+        timeout_secs = timeout.as_secs(),
+        nonce_range = format!(
+            "{}..{}",
+            start_nonce,
+            start_nonce + num_approvals as u64 - 1
+        ),
+        "Waiting for batch approvals on EVM bridge"
+    );
+
     for i in 0..num_approvals {
         // Deposit i used nonce = start_nonce + i (not start_nonce + i + 1)
         // because depositNonce++ is post-increment
@@ -923,16 +1076,37 @@ pub async fn wait_for_batch_approvals(
         let remaining = timeout.saturating_sub(start.elapsed());
 
         if remaining.is_zero() {
+            warn!(
+                "Batch approval timeout: found {}/{} approvals before deadline, \
+                 skipping nonces {} through {}",
+                found,
+                num_approvals,
+                nonce,
+                start_nonce + num_approvals as u64 - 1
+            );
             break;
         }
 
         match poll_for_approval(config, nonce, remaining).await {
             Ok(_) => {
                 found += 1;
-                info!("Found approval for nonce {}", nonce);
+                info!(
+                    "Found approval for nonce {} ({}/{} batch approvals found)",
+                    nonce, found, num_approvals
+                );
             }
             Err(e) => {
-                warn!("Approval for nonce {} not found: {}", nonce, e);
+                warn!(
+                    nonce = nonce,
+                    found = found,
+                    total = num_approvals,
+                    elapsed_secs = start.elapsed().as_secs(),
+                    "Batch approval not found for nonce: {}",
+                    e
+                );
+                // Don't continue polling remaining nonces if first one times out
+                // — they all share the same root cause
+                break;
             }
         }
     }

@@ -169,21 +169,25 @@ pub async fn test_native_deposit_terra_to_evm(config: &E2eConfig) -> TestResult 
         );
     }
 
-    let evm_addr_hex = hex::encode(config.test_accounts.evm_address.as_slice());
-    let evm_recipient = format!("{:0>64}", evm_addr_hex);
+    // EVM chain's registered 4-byte chain ID (set during setup in terra.rs)
+    let evm_dest_chain: [u8; 4] = [0, 0, 0, 1];
+    // EVM address left-padded to 32 bytes
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(config.test_accounts.evm_address.as_slice());
+
     let tx_hash = or_fail!(
         terra_client
-            .lock_tokens(
+            .deposit_native_tokens(
                 terra_bridge,
-                config.evm.chain_id,
-                &evm_recipient,
+                evm_dest_chain,
+                dest_account,
                 lock_amount,
                 denom
             )
             .await,
         name,
         start,
-        "Lock"
+        "DepositNative"
     );
 
     let result = or_fail!(
@@ -197,7 +201,7 @@ pub async fn test_native_deposit_terra_to_evm(config: &E2eConfig) -> TestResult 
     if !result.success {
         return TestResult::fail(
             name,
-            format!("Lock tx failed: {}", result.raw_log),
+            format!("DepositNative tx failed: {}", result.raw_log),
             start.elapsed(),
         );
     }
@@ -502,10 +506,18 @@ pub async fn test_deposit_events_correctness(config: &E2eConfig) -> TestResult {
             }
         };
 
+        // V2 Deposit event data layout (non-indexed fields):
+        //   [0..32]   srcAccount  (bytes32)
+        //   [32..64]  token       (address, right-aligned)
+        //   [64..96]  amount      (uint256)
+        //   [96..128] nonce       (uint64, right-aligned in 32 bytes)
+        //   [128..160] fee        (uint256)
+        let src_account = B256::from_slice(&data_bytes[0..32]);
         let token = Address::from_slice(&data_bytes[44..64]);
         let amount = U256::from_be_slice(&data_bytes[64..96]);
-        let nonce = u64::from_be_bytes(data_bytes[88..96].try_into().unwrap_or([0u8; 8]));
-        let src_account = B256::from_slice(&data_bytes[0..32]);
+        // FIXED: nonce is at [96..128], uint64 right-aligned at [120..128]
+        // Previously was [88..96] which read the LAST 8 BYTES OF AMOUNT — wrong!
+        let nonce = u64::from_be_bytes(data_bytes[120..128].try_into().unwrap_or([0u8; 8]));
 
         if nonce != nonce_before + 1 {
             return TestResult::fail(

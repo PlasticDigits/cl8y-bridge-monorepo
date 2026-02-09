@@ -34,11 +34,17 @@ sol! {
         function hasRole(uint64 roleId, address account) public view returns (bool, uint32);
     }
 
-    /// Chain Registry contract ABI
+    /// Chain Registry contract ABI (V2 with V1 compatibility queries)
     #[derive(Debug)]
     #[sol(rpc)]
     contract IChainRegistry {
-        function addCOSMWChainKey(string calldata chainId) external returns (bytes32);
+        // V2 functions
+        function registerChain(string calldata identifier, bytes4 chainId) external;
+        function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash);
+        function getChainIdFromHash(bytes32 hash) external view returns (bytes4 chainId);
+        function isChainRegistered(bytes4 chainId) external view returns (bool registered);
+        function getChainHash(bytes4 chainId) external view returns (bytes32 hash);
+        // V1 compatibility (may not exist on V2 contracts — used for local hash computation only)
         function getChainKeyCOSMW(string calldata chainId) public view returns (bytes32);
         function getChainKeyEVM(uint256 chainId) public view returns (bytes32);
     }
