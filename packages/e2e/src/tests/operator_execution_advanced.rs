@@ -733,8 +733,14 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         }
     };
 
-    // For Terra-to-EVM, we need to check if there are existing approvals
-    // from Terra deposits that the operator should process
+    // For Terra-to-EVM, the approval nonce on EVM does NOT correspond to the
+    // EVM bridge's depositNonce. Terra deposits are counted on Terra, and the
+    // operator writes the approval on EVM using the nonce from the Terra deposit.
+    // Using query_deposit_nonce() here would return the EVM deposit counter,
+    // causing a 30s timeout polling a nonce that will never have a Terra approval.
+    //
+    // Instead, scan recent nonces downward from the EVM deposit nonce to find
+    // the most recent approval (which may be from a Terra or EVM deposit).
     let current_nonce = match query_deposit_nonce(config).await {
         Ok(n) => n,
         Err(e) => {
@@ -746,32 +752,27 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         }
     };
 
-    // Look for existing approvals on EVM
+    // Scan recent nonces to find an existing approval on EVM.
     // NOTE: Only Terra→EVM or EVM→EVM approvals appear on EVM.
     // EVM→Terra deposits are approved on Terra.
-    let approval = match poll_for_approval(config, current_nonce, Duration::from_secs(30)).await {
-        Ok(a) => Some(a),
-        Err(e) => {
-            info!(
-                "No EVM approval at nonce {}: {}. Trying recent nonces...",
-                current_nonce, e
-            );
-            // Try recent nonces
-            let mut found = None;
-            for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-                match poll_for_approval(config, nonce, Duration::from_secs(5)).await {
-                    Ok(a) => {
-                        found = Some(a);
-                        break;
-                    }
-                    Err(e) => {
-                        info!("No EVM approval at nonce {}: {}", nonce, e);
-                    }
-                }
+    // We scan downward from current_nonce with short timeouts since
+    // Terra-originated approvals won't match the EVM deposit counter.
+    let mut approval = None;
+    info!(
+        "Scanning recent EVM nonces for Terra-to-EVM approval (deposit_nonce={})",
+        current_nonce
+    );
+    for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
+        match poll_for_approval(config, nonce, Duration::from_secs(5)).await {
+            Ok(a) => {
+                approval = Some(a);
+                break;
             }
-            found
+            Err(_) => {
+                info!("No EVM approval at nonce {}", nonce);
+            }
         }
-    };
+    }
 
     let approval = match approval {
         Some(a) => a,
@@ -881,33 +882,30 @@ pub async fn test_operator_approval_timeout_handling(
         }
     };
 
-    // Look for an existing approval on EVM
-    let approval = match poll_for_approval(config, current_nonce, Duration::from_secs(15)).await {
-        Ok(a) => a,
-        Err(e) => {
-            info!(
-                "No EVM approval at nonce {}: {}. Trying recent nonces...",
-                current_nonce, e
-            );
-            // Try recent nonces
-            let mut found = None;
-            for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-                match poll_for_approval(config, nonce, Duration::from_secs(3)).await {
-                    Ok(a) => {
-                        found = Some(a);
-                        break;
-                    }
-                    Err(e) => {
-                        info!("No EVM approval at nonce {}: {}", nonce, e);
-                    }
-                }
+    // Scan recent nonces for an existing approval on EVM.
+    // We skip polling at current_nonce first since it's the EVM deposit counter
+    // which may not correspond to any approval (e.g., Terra-originated approvals
+    // use different nonces). Scanning downward with short timeouts is faster.
+    let mut approval_found = None;
+    info!(
+        "Scanning recent EVM nonces for approval to test timeout (deposit_nonce={})",
+        current_nonce
+    );
+    for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
+        match poll_for_approval(config, nonce, Duration::from_secs(5)).await {
+            Ok(a) => {
+                approval_found = Some(a);
+                break;
             }
-            match found {
-                Some(a) => a,
-                None => {
-                    return TestResult::skip(name, "No pending approvals to test timeout handling");
-                }
+            Err(_) => {
+                info!("No EVM approval at nonce {}", nonce);
             }
+        }
+    }
+    let approval = match approval_found {
+        Some(a) => a,
+        None => {
+            return TestResult::skip(name, "No pending approvals to test timeout handling");
         }
     };
 

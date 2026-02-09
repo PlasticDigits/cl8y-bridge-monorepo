@@ -382,11 +382,21 @@ pub async fn test_full_transfer_cycle(
     //
     // NOTE: This is an EVM→Terra deposit. In V2, the operator creates approvals
     // on the DESTINATION chain (Terra). poll_for_approval() queries EVM, so it
-    // won't find EVM→Terra approvals. We try anyway for EVM→EVM compatibility,
-    // but expect this to time out for EVM→Terra flows.
+    // won't find EVM→Terra approvals. We use a short timeout (10s) since this
+    // is expected to timeout for EVM→Terra flows — the full 120s DEFAULT_POLL_TIMEOUT
+    // was wasting ~2 minutes every run producing noisy diagnostic warnings.
     let deposit_nonce = nonce_before;
-    info!("Waiting for operator to relay deposit...");
-    let approval = match poll_for_approval(config, deposit_nonce, DEFAULT_POLL_TIMEOUT).await {
+    let is_terra_destination = config.terra.bridge_address.is_some();
+    let poll_timeout = if is_terra_destination {
+        info!(
+            "Deposit targets Terra — using short EVM poll timeout (approval is on Terra, not EVM)"
+        );
+        Duration::from_secs(10)
+    } else {
+        info!("Waiting for operator to relay deposit...");
+        DEFAULT_POLL_TIMEOUT
+    };
+    let approval = match poll_for_approval(config, deposit_nonce, poll_timeout).await {
         Ok(a) => {
             info!(
                 "Approval received on EVM: hash=0x{}",
@@ -395,10 +405,17 @@ pub async fn test_full_transfer_cycle(
             Some(a)
         }
         Err(e) => {
-            warn!(
-                "EVM approval not found for deposit nonce {} (EVM→Terra approvals are on Terra): {}",
-                deposit_nonce, e
-            );
+            if is_terra_destination {
+                info!(
+                    "EVM approval not found for deposit nonce {} (expected: EVM→Terra approvals are on Terra)",
+                    deposit_nonce
+                );
+            } else {
+                warn!(
+                    "EVM approval not found for deposit nonce {}: {}",
+                    deposit_nonce, e
+                );
+            }
             None
         }
     };
