@@ -16,6 +16,7 @@ mod env;
 mod evm;
 mod terra;
 
+use crate::chain_config;
 use crate::chain_config::ChainId4;
 use crate::config::E2eConfig;
 use crate::docker::DockerCompose;
@@ -323,6 +324,26 @@ impl E2eSetup {
             "Updated config with deployed contract addresses: bridge={}",
             deployed.bridge
         );
+
+        // Set cancel window to 15 seconds for devnet/testing
+        // Production default is 5 minutes (300s), set in Bridge.sol constants.
+        // For local testing we use 15s so canceler E2E tests complete quickly.
+        {
+            let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+            let rpc_url = self.config.evm.rpc_url.as_str();
+            match chain_config::set_cancel_window(
+                deployed.bridge,
+                15, // 15 seconds for devnet
+                rpc_url,
+                &private_key,
+            )
+            .await
+            {
+                Ok(()) => info!("EVM cancel window set to 15 seconds for devnet"),
+                Err(e) => warn!("Failed to set EVM cancel window: {}", e),
+            }
+        }
+
         on_step(SetupStep::DeployEvmContracts, true);
 
         // Deploy Test ERC20 Token for cross-chain transfers

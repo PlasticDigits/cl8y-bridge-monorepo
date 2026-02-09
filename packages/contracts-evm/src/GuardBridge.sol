@@ -6,7 +6,7 @@ import {DatastoreSetAddress, DatastoreSetIdAddress} from "./DatastoreSetAddress.
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 
 contract GuardBridge is IGuardBridge, AccessManaged {
-    DatastoreSetAddress public immutable datastoreAddress;
+    DatastoreSetAddress public immutable DATASTORE_ADDRESS;
 
     error CallFailed();
 
@@ -20,55 +20,55 @@ contract GuardBridge is IGuardBridge, AccessManaged {
         DatastoreSetIdAddress.wrap(keccak256("GUARD_MODULES_ACCOUNT"));
 
     constructor(address _initialAuthority, DatastoreSetAddress _datastoreAddress) AccessManaged(_initialAuthority) {
-        datastoreAddress = _datastoreAddress;
+        DATASTORE_ADDRESS = _datastoreAddress;
     }
 
     function checkAccount(address account) external {
-        uint256 length = datastoreAddress.length(address(this), GUARD_MODULES_ACCOUNT);
+        uint256 length = DATASTORE_ADDRESS.length(address(this), GUARD_MODULES_ACCOUNT);
         for (uint256 i; i < length; i++) {
-            address guardModule = datastoreAddress.at(address(this), GUARD_MODULES_ACCOUNT, i);
+            address guardModule = DATASTORE_ADDRESS.at(address(this), GUARD_MODULES_ACCOUNT, i);
             IGuardBridge(guardModule).checkAccount(account);
         }
     }
 
     function checkDeposit(address token, uint256 amount, address sender) external {
-        uint256 length = datastoreAddress.length(address(this), GUARD_MODULES_DEPOSIT);
+        uint256 length = DATASTORE_ADDRESS.length(address(this), GUARD_MODULES_DEPOSIT);
         for (uint256 i; i < length; i++) {
-            address guardModule = datastoreAddress.at(address(this), GUARD_MODULES_DEPOSIT, i);
+            address guardModule = DATASTORE_ADDRESS.at(address(this), GUARD_MODULES_DEPOSIT, i);
             IGuardBridge(guardModule).checkDeposit(token, amount, sender);
         }
     }
 
     function checkWithdraw(address token, uint256 amount, address sender) external {
-        uint256 length = datastoreAddress.length(address(this), GUARD_MODULES_WITHDRAW);
+        uint256 length = DATASTORE_ADDRESS.length(address(this), GUARD_MODULES_WITHDRAW);
         for (uint256 i; i < length; i++) {
-            address guardModule = datastoreAddress.at(address(this), GUARD_MODULES_WITHDRAW, i);
+            address guardModule = DATASTORE_ADDRESS.at(address(this), GUARD_MODULES_WITHDRAW, i);
             IGuardBridge(guardModule).checkWithdraw(token, amount, sender);
         }
     }
 
     function addGuardModuleDeposit(address guardModule) external restricted {
-        datastoreAddress.add(GUARD_MODULES_DEPOSIT, guardModule);
+        DATASTORE_ADDRESS.add(GUARD_MODULES_DEPOSIT, guardModule);
     }
 
     function removeGuardModuleDeposit(address guardModule) external restricted {
-        datastoreAddress.remove(GUARD_MODULES_DEPOSIT, guardModule);
+        DATASTORE_ADDRESS.remove(GUARD_MODULES_DEPOSIT, guardModule);
     }
 
     function addGuardModuleWithdraw(address guardModule) external restricted {
-        datastoreAddress.add(GUARD_MODULES_WITHDRAW, guardModule);
+        DATASTORE_ADDRESS.add(GUARD_MODULES_WITHDRAW, guardModule);
     }
 
     function removeGuardModuleWithdraw(address guardModule) external restricted {
-        datastoreAddress.remove(GUARD_MODULES_WITHDRAW, guardModule);
+        DATASTORE_ADDRESS.remove(GUARD_MODULES_WITHDRAW, guardModule);
     }
 
     function addGuardModuleAccount(address guardModule) external restricted {
-        datastoreAddress.add(GUARD_MODULES_ACCOUNT, guardModule);
+        DATASTORE_ADDRESS.add(GUARD_MODULES_ACCOUNT, guardModule);
     }
 
     function removeGuardModuleAccount(address guardModule) external restricted {
-        datastoreAddress.remove(GUARD_MODULES_ACCOUNT, guardModule);
+        DATASTORE_ADDRESS.remove(GUARD_MODULES_ACCOUNT, guardModule);
     }
 
     function execute(address target, bytes calldata data) external payable restricted returns (bytes memory) {

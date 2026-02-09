@@ -309,7 +309,7 @@ configure_local() {
     log_info "Configuring bridge for local testing..."
     
     # Set withdraw delay to 60 seconds (contract minimum)
-    SET_DELAY_MSG='{"set_withdraw_delay":{"delay_seconds":60}}'
+    SET_DELAY_MSG='{"set_withdraw_delay":{"delay_seconds":15}}'
     
     TX=$(terrad_tx tx wasm execute "$BRIDGE_CONTRACT" "$SET_DELAY_MSG" \
         --from "$KEY_NAME" \

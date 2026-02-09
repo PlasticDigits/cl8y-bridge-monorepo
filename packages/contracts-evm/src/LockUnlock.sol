@@ -6,12 +6,15 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title LockUnlock
 /// @notice Upgradeable lock/unlock handler for ERC20 tokens
 /// @dev Uses UUPS proxy pattern for upgradeability
 /// @dev Does not support transfer taxed tokens, rebasing tokens, or other balance modifying tokens
 contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ============================================================================
     // Constants
     // ============================================================================
@@ -64,10 +67,14 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
 
     /// @notice Only authorized callers can call
     modifier onlyAuthorized() {
+        _onlyAuthorized();
+        _;
+    }
+
+    function _onlyAuthorized() internal view {
         if (!authorizedCallers[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     // ============================================================================
@@ -122,7 +129,7 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
         uint256 initialBalanceThis = IERC20(token).balanceOf(address(this));
         uint256 initialBalanceFrom = IERC20(token).balanceOf(from);
 
-        IERC20(token).transferFrom(from, address(this), amount);
+        IERC20(token).safeTransferFrom(from, address(this), amount);
 
         uint256 finalBalanceThis = IERC20(token).balanceOf(address(this));
         uint256 finalBalanceFrom = IERC20(token).balanceOf(from);
@@ -143,7 +150,7 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
         uint256 initialBalanceThis = IERC20(token).balanceOf(address(this));
         uint256 initialBalanceTo = IERC20(token).balanceOf(to);
 
-        IERC20(token).transfer(to, amount);
+        IERC20(token).safeTransfer(to, amount);
 
         uint256 finalBalanceThis = IERC20(token).balanceOf(address(this));
         uint256 finalBalanceTo = IERC20(token).balanceOf(to);

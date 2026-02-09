@@ -33,6 +33,7 @@ library HashLib {
         uint256 amount,
         uint256 nonce
     ) internal pure returns (bytes32 transferId) {
+        // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
     }
 
@@ -64,7 +65,8 @@ library HashLib {
     /// @dev Format: keccak256(abi.encode("EVM", bytes32(chainId)))
     /// @param chainId The EVM chain ID (e.g., 1 for Ethereum, 56 for BSC)
     /// @return chainKey The computed chain key
-    function computeEVMChainKey(uint256 chainId) internal pure returns (bytes32 chainKey) {
+    function computeEvmChainKey(uint256 chainId) internal pure returns (bytes32 chainKey) {
+        // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(abi.encode("EVM", bytes32(chainId)));
     }
 
@@ -73,14 +75,16 @@ library HashLib {
     /// @param chainId The Cosmos chain ID string (e.g., "columbus-5", "localterra")
     /// @return chainKey The computed chain key
     function computeCosmosChainKey(string memory chainId) internal pure returns (bytes32 chainKey) {
+        // forge-lint: disable-next-line(asm-keccak256)
         bytes32 innerHash = keccak256(abi.encode(chainId));
+        // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(abi.encode("COSMW", innerHash));
     }
 
     /// @notice Get the chain key for the current EVM chain
     /// @return chainKey The chain key for this chain
     function thisChainKey() internal view returns (bytes32 chainKey) {
-        return computeEVMChainKey(block.chainid);
+        return computeEvmChainKey(block.chainid);
     }
 
     // ============================================================================
@@ -92,6 +96,7 @@ library HashLib {
     /// @param identifier The chain identifier (e.g., "evm_1", "terraclassic_columbus-5")
     /// @return hash The keccak256 hash of the identifier
     function computeChainIdentifierHash(string memory identifier) internal pure returns (bytes32 hash) {
+        // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(abi.encode(identifier));
     }
 
@@ -106,6 +111,7 @@ library HashLib {
     /// @param chainKey The chain key as bytes32
     /// @return chainId The first 4 bytes as bytes4
     function bytes32ToChainId(bytes32 chainKey) internal pure returns (bytes4 chainId) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return bytes4(chainKey);
     }
 
@@ -139,9 +145,9 @@ library HashLib {
         uint256 amount,
         uint64 nonce
     ) internal pure returns (bytes32 transferHash) {
-        return keccak256(
-            abi.encode(bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce))
-        );
+        bytes memory data = abi.encode(bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce));
+        // forge-lint: disable-next-line(asm-keccak256)
+        return keccak256(data);
     }
 
     // ============================================================================

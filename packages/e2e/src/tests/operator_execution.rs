@@ -237,10 +237,19 @@ pub async fn test_operator_live_deposit_detection(
     // In V2, the user must call WithdrawSubmit on the destination chain (Terra)
     // before the operator can approve it. This creates the entry in PENDING_WITHDRAWS.
     //
+    // IMPORTANT: The nonce used here must be nonce_before (the value of depositNonce
+    // BEFORE the deposit was executed). The Solidity `depositNonce++` is a post-increment:
+    // it assigns the current value to `currentNonce` then increments. So the deposit
+    // uses nonce_before as its nonce, and nonce_after = nonce_before + 1.
+    //
     // IMPORTANT: The amount must be the post-fee amount (netAmount) from the EVM deposit.
     // The EVM Bridge deducts fees on deposit and uses netAmount in the hash.
     // The Terra WithdrawSubmit must use the same amount to produce a matching hash.
     let evm_chain_id: [u8; 4] = [0, 0, 0, 1]; // EVM predetermined chain ID
+
+    // The actual nonce used in the deposit hash is nonce_before (pre-increment value).
+    // depositNonce++ assigns the current value, then increments the counter.
+    let deposit_nonce = nonce_before;
 
     // Calculate the net amount (post-fee) that was stored in the EVM deposit hash
     let fee_amount = match calculate_evm_fee(config, test_account, transfer_amount).await {
@@ -269,7 +278,7 @@ pub async fn test_operator_live_deposit_detection(
 
     info!(
         "Submitting WithdrawSubmit on Terra: nonce={}, token=uluna, amount={}",
-        nonce_after, net_amount
+        deposit_nonce, net_amount
     );
 
     match submit_withdraw_on_terra(
@@ -280,14 +289,14 @@ pub async fn test_operator_live_deposit_detection(
         "uluna",
         terra_recipient,
         net_amount,
-        nonce_after,
+        deposit_nonce,
     )
     .await
     {
         Ok(tx_hash) => {
             info!(
                 "WithdrawSubmit succeeded on Terra: tx={}, nonce={}",
-                tx_hash, nonce_after
+                tx_hash, deposit_nonce
             );
         }
         Err(e) => {
@@ -309,7 +318,7 @@ pub async fn test_operator_live_deposit_detection(
     let approval_result = poll_terra_for_approval(
         &terra_client,
         &terra_bridge,
-        nonce_after,
+        deposit_nonce,
         TERRA_APPROVAL_TIMEOUT,
     )
     .await;
@@ -732,8 +741,12 @@ pub async fn test_operator_sequential_deposit_processing(
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Verify approvals were created (spot check first and last)
+    // The deposits used nonces initial_nonce through initial_nonce + num_deposits - 1
+    // (depositNonce++ is post-increment: assigns current value, then increments)
     let mut approvals_found = 0;
-    for &nonce in &[initial_nonce + 1, final_nonce] {
+    let first_deposit_nonce = initial_nonce;
+    let last_deposit_nonce = initial_nonce + num_deposits as u64 - 1;
+    for &nonce in &[first_deposit_nonce, last_deposit_nonce] {
         if (poll_for_approval(config, nonce, Duration::from_secs(15)).await).is_ok() {
             approvals_found += 1;
             info!("Found approval for nonce {}", nonce);

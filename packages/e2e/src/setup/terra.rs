@@ -113,10 +113,12 @@ impl E2eSetup {
             }
         };
 
-        // Step 3: Configure withdraw delay (300 seconds)
+        // Step 3: Configure withdraw delay (15 seconds for devnet/testing)
+        // Production default is 5 minutes (300s), set in contract constants.
+        // For local testing we use 15s so canceler E2E tests complete quickly.
         let delay_msg = serde_json::json!({
             "set_withdraw_delay": {
-                "delay_seconds": 300
+                "delay_seconds": 15
             }
         });
 

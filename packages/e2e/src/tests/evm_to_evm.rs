@@ -332,17 +332,19 @@ pub async fn test_evm_to_evm_full_cycle(
         return deposit_result;
     }
 
-    // Get the deposit nonce
-    let nonce = match query_deposit_nonce(config).await {
+    // Get the deposit nonce counter (post-increment value).
+    // The actual nonce used in the deposit is nonce - 1 because depositNonce++ is post-increment.
+    let nonce_counter = match query_deposit_nonce(config).await {
         Ok(n) => n,
         Err(e) => {
             return TestResult::fail(name, format!("Failed to get nonce: {}", e), start.elapsed());
         }
     };
+    let deposit_nonce = nonce_counter - 1;
 
     // Poll for operator to create approval
     info!("Waiting for operator relay...");
-    let approval = match poll_for_approval(config, nonce, options.approval_timeout).await {
+    let approval = match poll_for_approval(config, deposit_nonce, options.approval_timeout).await {
         Ok(a) => {
             info!(
                 "Approval received: 0x{}",

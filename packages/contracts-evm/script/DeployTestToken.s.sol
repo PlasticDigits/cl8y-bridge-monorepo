@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import {Script, console} from "forge-std/Script.sol";
-import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 
 /// @title DeployTestToken - Deploys a test ERC20 token for integration testing
 /// @notice Creates a bridged token with initial supply for testing EVM deposits

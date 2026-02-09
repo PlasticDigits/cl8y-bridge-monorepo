@@ -212,7 +212,13 @@ impl TerraWriter {
             );
 
             let response: serde_json::Value = match self.client.get(&url).send().await {
-                Ok(resp) => resp.json().await.unwrap_or_default(),
+                Ok(resp) => match resp.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "Failed to parse Terra PendingWithdrawals response as JSON");
+                        return Ok(());
+                    }
+                },
                 Err(e) => {
                     warn!(error = %e, "Failed to query Terra PendingWithdrawals");
                     return Ok(());
@@ -222,14 +228,35 @@ impl TerraWriter {
             let withdrawals = match response["data"]["withdrawals"].as_array() {
                 Some(arr) => arr.clone(),
                 None => {
-                    debug!("No pending withdrawals data in response");
+                    // Log at info level so it's always visible
+                    info!(
+                        response_keys = ?response.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+                        "No pending withdrawals data in LCD response (data.withdrawals missing)"
+                    );
                     return Ok(());
                 }
             };
 
             if withdrawals.is_empty() {
+                debug!("No pending withdrawals returned from Terra");
                 break;
             }
+
+            // Count unapproved entries for logging
+            let unapproved_count = withdrawals
+                .iter()
+                .filter(|e| {
+                    !e["approved"].as_bool().unwrap_or(false)
+                        && !e["cancelled"].as_bool().unwrap_or(false)
+                        && !e["executed"].as_bool().unwrap_or(false)
+                })
+                .count();
+
+            info!(
+                total = withdrawals.len(),
+                unapproved = unapproved_count,
+                "Polled Terra PendingWithdrawals"
+            );
 
             let mut last_hash: Option<String> = None;
 

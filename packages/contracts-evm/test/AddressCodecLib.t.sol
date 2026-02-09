@@ -22,17 +22,20 @@ contract AddressCodecLibTest is Test {
     // ============================================================================
 
     function test_EncodeEVM() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
 
         // Check chain type is EVM (0x00000001)
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint32 chainType = uint32(bytes4(encoded));
         assertEq(chainType, AddressCodecLib.CHAIN_TYPE_EVM, "Chain type should be EVM");
 
         // Check raw address is correct
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes20 rawAddr = bytes20(encoded << 32);
         assertEq(rawAddr, bytes20(TEST_EVM_ADDRESS), "Raw address should match");
 
         // Check reserved bytes are zero
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes8 reserved = bytes8(encoded << 192);
         assertEq(reserved, bytes8(0), "Reserved bytes should be zero");
     }
@@ -41,10 +44,12 @@ contract AddressCodecLibTest is Test {
         bytes32 encoded = AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW);
 
         // Check chain type is Cosmos (0x00000002)
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint32 chainType = uint32(bytes4(encoded));
         assertEq(chainType, AddressCodecLib.CHAIN_TYPE_COSMOS, "Chain type should be Cosmos");
 
         // Check raw address is correct
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes20 rawAddr = bytes20(encoded << 32);
         assertEq(rawAddr, TEST_COSMOS_RAW, "Raw address should match");
     }
@@ -53,9 +58,11 @@ contract AddressCodecLibTest is Test {
         bytes20 rawAddr = bytes20(TEST_EVM_ADDRESS);
         bytes32 encoded = AddressCodecLib.encode(AddressCodecLib.CHAIN_TYPE_EVM, rawAddr);
 
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint32 chainType = uint32(bytes4(encoded));
         assertEq(chainType, AddressCodecLib.CHAIN_TYPE_EVM);
 
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes20 extractedAddr = bytes20(encoded << 32);
         assertEq(extractedAddr, rawAddr);
     }
@@ -89,7 +96,7 @@ contract AddressCodecLibTest is Test {
     // ============================================================================
 
     function test_Decode() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
 
         (uint32 chainType, bytes20 rawAddr, bytes8 reserved) = AddressCodecLib.decode(encoded);
 
@@ -99,7 +106,7 @@ contract AddressCodecLibTest is Test {
     }
 
     function test_DecodeStrict() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
 
         (uint32 chainType, bytes20 rawAddr) = AddressCodecLib.decodeStrict(encoded);
 
@@ -133,9 +140,9 @@ contract AddressCodecLibTest is Test {
     }
 
     function test_DecodeAsEVM() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
 
-        address addr = AddressCodecLib.decodeAsEVM(encoded);
+        address addr = AddressCodecLib.decodeAsEvm(encoded);
 
         assertEq(addr, TEST_EVM_ADDRESS);
     }
@@ -147,12 +154,12 @@ contract AddressCodecLibTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(AddressCodecLib.InvalidChainType.selector, AddressCodecLib.CHAIN_TYPE_COSMOS)
         );
-        this.decodeAsEVMExternal(encoded);
+        this.decodeAsEvmExternal(encoded);
     }
 
     // External helper for vm.expectRevert
-    function decodeAsEVMExternal(bytes32 encoded) external pure returns (address) {
-        return AddressCodecLib.decodeAsEVM(encoded);
+    function decodeAsEvmExternal(bytes32 encoded) external pure returns (address) {
+        return AddressCodecLib.decodeAsEvm(encoded);
     }
 
     function test_DecodeAsCosmos() public pure {
@@ -164,7 +171,7 @@ contract AddressCodecLibTest is Test {
     }
 
     function test_DecodeAsCosmos_RevertsOnWrongChainType() public {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
 
         // Should revert because chain type is not EVM
         vm.expectRevert(
@@ -183,8 +190,8 @@ contract AddressCodecLibTest is Test {
     // ============================================================================
 
     function test_Roundtrip_EVM() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
-        address decoded = AddressCodecLib.decodeAsEVM(encoded);
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
+        address decoded = AddressCodecLib.decodeAsEvm(encoded);
 
         assertEq(decoded, TEST_EVM_ADDRESS, "EVM roundtrip should preserve address");
     }
@@ -197,8 +204,8 @@ contract AddressCodecLibTest is Test {
     }
 
     function testFuzz_Roundtrip_EVM(address addr) public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(addr);
-        address decoded = AddressCodecLib.decodeAsEVM(encoded);
+        bytes32 encoded = AddressCodecLib.encodeEvm(addr);
+        address decoded = AddressCodecLib.decodeAsEvm(encoded);
         assertEq(decoded, addr);
     }
 
@@ -214,7 +221,7 @@ contract AddressCodecLibTest is Test {
 
     function test_IsValidChainType() public pure {
         // Valid chain types
-        assertTrue(AddressCodecLib.isValidChainType(AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS)));
+        assertTrue(AddressCodecLib.isValidChainType(AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS)));
         assertTrue(AddressCodecLib.isValidChainType(AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW)));
 
         // Create encoded with Solana chain type
@@ -234,17 +241,17 @@ contract AddressCodecLibTest is Test {
     }
 
     function test_IsEVM() public pure {
-        assertTrue(AddressCodecLib.isEVM(AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS)));
-        assertFalse(AddressCodecLib.isEVM(AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW)));
+        assertTrue(AddressCodecLib.isEvm(AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS)));
+        assertFalse(AddressCodecLib.isEvm(AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW)));
     }
 
     function test_IsCosmos() public pure {
         assertTrue(AddressCodecLib.isCosmos(AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW)));
-        assertFalse(AddressCodecLib.isCosmos(AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS)));
+        assertFalse(AddressCodecLib.isCosmos(AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS)));
     }
 
     function test_GetChainType() public pure {
-        bytes32 evmEncoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 evmEncoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
         assertEq(AddressCodecLib.getChainType(evmEncoded), AddressCodecLib.CHAIN_TYPE_EVM);
 
         bytes32 cosmosEncoded = AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW);
@@ -252,7 +259,7 @@ contract AddressCodecLibTest is Test {
     }
 
     function test_GetRawAddress() public pure {
-        bytes32 evmEncoded = AddressCodecLib.encodeEVM(TEST_EVM_ADDRESS);
+        bytes32 evmEncoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
         assertEq(AddressCodecLib.getRawAddress(evmEncoded), bytes20(TEST_EVM_ADDRESS));
 
         bytes32 cosmosEncoded = AddressCodecLib.encodeCosmos(TEST_COSMOS_RAW);
@@ -264,15 +271,15 @@ contract AddressCodecLibTest is Test {
     // ============================================================================
 
     function test_ZeroAddress() public pure {
-        bytes32 encoded = AddressCodecLib.encodeEVM(address(0));
-        address decoded = AddressCodecLib.decodeAsEVM(encoded);
+        bytes32 encoded = AddressCodecLib.encodeEvm(address(0));
+        address decoded = AddressCodecLib.decodeAsEvm(encoded);
         assertEq(decoded, address(0));
     }
 
     function test_MaxAddress() public pure {
         address maxAddr = address(type(uint160).max);
-        bytes32 encoded = AddressCodecLib.encodeEVM(maxAddr);
-        address decoded = AddressCodecLib.decodeAsEVM(encoded);
+        bytes32 encoded = AddressCodecLib.encodeEvm(maxAddr);
+        address decoded = AddressCodecLib.decodeAsEvm(encoded);
         assertEq(decoded, maxAddr);
     }
 

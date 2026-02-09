@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.30;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
@@ -487,6 +487,173 @@ contract BridgeTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawCancelled.selector, withdrawHash));
         bridge.withdrawExecuteUnlock(withdrawHash);
+    }
+
+    // ============================================================================
+    // Deposit Nonce Semantics Tests
+    // ============================================================================
+
+    /// @notice Proves that depositNonce() returns the NEXT nonce to be used,
+    /// and the deposit uses nonce_before (the pre-increment value).
+    ///
+    /// This test was written to reproduce the off-by-one bug in the e2e test where
+    /// WithdrawSubmit was called with nonce_after (post-increment) instead of
+    /// nonce_before (the actual nonce used in the deposit hash).
+    function test_DepositNonce_IsPreIncrement() public {
+        // Step 1: Read depositNonce before deposit (starts at 1 after initialization)
+        uint64 nonceBefore = bridge.depositNonce();
+        assertEq(nonceBefore, 1, "depositNonce should start at 1");
+
+        // Step 2: Execute a deposit
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        // Step 3: Read depositNonce after deposit
+        uint64 nonceAfter = bridge.depositNonce();
+        assertEq(nonceAfter, 2, "depositNonce should be 2 after first deposit");
+
+        // Step 4: Verify the deposit used nonceBefore (1), NOT nonceAfter (2)
+        // The deposit record should exist at the hash computed with nonceBefore
+        uint256 fee = bridge.calculateFee(user, 100 ether);
+        uint256 netAmount = 100 ether - fee;
+        bytes32 srcAccount = bytes32(uint256(uint160(user)));
+        bytes32 destToken = tokenRegistry.getDestToken(address(token), destChainId);
+
+        // Compute hash using nonceBefore (the CORRECT nonce)
+        bytes32 correctHash = keccak256(
+            abi.encode(
+                bytes32(thisChainId),
+                bytes32(destChainId),
+                srcAccount,
+                destAccount,
+                destToken,
+                netAmount,
+                uint256(nonceBefore) // nonceBefore = 1 (the actual nonce used)
+            )
+        );
+
+        // Compute hash using nonceAfter (the WRONG nonce - what the e2e bug was using)
+        bytes32 wrongHash = keccak256(
+            abi.encode(
+                bytes32(thisChainId),
+                bytes32(destChainId),
+                srcAccount,
+                destAccount,
+                destToken,
+                netAmount,
+                uint256(nonceAfter) // nonceAfter = 2 (off-by-one!)
+            )
+        );
+
+        // The deposit record exists at correctHash (nonceBefore)
+        IBridge.DepositRecord memory correctRecord = bridge.getDeposit(correctHash);
+        assertTrue(correctRecord.timestamp > 0, "Deposit should exist at hash with nonceBefore");
+        assertEq(correctRecord.nonce, nonceBefore, "Deposit nonce should be nonceBefore");
+
+        // The deposit record does NOT exist at wrongHash (nonceAfter)
+        IBridge.DepositRecord memory wrongRecord = bridge.getDeposit(wrongHash);
+        assertEq(wrongRecord.timestamp, 0, "No deposit should exist at hash with nonceAfter");
+
+        // This proves:
+        // - depositNonce() returns the NEXT nonce (post-increment counter)
+        // - The deposit actually uses nonceBefore (pre-increment value)
+        // - Using nonceAfter in WithdrawSubmit would produce a DIFFERENT hash
+        //   that doesn't match any deposit, causing the operator to never approve
+    }
+
+    /// @notice Verify that multiple deposits use sequential nonces starting from nonceBefore
+    function test_DepositNonce_SequentialDeposits() public {
+        uint64 nonce0 = bridge.depositNonce(); // Should be 1
+
+        // Deposit 1: uses nonce 1
+        vm.startPrank(user);
+        token.approve(address(bridge), 300 ether);
+        token.approve(address(lockUnlock), 300 ether);
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        uint64 nonce1 = bridge.depositNonce(); // Should be 2
+        assertEq(nonce1, nonce0 + 1);
+
+        // Deposit 2: uses nonce 2
+        vm.startPrank(user);
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        uint64 nonce2 = bridge.depositNonce(); // Should be 3
+        assertEq(nonce2, nonce0 + 2);
+
+        // Each deposit used nonceBefore for that deposit:
+        // Deposit 1 used nonce0 (1), Deposit 2 used nonce1 (2)
+        // The correct nonce for WithdrawSubmit is the value READ BEFORE the deposit
+    }
+
+    /// @notice Verify batch deposit nonce semantics for wait_for_batch_approvals
+    ///
+    /// This test reproduces the bug in wait_for_batch_approvals which was using
+    /// start_nonce + i + 1 instead of start_nonce + i, causing it to poll for
+    /// the wrong nonces and never find approvals for batch deposits.
+    function test_DepositNonce_BatchCorrectNonces() public {
+        // Simulate the e2e batch test scenario:
+        // initial_nonce = depositNonce() before batch = 1
+        uint64 initialNonce = bridge.depositNonce();
+        assertEq(initialNonce, 1);
+
+        uint256 batchSize = 3;
+        uint256 fee = bridge.calculateFee(user, 10 ether);
+        uint256 netAmount = 10 ether - fee;
+        bytes32 srcAccount = bytes32(uint256(uint160(user)));
+        bytes32 destToken = tokenRegistry.getDestToken(address(token), destChainId);
+
+        // Execute batch of 3 deposits
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+        for (uint256 i = 0; i < batchSize; i++) {
+            bridge.depositERC20(address(token), 10 ether, destChainId, destAccount);
+        }
+        vm.stopPrank();
+
+        uint64 finalNonce = bridge.depositNonce();
+        // casting to 'uint64' is safe because batchSize is a small test constant (3)
+        // forge-lint: disable-next-line(unsafe-typecast)
+        assertEq(finalNonce, initialNonce + uint64(batchSize), "Final nonce should be initial + batchSize");
+
+        // CORRECT: deposits used nonces initialNonce, initialNonce+1, initialNonce+2
+        // i.e., nonces 1, 2, 3
+        for (uint256 i = 0; i < batchSize; i++) {
+            // casting to 'uint64' is safe because i is bounded by batchSize (3)
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64 expectedNonce = initialNonce + uint64(i); // NOT initialNonce + i + 1
+            bytes32 hash = keccak256(
+                abi.encode(
+                    bytes32(thisChainId), bytes32(destChainId), srcAccount, destAccount,
+                    destToken, netAmount, uint256(expectedNonce)
+                )
+            );
+            IBridge.DepositRecord memory record = bridge.getDeposit(hash);
+            assertTrue(record.timestamp > 0, "Deposit should exist at correct nonce");
+            assertEq(record.nonce, expectedNonce, "Deposit nonce should match");
+        }
+
+        // WRONG: nonces initialNonce+1, initialNonce+2, initialNonce+3 (the old buggy pattern)
+        // The last one (initialNonce + batchSize) has no deposit
+        {
+            // casting to 'uint64' is safe because batchSize is a small test constant (3)
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint64 wrongNonce = initialNonce + uint64(batchSize); // = 4, no deposit exists here
+            bytes32 wrongHash = keccak256(
+                abi.encode(
+                    bytes32(thisChainId), bytes32(destChainId), srcAccount, destAccount,
+                    destToken, netAmount, uint256(wrongNonce)
+                )
+            );
+            IBridge.DepositRecord memory wrongRecord = bridge.getDeposit(wrongHash);
+            assertEq(wrongRecord.timestamp, 0, "No deposit should exist at wrong nonce (off-by-one)");
+        }
     }
 
     // ============================================================================

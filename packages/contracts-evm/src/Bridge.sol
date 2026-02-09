@@ -7,9 +7,9 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IBridge} from "./interfaces/IBridge.sol";
-import {ITokenRegistry} from "./interfaces/ITokenRegistry.sol";
 import {ChainRegistry} from "./ChainRegistry.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {LockUnlock} from "./LockUnlock.sol";
@@ -22,6 +22,7 @@ import {HashLib} from "./lib/HashLib.sol";
 /// @dev Uses UUPS proxy pattern for upgradeability
 contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuard, IBridge {
     using FeeCalculatorLib for FeeCalculatorLib.FeeConfig;
+    using SafeERC20 for IERC20;
 
     // ============================================================================
     // Constants
@@ -103,18 +104,26 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Only operator can call
     modifier onlyOperator() {
+        _onlyOperator();
+        _;
+    }
+
+    function _onlyOperator() internal view {
         if (!operators[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     /// @notice Only canceler can call
     modifier onlyCanceler() {
+        _onlyCanceler();
+        _;
+    }
+
+    function _onlyCanceler() internal view {
         if (!cancelers[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     // ============================================================================
@@ -388,7 +397,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Transfer fee directly from user to fee recipient
         if (fee > 0) {
-            IERC20(token).transferFrom(msg.sender, feeConfig.feeRecipient, fee);
+            IERC20(token).safeTransferFrom(msg.sender, feeConfig.feeRecipient, fee);
             emit FeeCollected(token, fee, feeConfig.feeRecipient);
         }
 
@@ -440,7 +449,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Transfer fee tokens first (before burning)
         if (fee > 0) {
-            IERC20(token).transferFrom(msg.sender, feeConfig.feeRecipient, fee);
+            IERC20(token).safeTransferFrom(msg.sender, feeConfig.feeRecipient, fee);
             emit FeeCollected(token, fee, feeConfig.feeRecipient);
         }
 

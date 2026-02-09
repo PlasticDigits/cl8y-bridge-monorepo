@@ -378,8 +378,10 @@ pub async fn test_full_transfer_cycle(
     );
 
     // Step 8: Poll for operator to create approval
+    // The deposit used nonce_before as its nonce (depositNonce++ is post-increment)
+    let deposit_nonce = nonce_before;
     info!("Waiting for operator to relay deposit...");
-    let approval = match poll_for_approval(config, nonce_after, DEFAULT_POLL_TIMEOUT).await {
+    let approval = match poll_for_approval(config, deposit_nonce, DEFAULT_POLL_TIMEOUT).await {
         Ok(a) => {
             info!(
                 "Approval received: hash=0x{}",

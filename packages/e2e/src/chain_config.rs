@@ -949,6 +949,52 @@ pub async fn configure_chains(
     })
 }
 
+// =============================================================================
+// Bridge Configuration
+// =============================================================================
+
+/// Set the cancel window on the EVM Bridge contract
+///
+/// The cancel window is the delay between operator approval and when the
+/// withdrawal can be executed. During this window, cancelers can cancel
+/// fraudulent approvals.
+///
+/// # Arguments
+/// * `bridge` - Address of the Bridge contract
+/// * `seconds` - Cancel window duration in seconds
+/// * `rpc_url` - EVM RPC URL
+/// * `private_key` - Private key for signing (hex string with 0x prefix)
+pub async fn set_cancel_window(
+    bridge: Address,
+    seconds: u64,
+    rpc_url: &str,
+    private_key: &str,
+) -> Result<()> {
+    info!("Setting EVM cancel window to {} seconds", seconds);
+
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            &format!("{}", bridge),
+            "setCancelWindow(uint256)",
+            &seconds.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to set cancel window: {}", stderr));
+    }
+
+    info!("EVM cancel window set to {} seconds", seconds);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,20 +7,20 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// @notice A simple mintable ERC20 token for E2E testing
 /// @dev Anyone can mint tokens - DO NOT USE IN PRODUCTION
 contract MockMintableToken is ERC20 {
-    uint8 private immutable _decimals;
+    uint8 private immutable DECIMALS;
 
     /// @notice Constructor
     /// @param name The name of the token
     /// @param symbol The symbol of the token
     /// @param decimals_ The number of decimals (default 18)
     constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
-        _decimals = decimals_;
+        DECIMALS = decimals_;
     }
 
     /// @notice Override decimals
     /// @return The number of decimals
     function decimals() public view override returns (uint8) {
-        return _decimals;
+        return DECIMALS;
     }
 
     /// @notice Mint tokens to an address (anyone can call)

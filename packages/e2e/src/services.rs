@@ -456,7 +456,7 @@ impl ServiceManager {
             ),
             (
                 "RUST_LOG".to_string(),
-                "info,cl8y_operator=debug".to_string(),
+                "info,cl8y_relayer=debug".to_string(),
             ),
             // Skip migrations since e2e setup already ran them
             ("SKIP_MIGRATIONS".to_string(), "true".to_string()),

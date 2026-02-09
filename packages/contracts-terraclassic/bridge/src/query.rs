@@ -301,7 +301,7 @@ pub fn query_pending_withdraw(
         Some(w) => {
             // Calculate cancel window remaining
             let cancel_window_remaining = if w.approved && !w.cancelled {
-                let cancel_window = 300u64; // 5 minutes, matches withdraw.rs CANCEL_WINDOW
+                let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64);
                 let elapsed = env.block.time.seconds().saturating_sub(w.approved_at);
                 cancel_window.saturating_sub(elapsed)
             } else {
@@ -349,7 +349,7 @@ pub fn query_pending_withdrawals(
     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
     let start = start_after.as_ref().map(|b| Bound::exclusive(b.as_slice()));
 
-    let cancel_window = 300u64; // 5 minutes, matches withdraw.rs CANCEL_WINDOW
+    let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64); // default 5 minutes if not set
 
     let withdrawals: Vec<PendingWithdrawalEntry> = PENDING_WITHDRAWS
         .range(deps.storage, start, None, Order::Ascending)

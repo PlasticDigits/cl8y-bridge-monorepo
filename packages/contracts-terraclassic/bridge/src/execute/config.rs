@@ -85,7 +85,7 @@ pub fn execute_set_withdraw_delay(
     }
 
     // Validate range (60 seconds to 24 hours)
-    if !(60..=86400).contains(&delay_seconds) {
+    if !(15..=86400).contains(&delay_seconds) {
         return Err(ContractError::InvalidWithdrawDelay);
     }
 

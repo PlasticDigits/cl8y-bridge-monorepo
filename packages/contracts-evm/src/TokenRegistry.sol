@@ -52,10 +52,14 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
 
     /// @notice Only operator can call
     modifier onlyOperator() {
+        _onlyOperator();
+        _;
+    }
+
+    function _onlyOperator() internal view {
         if (!operators[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     // ============================================================================

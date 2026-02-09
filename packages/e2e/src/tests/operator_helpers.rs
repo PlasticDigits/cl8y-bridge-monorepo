@@ -901,6 +901,10 @@ pub async fn execute_batch_deposits(
 }
 
 /// Wait for multiple approvals to be created
+///
+/// `start_nonce` is the value of `depositNonce()` BEFORE the batch started.
+/// The deposits use nonces `start_nonce`, `start_nonce + 1`, ..., `start_nonce + num_approvals - 1`
+/// because Solidity's `depositNonce++` is a post-increment (assigns current value, then increments).
 pub async fn wait_for_batch_approvals(
     config: &E2eConfig,
     start_nonce: u64,
@@ -913,7 +917,9 @@ pub async fn wait_for_batch_approvals(
     let mut found = 0u32;
 
     for i in 0..num_approvals {
-        let nonce = start_nonce + (i as u64) + 1;
+        // Deposit i used nonce = start_nonce + i (not start_nonce + i + 1)
+        // because depositNonce++ is post-increment
+        let nonce = start_nonce + (i as u64);
         let remaining = timeout.saturating_sub(start.elapsed());
 
         if remaining.is_zero() {

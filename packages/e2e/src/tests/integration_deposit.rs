@@ -239,16 +239,18 @@ pub async fn test_evm_to_terra_with_verification(
     }
 
     // Step 3: Wait for operator relay with polling
+    // The deposit nonce counter is post-increment, so the actual nonce used is counter - 1.
     info!("Waiting for cross-chain relay...");
-    let nonce = match query_deposit_nonce(config).await {
+    let nonce_counter = match query_deposit_nonce(config).await {
         Ok(n) => n,
         Err(_) => {
             return TestResult::pass(name, start.elapsed()); // Pass partial if can't query
         }
     };
+    let deposit_nonce = nonce_counter - 1;
 
     // Poll for approval
-    match poll_for_approval(config, nonce, Duration::from_secs(90)).await {
+    match poll_for_approval(config, deposit_nonce, Duration::from_secs(90)).await {
         Ok(approval) => {
             info!(
                 "Cross-chain approval confirmed: 0x{}",

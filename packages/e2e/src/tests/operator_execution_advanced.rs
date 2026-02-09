@@ -468,7 +468,9 @@ pub async fn test_operator_evm_to_evm_withdrawal(
     }
 
     // Wait for approval
-    let approval = match poll_for_approval(config, new_nonce, Duration::from_secs(60)).await {
+    // The deposit used initial_nonce as its nonce (depositNonce++ is post-increment)
+    let deposit_nonce = initial_nonce;
+    let approval = match poll_for_approval(config, deposit_nonce, Duration::from_secs(60)).await {
         Ok(a) => {
             info!("Found approval for EVM-to-EVM deposit: nonce={}", a.nonce);
             a

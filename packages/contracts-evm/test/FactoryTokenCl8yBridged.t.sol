@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
-import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 
 contract FactoryTokenCl8yBridgedTest is Test {
     FactoryTokenCl8yBridged public factory;

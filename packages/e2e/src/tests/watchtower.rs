@@ -195,13 +195,13 @@ pub async fn test_withdraw_delay_enforcement(config: &E2eConfig) -> TestResult {
         }
     };
 
-    // The delay should be at least 60 seconds for security
+    // The delay should be at least 15 seconds for security
     // In production this is typically 5 minutes (300s) or more
-    if delay < 60 {
+    if delay < 15 {
         return TestResult::fail(
             name,
             format!(
-                "Withdraw delay too short: {} seconds (minimum 60 for security)",
+                "Withdraw delay too short: {} seconds (minimum 15 for security)",
                 delay
             ),
             start.elapsed(),

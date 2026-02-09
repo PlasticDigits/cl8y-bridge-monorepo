@@ -60,7 +60,7 @@ library AddressCodecLib {
     /// @notice Encode an EVM address to bytes32 universal format
     /// @param addr The EVM address to encode
     /// @return encoded The encoded bytes32 with chain type prefix
-    function encodeEVM(address addr) internal pure returns (bytes32 encoded) {
+    function encodeEvm(address addr) internal pure returns (bytes32 encoded) {
         return encode(CHAIN_TYPE_EVM, bytes20(uint160(addr)));
     }
 
@@ -112,12 +112,15 @@ library AddressCodecLib {
     /// @return reserved The 8-byte reserved field
     function decode(bytes32 encoded) internal pure returns (uint32 chainType, bytes20 rawAddr, bytes8 reserved) {
         // Extract chain type from first 4 bytes
+        // forge-lint: disable-next-line(unsafe-typecast)
         chainType = uint32(bytes4(encoded));
 
         // Extract raw address from bytes 4-23 (20 bytes)
+        // forge-lint: disable-next-line(unsafe-typecast)
         rawAddr = bytes20(encoded << 32);
 
         // Extract reserved from last 8 bytes
+        // forge-lint: disable-next-line(unsafe-typecast)
         reserved = bytes8(encoded << 192);
     }
 
@@ -138,7 +141,7 @@ library AddressCodecLib {
     /// @dev Reverts if chain type is not CHAIN_TYPE_EVM
     /// @param encoded The encoded bytes32 address
     /// @return addr The extracted EVM address
-    function decodeAsEVM(bytes32 encoded) internal pure returns (address addr) {
+    function decodeAsEvm(bytes32 encoded) internal pure returns (address addr) {
         (uint32 chainType, bytes20 rawAddr) = decodeStrict(encoded);
         if (chainType != CHAIN_TYPE_EVM) revert InvalidChainType(chainType);
         addr = address(rawAddr);
@@ -162,14 +165,16 @@ library AddressCodecLib {
     /// @param encoded The encoded bytes32 address
     /// @return isValid True if chain type is recognized and valid
     function isValidChainType(bytes32 encoded) internal pure returns (bool isValid) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint32 chainType = uint32(bytes4(encoded));
         return chainType >= CHAIN_TYPE_EVM && chainType <= CHAIN_TYPE_BITCOIN;
     }
 
     /// @notice Check if an encoded address is an EVM address
     /// @param encoded The encoded bytes32 address
-    /// @return isEVM True if chain type is CHAIN_TYPE_EVM
-    function isEVM(bytes32 encoded) internal pure returns (bool) {
+    /// @return isEvm True if chain type is CHAIN_TYPE_EVM
+    function isEvm(bytes32 encoded) internal pure returns (bool) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(bytes4(encoded)) == CHAIN_TYPE_EVM;
     }
 
@@ -177,6 +182,7 @@ library AddressCodecLib {
     /// @param encoded The encoded bytes32 address
     /// @return True if chain type is CHAIN_TYPE_COSMOS
     function isCosmos(bytes32 encoded) internal pure returns (bool) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(bytes4(encoded)) == CHAIN_TYPE_COSMOS;
     }
 
@@ -184,6 +190,7 @@ library AddressCodecLib {
     /// @param encoded The encoded bytes32 address
     /// @return chainType The chain type code
     function getChainType(bytes32 encoded) internal pure returns (uint32 chainType) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint32(bytes4(encoded));
     }
 
@@ -191,6 +198,7 @@ library AddressCodecLib {
     /// @param encoded The encoded bytes32 address
     /// @return rawAddr The 20-byte raw address
     function getRawAddress(bytes32 encoded) internal pure returns (bytes20 rawAddr) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return bytes20(encoded << 32);
     }
 }

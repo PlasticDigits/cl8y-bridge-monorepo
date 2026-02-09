@@ -33,6 +33,7 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     mapping(bytes4 => bool) public registeredChains;
 
     /// @dev Deprecated: was nextChainId in V1 (auto-increment). Kept for storage layout compatibility.
+    // forge-lint: disable-next-line(mixed-case-variable)
     bytes4 private __deprecated_nextChainId;
 
     /// @notice Mapping of operators
@@ -50,18 +51,26 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
 
     /// @notice Only operator can call
     modifier onlyOperator() {
+        _onlyOperator();
+        _;
+    }
+
+    function _onlyOperator() internal view {
         if (!operators[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     /// @notice Validate chain is registered
     modifier onlyRegisteredChain(bytes4 chainId) {
+        _onlyRegisteredChain(chainId);
+        _;
+    }
+
+    function _onlyRegisteredChain(bytes4 chainId) internal view {
         if (!registeredChains[chainId]) {
             revert ChainNotRegistered(chainId);
         }
-        _;
     }
 
     // ============================================================================
@@ -120,6 +129,7 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
             revert InvalidChainId();
         }
 
+        // forge-lint: disable-next-line(asm-keccak256)
         bytes32 hash = keccak256(abi.encode(identifier));
 
         // Check if identifier is already registered
@@ -219,6 +229,7 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @param identifier The chain identifier string
     /// @return hash The keccak256 hash
     function computeIdentifierHash(string calldata identifier) external pure returns (bytes32 hash) {
+        // forge-lint: disable-next-line(asm-keccak256)
         return keccak256(abi.encode(identifier));
     }
 

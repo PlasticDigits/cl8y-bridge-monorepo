@@ -152,6 +152,12 @@ build-terra-optimized:
 build-operator:
 	cd packages/operator && cargo build
 
+build-operator-release:
+	cd packages/operator && cargo build --release
+
+build-canceler-release:
+	cd packages/canceler && cargo build --release
+
 build: build-evm build-terra build-operator
 
 # Testing
@@ -365,16 +371,20 @@ e2e-status:
 	cd packages/e2e && cargo run --release -- status
 
 # Full E2E cycle: setup -> test -> teardown (atomic, teardown always runs)
-# Builds optimized Terra WASM first so the latest contract code is deployed
-e2e-full-rust: build-terra-optimized
+# Builds ALL projects first so the latest code is deployed and run:
+#   - EVM contracts (forge build, deployed via forge script)
+#   - Terra WASM (docker optimizer, deployed via terrad)
+#   - Operator service (release binary, spawned by E2E runner)
+#   - Canceler service (release binary, spawned by E2E runner)
+e2e-full-rust: build-evm build-terra-optimized build-operator-release build-canceler-release
 	cd packages/e2e && cargo run --release -- full
 
 # Full E2E cycle with quick tests only (for faster CI)
-e2e-full-quick:
+e2e-full-quick: build-evm build-terra-optimized build-operator-release build-canceler-release
 	cd packages/e2e && cargo run --release -- full --quick
 
 # Full E2E cycle keeping volumes (faster restart)
-e2e-full-keep:
+e2e-full-keep: build-evm build-terra-optimized build-operator-release build-canceler-release
 	cd packages/e2e && cargo run --release -- full --keep-volumes
 
 # Integration tests

@@ -59,10 +59,14 @@ contract MintBurn is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reentra
 
     /// @notice Only authorized callers can call
     modifier onlyAuthorized() {
+        _onlyAuthorized();
+        _;
+    }
+
+    function _onlyAuthorized() internal view {
         if (!authorizedCallers[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
         }
-        _;
     }
 
     // ============================================================================

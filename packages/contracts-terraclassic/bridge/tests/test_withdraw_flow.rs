@@ -529,7 +529,7 @@ fn test_uncancel_resets_cancel_window() {
         )
         .unwrap();
 
-    // Cancel window should be ~300s from now
+    // Cancel window should be ~60s from now (setup configures 60s delay)
     let pending: PendingWithdrawResponse = env
         .app
         .wrap()
@@ -541,8 +541,8 @@ fn test_uncancel_resets_cancel_window() {
         )
         .unwrap();
     assert!(
-        pending.cancel_window_remaining >= 295,
-        "Window should be near 300s, got {}",
+        pending.cancel_window_remaining >= 55,
+        "Window should be near 60s, got {}",
         pending.cancel_window_remaining
     );
 }
@@ -1042,7 +1042,7 @@ fn test_cancel_window_countdown() {
         )
         .unwrap();
 
-    // Right after approval: should be ~300s
+    // Right after approval: should be 60s (the configured delay)
     let pending: PendingWithdrawResponse = env
         .app
         .wrap()
@@ -1053,11 +1053,11 @@ fn test_cancel_window_countdown() {
             },
         )
         .unwrap();
-    assert_eq!(pending.cancel_window_remaining, 300);
+    assert_eq!(pending.cancel_window_remaining, 60);
 
-    // Advance 100s
+    // Advance 20s
     env.app.update_block(|block| {
-        block.time = block.time.plus_seconds(100);
+        block.time = block.time.plus_seconds(20);
     });
 
     let pending: PendingWithdrawResponse = env
@@ -1070,11 +1070,11 @@ fn test_cancel_window_countdown() {
             },
         )
         .unwrap();
-    assert_eq!(pending.cancel_window_remaining, 200);
+    assert_eq!(pending.cancel_window_remaining, 40);
 
     // Advance past window
     env.app.update_block(|block| {
-        block.time = block.time.plus_seconds(201);
+        block.time = block.time.plus_seconds(41);
     });
 
     let pending: PendingWithdrawResponse = env

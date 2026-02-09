@@ -569,10 +569,11 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
 
     assert!(!pending.cancelled);
     assert!(pending.approved);
-    // Cancel window should have been reset — remaining should be close to 300
+    // Cancel window should have been reset — remaining should be close to 60
+    // (the withdraw delay configured in setup() is 60 seconds)
     assert!(
-        pending.cancel_window_remaining > 290,
-        "Expected cancel window near 300s, got: {}",
+        pending.cancel_window_remaining > 50,
+        "Expected cancel window near 60s, got: {}",
         pending.cancel_window_remaining
     );
 }

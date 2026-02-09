@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
 import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
-import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 
 contract TokenCl8yBridgedTest is Test {
     TokenCl8yBridged public token;
@@ -194,7 +193,7 @@ contract TokenCl8yBridgedTest is Test {
         emit Transfer(user, address(5), transferAmount);
 
         vm.prank(user);
-        token.transfer(address(5), transferAmount);
+        assertTrue(token.transfer(address(5), transferAmount));
 
         assertEq(token.balanceOf(user), amount - transferAmount);
         assertEq(token.balanceOf(address(5)), transferAmount);
@@ -229,7 +228,7 @@ contract TokenCl8yBridgedTest is Test {
         emit Transfer(user, address(5), transferAmount);
 
         vm.prank(minter);
-        token.transferFrom(user, address(5), transferAmount);
+        assertTrue(token.transferFrom(user, address(5), transferAmount));
 
         assertEq(token.balanceOf(user), amount - transferAmount);
         assertEq(token.balanceOf(address(5)), transferAmount);
