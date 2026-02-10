@@ -822,6 +822,35 @@ impl TerraClient {
         Ok(result.nonce)
     }
 
+    /// Query Terra deposit info by outgoing nonce.
+    ///
+    /// Returns the net amount stored by the Terra bridge for that nonce.
+    /// This is the canonical amount that must be used for destination-chain
+    /// `withdrawSubmit` hash parity.
+    pub async fn get_terra_deposit_amount_by_nonce(
+        &self,
+        bridge_address: &str,
+        nonce: u64,
+    ) -> Result<Option<u128>> {
+        let query = serde_json::json!({
+            "deposit_by_nonce": {
+                "nonce": nonce
+            }
+        });
+        let result: Option<DepositInfoResponse> =
+            self.query_contract_cli(bridge_address, &query).await?;
+        match result {
+            Some(info) => {
+                let amount = info
+                    .amount
+                    .parse::<u128>()
+                    .map_err(|e| eyre!("Invalid Terra deposit amount '{}': {}", info.amount, e))?;
+                Ok(Some(amount))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Query withdraw delay from Terra bridge (V2 API)
     pub async fn get_withdraw_delay(&self, bridge_address: &str) -> Result<u64> {
         info!("Querying withdraw delay from Terra bridge");
@@ -942,4 +971,32 @@ struct NonceResponse {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct WithdrawDelayResponse {
     delay_seconds: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DepositInfoResponse {
+    amount: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DepositInfoResponse;
+
+    #[test]
+    fn test_parse_deposit_by_nonce_some() {
+        let data = serde_json::json!({
+            "amount": "997000"
+        });
+        let parsed: Option<DepositInfoResponse> = serde_json::from_value(data).ok();
+        assert!(parsed.is_some());
+        assert_eq!(parsed.expect("deposit info").amount, "997000");
+    }
+
+    #[test]
+    fn test_parse_deposit_by_nonce_none() {
+        let data = serde_json::Value::Null;
+        let parsed: Option<DepositInfoResponse> =
+            serde_json::from_value(data).expect("optional null should deserialize");
+        assert!(parsed.is_none());
+    }
 }

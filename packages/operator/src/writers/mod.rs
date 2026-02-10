@@ -61,7 +61,8 @@ impl WriterManager {
     /// for each enabled chain in the multi-EVM configuration. These writers
     /// handle EVM→EVM transfers by submitting approvals on the destination chain.
     pub async fn new(config: &crate::config::Config, db: PgPool) -> Result<Self> {
-        let evm_writer = EvmWriter::new(&config.evm, &config.fees, db.clone()).await?;
+        let evm_writer =
+            EvmWriter::new(&config.evm, Some(&config.terra), &config.fees, db.clone()).await?;
         let terra_writer = TerraWriter::new(&config.terra, &config.evm, db.clone()).await?;
 
         // Create per-chain EVM writers from MultiEvmConfig
@@ -69,7 +70,14 @@ impl WriterManager {
         if let Some(ref multi) = config.multi_evm {
             for chain in multi.enabled_chains() {
                 let chain_evm_config = chain.to_evm_config(multi.private_key());
-                match EvmWriter::new(&chain_evm_config, &config.fees, db.clone()).await {
+                match EvmWriter::new(
+                    &chain_evm_config,
+                    Some(&config.terra),
+                    &config.fees,
+                    db.clone(),
+                )
+                .await
+                {
                     Ok(writer) => {
                         tracing::info!(
                             chain_name = %chain.name,

@@ -441,6 +441,14 @@ async fn main() -> Result<()> {
 async fn run_single_test(config: &E2eConfig, test_name: &str, skip_terra: bool) -> Vec<TestResult> {
     use cl8y_e2e::tests::*;
 
+    // Tests that require token address use the deployed test token when available.
+    let test_token = config.evm.contracts.test_token;
+    let token_address = if test_token != alloy::primitives::Address::ZERO {
+        Some(test_token)
+    } else {
+        None
+    };
+
     let result = match test_name {
         "evm_connectivity" => test_evm_connectivity(config).await,
         "terra_connectivity" => {
@@ -461,6 +469,15 @@ async fn run_single_test(config: &E2eConfig, test_name: &str, skip_terra: bool) 
         "token_registry" => test_token_registry(config).await,
         "chain_registry" => test_chain_registry(config).await,
         "access_manager" => test_access_manager(config).await,
+        "operator_live_deposit_detection" => {
+            test_operator_live_deposit_detection(config, token_address).await
+        }
+        "operator_live_withdrawal_execution" => {
+            test_operator_live_withdrawal_execution(config, token_address).await
+        }
+        "operator_terra_to_evm_withdrawal" => {
+            test_operator_terra_to_evm_withdrawal(config, token_address).await
+        }
         _ => {
             let start = Instant::now();
             TestResult::fail(

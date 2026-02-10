@@ -21,12 +21,13 @@ use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
+use base64::Engine;
 use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
 use std::str::FromStr;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{EvmConfig, FeeConfig};
+use crate::config::{EvmConfig, FeeConfig, TerraConfig};
 use crate::contracts::evm_bridge::Bridge;
 use crate::db::{self, EvmDeposit, NewApproval, TerraDeposit};
 use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash};
@@ -59,6 +60,12 @@ pub struct EvmWriter {
     chain_id: u64,
     /// This chain's registered 4-byte chain ID (V2)
     this_chain_id: ChainId,
+    /// Terra LCD URL for Terra-source deposit verification
+    terra_lcd_url: Option<String>,
+    /// Terra bridge address for Terra-source deposit verification
+    terra_bridge_address: Option<String>,
+    /// Terra V2 4-byte chain ID (defaults to 0x00000002)
+    terra_chain_id: ChainId,
     signer: PrivateKeySigner,
     default_fee_bps: u32,
     fee_recipient: Address,
@@ -75,7 +82,12 @@ pub struct EvmWriter {
 
 impl EvmWriter {
     /// Create a new EVM writer
-    pub async fn new(evm_config: &EvmConfig, fee_config: &FeeConfig, db: PgPool) -> Result<Self> {
+    pub async fn new(
+        evm_config: &EvmConfig,
+        terra_config: Option<&TerraConfig>,
+        fee_config: &FeeConfig,
+        db: PgPool,
+    ) -> Result<Self> {
         let bridge_address =
             Address::from_str(&evm_config.bridge_address).wrap_err("Invalid bridge address")?;
         let fee_recipient =
@@ -129,6 +141,11 @@ impl EvmWriter {
             .await
             .unwrap_or(300);
 
+        let terra_lcd_url = terra_config.map(|t| t.lcd_url.clone());
+        let terra_bridge_address = terra_config.map(|t| t.bridge_address.clone());
+        let terra_chain_id =
+            ChainId::from_u32(terra_config.and_then(|t| t.this_chain_id).unwrap_or(2));
+
         info!(delay_seconds = cancel_window, "EVM cancel window");
 
         Ok(Self {
@@ -136,6 +153,9 @@ impl EvmWriter {
             bridge_address,
             chain_id: evm_config.chain_id,
             this_chain_id,
+            terra_lcd_url,
+            terra_bridge_address,
+            terra_chain_id,
             signer,
             default_fee_bps: fee_config.default_fee_bps,
             fee_recipient,
@@ -379,9 +399,19 @@ impl EvmWriter {
         withdraw_hash: &[u8; 32],
         src_chain_id: &[u8; 4],
     ) -> Result<bool> {
-        // For now, verify on the same EVM chain (local single-chain setup).
-        // In multi-chain production, this would route to the source chain's RPC.
-        // TODO: Add Terra verification and multi-EVM routing
+        // Terra-source withdrawals are verified on Terra bridge storage.
+        if src_chain_id == self.terra_chain_id.as_bytes() {
+            debug!(
+                hash = %bytes32_to_hex(withdraw_hash),
+                src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                terra_chain = %format!("0x{}", hex::encode(self.terra_chain_id.as_bytes())),
+                "Routing source deposit verification to Terra bridge"
+            );
+            return self.verify_terra_deposit(withdraw_hash).await;
+        }
+
+        // EVM-source withdrawals are verified via getDeposit(hash) on EVM.
+        // In multi-EVM production this should route to the source chain RPC.
 
         let provider =
             ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
@@ -419,6 +449,69 @@ impl EvmWriter {
                 Err(eyre!("Failed to verify deposit: {}", e))
             }
         }
+    }
+
+    /// Verify Terra-source deposit exists by querying Terra `deposit_hash`.
+    async fn verify_terra_deposit(&self, withdraw_hash: &[u8; 32]) -> Result<bool> {
+        let lcd_url = self
+            .terra_lcd_url
+            .as_ref()
+            .ok_or_else(|| eyre!("Terra LCD URL not configured for Terra-source verification"))?;
+        let bridge = self.terra_bridge_address.as_ref().ok_or_else(|| {
+            eyre!("Terra bridge address not configured for Terra-source verification")
+        })?;
+
+        let query = serde_json::json!({
+            "deposit_hash": {
+                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(withdraw_hash)
+            }
+        });
+        let query_b64 =
+            base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&query)?);
+        let url = format!(
+            "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+            lcd_url.trim_end_matches('/'),
+            bridge,
+            query_b64
+        );
+
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| eyre!("Terra deposit verification request failed: {}", e))?;
+        if !response.status().is_success() {
+            return Err(eyre!(
+                "Terra deposit verification failed with status {}",
+                response.status()
+            ));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| eyre!("Failed to parse Terra deposit verification response: {}", e))?;
+
+        let exists = Self::terra_deposit_exists_in_query(&body);
+        if exists {
+            info!(
+                hash = %bytes32_to_hex(withdraw_hash),
+                nonce = body["data"]["nonce"].as_u64().unwrap_or_default(),
+                amount = body["data"]["amount"].as_str().unwrap_or("?"),
+                "Terra deposit verified on source chain"
+            );
+        } else {
+            info!(
+                hash = %bytes32_to_hex(withdraw_hash),
+                "Terra deposit not found on source chain for withdraw hash"
+            );
+        }
+
+        Ok(exists)
+    }
+
+    fn terra_deposit_exists_in_query(body: &serde_json::Value) -> bool {
+        body.get("data").is_some_and(|data| !data.is_null())
     }
 
     /// Submit a withdrawApprove transaction
@@ -1085,5 +1178,27 @@ impl EvmWriter {
     /// Get count of pending executions
     pub fn pending_execution_count(&self) -> usize {
         self.pending_executions.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EvmWriter;
+
+    #[test]
+    fn test_terra_deposit_exists_in_query_when_data_present() {
+        let body = serde_json::json!({
+            "data": {
+                "nonce": 1,
+                "amount": "997000"
+            }
+        });
+        assert!(EvmWriter::terra_deposit_exists_in_query(&body));
+    }
+
+    #[test]
+    fn test_terra_deposit_exists_in_query_when_data_null() {
+        let body = serde_json::json!({ "data": serde_json::Value::Null });
+        assert!(!EvmWriter::terra_deposit_exists_in_query(&body));
     }
 }
