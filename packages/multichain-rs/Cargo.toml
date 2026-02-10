@@ -51,3 +51,4 @@ tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

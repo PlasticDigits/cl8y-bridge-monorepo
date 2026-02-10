@@ -457,8 +457,13 @@ pub async fn test_full_transfer_cycle(
         deposit_nonce
     );
 
-    match poll_terra_for_approval(&terra_client, &terra_bridge, deposit_nonce, TERRA_APPROVAL_TIMEOUT)
-        .await
+    match poll_terra_for_approval(
+        &terra_client,
+        &terra_bridge,
+        deposit_nonce,
+        TERRA_APPROVAL_TIMEOUT,
+    )
+    .await
     {
         Ok(approval_info) => {
             info!(
@@ -575,17 +580,12 @@ mod tests {
     #[test]
     fn test_evm_chain_id_encoding() {
         let evm_chain_id: [u8; 4] = [0, 0, 0, 1];
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            evm_chain_id,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, evm_chain_id);
         assert_eq!(b64, "AAAAAQ==");
 
         let terra_chain_id: [u8; 4] = [0, 0, 0, 2];
-        let b64_terra = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            terra_chain_id,
-        );
+        let b64_terra =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, terra_chain_id);
         assert_eq!(b64_terra, "AAAAAg==");
     }
 
@@ -608,7 +608,8 @@ mod tests {
     /// Verify that Terra destination check logic works.
     #[test]
     fn test_terra_destination_detection() {
-        let bridge_some = Some("terra14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9ssrc8au".to_string());
+        let bridge_some =
+            Some("terra14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9ssrc8au".to_string());
         let bridge_none: Option<String> = None;
         let bridge_empty = Some("".to_string());
 
@@ -617,6 +618,9 @@ mod tests {
         // When None, not Terra destination
         assert!(!bridge_none.as_ref().map(|s| !s.is_empty()).unwrap_or(false));
         // When empty string, not Terra destination
-        assert!(!bridge_empty.as_ref().map(|s| !s.is_empty()).unwrap_or(false));
+        assert!(!bridge_empty
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false));
     }
 }

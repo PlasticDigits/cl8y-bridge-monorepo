@@ -25,6 +25,7 @@
 
 // Core modules (always available)
 pub mod address_codec;
+pub mod discovery;
 pub mod hash;
 pub mod types;
 
@@ -50,6 +51,7 @@ pub use hash::{
     compute_transfer_hash, compute_withdraw_hash, keccak256,
 };
 
+pub use discovery::{additional_chains, discover_chains, DiscoveredChain, KnownChain};
 pub use types::{
     ChainId, ChainRegistration, EvmAddress, FeeCalculator, FeeParams, OperatorGasConfig, Status,
     TokenDestination, TokenRegistration, TokenType, WithdrawHash,

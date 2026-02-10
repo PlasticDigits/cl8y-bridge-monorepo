@@ -4,6 +4,7 @@ mod config;
 mod confirmation;
 mod contracts;
 mod db;
+mod discovery;
 pub mod hash;
 mod metrics;
 mod multi_evm;
@@ -68,6 +69,7 @@ async fn async_main() -> eyre::Result<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let (shutdown_tx2, shutdown_rx2) = tokio::sync::mpsc::channel::<()>(1);
     let (shutdown_tx3, shutdown_rx3) = tokio::sync::mpsc::channel::<()>(1);
+    let (shutdown_tx4, shutdown_rx4) = tokio::sync::mpsc::channel::<()>(1);
 
     // Setup signal handlers
     let shutdown_tx_signal = shutdown_tx.clone();
@@ -76,6 +78,7 @@ async fn async_main() -> eyre::Result<()> {
         let _ = shutdown_tx_signal.send(()).await;
         let _ = shutdown_tx2.send(()).await;
         let _ = shutdown_tx3.send(()).await;
+        let _ = shutdown_tx4.send(()).await;
     });
 
     // Create managers
@@ -97,6 +100,14 @@ async fn async_main() -> eyre::Result<()> {
     tokio::spawn(async move {
         if let Err(e) = api::start_api_server(api_addr, api_db).await {
             tracing::error!(error = %e, "API server error");
+        }
+    });
+
+    // Start chain discovery task (runs on startup and every 4 hours)
+    let discovery_config = config.clone();
+    tokio::spawn(async move {
+        if let Err(e) = discovery::run_discovery_task(&discovery_config, shutdown_rx4).await {
+            tracing::error!(error = %e, "Chain discovery task error");
         }
     });
 

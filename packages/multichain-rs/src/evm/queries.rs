@@ -54,6 +54,18 @@ impl EvmQueryClient {
     // Bridge Contract Queries
     // =========================================================================
 
+    /// Get the ChainRegistry contract address from the bridge
+    pub async fn get_chain_registry_address(&self) -> Result<Address> {
+        let bridge = Bridge::new(self.bridge_address, &self.provider);
+        let result = bridge
+            .chainRegistry()
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get chain registry address: {}", e))?;
+
+        Ok(result._0)
+    }
+
     /// Get this chain's registered 4-byte chain ID
     pub async fn get_this_chain_id(&self) -> Result<ChainId> {
         let bridge = Bridge::new(self.bridge_address, &self.provider);

@@ -85,17 +85,28 @@ async fn async_main() -> eyre::Result<()> {
     let mut watcher =
         CancelerWatcher::new(&config, Arc::clone(&stats), Arc::clone(&metrics)).await?;
 
-    // Create shutdown channel
+    // Create shutdown channels (watcher and discovery each need one)
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (shutdown_tx2, shutdown_rx2) = tokio::sync::mpsc::channel::<()>(1);
 
     // Handle signals
     tokio::spawn(async move {
         wait_for_shutdown_signal().await;
         let _ = shutdown_tx.send(()).await;
+        let _ = shutdown_tx2.send(()).await;
     });
 
-    // Run the watcher
-    watcher.run(shutdown_rx).await?;
+    // Run watcher and discovery concurrently
+    tokio::select! {
+        result = watcher.run(shutdown_rx) => {
+            result?;
+        }
+        result = canceler::discovery::run_discovery_task(&config, shutdown_rx2) => {
+            if let Err(e) = result {
+                tracing::error!(error = %e, "Chain discovery task error");
+            }
+        }
+    }
 
     info!("CL8Y Bridge Canceler stopped");
     Ok(())
