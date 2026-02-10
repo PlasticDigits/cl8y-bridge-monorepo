@@ -15,6 +15,7 @@
 
 use crate::evm::AnvilTimeClient;
 use crate::services::{find_project_root, ServiceManager};
+use crate::terra::TerraClient;
 use crate::transfer_helpers::{
     poll_for_approval, skip_withdrawal_delay, verify_withdrawal_executed,
 };
@@ -25,11 +26,10 @@ use tracing::{info, warn};
 
 use super::helpers::query_evm_chain_key;
 use super::operator_helpers::{
-    approve_erc20, calculate_evm_fee, calculate_fee, encode_terra_address, execute_batch_deposits,
+    approve_erc20, calculate_evm_fee, encode_terra_address, execute_batch_deposits,
     execute_deposit, get_erc20_balance, get_terra_chain_key, query_cancel_window,
-    query_deposit_nonce, query_fee_bps, query_fee_collector, submit_withdraw_on_evm,
-    verify_token_setup, wait_for_batch_approvals, DEFAULT_TRANSFER_AMOUNT,
-    WITHDRAWAL_EXECUTION_TIMEOUT,
+    query_deposit_nonce, query_fee_collector, submit_withdraw_on_evm, verify_token_setup,
+    wait_for_batch_approvals, DEFAULT_TRANSFER_AMOUNT, WITHDRAWAL_EXECUTION_TIMEOUT,
 };
 
 // ============================================================================
@@ -38,11 +38,9 @@ use super::operator_helpers::{
 
 /// Test operator fee collection on deposits with live verification
 ///
-/// Verifies that fees are correctly calculated and collected during deposits:
-/// 1. Query fee BPS from bridge contract
-/// 2. Get initial balance of fee collector
-/// 3. Execute a deposit
-/// 4. Verify fee collector balance increased by expected amount
+/// Verifies that fees are correctly calculated and collected during deposits.
+/// Uses calculateFee(address,amount) because accounts can have different fee settings
+/// (standard, discounted, custom). Fees apply only to deposits, not withdrawals.
 pub async fn test_operator_live_fee_collection(
     config: &E2eConfig,
     token_address: Option<Address>,
@@ -64,21 +62,26 @@ pub async fn test_operator_live_fee_collection(
         return TestResult::skip(name, "Operator service is not running");
     }
 
-    // Query fee configuration
-    let fee_bps = match query_fee_bps(config).await {
-        Ok(bps) => {
-            info!("Fee BPS: {}", bps);
-            bps
+    let test_account = config.test_accounts.evm_address;
+
+    // Use calculateFee(depositor, amount) — accounts have different fee settings
+    let expected_fee = match calculate_evm_fee(config, test_account, DEFAULT_TRANSFER_AMOUNT).await
+    {
+        Ok(fee) => {
+            info!(
+                "CalculateFee for depositor {}: {} (from bridge)",
+                test_account, fee
+            );
+            fee
         }
         Err(e) => {
-            // If fee query fails, fee collection may not be enabled
-            info!("Could not query fee BPS ({}), assuming no fees", e);
+            info!("Could not query calculateFee ({}), assuming no fees", e);
             return TestResult::pass(name, start.elapsed());
         }
     };
 
-    if fee_bps == 0 {
-        info!("No fees configured (fee_bps=0), test passes");
+    if expected_fee == 0 {
+        info!("No fees configured for this account (fee=0), test passes");
         return TestResult::pass(name, start.elapsed());
     }
 
@@ -167,7 +170,6 @@ pub async fn test_operator_live_fee_collection(
         }
     };
 
-    let expected_fee = calculate_fee(transfer_amount, fee_bps);
     let actual_fee_increase = final_fee_balance.saturating_sub(initial_fee_balance);
 
     if actual_fee_increase >= U256::from(expected_fee) {
@@ -682,10 +684,12 @@ pub async fn test_operator_evm_to_evm_withdrawal(
 
 /// Test Terra-to-EVM withdrawal execution with balance assertions
 ///
-/// Verifies operator correctly detects Terra deposits and creates EVM approvals:
-/// 1. Query Terra bridge for pending outgoing transfers
-/// 2. Verify operator detects the transfer
-/// 3. Verify approval is created on EVM bridge
+/// Verifies operator correctly detects Terra deposits and creates EVM approvals.
+/// Follows the V2 flow: user must call WithdrawSubmit before operator can approve.
+///
+/// 1. Create a Terra deposit (deposit_native) — Terra nonce is independent of EVM depositNonce
+/// 2. User calls WithdrawSubmit on EVM (required — operator never submits on behalf of users)
+/// 3. Poll EVM for approval (operator verifies deposit and approves)
 /// 4. Skip withdrawal delay and verify execution
 pub async fn test_operator_terra_to_evm_withdrawal(
     config: &E2eConfig,
@@ -701,8 +705,7 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         None => return TestResult::skip(name, "No test token address provided"),
     };
 
-    // Check Terra bridge is configured
-    let _terra_bridge = match &config.terra.bridge_address {
+    let terra_bridge = match &config.terra.bridge_address {
         Some(addr) if !addr.is_empty() => addr.clone(),
         _ => {
             return TestResult::skip(name, "Terra bridge address not configured");
@@ -716,57 +719,113 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         return TestResult::skip(name, "Operator service is not running");
     }
 
-    let _test_account = config.test_accounts.evm_address;
+    let test_account = config.test_accounts.evm_address;
+    let terra_client = TerraClient::new(&config.terra);
 
-    // For Terra-to-EVM, the approval nonce on EVM does NOT correspond to the
-    // EVM bridge's depositNonce. Terra deposits are counted on Terra, and the
-    // operator writes the approval on EVM using the nonce from the Terra deposit.
-    // Using query_deposit_nonce() here would return the EVM deposit counter,
-    // causing a 30s timeout polling a nonce that will never have a Terra approval.
-    //
-    // Instead, scan recent nonces downward from the EVM deposit nonce to find
-    // the most recent approval (which may be from a Terra or EVM deposit).
-    let current_nonce = match query_deposit_nonce(config).await {
-        Ok(n) => n,
+    // Terra deposits use Terra's outgoing nonce; EVM depositNonce is only for EVM-originated deposits.
+    // Query Terra nonce BEFORE deposit — the deposit will use this value.
+    let terra_nonce_before = match terra_client.get_terra_outgoing_nonce(&terra_bridge).await {
+        Ok(n) => {
+            info!(
+                "Terra outgoing nonce before deposit: {} (deposit will use this)",
+                n
+            );
+            n
+        }
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to query deposit nonce: {}", e),
+                format!("Failed to query Terra outgoing nonce: {}", e),
                 start.elapsed(),
             );
         }
     };
 
-    // Scan recent nonces to find an existing approval on EVM.
-    // NOTE: Only Terra→EVM or EVM→EVM approvals appear on EVM.
-    // EVM→Terra deposits are approved on Terra.
-    // We scan downward from current_nonce with short timeouts since
-    // Terra-originated approvals won't match the EVM deposit counter.
-    let mut approval = None;
-    info!(
-        "Scanning recent EVM nonces for Terra-to-EVM approval (deposit_nonce={})",
-        current_nonce
-    );
-    for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
-        match poll_for_approval(config, nonce, Duration::from_secs(5)).await {
-            Ok(a) => {
-                approval = Some(a);
-                break;
-            }
-            Err(_) => {
-                info!("No EVM approval at nonce {}", nonce);
-            }
-        }
-    }
+    // Create Terra deposit (native uluna) targeting EVM
+    let amount = 1_000_000u128;
+    let evm_dest_chain: [u8; 4] = [0, 0, 0, 1];
+    let mut dest_account = [0u8; 32];
+    dest_account[12..32].copy_from_slice(test_account.as_slice());
 
-    let approval = match approval {
-        Some(a) => a,
-        None => {
-            // No pending approvals - this test needs existing Terra deposits
-            info!("No pending Terra-to-EVM approvals found");
-            return TestResult::skip(name, "No pending Terra deposits - execute Terra lock first");
+    info!(
+        "Creating Terra deposit: {} uluna -> EVM, expected Terra nonce={}",
+        amount, terra_nonce_before
+    );
+    let tx_hash = match terra_client
+        .deposit_native_tokens(&terra_bridge, evm_dest_chain, dest_account, amount, "uluna")
+        .await
+    {
+        Ok(h) => h,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Terra deposit_native failed: {}", e),
+                start.elapsed(),
+            );
         }
     };
+    info!("Terra deposit tx: {}", tx_hash);
+
+    if let Err(e) = terra_client
+        .wait_for_tx(&tx_hash, Duration::from_secs(60))
+        .await
+    {
+        return TestResult::fail(
+            name,
+            format!("Terra deposit tx confirmation failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    // V2: User must call WithdrawSubmit on EVM before operator can approve (operator never submits)
+    let terra_src_chain: [u8; 4] = [0, 0, 0, 2]; // Terra chain ID in ChainRegistry
+    let src_account = encode_terra_address(&config.test_accounts.terra_address);
+    if let Err(e) = submit_withdraw_on_evm(
+        config,
+        terra_src_chain,
+        src_account,
+        dest_account, // EVM recipient (same as deposit dest_account)
+        token,
+        amount,
+        terra_nonce_before,
+    )
+    .await
+    {
+        return TestResult::fail(
+            name,
+            format!("WithdrawSubmit on EVM failed (user step required): {}", e),
+            start.elapsed(),
+        );
+    }
+
+    // Poll EVM for approval — operator verifies Terra deposit and creates WithdrawApprove on EVM
+    info!(
+        "Polling EVM for Terra-to-EVM approval (terra_nonce={}, EVM depositNonce is irrelevant)",
+        terra_nonce_before
+    );
+    let approval =
+        match poll_for_approval(config, terra_nonce_before, Duration::from_secs(90)).await {
+            Ok(a) => {
+                info!(
+                    "Found Terra-to-EVM approval: nonce={}, recipient={}, token=0x{}",
+                    a.nonce,
+                    a.recipient,
+                    hex::encode(a.token.as_slice())
+                );
+                a
+            }
+            Err(e) => {
+                return TestResult::fail(
+                    name,
+                    format!(
+                        "Operator did not create EVM approval for Terra nonce {}: {}. \
+                     Terra deposits use Terra nonce, not EVM depositNonce.",
+                        terra_nonce_before, e
+                    ),
+                    start.elapsed(),
+                );
+            }
+        };
 
     info!(
         "Found Terra-to-EVM approval: nonce={}, recipient={}, token={}, hash=0x{}",
@@ -875,7 +934,8 @@ pub async fn test_operator_approval_timeout_handling(
         return TestResult::skip(name, "Operator service is not running");
     }
 
-    // Query current nonce
+    // Query EVM deposit nonce. We scan recent nonces to find ANY existing approval
+    // (EVM→EVM or Terra→EVM) since we only need one to test timeout handling.
     let current_nonce = match query_deposit_nonce(config).await {
         Ok(n) => n,
         Err(e) => {
@@ -887,14 +947,12 @@ pub async fn test_operator_approval_timeout_handling(
         }
     };
 
-    // Scan recent nonces for an existing approval on EVM.
-    // We skip polling at current_nonce first since it's the EVM deposit counter
-    // which may not correspond to any approval (e.g., Terra-originated approvals
-    // use different nonces). Scanning downward with short timeouts is faster.
+    // Scan recent EVM nonces for an existing approval (EVM or Terra-originated).
     let mut approval_found = None;
+    let scan_start = current_nonce.saturating_sub(5);
     info!(
-        "Scanning recent EVM nonces for approval to test timeout (deposit_nonce={})",
-        current_nonce
+        "Scanning EVM nonces {}..={} for any approval to test timeout (evm_deposit_nonce={})",
+        scan_start, current_nonce, current_nonce
     );
     for nonce in (current_nonce.saturating_sub(5)..=current_nonce).rev() {
         match poll_for_approval(config, nonce, Duration::from_secs(5)).await {

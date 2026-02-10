@@ -633,11 +633,13 @@ impl EvmWriter {
 
     /// Submit an approval transaction to EVM (V2 - user-initiated flow)
     ///
-    /// In V2, the user has already submitted the withdrawal request.
-    /// The operator just needs to approve it by hash.
+    /// In V2, the **user** must call `withdrawSubmit` on the destination chain first.
+    /// The operator only approves after verifying the deposit on the source chain.
+    /// The operator must NEVER submit withdraws on behalf of users — the canceler
+    /// needs the user-initiated submit to be able to cancel fraudulent withdrawals.
     ///
     /// Pre-flight checks:
-    /// 1. Verify `withdrawSubmit` has been called (submittedAt != 0)
+    /// 1. Verify `withdrawSubmit` has been called (submittedAt != 0) — if not, skip (user must submit)
     /// 2. Verify the withdrawal is not already approved
     async fn submit_approval(
         &self,
@@ -657,7 +659,7 @@ impl EvmWriter {
         // Create V2 contract instance
         let contract = Bridge::new(self.bridge_address, &provider);
 
-        // Pre-flight: verify the withdrawal has been submitted by the user
+        // Pre-flight: verify the withdrawal has been submitted
         let pending = contract
             .getPendingWithdraw(withdraw_hash_fixed)
             .call()
@@ -670,11 +672,11 @@ impl EvmWriter {
                 )
             })?;
 
+        // User must have called withdrawSubmit first — operator never submits on behalf of users
         if pending.submittedAt.is_zero() {
             return Err(eyre!(
-                "WithdrawSubmit not yet called for {} (submittedAt=0). \
-                 User must call withdrawSubmit before operator can approve.",
-                bytes32_to_hex(withdraw_hash)
+                "WithdrawSubmit not yet called (submittedAt=0). User must call withdrawSubmit on EVM first. \
+                 Operator only approves; canceler requires user-initiated submit to cancel fraudulent withdrawals."
             ));
         }
 
@@ -691,7 +693,7 @@ impl EvmWriter {
             submitted_at = %pending.submittedAt,
             nonce = pending.nonce,
             amount = %pending.amount,
-            "Pre-flight passed (Terra→EVM): withdrawal exists, submitting withdrawApprove"
+            "Pre-flight passed: user submitted withdrawal, submitting withdrawApprove"
         );
 
         debug!(

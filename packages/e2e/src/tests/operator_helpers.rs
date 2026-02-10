@@ -833,11 +833,13 @@ pub async fn get_erc20_balance(
 // Fee Collection Helpers
 // ============================================================================
 
-/// Query fee collector address from bridge
+/// Query fee collector (feeRecipient) address from bridge.
+/// The Bridge uses getFeeConfig() which returns a struct; feeRecipient is the 5th field.
 pub async fn query_fee_collector(config: &E2eConfig) -> Result<Address> {
     let client = reqwest::Client::new();
 
-    let call_data = format!("0x{}", selector("feeCollector()"));
+    // getFeeConfig() returns: (standardFeeBps, discountedFeeBps, cl8yThreshold, cl8yToken, feeRecipient)
+    let call_data = format!("0x{}", selector("getFeeConfig()"));
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -859,11 +861,15 @@ pub async fn query_fee_collector(config: &E2eConfig) -> Result<Address> {
         .ok_or_else(|| eyre::eyre!("No result in response"))?;
 
     let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
-    if bytes.len() < 32 {
-        return Err(eyre::eyre!("Invalid fee collector response"));
+    // FeeConfig: 5 x 32 bytes. feeRecipient is 5th field (bytes 128-160), right-aligned
+    if bytes.len() < 160 {
+        return Err(eyre::eyre!(
+            "Invalid fee config response: expected >= 160 bytes, got {}",
+            bytes.len()
+        ));
     }
 
-    Ok(Address::from_slice(&bytes[12..32]))
+    Ok(Address::from_slice(&bytes[140..160]))
 }
 
 /// Query fee BPS from bridge
@@ -1218,5 +1224,20 @@ mod tests {
         assert_eq!(calculate_fee(1_000_000, 30), 3_000);
         // 100 bps = 1%
         assert_eq!(calculate_fee(1_000_000, 100), 10_000);
+    }
+
+    #[test]
+    fn test_fee_config_parsing_extracts_fee_recipient() {
+        // Test that getFeeConfig() response parsing correctly extracts feeRecipient.
+        // Layout: standardFeeBps (32), discountedFeeBps (32), cl8yThreshold (32),
+        //         cl8yToken (32), feeRecipient (32). Addresses are right-aligned in 32 bytes.
+        let fee_recipient = alloy::primitives::Address::from_slice(
+            &hex::decode("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
+        );
+        let mut bytes = vec![0u8; 160];
+        // Put feeRecipient at bytes 140-160 (right-aligned in last 32-byte slot)
+        bytes[140..160].copy_from_slice(fee_recipient.as_slice());
+        let extracted = Address::from_slice(&bytes[140..160]);
+        assert_eq!(extracted, fee_recipient);
     }
 }

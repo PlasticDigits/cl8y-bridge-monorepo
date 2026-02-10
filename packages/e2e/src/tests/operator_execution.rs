@@ -887,24 +887,36 @@ pub async fn test_operator_sequential_deposit_processing(
         num_deposits, initial_nonce, final_nonce
     );
 
-    // Wait for operator to poll WithdrawSubmit events and create approvals on EVM
-    info!("Waiting for operator to create approvals...");
-    let mut approvals_found = 0u32;
+    // Wait for operator to poll WithdrawSubmit events and create approvals on EVM.
+    // We sample first and last nonce to verify the operator processed the range.
     let first_deposit_nonce = initial_nonce;
     let last_deposit_nonce = initial_nonce + num_deposits as u64 - 1;
+    info!(
+        "Waiting for operator to create approvals (sampling nonces {} and {} of {} total)",
+        first_deposit_nonce, last_deposit_nonce, num_deposits
+    );
 
-    // Poll for first and last deposit approvals
-    for &nonce in &[first_deposit_nonce, last_deposit_nonce] {
-        if (poll_for_approval(config, nonce, Duration::from_secs(30)).await).is_ok() {
-            approvals_found += 1;
-            info!("Found EVM approval for nonce {}", nonce);
+    let mut approvals_found = 0u32;
+    let nonces_to_check = [first_deposit_nonce, last_deposit_nonce];
+    for &nonce in &nonces_to_check {
+        match poll_for_approval(config, nonce, Duration::from_secs(30)).await {
+            Ok(_) => {
+                approvals_found += 1;
+                info!("Found EVM approval for nonce {}", nonce);
+            }
+            Err(e) => {
+                info!(
+                    "No EVM approval at nonce {} (elapsed or not yet processed): {}",
+                    nonce, e
+                );
+            }
         }
     }
 
     if approvals_found > 0 {
         info!(
-            "Sequential deposit processing passed: {} deposits, {} approvals verified",
-            num_deposits, approvals_found
+            "Sequential deposit processing passed: {} deposits, {} approvals verified (nonces {} and {} checked)",
+            num_deposits, approvals_found, first_deposit_nonce, last_deposit_nonce
         );
         TestResult::pass(name, start.elapsed())
     } else {

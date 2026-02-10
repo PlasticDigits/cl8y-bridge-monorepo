@@ -6,6 +6,7 @@
 use super::E2eSetup;
 use crate::chain_config;
 use crate::terra::TerraClient;
+use alloy::primitives::Address;
 use eyre::{eyre, Result};
 use tracing::{info, warn};
 
@@ -171,12 +172,21 @@ impl E2eSetup {
         tokio::time::sleep(std::time::Duration::from_secs(6)).await;
 
         // Step 5: Add uluna token
+        // Use test token for Terra→EVM so user's WithdrawSubmit on EVM references a valid registered token
+        let evm_token = if self.config.evm.contracts.test_token != Address::ZERO {
+            format!(
+                "{:0>64}",
+                hex::encode(self.config.evm.contracts.test_token.as_slice())
+            )
+        } else {
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+        };
         let add_token_msg = serde_json::json!({
             "add_token": {
                 "token": "uluna",
                 "is_native": true,
                 "token_type": "lock_unlock",
-                "evm_token_address": "0x0000000000000000000000000000000000000000",
+                "evm_token_address": evm_token,
                 "terra_decimals": 6,
                 "evm_decimals": 18
             }

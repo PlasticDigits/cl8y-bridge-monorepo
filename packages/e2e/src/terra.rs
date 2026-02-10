@@ -814,6 +814,14 @@ impl TerraClient {
         self.query_contract(bridge_address, &query).await
     }
 
+    /// Query the Terra bridge's current outgoing nonce.
+    /// The next deposit will use this nonce. Used for Terra→EVM tests to poll EVM for the correct approval.
+    pub async fn get_terra_outgoing_nonce(&self, bridge_address: &str) -> Result<u64> {
+        let query = serde_json::json!({"current_nonce": {}});
+        let result: NonceResponse = self.query_contract_cli(bridge_address, &query).await?;
+        Ok(result.nonce)
+    }
+
     /// Query withdraw delay from Terra bridge (V2 API)
     pub async fn get_withdraw_delay(&self, bridge_address: &str) -> Result<u64> {
         info!("Querying withdraw delay from Terra bridge");
@@ -924,6 +932,11 @@ struct Event {
 struct Attribute {
     key: String,
     value: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct NonceResponse {
+    nonce: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
