@@ -142,6 +142,43 @@ pub async fn find_evm_deposit_id_by_src_v2_chain_nonce_for_cosmos(
     Ok(row.map(|r| r.0))
 }
 
+/// Find any pending EVM deposit by nonce (for EVM→EVM V2 poll-and-approve DB sync).
+///
+/// Unlike `find_evm_deposit_id_by_src_v2_chain_nonce_for_cosmos`, this matches
+/// any dest_chain_type, so it covers EVM→EVM deposits that the V2 poll-and-approve
+/// path approved on-chain without going through the DB-driven path.
+pub async fn find_evm_deposit_id_by_nonce_for_evm(
+    pool: &PgPool,
+    nonce: i64,
+) -> Result<Option<i64>> {
+    let row = sqlx::query_as::<_, (i64,)>(
+        r#"SELECT id FROM evm_deposits 
+           WHERE nonce = $1 AND status = 'pending'
+           LIMIT 1"#,
+    )
+    .bind(nonce)
+    .fetch_optional(pool)
+    .await
+    .wrap_err("Failed to find EVM deposit by nonce")?;
+
+    Ok(row.map(|r| r.0))
+}
+
+/// Find pending Terra deposit by nonce (for Terra→EVM V2 poll-and-approve DB sync).
+pub async fn find_terra_deposit_id_by_nonce(pool: &PgPool, nonce: i64) -> Result<Option<i64>> {
+    let row = sqlx::query_as::<_, (i64,)>(
+        r#"SELECT id FROM terra_deposits 
+           WHERE nonce = $1 AND status = 'pending'
+           LIMIT 1"#,
+    )
+    .bind(nonce)
+    .fetch_optional(pool)
+    .await
+    .wrap_err("Failed to find Terra deposit by nonce")?;
+
+    Ok(row.map(|r| r.0))
+}
+
 /// Update EVM deposit status
 pub async fn update_evm_deposit_status(pool: &PgPool, id: i64, status: &str) -> Result<()> {
     sqlx::query(r#"UPDATE evm_deposits SET status = $1 WHERE id = $2"#)

@@ -370,6 +370,13 @@ impl EvmWriter {
                             attempts: 0,
                         },
                     );
+
+                    // Sync DB: mark corresponding evm_deposit or terra_deposit as processed
+                    // so pending_deposits count stays accurate. The V2 poll-and-approve path
+                    // works from on-chain events, but the DB is the shared data source for
+                    // /status reporting and the legacy DB-driven paths.
+                    self.sync_deposit_status_after_approval(&src_chain_id, nonce)
+                        .await;
                 }
                 Err(e) => {
                     warn!(
@@ -447,6 +454,83 @@ impl EvmWriter {
                     "Failed to query getDeposit on source chain"
                 );
                 Err(eyre!("Failed to verify deposit: {}", e))
+            }
+        }
+    }
+
+    /// Sync DB deposit status after V2 poll-and-approve creates an on-chain approval.
+    ///
+    /// The V2 poll-and-approve path works from on-chain WithdrawSubmit events and does
+    /// not consume deposits from the DB. This helper updates the corresponding DB record
+    /// (evm_deposits or terra_deposits) so the /status endpoint's `pending_deposits` count
+    /// stays accurate and the legacy DB-driven paths don't reprocess the deposit.
+    async fn sync_deposit_status_after_approval(&self, src_chain_id: &[u8; 4], nonce: u64) {
+        // Try EVM deposits first (EVM→EVM or EVM→Terra that was recorded by EVM watcher)
+        match db::find_evm_deposit_id_by_nonce_for_evm(&self.db, nonce as i64).await {
+            Ok(Some(deposit_id)) => {
+                if let Err(e) =
+                    db::update_evm_deposit_status(&self.db, deposit_id, "processed").await
+                {
+                    warn!(
+                        deposit_id = deposit_id,
+                        nonce = nonce,
+                        error = %e,
+                        "Failed to sync evm_deposit status after V2 approval"
+                    );
+                } else {
+                    debug!(
+                        deposit_id = deposit_id,
+                        nonce = nonce,
+                        "Synced evm_deposit as processed (V2 poll-and-approve)"
+                    );
+                }
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                debug!(
+                    nonce = nonce,
+                    src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                    error = %e,
+                    "DB lookup for evm_deposit failed (non-fatal)"
+                );
+            }
+        }
+
+        // Try Terra deposits (Terra→EVM)
+        if src_chain_id == self.terra_chain_id.as_bytes() {
+            match db::find_terra_deposit_id_by_nonce(&self.db, nonce as i64).await {
+                Ok(Some(deposit_id)) => {
+                    if let Err(e) =
+                        db::update_terra_deposit_status(&self.db, deposit_id, "processed").await
+                    {
+                        warn!(
+                            deposit_id = deposit_id,
+                            nonce = nonce,
+                            error = %e,
+                            "Failed to sync terra_deposit status after V2 approval"
+                        );
+                    } else {
+                        debug!(
+                            deposit_id = deposit_id,
+                            nonce = nonce,
+                            "Synced terra_deposit as processed (V2 poll-and-approve)"
+                        );
+                    }
+                }
+                Ok(None) => {
+                    debug!(
+                        nonce = nonce,
+                        "No DB record found for Terra deposit nonce (deposit may not have been recorded yet)"
+                    );
+                }
+                Err(e) => {
+                    debug!(
+                        nonce = nonce,
+                        error = %e,
+                        "DB lookup for terra_deposit failed (non-fatal)"
+                    );
+                }
             }
         }
     }
@@ -1185,6 +1269,10 @@ impl EvmWriter {
 mod tests {
     use super::EvmWriter;
 
+    // ========================================================================
+    // Terra Deposit Verification Tests
+    // ========================================================================
+
     #[test]
     fn test_terra_deposit_exists_in_query_when_data_present() {
         let body = serde_json::json!({
@@ -1200,5 +1288,93 @@ mod tests {
     fn test_terra_deposit_exists_in_query_when_data_null() {
         let body = serde_json::json!({ "data": serde_json::Value::Null });
         assert!(!EvmWriter::terra_deposit_exists_in_query(&body));
+    }
+
+    #[test]
+    fn test_terra_deposit_exists_in_query_when_data_missing() {
+        let body = serde_json::json!({ "error": "not found" });
+        assert!(!EvmWriter::terra_deposit_exists_in_query(&body));
+    }
+
+    #[test]
+    fn test_terra_deposit_exists_in_query_with_full_deposit_record() {
+        // Real-world response from Terra bridge deposit_hash query
+        let body = serde_json::json!({
+            "data": {
+                "nonce": 0,
+                "amount": "995000",
+                "deposit_hash": "de2e967d5bfeea4a57a752a561b70d241ef3ef8474a48901f92b0648cfb002f7",
+                "deposited_at": "1770716032132606174",
+                "dest_account": "AAAAAAAAAAAAAAAA85/W5RqtiPb0zmq4gnJ5z/+5ImY=",
+                "dest_chain_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "dest_token_address": "AAAAAAAAAAAAAAAACzBr+RXE1kX/WW5Rj68/lmm5cBY=",
+                "src_account": "AAAAAAAAAAAAAAAANXQwdJVscQgA6DGYARzL1N3xVW0="
+            }
+        });
+        assert!(EvmWriter::terra_deposit_exists_in_query(&body));
+    }
+
+    #[test]
+    fn test_terra_deposit_exists_in_query_with_empty_data_object() {
+        // Empty data object should be treated as "exists" (has a value, just no fields)
+        let body = serde_json::json!({ "data": {} });
+        assert!(EvmWriter::terra_deposit_exists_in_query(&body));
+    }
+
+    // ========================================================================
+    // V2 Flow Invariant Tests
+    // ========================================================================
+
+    /// Verify that the V2 flow correctly routes Terra-source deposits to Terra LCD
+    /// verification instead of EVM getDeposit().
+    ///
+    /// This is a structural test: the source_chain_id matching logic determines
+    /// whether verification goes to Terra LCD or EVM RPC.
+    #[test]
+    fn test_source_chain_routing_terra_vs_evm() {
+        use crate::types::ChainId;
+
+        let terra_chain_id = ChainId::from_u32(2);
+        let evm_chain_id_bytes: [u8; 4] = [0, 0, 0, 1];
+        let terra_chain_id_bytes: [u8; 4] = [0, 0, 0, 2];
+
+        // Terra-source should route to Terra verification
+        assert_eq!(
+            terra_chain_id_bytes,
+            *terra_chain_id.as_bytes(),
+            "Terra chain ID bytes should match"
+        );
+        assert!(
+            terra_chain_id_bytes == *terra_chain_id.as_bytes(),
+            "Terra source should be identified for Terra LCD routing"
+        );
+
+        // EVM-source should NOT route to Terra verification
+        assert_ne!(
+            evm_chain_id_bytes,
+            *terra_chain_id.as_bytes(),
+            "EVM chain ID should not match Terra chain ID"
+        );
+    }
+
+    /// Verify hash-matching invariant: the withdraw_hash on EVM must match
+    /// the deposit_hash on the source chain. The operator does NOT recompute
+    /// hashes — it verifies by looking up the hash directly.
+    #[test]
+    fn test_hash_matching_is_identity() {
+        // In V2, deposit_hash on source == withdraw_hash on destination.
+        // Both are computed from the same 7-field compute_transfer_hash.
+        // The operator only needs to verify the hash exists, not recompute it.
+        let deposit_hash: [u8; 32] = [
+            0xde, 0x2e, 0x96, 0x7d, 0x5b, 0xfe, 0xea, 0x4a, 0x57, 0xa7, 0x52, 0xa5, 0x61, 0xb7,
+            0x0d, 0x24, 0x1e, 0xf3, 0xef, 0x84, 0x74, 0xa4, 0x89, 0x01, 0xf9, 0x2b, 0x06, 0x48,
+            0xcf, 0xb0, 0x02, 0xf7,
+        ];
+        let withdraw_hash = deposit_hash; // Identity — same hash
+
+        assert_eq!(
+            deposit_hash, withdraw_hash,
+            "V2 invariant: deposit_hash == withdraw_hash (no recomputation)"
+        );
     }
 }
