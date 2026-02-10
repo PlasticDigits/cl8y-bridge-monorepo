@@ -716,22 +716,7 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         return TestResult::skip(name, "Operator service is not running");
     }
 
-    let test_account = config.test_accounts.evm_address;
-
-    // Get initial EVM balance
-    let initial_balance = match get_erc20_balance(config, token, test_account).await {
-        Ok(b) => {
-            info!("Initial EVM balance: {}", b);
-            b
-        }
-        Err(e) => {
-            return TestResult::fail(
-                name,
-                format!("Failed to get initial balance: {}", e),
-                start.elapsed(),
-            );
-        }
-    };
+    let _test_account = config.test_accounts.evm_address;
 
     // For Terra-to-EVM, the approval nonce on EVM does NOT correspond to the
     // EVM bridge's depositNonce. Terra deposits are counted on Terra, and the
@@ -784,10 +769,30 @@ pub async fn test_operator_terra_to_evm_withdrawal(
     };
 
     info!(
-        "Found Terra-to-EVM approval: nonce={}, hash=0x{}",
+        "Found Terra-to-EVM approval: nonce={}, recipient={}, token={}, hash=0x{}",
         approval.nonce,
+        approval.recipient,
+        approval.token,
         hex::encode(&approval.withdraw_hash.as_slice()[..8])
     );
+
+    // Get initial balance of the actual recipient (before withdrawal executes)
+    let recipient = approval.recipient;
+    let token_for_balance = approval.token;
+    let initial_recipient_balance =
+        match get_erc20_balance(config, token_for_balance, recipient).await {
+            Ok(b) => {
+                info!("Initial recipient balance: {} (recipient={})", b, recipient);
+                b
+            }
+            Err(e) => {
+                return TestResult::fail(
+                    name,
+                    format!("Failed to get initial recipient balance: {}", e),
+                    start.elapsed(),
+                );
+            }
+        };
 
     // Skip withdrawal delay
     if let Err(e) = skip_withdrawal_delay(config, 60).await {
@@ -810,22 +815,22 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
-    // Check balance increased
-    let final_balance = match get_erc20_balance(config, token, test_account).await {
+    // Check balance increased on the actual recipient from the approval
+    let final_balance = match get_erc20_balance(config, token_for_balance, recipient).await {
         Ok(b) => b,
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to get final balance: {}", e),
+                format!("Failed to get final recipient balance: {}", e),
                 start.elapsed(),
             );
         }
     };
 
-    let balance_increase = final_balance.saturating_sub(initial_balance);
+    let balance_increase = final_balance.saturating_sub(initial_recipient_balance);
     info!(
-        "Terra-to-EVM: balance {} -> {} (increase: {}), withdrawal_executed={}",
-        initial_balance, final_balance, balance_increase, withdrawal_executed
+        "Terra-to-EVM: recipient {} token {} balance {} -> {} (increase: {}), withdrawal_executed={}",
+        recipient, token_for_balance, initial_recipient_balance, final_balance, balance_increase, withdrawal_executed
     );
 
     if withdrawal_executed || balance_increase > U256::ZERO {

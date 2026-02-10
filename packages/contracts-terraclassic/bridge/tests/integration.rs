@@ -7,7 +7,7 @@ use cw_multi_test::{App, ContractWrapper, Executor};
 
 use bridge::msg::{
     ConfigResponse, ExecuteMsg, InstantiateMsg, PendingWithdrawResponse, QueryMsg,
-    WithdrawDelayResponse,
+    ThisChainIdResponse, WithdrawDelayResponse,
 };
 
 // ============================================================================
@@ -402,7 +402,7 @@ fn test_withdraw_cancel_within_window() {
 
     assert!(res.is_ok());
 
-    // Query — should be cancelled
+    // Query — should be cancelled (stored for auditing)
     let pending: PendingWithdrawResponse = app
         .wrap()
         .query_wasm_smart(&contract_addr, &QueryMsg::PendingWithdraw { withdraw_hash })
@@ -820,6 +820,22 @@ fn test_lock_stores_deposit_hash() {
     assert!(deposit.is_some());
     let d = deposit.unwrap();
     assert_eq!(d.nonce, 0);
+}
+
+// ============================================================================
+// Configuration Query Tests
+// ============================================================================
+
+#[test]
+fn test_this_chain_id_query() {
+    let (app, contract_addr, _operator, _user) = setup();
+
+    let resp: ThisChainIdResponse = app
+        .wrap()
+        .query_wasm_smart(&contract_addr, &QueryMsg::ThisChainId {})
+        .unwrap();
+
+    assert_eq!(resp.chain_id.as_slice(), &[0, 0, 0, 1]);
 }
 
 // ============================================================================

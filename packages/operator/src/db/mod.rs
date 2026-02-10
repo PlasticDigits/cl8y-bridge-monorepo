@@ -120,6 +120,28 @@ pub async fn get_pending_evm_deposits_for_evm(pool: &PgPool) -> Result<Vec<EvmDe
     Ok(rows)
 }
 
+/// Find EVM deposit ID by source chain (V2 4-byte) and nonce for cosmos-bound deposits.
+/// Used when Terra writer approves an EVM→Terra withdrawal to update shared state.
+/// Uses src_v2_chain_id so it works with multiple EVM chains (BSC, opBNB, etc.).
+pub async fn find_evm_deposit_id_by_src_v2_chain_nonce_for_cosmos(
+    pool: &PgPool,
+    src_v2_chain_id: &[u8; 4],
+    nonce: i64,
+) -> Result<Option<i64>> {
+    let row = sqlx::query_as::<_, (i64,)>(
+        r#"SELECT id FROM evm_deposits 
+           WHERE src_v2_chain_id = $1 AND nonce = $2 AND dest_chain_type = 'cosmos' AND status = 'pending'
+           LIMIT 1"#,
+    )
+    .bind(src_v2_chain_id)
+    .bind(nonce)
+    .fetch_optional(pool)
+    .await
+    .wrap_err("Failed to find EVM deposit by src_v2_chain_id and nonce")?;
+
+    Ok(row.map(|r| r.0))
+}
+
 /// Update EVM deposit status
 pub async fn update_evm_deposit_status(pool: &PgPool, id: i64, status: &str) -> Result<()> {
     sqlx::query(r#"UPDATE evm_deposits SET status = $1 WHERE id = $2"#)
@@ -742,15 +764,21 @@ pub async fn update_release_for_retry(
 
 // ============ Sprint 4: API/Status Queries ============
 
-/// Count pending deposits by chain
+/// Count pending deposits across all chains (evm_deposits + terra_deposits).
+/// Both writers use this shared DB; when Terra writer approves EVM→Terra it updates
+/// evm_deposits, when EVM writer approves Terra→EVM it updates terra_deposits.
 pub async fn count_pending_deposits(pool: &PgPool) -> Result<i64> {
-    let row: (i64,) =
+    let evm: (i64,) =
         sqlx::query_as(r#"SELECT COUNT(*) FROM evm_deposits WHERE status = 'pending'"#)
             .fetch_one(pool)
             .await
-            .wrap_err("Failed to count pending deposits")?;
-
-    Ok(row.0)
+            .wrap_err("Failed to count pending EVM deposits")?;
+    let terra: (i64,) =
+        sqlx::query_as(r#"SELECT COUNT(*) FROM terra_deposits WHERE status = 'pending'"#)
+            .fetch_one(pool)
+            .await
+            .wrap_err("Failed to count pending Terra deposits")?;
+    Ok(evm.0 + terra.0)
 }
 
 /// Count pending approvals

@@ -505,6 +505,10 @@ pub enum QueryMsg {
     // ========================================================================
     // Configuration Queries
     // ========================================================================
+    /// Get this chain's predetermined 4-byte V2 chain ID (set at instantiation)
+    #[returns(ThisChainIdResponse)]
+    ThisChainId {},
+
     /// Get current withdraw delay
     #[returns(WithdrawDelayResponse)]
     WithdrawDelay {},
@@ -796,6 +800,12 @@ pub struct IsCancelerResponse {
 // ============================================================================
 // Response Types - Configuration
 // ============================================================================
+
+#[cw_serde]
+pub struct ThisChainIdResponse {
+    /// This chain's predetermined 4-byte V2 chain ID (Binary)
+    pub chain_id: Binary,
+}
 
 #[cw_serde]
 pub struct WithdrawDelayResponse {

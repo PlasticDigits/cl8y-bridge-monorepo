@@ -34,8 +34,9 @@ use crate::query::{
     query_incoming_token_mapping, query_incoming_token_mappings, query_is_canceler,
     query_locked_balance, query_nonce_used, query_operators, query_pending_admin,
     query_pending_withdraw, query_pending_withdrawals, query_period_usage, query_rate_limit,
-    query_simulate_bridge, query_stats, query_status, query_token, query_token_dest_mapping,
-    query_token_type, query_tokens, query_transaction, query_verify_deposit, query_withdraw_delay,
+    query_simulate_bridge, query_stats, query_status, query_this_chain_id, query_token,
+    query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
+    query_verify_deposit, query_withdraw_delay,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -417,6 +418,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::IsCanceler { address } => to_json_binary(&query_is_canceler(deps, address)?),
 
         // Configuration queries
+        QueryMsg::ThisChainId {} => to_json_binary(&query_this_chain_id(deps)?),
         QueryMsg::WithdrawDelay {} => to_json_binary(&query_withdraw_delay(deps)?),
         QueryMsg::RateLimit { token } => to_json_binary(&query_rate_limit(deps, token)?),
         QueryMsg::PeriodUsage { token } => to_json_binary(&query_period_usage(deps, env, token)?),

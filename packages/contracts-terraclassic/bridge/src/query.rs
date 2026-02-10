@@ -18,14 +18,15 @@ use crate::msg::{
     IsCancelerResponse, LockedBalanceResponse, NonceResponse, NonceUsedResponse, OperatorsResponse,
     PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
     PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse, SimulationResponse,
-    StatsResponse, StatusResponse, TokenDestMappingResponse, TokenResponse, TokenTypeResponse,
-    TokensResponse, TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
+    StatsResponse, StatusResponse, ThisChainIdResponse, TokenDestMappingResponse, TokenResponse,
+    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
+    WithdrawDelayResponse,
 };
 use crate::state::{
     CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
     OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS, RATE_LIMITS,
-    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, TOKENS, TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS,
-    TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
+    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS, TOKEN_DEST_MAPPINGS,
+    TOKEN_SRC_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -602,6 +603,14 @@ pub fn query_is_canceler(deps: Deps, address: String) -> StdResult<IsCancelerRes
 // ============================================================================
 // Configuration Queries
 // ============================================================================
+
+/// Query this chain's predetermined 4-byte V2 chain ID (set at instantiation).
+pub fn query_this_chain_id(deps: Deps) -> StdResult<ThisChainIdResponse> {
+    let chain_id = THIS_CHAIN_ID.load(deps.storage)?;
+    Ok(ThisChainIdResponse {
+        chain_id: Binary::from(chain_id.to_vec()),
+    })
+}
 
 /// Query the withdraw delay.
 pub fn query_withdraw_delay(deps: Deps) -> StdResult<WithdrawDelayResponse> {

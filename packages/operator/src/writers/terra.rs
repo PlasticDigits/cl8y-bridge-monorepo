@@ -26,6 +26,7 @@ use crate::contracts::evm_bridge::Bridge as EvmBridge;
 use crate::contracts::terra_bridge::{
     build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
 };
+use crate::db;
 use crate::hash::bytes32_to_hex;
 use crate::terra_client::TerraClient;
 use crate::types::ChainId;
@@ -424,6 +425,56 @@ impl TerraWriter {
                                     nonce = nonce,
                                     "WithdrawApprove submitted successfully on Terra"
                                 );
+
+                                // Update shared DB: mark evm_deposit as processed so both writers
+                                // see consistent state (pending_deposits count decreases).
+                                // Use src_chain from the withdrawal entry (V2 4-byte) for multi-EVM support.
+                                let src_v2_chain_id: Option<[u8; 4]> = entry["src_chain"]
+                                    .as_str()
+                                    .and_then(|b64| {
+                                        base64::Engine::decode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            b64,
+                                        )
+                                        .ok()
+                                    })
+                                    .and_then(|b| b.try_into().ok());
+                                if let Some(src) = src_v2_chain_id {
+                                    if let Ok(Some(deposit_id)) =
+                                        db::find_evm_deposit_id_by_src_v2_chain_nonce_for_cosmos(
+                                            &self.db,
+                                            &src,
+                                            nonce as i64,
+                                        )
+                                        .await
+                                    {
+                                        if let Err(e) = db::update_evm_deposit_status(
+                                            &self.db,
+                                            deposit_id,
+                                            "processed",
+                                        )
+                                        .await
+                                        {
+                                            warn!(
+                                                deposit_id = deposit_id,
+                                                nonce = nonce,
+                                                error = %e,
+                                                "Failed to update evm_deposit status after Terra approval"
+                                            );
+                                        } else {
+                                            debug!(
+                                                deposit_id = deposit_id,
+                                                nonce = nonce,
+                                                "Marked evm_deposit as processed (shared data source)"
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    debug!(
+                                        nonce = nonce,
+                                        "Could not parse src_chain from withdrawal entry, skipping evm_deposit update"
+                                    );
+                                }
 
                                 // Track for auto-execution after cancel window
                                 self.pending_executions.insert(
