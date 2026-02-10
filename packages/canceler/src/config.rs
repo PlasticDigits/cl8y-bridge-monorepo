@@ -43,8 +43,10 @@ pub struct Config {
     /// Poll interval in milliseconds
     pub poll_interval_ms: u64,
 
-    /// Health server port (default 9090)
+    /// Health server port (default 9099)
     pub health_port: u16,
+    /// Health server bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)
+    pub health_bind_address: String,
 }
 
 impl Config {
@@ -121,6 +123,9 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(9099),
+
+            // Default bind to localhost; set HEALTH_BIND_ADDRESS=0.0.0.0 to expose on all interfaces
+            health_bind_address: env::var("HEALTH_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
         })
     }
 }

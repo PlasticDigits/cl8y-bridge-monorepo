@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use eyre::eyre;
 use axum::{
     extract::State,
     http::header,
@@ -196,6 +197,7 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
 
 /// Start the HTTP server for health and metrics
 pub async fn start_server(
+    bind_address: &str,
     port: u16,
     stats: SharedStats,
     prom_metrics: SharedMetrics,
@@ -212,7 +214,9 @@ pub async fn start_server(
         .route("/metrics", get(prometheus_metrics))
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr: SocketAddr = format!("{}:{}", bind_address, port)
+        .parse()
+        .map_err(|e| eyre!("Invalid bind address {}:{}: {}", bind_address, port, e))?;
     info!("Health server listening on {}", addr);
     info!("  /health  - Full health status (JSON)");
     info!("  /metrics - Prometheus metrics");

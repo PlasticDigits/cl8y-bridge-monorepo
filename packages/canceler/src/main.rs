@@ -72,11 +72,12 @@ async fn async_main() -> eyre::Result<()> {
     let metrics: SharedMetrics = Arc::new(Metrics::new());
 
     // Start HTTP server for health endpoint
+    let health_bind_address = config.health_bind_address.clone();
     let health_port = config.health_port;
     let server_stats = Arc::clone(&stats);
     let server_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
-        if let Err(e) = server::start_server(health_port, server_stats, server_metrics).await {
+        if let Err(e) = server::start_server(&health_bind_address, health_port, server_stats, server_metrics).await {
             tracing::error!(error = %e, "Health server error");
         }
     });

@@ -12,7 +12,7 @@ use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage,
     Uint128,
 };
-use cw20::Cw20ExecuteMsg;
+use cw20::{Cw20ExecuteMsg, Cw20QueryMsg};
 
 use crate::error::ContractError;
 use crate::hash::{
@@ -26,6 +26,9 @@ use crate::state::{
 
 /// Default cancel window: 5 minutes (matches EVM)
 const CANCEL_WINDOW: u64 = 300;
+
+/// Default rate limit when not configured: 0.1% of total supply, or 100 ether if supply is zero
+const DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY: Uint128 = Uint128::new(100_000_000_000_000_000_000);
 
 // ============================================================================
 // WithdrawSubmit — User-initiated
@@ -362,8 +365,9 @@ pub fn execute_withdraw_execute_unlock(
     let payout_amount =
         normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals);
 
-    // Check rate limits
-    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount)?;
+    // Check rate limits (resolve limits first to avoid overlapping borrows)
+    let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
+    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount, limits.0, limits.1)?;
 
     // Check liquidity
     let locked = LOCKED_BALANCES
@@ -450,8 +454,9 @@ pub fn execute_withdraw_execute_mint(
     let payout_amount =
         normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals);
 
-    // Check rate limits
-    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount)?;
+    // Check rate limits (resolve limits first to avoid overlapping borrows)
+    let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
+    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount, limits.0, limits.1)?;
 
     // Mark as executed
     pending.executed = true;
@@ -546,31 +551,53 @@ fn load_and_validate_execution(
     Ok(pending)
 }
 
+/// Resolve effective rate limits (from config or default 0.1% of supply).
+fn resolve_effective_rate_limits(
+    deps: cosmwasm_std::Deps,
+    token: &str,
+) -> Result<(Uint128, Uint128), ContractError> {
+    let config = RATE_LIMITS.may_load(deps.storage, token)?;
+
+    if let Some(ref c) = config {
+        return Ok((c.max_per_transaction, c.max_per_period));
+    }
+
+    // No limit configured: use default 0.1% of supply, or 100 ether if supply is zero
+    let token_config = TOKENS
+        .may_load(deps.storage, token.to_string())?
+        .ok_or(ContractError::TokenNotSupported {
+            token: token.to_string(),
+        })?;
+    let supply = query_token_supply(deps, token, token_config.is_native)?;
+    let period_limit = if supply.is_zero() {
+        DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY
+    } else {
+        supply / Uint128::new(1000) // 0.1%
+    };
+    Ok((Uint128::zero(), period_limit)) // No per-tx limit when using default
+}
+
 /// Check and update rate limits for a token withdrawal.
 pub fn check_and_update_rate_limit(
     storage: &mut dyn Storage,
     env: &Env,
     token: &str,
     amount: Uint128,
+    max_per_transaction: Uint128,
+    max_per_period: Uint128,
 ) -> Result<(), ContractError> {
-    let config = RATE_LIMITS.may_load(storage, token)?;
-
-    let Some(config) = config else {
-        return Ok(()); // No limit configured
-    };
-
     // Check per-transaction limit
-    if !config.max_per_transaction.is_zero() && amount > config.max_per_transaction {
+    if !max_per_transaction.is_zero() && amount > max_per_transaction {
         return Err(ContractError::RateLimitExceeded {
             limit_type: "per_transaction".to_string(),
-            limit: config.max_per_transaction,
+            limit: max_per_transaction,
             requested: amount,
         });
     }
 
     // Check per-period limit
-    if config.max_per_period.is_zero() {
-        return Ok(()); // No period limit
+    if max_per_period.is_zero() {
+        return Ok(()); // No period limit (only when explicitly configured that way)
     }
 
     let mut window = RATE_WINDOWS
@@ -589,10 +616,10 @@ pub fn check_and_update_rate_limit(
     }
 
     let new_used = window.used + amount;
-    if new_used > config.max_per_period {
+    if new_used > max_per_period {
         return Err(ContractError::RateLimitExceeded {
             limit_type: "per_period".to_string(),
-            limit: config.max_per_period,
+            limit: max_per_period,
             requested: amount,
         });
     }
@@ -601,4 +628,37 @@ pub fn check_and_update_rate_limit(
     RATE_WINDOWS.save(storage, token, &window)?;
 
     Ok(())
+}
+
+/// Query total supply of a token (native denom or CW20).
+/// For native tokens, uses BankQuery::Supply when cosmwasm_1_2 (or cosmwasm_1_1) is enabled.
+/// Otherwise falls back to DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY for native tokens.
+fn query_token_supply(
+    deps: cosmwasm_std::Deps,
+    token: &str,
+    is_native: bool,
+) -> Result<Uint128, ContractError> {
+    if is_native {
+        #[cfg(feature = "cosmwasm_1_2")]
+        {
+            use cosmwasm_std::{BankQuery, QueryRequest};
+            let res: cosmwasm_std::SupplyResponse = deps
+                .querier
+                .query(&QueryRequest::Bank(BankQuery::Supply {
+                    denom: token.to_string(),
+                }))?;
+            Ok(res.amount.amount)
+        }
+        #[cfg(not(feature = "cosmwasm_1_2"))]
+        {
+            let _ = (deps, token);
+            // BankQuery::Supply not available without cosmwasm_1_2
+            Ok(Uint128::zero())
+        }
+    } else {
+        let res: cw20::TokenInfoResponse = deps
+            .querier
+            .query_wasm_smart(token, &Cw20QueryMsg::TokenInfo {})?;
+        Ok(res.total_supply)
+    }
 }

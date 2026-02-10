@@ -7,19 +7,24 @@ import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManage
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
 import {GuardBridge} from "../src/GuardBridge.sol";
 import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
+import {MockMintableToken} from "./mocks/MockMintableToken.sol";
 
 contract TokenRateLimitTest is Test {
     AccessManager public accessManager;
     TokenRateLimit public rateLimit;
     GuardBridge public guard;
     DatastoreSetAddress public datastore;
+    MockMintableToken public mockToken;
 
     address public owner = address(1);
     address public user = address(2);
-    address public tokenA = address(0xA1);
+    address public tokenA;
     address public tokenB = address(0xB2);
 
     function setUp() public {
+        mockToken = new MockMintableToken("Test", "TST", 18);
+        mockToken.mint(address(this), 1e27); // 0.1% = 1e24, allows large default-limit operations
+        tokenA = address(mockToken);
         vm.prank(owner);
         accessManager = new AccessManager(owner);
         rateLimit = new TokenRateLimit(address(accessManager));
@@ -49,9 +54,12 @@ contract TokenRateLimitTest is Test {
         vm.stopPrank();
     }
 
-    function test_DefaultUnlimited_NoRevert() public {
-        rateLimit.checkDeposit(tokenA, 1_000_000 ether, user);
-        rateLimit.checkWithdraw(tokenA, 1_000_000 ether, user);
+    function test_DefaultLimit_WhenNotConfigured() public {
+        // When no limit is set, default is 0.1% of total supply (1e27/1000 = 1e24)
+        rateLimit.checkDeposit(tokenA, 1e24, user);
+        rateLimit.checkWithdraw(tokenA, 1e24, user);
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 1e24, 1e24));
+        rateLimit.checkDeposit(tokenA, 1, user);
     }
 
     function test_DepositLimit_WindowAndReset() public {
@@ -175,23 +183,29 @@ contract TokenRateLimitTest is Test {
         rateLimit.checkAccount(address(0xBEEF));
     }
 
-    function test_SetDepositLimitZero_MakesUnlimitedEvenAfterUsage() public {
+    function test_SetDepositLimitZero_UsesDefaultLimit() public {
         rateLimit.setDepositLimit(tokenA, 10);
         rateLimit.checkDeposit(tokenA, 10, user);
         vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 10, 10));
         rateLimit.checkDeposit(tokenA, 1, user);
-        // Now switch to unlimited and ensure it bypasses accounting
+        // Set to 0: now uses default 0.1% of supply (1e24 for 1e27 supply)
         rateLimit.setDepositLimit(tokenA, 0);
-        rateLimit.checkDeposit(tokenA, type(uint256).max / 2, user);
+        vm.warp(block.timestamp + 24 hours); // Reset window
+        rateLimit.checkDeposit(tokenA, 1e24, user);
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 1e24, 1e24));
+        rateLimit.checkDeposit(tokenA, 1, user);
     }
 
-    function test_SetWithdrawLimitZero_MakesUnlimitedEvenAfterUsage() public {
+    function test_SetWithdrawLimitZero_UsesDefaultLimit() public {
         rateLimit.setWithdrawLimit(tokenA, 9);
         rateLimit.checkWithdraw(tokenA, 9, user);
         vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 9, 9));
         rateLimit.checkWithdraw(tokenA, 1, user);
         rateLimit.setWithdrawLimit(tokenA, 0);
-        rateLimit.checkWithdraw(tokenA, type(uint256).max / 2, user);
+        vm.warp(block.timestamp + 24 hours); // Reset window
+        rateLimit.checkWithdraw(tokenA, 1e24, user);
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 1e24, 1e24));
+        rateLimit.checkWithdraw(tokenA, 1, user);
     }
 
     function test_SetLimitsBatch_LengthMismatch_Reverts() public {

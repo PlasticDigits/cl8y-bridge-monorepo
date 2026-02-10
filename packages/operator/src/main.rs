@@ -94,7 +94,11 @@ async fn async_main() -> eyre::Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(9092);
-    let api_addr = std::net::SocketAddr::from(([0, 0, 0, 0], api_port));
+    let api_bind: std::net::IpAddr = std::env::var("OPERATOR_API_BIND_ADDRESS")
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+        .parse()
+        .unwrap_or_else(|_| std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+    let api_addr = std::net::SocketAddr::from((api_bind, api_port));
     tracing::info!(port = api_port, "Starting API server");
     let api_db = db.clone();
     tokio::spawn(async move {

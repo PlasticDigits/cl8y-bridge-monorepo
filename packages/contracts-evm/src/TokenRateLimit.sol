@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 
 import {IGuardBridge} from "./interfaces/IGuardBridge.sol";
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title TokenRateLimit
 /// @notice Guard module enforcing per-token 24h rate limits on deposits and withdrawals
@@ -15,7 +16,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     }
 
     /// @notice Mapping of token => deposit limit per 24h window.
-    /// @dev A limit of 0 is treated as unlimited (i.e., no rate limiting for that token on that direction).
+    /// @dev A limit of 0 uses default: 0.1% of token total supply, or 100 ether if supply is zero.
     mapping(address token => uint256 limit) public depositLimitPerToken;
     mapping(address token => uint256 limit) public withdrawLimitPerToken;
 
@@ -24,6 +25,8 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     mapping(address token => Window) public withdrawWindowPerToken;
 
     uint256 public constant WINDOW_SECONDS = 24 hours;
+    /// @dev Default rate limit when not configured: 0.1% of total supply, or 100 ether if supply is zero
+    uint256 public constant DEFAULT_LIMIT_IF_ZERO_SUPPLY = 100 ether;
 
     error DepositRateLimitExceeded(address token, uint256 attempted, uint256 used, uint256 limit);
     error WithdrawRateLimitExceeded(address token, uint256 attempted, uint256 used, uint256 limit);
@@ -40,7 +43,9 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     /// @inheritdoc IGuardBridge
     function checkDeposit(address token, uint256 amount, address) external {
         uint256 limit = depositLimitPerToken[token];
-        if (limit == 0) return; // unlimited unless configured
+        if (limit == 0) {
+            limit = _getDefaultLimit(token);
+        }
 
         Window storage win = depositWindowPerToken[token];
         _resetIfWindowExpired(win);
@@ -53,7 +58,9 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     /// @inheritdoc IGuardBridge
     function checkWithdraw(address token, uint256 amount, address) external {
         uint256 limit = withdrawLimitPerToken[token];
-        if (limit == 0) return; // unlimited unless configured
+        if (limit == 0) {
+            limit = _getDefaultLimit(token);
+        }
 
         Window storage win = withdrawWindowPerToken[token];
         _resetIfWindowExpired(win);
@@ -121,5 +128,15 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     function _isWindowExpired(Window memory win) internal view returns (bool) {
         // Use <= so at exact boundary we start a new window (fix off-by-one)
         return win.windowStart + WINDOW_SECONDS <= block.timestamp;
+    }
+
+    /// @dev Returns default rate limit: 0.1% of token total supply, or 100 ether if supply is zero
+    function _getDefaultLimit(address token) internal view returns (uint256) {
+        try IERC20(token).totalSupply() returns (uint256 supply) {
+            if (supply == 0) return DEFAULT_LIMIT_IF_ZERO_SUPPLY;
+            return supply / 1000; // 0.1%
+        } catch {
+            return DEFAULT_LIMIT_IF_ZERO_SUPPLY;
+        }
     }
 }
