@@ -34,7 +34,7 @@ sol! {
 
         /// User submits a withdrawal request (requires operatorGas payment)
         /// Must include srcAccount and destAccount for hash computation
-        function withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce) external payable;
+        function withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals) external payable;
 
         /// Operator approves a pending withdrawal
         function withdrawApprove(bytes32 withdrawHash) external;
@@ -98,6 +98,8 @@ sol! {
             address recipient,
             uint256 amount,
             uint64 nonce,
+            uint8 srcDecimals,
+            uint8 destDecimals,
             uint256 operatorGas,
             uint256 submittedAt,
             uint256 approvedAt,

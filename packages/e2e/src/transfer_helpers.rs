@@ -463,21 +463,23 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
             let hex_result = pw_body["result"].as_str().unwrap_or("");
             let result_bytes = hex::decode(hex_result.trim_start_matches("0x")).unwrap_or_default();
 
-            // PendingWithdraw struct ABI layout (13 fields):
-            //   [0..32]    srcChain    (bytes4, left-aligned)
-            //   [32..64]   srcAccount  (bytes32)
-            //   [64..96]   destAccount (bytes32)
-            //   [96..128]  token       (address, right-aligned)
-            //   [128..160] recipient   (address, right-aligned)
-            //   [160..192] amount      (uint256)
-            //   [192..224] nonce       (uint64, right-aligned)
-            //   [224..256] operatorGas (uint256)
-            //   [256..288] submittedAt (uint256)
-            //   [288..320] approvedAt  (uint256)
-            //   [320..352] approved    (bool)
-            //   [352..384] cancelled   (bool)
-            //   [384..416] executed    (bool)
-            if result_bytes.len() >= 416 {
+            // PendingWithdraw struct ABI layout (15 fields):
+            //   [0..32]    srcChain      (bytes4, left-aligned)
+            //   [32..64]   srcAccount    (bytes32)
+            //   [64..96]   destAccount   (bytes32)
+            //   [96..128]  token         (address, right-aligned)
+            //   [128..160] recipient     (address, right-aligned)
+            //   [160..192] amount        (uint256)
+            //   [192..224] nonce         (uint64, right-aligned)
+            //   [224..256] srcDecimals   (uint8, right-aligned)
+            //   [256..288] destDecimals  (uint8, right-aligned)
+            //   [288..320] operatorGas   (uint256)
+            //   [320..352] submittedAt   (uint256)
+            //   [352..384] approvedAt    (uint256)
+            //   [384..416] approved      (bool)
+            //   [416..448] cancelled     (bool)
+            //   [448..480] executed      (bool)
+            if result_bytes.len() >= 480 {
                 let pw_nonce =
                     u64::from_be_bytes(result_bytes[216..224].try_into().unwrap_or([0u8; 8]));
                 found_nonces.push(pw_nonce);
@@ -485,7 +487,7 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                 // Debug: log raw field values for ABI verification
                 if found_nonces.len() <= 3 {
                     let src_chain_raw = &result_bytes[0..4];
-                    let submitted_at = U256::from_be_slice(&result_bytes[256..288]);
+                    let submitted_at = U256::from_be_slice(&result_bytes[320..352]);
                     debug!(
                         hash = %format!("0x{}", hex::encode(withdraw_hash.as_slice())),
                         nonce = pw_nonce,
@@ -503,9 +505,9 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                     let recipient = Address::from_slice(&result_bytes[140..160]);
                     let amount = U256::from_be_slice(&result_bytes[160..192]);
                     let approved_at =
-                        u64::from_be_bytes(result_bytes[312..320].try_into().unwrap_or([0u8; 8]));
-                    let cancelled = result_bytes[383] != 0;
-                    let executed = result_bytes[415] != 0;
+                        u64::from_be_bytes(result_bytes[376..384].try_into().unwrap_or([0u8; 8]));
+                    let cancelled = result_bytes[447] != 0;
+                    let executed = result_bytes[479] != 0;
 
                     return Ok(Some(ApprovalInfo {
                         withdraw_hash,
@@ -707,16 +709,16 @@ async fn query_all_approval_events(config: &E2eConfig) -> Result<Vec<ApprovalInf
             let hex_result = pw_body["result"].as_str().unwrap_or("");
             let result_bytes = hex::decode(hex_result.trim_start_matches("0x")).unwrap_or_default();
 
-            if result_bytes.len() >= 416 {
+            if result_bytes.len() >= 480 {
                 let nonce =
                     u64::from_be_bytes(result_bytes[216..224].try_into().unwrap_or([0u8; 8]));
                 let token = Address::from_slice(&result_bytes[108..128]);
                 let recipient = Address::from_slice(&result_bytes[140..160]);
                 let amount = U256::from_be_slice(&result_bytes[160..192]);
                 let approved_at =
-                    u64::from_be_bytes(result_bytes[312..320].try_into().unwrap_or([0u8; 8]));
-                let cancelled = result_bytes[383] != 0;
-                let executed = result_bytes[415] != 0;
+                    u64::from_be_bytes(result_bytes[376..384].try_into().unwrap_or([0u8; 8]));
+                let cancelled = result_bytes[447] != 0;
+                let executed = result_bytes[479] != 0;
 
                 results.push(ApprovalInfo {
                     withdraw_hash,

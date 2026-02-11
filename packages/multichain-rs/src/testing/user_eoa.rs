@@ -234,7 +234,7 @@ impl EvmUser {
 
     /// Submit a withdrawal on the destination EVM chain
     ///
-    /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce)`
+    /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce, srcDecimals)`
     /// with operator gas payment.
     pub async fn withdraw_submit(
         &self,
@@ -248,6 +248,7 @@ impl EvmUser {
         amount: U256,
         nonce: u64,
         operator_gas: U256,
+        src_decimals: u8,
     ) -> Result<FixedBytes<32>> {
         use crate::evm::contracts::Bridge;
 
@@ -262,6 +263,7 @@ impl EvmUser {
                 token_address,
                 amount,
                 nonce,
+                src_decimals,
             )
             .value(operator_gas);
 
@@ -444,6 +446,8 @@ impl EvmUser {
             recipient: result.recipient,
             amount: result.amount,
             nonce: result.nonce,
+            src_decimals: result.srcDecimals,
+            dest_decimals: result.destDecimals,
             operator_gas: result.operatorGas,
             submitted_at: result.submittedAt,
             approved_at: result.approvedAt,
@@ -486,6 +490,8 @@ pub struct PendingWithdrawInfo {
     pub recipient: Address,
     pub amount: U256,
     pub nonce: u64,
+    pub src_decimals: u8,
+    pub dest_decimals: u8,
     pub operator_gas: U256,
     pub submitted_at: U256,
     pub approved_at: U256,

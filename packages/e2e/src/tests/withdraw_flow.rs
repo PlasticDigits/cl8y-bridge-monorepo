@@ -88,17 +88,18 @@ async fn execute_withdraw_submit(
 ) -> eyre::Result<B256> {
     use super::helpers::chain_id4_to_bytes32;
     let params = format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}",
         hex::encode(chain_id4_to_bytes32(src_chain)),
         hex::encode(src_account),
         hex::encode(dest_account),
         format!("{:0>64}", hex::encode(token.as_slice())),
         format!("{:064x}", amount),
-        format!("{:064x}", nonce)
+        format!("{:064x}", nonce),
+        format!("{:064x}", 18u8) // srcDecimals: ERC20 default 18
     );
     let sel = format!(
         "0x{}",
-        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)")
+        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)")
     );
     execute_withdraw_op(config, &sel, None, Some(&params), Some(operator_gas)).await
 }
@@ -148,16 +149,17 @@ async fn query_pending_withdraw(
             .trim_start_matches("0x"),
     )?;
 
-    if bytes.len() < 416 {
+    if bytes.len() < 480 {
         return Err(eyre::eyre!("Response too short"));
     }
 
+    // 15-field struct: submittedAt=slot10, approvedAt=slot11, approved=slot12, cancelled=slot13, executed=slot14
     Ok(PendingWithdrawInfo {
-        submitted_at: U256::from_be_slice(&bytes[256..288]).to::<u64>(),
-        approved_at: U256::from_be_slice(&bytes[288..320]).to::<u64>(),
-        approved: bytes[351] != 0,
-        cancelled: bytes[383] != 0,
-        executed: bytes[415] != 0,
+        submitted_at: U256::from_be_slice(&bytes[320..352]).to::<u64>(),
+        approved_at: U256::from_be_slice(&bytes[352..384]).to::<u64>(),
+        approved: bytes[415] != 0,
+        cancelled: bytes[447] != 0,
+        executed: bytes[479] != 0,
     })
 }
 

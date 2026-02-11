@@ -975,24 +975,26 @@ pub async fn submit_withdraw_on_evm(
 ) -> Result<B256> {
     let client = reqwest::Client::new();
 
-    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce)
-    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
+    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals)
+    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
     let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_id));
     let src_account_hex = hex::encode(src_account);
     let dest_account_hex = hex::encode(dest_account);
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount);
     let nonce_padded = format!("{:064x}", nonce);
+    let src_decimals_padded = format!("{:064x}", 18u8); // ERC20 default 18 decimals
 
     let call_data = format!(
-        "0x{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}{}",
         sel,
         src_chain_padded,
         src_account_hex,
         dest_account_hex,
         token_padded,
         amount_padded,
-        nonce_padded
+        nonce_padded,
+        src_decimals_padded
     );
 
     info!(

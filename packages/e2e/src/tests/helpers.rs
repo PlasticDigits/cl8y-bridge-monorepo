@@ -540,7 +540,7 @@ pub struct FraudulentApprovalResult {
 /// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
 ///
 /// This creates an approval that has no matching deposit (fraud scenario).
-/// Step 1: withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64) - creates pending withdrawal
+/// Step 1: withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8) - creates pending withdrawal
 /// Step 2: withdrawApprove(bytes32) - operator approves it
 ///
 /// IMPORTANT: `src_chain_key` must have a registered bytes4 chain ID in the first 4 bytes,
@@ -572,7 +572,8 @@ pub(crate) async fn create_fraudulent_approval(
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
 
     // --- Step 1: withdrawSubmit ---
-    let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
+    let submit_sel =
+        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
 
     // srcChain is the first 4 bytes of src_chain_key, ABI-encoded as bytes4 (left-aligned in 32 bytes)
     let src_chain_bytes4 = &src_chain_key.as_slice()[..4];
@@ -582,16 +583,18 @@ pub(crate) async fn create_fraudulent_approval(
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount_u256);
     let nonce_padded = format!("{:064x}", nonce);
+    let src_decimals_padded = format!("{:064x}", 18u8); // ERC20 default 18 decimals
 
     let submit_data = format!(
-        "0x{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}{}",
         submit_sel,
         src_chain_padded,
         src_account_hex,
         dest_account_hex,
         token_padded,
         amount_padded,
-        nonce_padded
+        nonce_padded,
+        src_decimals_padded
     );
 
     debug!(
@@ -743,12 +746,14 @@ pub(crate) async fn create_fraudulent_approval(
 /// - slot 4: recipient (address, left-padded in 32 bytes)
 /// - slot 5: amount (uint256)
 /// - slot 6: nonce (uint64, left-padded in 32 bytes)
-/// - slot 7: operatorGas (uint256)
-/// - slot 8: submittedAt (uint256)
-/// - slot 9: approvedAt (uint256)
-/// - slot 10: approved (bool)
-/// - slot 11: cancelled (bool)
-/// - slot 12: executed (bool)
+/// - slot 7: srcDecimals (uint8, right-aligned in 32 bytes)
+/// - slot 8: destDecimals (uint8, right-aligned in 32 bytes)
+/// - slot 9: operatorGas (uint256)
+/// - slot 10: submittedAt (uint256)
+/// - slot 11: approvedAt (uint256)
+/// - slot 12: approved (bool)
+/// - slot 13: cancelled (bool)
+/// - slot 14: executed (bool)
 pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
     let client = reqwest::Client::new();
 
@@ -788,8 +793,8 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
 
     let bytes = hex::decode(result_hex.trim_start_matches("0x")).unwrap_or_default();
 
-    // PendingWithdraw has 13 fields * 32 bytes = 416 bytes
-    if bytes.len() < 13 * 32 {
+    // PendingWithdraw has 15 fields * 32 bytes = 480 bytes
+    if bytes.len() < 15 * 32 {
         debug!(
             "Response too short ({}), withdrawal may not exist",
             bytes.len()
@@ -797,8 +802,8 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
         return Ok(false);
     }
 
-    // Check submittedAt (slot 8, offset 256) to verify it exists
-    let submitted_at_offset = 8 * 32;
+    // Check submittedAt (slot 10, offset 320) to verify it exists
+    let submitted_at_offset = 10 * 32;
     let submitted_at_byte = bytes.get(submitted_at_offset + 31).copied().unwrap_or(0);
     let submitted_at_nonzero = bytes[submitted_at_offset..submitted_at_offset + 32]
         .iter()
@@ -809,11 +814,11 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
         return Ok(false);
     }
 
-    // Check approved (slot 10, offset 320)
-    let approved = bytes.get(10 * 32 + 31).copied().unwrap_or(0) != 0;
+    // Check approved (slot 12, offset 384)
+    let approved = bytes.get(12 * 32 + 31).copied().unwrap_or(0) != 0;
 
-    // Check cancelled (slot 11, offset 352)
-    let cancelled = bytes.get(11 * 32 + 31).copied().unwrap_or(0) != 0;
+    // Check cancelled (slot 13, offset 416)
+    let cancelled = bytes.get(13 * 32 + 31).copied().unwrap_or(0) != 0;
 
     debug!(
         "Withdrawal status for withdrawHash=0x{}: submitted={}, approved={}, cancelled={}",

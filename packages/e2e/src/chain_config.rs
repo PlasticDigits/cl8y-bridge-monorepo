@@ -32,11 +32,15 @@ pub const OPERATOR_ROLE_ID: u64 = 1;
 pub const CANCELER_ROLE_ID: u64 = 2;
 
 /// Bridge type for TokenRegistry
+///
+/// IMPORTANT: Must match Solidity ITokenRegistry.TokenType enum ordering:
+///   enum TokenType { LockUnlock, MintBurn }
+/// i.e. LockUnlock = 0, MintBurn = 1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BridgeType {
-    MintBurn = 0,
-    LockUnlock = 1,
+    LockUnlock = 0,
+    MintBurn = 1,
 }
 
 // =============================================================================
@@ -1040,7 +1044,9 @@ mod tests {
 
     #[test]
     fn test_bridge_type_values() {
-        assert_eq!(BridgeType::MintBurn as u8, 0);
-        assert_eq!(BridgeType::LockUnlock as u8, 1);
+        // Must match Solidity ITokenRegistry.TokenType enum:
+        //   enum TokenType { LockUnlock, MintBurn }
+        assert_eq!(BridgeType::LockUnlock as u8, 0);
+        assert_eq!(BridgeType::MintBurn as u8, 1);
     }
 }

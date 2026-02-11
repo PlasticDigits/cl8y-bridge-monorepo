@@ -298,35 +298,35 @@ e2e-test:
 	@echo "  - Terra → EVM transfers"
 	@echo "  - Fraud detection tests"
 	@echo ""
-	./scripts/e2e-test.sh --with-all --full
+	cd packages/e2e && cargo run --release -- full
 
 # Quick connectivity tests only (no operator, no transfers)
 e2e-test-quick:
-	./scripts/e2e-test.sh --quick --no-operator
+	cd packages/e2e && cargo run --release -- full --quick
 
 # Alias for master test
 e2e-test-full: e2e-test
 
 # Run only transfer tests (operator on, no canceler)
 e2e-test-transfers:
-	./scripts/e2e-test.sh --full
+	cd packages/e2e && cargo run --release -- full
 
 # Run only canceler fraud detection tests
 e2e-test-canceler:
-	./scripts/e2e-test.sh --full --with-canceler
+	cd packages/e2e && cargo run --release -- full
 
 # Individual real token transfer tests
 e2e-evm-to-terra:
 	@echo "Testing EVM → Terra transfer..."
-	./scripts/e2e-helpers/real-transfer-test.sh evm-to-terra
+	cd packages/e2e && cargo run --release -- run --test evm_to_terra_transfer
 
 e2e-terra-to-evm:
 	@echo "Testing Terra → EVM transfer..."
-	./scripts/e2e-helpers/real-transfer-test.sh terra-to-evm
+	cd packages/e2e && cargo run --release -- run --test terra_to_evm_transfer
 
 # E2E without any services (connectivity tests only)
 e2e-connectivity:
-	./scripts/e2e-test.sh --quick --no-operator
+	cd packages/e2e && cargo run --release -- run --quick
 
 # =============================================================================
 # Rust E2E Package (replaces bash scripts)
