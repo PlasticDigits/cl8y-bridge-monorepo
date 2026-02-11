@@ -127,6 +127,9 @@ pub enum ContractError {
     #[error("Withdrawal already executed")]
     WithdrawAlreadyExecuted,
 
+    #[error("Withdrawal already approved")]
+    WithdrawAlreadyApproved,
+
     #[error("Withdrawal cancelled")]
     WithdrawCancelled,
 
@@ -179,13 +182,24 @@ pub enum ContractError {
     #[error("Token not mapped for source chain: chain={chain_id}, token={token}")]
     TokenNotMappedForChain { chain_id: String, token: String },
 
+    /// CW20 contract's code_id is not in the allowed list (token={token}, code_id={code_id})
+    #[error("CW20 code ID not allowed: token={token}, code_id={code_id}")]
+    Cw20CodeIdNotAllowed { token: String, code_id: u64 },
+
+    /// Failed to query CW20 contract info (e.g. not a valid contract)
+    #[error("Invalid CW20 contract: {token}")]
+    InvalidCw20Contract { token: String },
+
     // ========================================================================
     // Validation Errors
     // ========================================================================
     #[error("Invalid hash length: expected 32 bytes, got {got}")]
     InvalidHashLength { got: usize },
 
-    #[error("Invalid withdraw delay: must be between 60 and 86400 seconds")]
+    #[error("Amount overflow during decimal normalization (amount too large for conversion)")]
+    AmountOverflow,
+
+    #[error("Invalid withdraw delay: must be between 15 and 86400 seconds")]
     InvalidWithdrawDelay,
 
     // ========================================================================

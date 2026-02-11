@@ -95,6 +95,14 @@ pub fn execute_deposit_native(
         });
     }
 
+    // Native deposits lock tokens; must be LockUnlock type
+    if !matches!(token_config.token_type, TokenType::LockUnlock) {
+        return Err(ContractError::InvalidTokenType {
+            expected: "lock_unlock".to_string(),
+            actual: token_config.token_type.as_str().to_string(),
+        });
+    }
+
     // Validate amount
     if amount < config.min_bridge_amount {
         return Err(ContractError::BelowMinimumAmount {

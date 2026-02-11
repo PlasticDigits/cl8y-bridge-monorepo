@@ -475,7 +475,7 @@ mod tests {
         let result = UniversalAddress::new(0, [0u8; 20]);
         assert!(result.is_err());
 
-        let mut bytes32 = [0u8; 32];
+        let bytes32 = [0u8; 32];
         let result = UniversalAddress::from_bytes32(&bytes32);
         assert!(result.is_err());
     }

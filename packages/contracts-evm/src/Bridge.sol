@@ -10,6 +10,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IBridge} from "./interfaces/IBridge.sol";
+import {IGuardBridge} from "./interfaces/IGuardBridge.sol";
+import {ITokenRegistry} from "./interfaces/ITokenRegistry.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ChainRegistry} from "./ChainRegistry.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {LockUnlock} from "./LockUnlock.sol";
@@ -19,6 +22,7 @@ import {HashLib} from "./lib/HashLib.sol";
 
 /// @title Bridge
 /// @notice Main upgradeable bridge contract with user-initiated withdrawals
+/// @author cl8y
 /// @dev Uses UUPS proxy pattern for upgradeability
 contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuard, IBridge {
     using FeeCalculatorLib for FeeCalculatorLib.FeeConfig;
@@ -36,6 +40,12 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Default cancel window (5 minutes)
     uint256 public constant DEFAULT_CANCEL_WINDOW = 5 minutes;
+
+    /// @notice Minimum cancel window (15 seconds, matching TerraClassic)
+    uint256 public constant MIN_CANCEL_WINDOW = 15;
+
+    /// @notice Maximum cancel window (24 hours, matching TerraClassic)
+    uint256 public constant MAX_CANCEL_WINDOW = 24 hours;
 
     // ============================================================================
     // Storage - Registries
@@ -95,8 +105,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Native token (WETH) address
     address public wrappedNative;
 
+    /// @notice Guard bridge for deposit/withdraw checks (address(0) = disabled)
+    address public guardBridge;
+
     /// @notice Reserved storage slots for future upgrades
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 
     // ============================================================================
     // Modifiers
@@ -108,6 +121,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         _;
     }
 
+    /// @notice Reverts if msg.sender is not an operator or owner
     function _onlyOperator() internal view {
         if (!operators[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
@@ -120,6 +134,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         _;
     }
 
+    /// @notice Reverts if msg.sender is not a canceler or owner
     function _onlyCanceler() internal view {
         if (!cancelers[msg.sender] && msg.sender != owner()) {
             revert Unauthorized();
@@ -131,6 +146,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     // ============================================================================
 
     /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @notice Disables initializers on the implementation contract
     constructor() {
         _disableInitializers();
     }
@@ -139,6 +155,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @param admin The admin address (owner)
     /// @param operator The initial operator address
     /// @param feeRecipient The fee recipient address
+    /// @param _wrappedNative The WETH/WMATIC/etc address for native deposits (address(0) to disable depositNative)
     /// @param _chainRegistry The chain registry contract
     /// @param _tokenRegistry The token registry contract
     /// @param _lockUnlock The lock/unlock handler
@@ -148,6 +165,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         address admin,
         address operator,
         address feeRecipient,
+        address _wrappedNative,
         ChainRegistry _chainRegistry,
         TokenRegistry _tokenRegistry,
         LockUnlock _lockUnlock,
@@ -157,6 +175,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         __Ownable_init(admin);
         __Pausable_init();
 
+        wrappedNative = _wrappedNative;
         chainRegistry = _chainRegistry;
         tokenRegistry = _tokenRegistry;
         lockUnlock = _lockUnlock;
@@ -195,16 +214,38 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         _unpause();
     }
 
-    /// @notice Set the wrapped native token address
-    /// @param _wrappedNative The WETH/WMATIC/etc address
-    function setWrappedNative(address _wrappedNative) external onlyOwner {
-        wrappedNative = _wrappedNative;
+    /// @notice Set the cancel window duration
+    /// @param _cancelWindow The new cancel window in seconds (min 15s, max 24h)
+    function setCancelWindow(uint256 _cancelWindow) external onlyOwner {
+        if (_cancelWindow < MIN_CANCEL_WINDOW || _cancelWindow > MAX_CANCEL_WINDOW) {
+            revert CancelWindowOutOfBounds(_cancelWindow, MIN_CANCEL_WINDOW, MAX_CANCEL_WINDOW);
+        }
+        uint256 oldWindow = cancelWindow;
+        cancelWindow = _cancelWindow;
+        emit CancelWindowUpdated(oldWindow, _cancelWindow);
     }
 
-    /// @notice Set the cancel window duration
-    /// @param _cancelWindow The new cancel window in seconds
-    function setCancelWindow(uint256 _cancelWindow) external onlyOwner {
-        cancelWindow = _cancelWindow;
+    /// @notice Set the guard bridge for deposit/withdraw checks
+    /// @param _guardBridge The guard bridge address (address(0) to disable)
+    function setGuardBridge(address _guardBridge) external onlyOwner {
+        address oldGuard = guardBridge;
+        guardBridge = _guardBridge;
+        emit GuardBridgeUpdated(oldGuard, _guardBridge);
+    }
+
+    /// @notice Recover stuck assets (admin only, when paused)
+    /// @param token Token address (address(0) for native ETH)
+    /// @param amount Amount to recover
+    /// @param recipient Address to send recovered assets to
+    function recoverAsset(address token, uint256 amount, address recipient) external onlyOwner whenPaused nonReentrant {
+        if (recipient == address(0)) revert InvalidFeeRecipient();
+        if (token == address(0)) {
+            (bool success,) = recipient.call{value: amount}("");
+            if (!success) revert RecoveryTransferFailed();
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
+        emit AssetRecovered(token, amount, recipient);
     }
 
     // ============================================================================
@@ -258,13 +299,19 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     // ============================================================================
 
     /// @notice Set fee parameters
+    /// @param standardFeeBps Standard fee in basis points
+    /// @param discountedFeeBps Discounted fee in basis points
+    /// @param cl8yThreshold CL8Y balance threshold for discount
+    /// @param cl8yToken CL8Y token address for discount eligibility
+    /// @param feeRecipient Address to receive collected fees. Must accept plain ETH (EOA or contract with receive()/fallback payable).
+    /// @dev See OPERATIONAL_NOTES.md for fee recipient requirements.
     function setFeeParams(
         uint256 standardFeeBps,
         uint256 discountedFeeBps,
         uint256 cl8yThreshold,
         address cl8yToken,
         address feeRecipient
-    ) external onlyOperator {
+    ) external onlyOwner {
         if (standardFeeBps > MAX_FEE_BPS) revert FeeExceedsMax(standardFeeBps, MAX_FEE_BPS);
         if (discountedFeeBps > MAX_FEE_BPS) revert FeeExceedsMax(discountedFeeBps, MAX_FEE_BPS);
         if (feeRecipient == address(0)) revert InvalidFeeRecipient();
@@ -283,7 +330,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Set custom fee for an account
     /// @param account The account address
     /// @param feeBps The custom fee in basis points
-    function setCustomAccountFee(address account, uint256 feeBps) external onlyOperator {
+    function setCustomAccountFee(address account, uint256 feeBps) external onlyOwner {
         if (feeBps > MAX_FEE_BPS) revert FeeExceedsMax(feeBps, MAX_FEE_BPS);
 
         customAccountFees[account] = FeeCalculatorLib.CustomAccountFee({feeBps: feeBps, isSet: true});
@@ -293,7 +340,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Remove custom fee for an account
     /// @param account The account address
-    function removeCustomAccountFee(address account) external onlyOperator {
+    function removeCustomAccountFee(address account) external onlyOwner {
         delete customAccountFees[account];
 
         emit CustomAccountFeeRemoved(account);
@@ -337,18 +384,28 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Deposit native token (ETH/MATIC/etc.)
     /// @param destChain The destination chain ID
     /// @param destAccount The recipient account on destination chain (encoded)
+    /// @dev feeRecipient (from feeConfig) must accept plain ETH. See OPERATIONAL_NOTES.md.
     function depositNative(bytes4 destChain, bytes32 destAccount) external payable whenNotPaused nonReentrant {
+        if (wrappedNative == address(0)) revert WrappedNativeNotSet();
         if (msg.value == 0) revert InvalidAmount(0);
+        if (destAccount == bytes32(0)) revert InvalidDestAccount();
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
+        if (!tokenRegistry.isTokenRegistered(wrappedNative)) revert TokenNotRegistered(wrappedNative);
+
+        bytes32 destToken = tokenRegistry.getDestToken(wrappedNative, destChain);
+        if (destToken == bytes32(0)) revert DestTokenMappingNotSet(wrappedNative, destChain);
 
         // Calculate and deduct fee
         uint256 fee = calculateFee(msg.sender, msg.value);
         uint256 netAmount = msg.value - fee;
 
+        // Guard check
+        _checkDepositGuard(wrappedNative, netAmount, msg.sender);
+
         // Transfer fee to recipient
         if (fee > 0) {
             (bool success,) = feeConfig.feeRecipient.call{value: fee}("");
-            require(success, "Fee transfer failed");
+            if (!success) revert FeeTransferFailed();
             emit FeeCollected(address(0), fee, feeConfig.feeRecipient);
         }
 
@@ -357,7 +414,6 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Encode source account and compute unified transfer hash
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 destToken = tokenRegistry.getDestToken(wrappedNative, destChain);
         bytes32 depositHash = HashLib.computeTransferHash(
             thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
         );
@@ -388,12 +444,18 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         nonReentrant
     {
         if (amount == 0) revert InvalidAmount(0);
+        if (destAccount == bytes32(0)) revert InvalidDestAccount();
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
+        bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
+        if (destToken == bytes32(0)) revert DestTokenMappingNotSet(token, destChain);
 
         // Calculate and deduct fee
         uint256 fee = calculateFee(msg.sender, amount);
         uint256 netAmount = amount - fee;
+
+        // Guard check
+        _checkDepositGuard(token, netAmount, msg.sender);
 
         // Transfer fee directly from user to fee recipient
         if (fee > 0) {
@@ -409,7 +471,6 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Encode source account and compute unified transfer hash
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
         bytes32 depositHash = HashLib.computeTransferHash(
             thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
         );
@@ -440,12 +501,18 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         nonReentrant
     {
         if (amount == 0) revert InvalidAmount(0);
+        if (destAccount == bytes32(0)) revert InvalidDestAccount();
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
+        bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
+        if (destToken == bytes32(0)) revert DestTokenMappingNotSet(token, destChain);
 
         // Calculate fee (still charged on burning)
         uint256 fee = calculateFee(msg.sender, amount);
         uint256 burnAmount = amount - fee;
+
+        // Guard check
+        _checkDepositGuard(token, burnAmount, msg.sender);
 
         // Transfer fee tokens first (before burning)
         if (fee > 0) {
@@ -461,7 +528,6 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Encode source account and compute unified transfer hash
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
         bytes32 depositHash = HashLib.computeTransferHash(
             thisChainId, destChain, srcAccount, destAccount, destToken, burnAmount, currentNonce
         );
@@ -498,7 +564,8 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         bytes32 destAccount,
         address token,
         uint256 amount,
-        uint64 nonce
+        uint64 nonce,
+        uint8 srcDecimals
     ) external payable whenNotPaused nonReentrant {
         if (amount == 0) revert InvalidAmount(0);
         if (!chainRegistry.isChainRegistered(srcChain)) revert ChainNotRegistered(srcChain);
@@ -517,6 +584,9 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Decode recipient from destAccount
         address recipient = HashLib.bytes32ToAddress(destAccount);
 
+        // Get local token decimals
+        uint8 localDecimals = _getTokenDecimals(token);
+
         // Store pending withdrawal
         pendingWithdraws[withdrawHash] = PendingWithdraw({
             srcChain: srcChain,
@@ -526,6 +596,8 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             recipient: recipient,
             amount: amount,
             nonce: nonce,
+            srcDecimals: srcDecimals,
+            destDecimals: localDecimals,
             operatorGas: msg.value,
             submittedAt: block.timestamp,
             approvedAt: 0,
@@ -552,7 +624,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Transfer operator gas tip to operator
         if (w.operatorGas > 0) {
             (bool success,) = msg.sender.call{value: w.operatorGas}("");
-            require(success, "Operator gas transfer failed");
+            if (!success) revert OperatorGasTransferFailed();
         }
 
         emit WithdrawApprove(withdrawHash);
@@ -599,13 +671,24 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         _validateWithdrawExecution(w, withdrawHash);
 
+        // Validate token type
+        if (tokenRegistry.getTokenType(w.token) != ITokenRegistry.TokenType.LockUnlock) {
+            revert WrongTokenType(w.token, "LockUnlock");
+        }
+
+        // Normalize decimals (src chain -> local chain)
+        uint256 normalizedAmount = _normalizeDecimals(w.amount, w.srcDecimals, w.destDecimals);
+
+        // Guard check
+        _checkWithdrawGuard(w.token, normalizedAmount, w.recipient);
+
         // Mark as executed
         w.executed = true;
 
         // Unlock tokens to recipient
-        lockUnlock.unlock(w.recipient, w.token, w.amount);
+        lockUnlock.unlock(w.recipient, w.token, normalizedAmount);
 
-        emit WithdrawExecute(withdrawHash, w.recipient, w.amount);
+        emit WithdrawExecute(withdrawHash, w.recipient, normalizedAmount);
     }
 
     /// @notice Execute an approved withdrawal (mint mode)
@@ -615,25 +698,82 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         _validateWithdrawExecution(w, withdrawHash);
 
+        // Validate token type
+        if (tokenRegistry.getTokenType(w.token) != ITokenRegistry.TokenType.MintBurn) {
+            revert WrongTokenType(w.token, "MintBurn");
+        }
+
+        // Normalize decimals (src chain -> local chain)
+        uint256 normalizedAmount = _normalizeDecimals(w.amount, w.srcDecimals, w.destDecimals);
+
+        // Guard check
+        _checkWithdrawGuard(w.token, normalizedAmount, w.recipient);
+
         // Mark as executed
         w.executed = true;
 
         // Mint tokens to recipient
-        mintBurn.mint(w.recipient, w.token, w.amount);
+        mintBurn.mint(w.recipient, w.token, normalizedAmount);
 
-        emit WithdrawExecute(withdrawHash, w.recipient, w.amount);
+        emit WithdrawExecute(withdrawHash, w.recipient, normalizedAmount);
     }
 
     /// @notice Internal validation for withdrawal execution
+    /// @param w Pending withdrawal storage reference
+    /// @param withdrawHash Withdrawal hash for error reporting
+    /// @dev Execution is allowed only when block.timestamp > approvedAt + cancelWindow (exclusive boundary).
     function _validateWithdrawExecution(PendingWithdraw storage w, bytes32 withdrawHash) internal view {
         if (w.submittedAt == 0) revert WithdrawNotFound(withdrawHash);
         if (w.executed) revert WithdrawAlreadyExecuted(withdrawHash);
         if (!w.approved) revert WithdrawNotApproved(withdrawHash);
         if (w.cancelled) revert WithdrawCancelled(withdrawHash);
 
-        // Check cancel window has passed
+        // Check cancel window has passed (exclusive: execute allowed only when timestamp > windowEnd)
         uint256 windowEnd = w.approvedAt + cancelWindow;
-        if (block.timestamp < windowEnd) revert CancelWindowActive(windowEnd);
+        if (block.timestamp <= windowEnd) revert CancelWindowActive(windowEnd);
+    }
+
+    /// @notice Normalize amount between different decimal precisions
+    /// @param amount Amount in source decimals
+    /// @param srcDecimals Source chain token decimals
+    /// @param destDecimals Destination (local) chain token decimals
+    /// @return normalizedAmount Amount in destination decimals
+    function _normalizeDecimals(uint256 amount, uint8 srcDecimals, uint8 destDecimals)
+        internal
+        pure
+        returns (uint256 normalizedAmount)
+    {
+        if (srcDecimals == destDecimals) return amount;
+        if (srcDecimals > destDecimals) {
+            return amount / (10 ** (srcDecimals - destDecimals));
+        } else {
+            return amount * (10 ** (destDecimals - srcDecimals));
+        }
+    }
+
+    /// @notice Get token decimals from ERC20Metadata, defaulting to 18
+    /// @param token The token address
+    /// @return decimals The token decimals
+    function _getTokenDecimals(address token) internal view returns (uint8) {
+        try IERC20Metadata(token).decimals() returns (uint8 decimals) {
+            return decimals;
+        } catch {
+            return 18;
+        }
+    }
+
+    /// @notice Check deposit against guard bridge (no-op if guard is not set)
+    function _checkDepositGuard(address token, uint256 amount, address sender) internal {
+        if (guardBridge != address(0)) {
+            IGuardBridge(guardBridge).checkDeposit(token, amount, sender);
+        }
+    }
+
+    /// @notice Check withdrawal against guard bridge (no-op if guard is not set)
+    function _checkWithdrawGuard(address token, uint256 amount, address recipient) internal {
+        if (guardBridge != address(0)) {
+            IGuardBridge(guardBridge).checkWithdraw(token, amount, recipient);
+        }
     }
 
     // ============================================================================
@@ -678,6 +818,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Authorize upgrade (only owner)
     /// @param newImplementation The new implementation address
+    /// @dev Empty body; authorization enforced by onlyOwner modifier
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // ============================================================================

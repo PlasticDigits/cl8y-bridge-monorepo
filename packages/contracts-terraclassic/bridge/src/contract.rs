@@ -17,26 +17,26 @@ use crate::execute::{
     execute_cancel_admin_proposal, execute_deposit_native, execute_pause, execute_propose_admin,
     execute_receive, execute_recover_asset, execute_register_chain, execute_remove_canceler,
     execute_remove_custom_account_fee, execute_remove_incoming_token_mapping,
-    execute_remove_operator, execute_set_custom_account_fee, execute_set_fee_params,
-    execute_set_incoming_token_mapping, execute_set_rate_limit, execute_set_token_destination,
-    execute_set_withdraw_delay, execute_unpause, execute_unregister_chain, execute_update_chain,
-    execute_update_fees, execute_update_limits, execute_update_min_signatures,
-    execute_update_token, execute_withdraw_approve, execute_withdraw_cancel,
-    execute_withdraw_execute_mint, execute_withdraw_execute_unlock, execute_withdraw_submit,
-    execute_withdraw_uncancel,
+    execute_remove_operator, execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee,
+    execute_set_fee_params, execute_set_incoming_token_mapping, execute_set_rate_limit,
+    execute_set_token_destination, execute_set_withdraw_delay, execute_unpause,
+    execute_unregister_chain, execute_update_chain, execute_update_fees, execute_update_limits,
+    execute_update_min_signatures, execute_update_token, execute_withdraw_approve,
+    execute_withdraw_cancel, execute_withdraw_execute_mint, execute_withdraw_execute_unlock,
+    execute_withdraw_submit, execute_withdraw_uncancel,
 };
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{
-    query_account_fee, query_calculate_fee, query_cancelers, query_chain, query_chains,
-    query_compute_transfer_hash, query_compute_withdraw_hash, query_config, query_current_nonce,
-    query_deposit_by_nonce, query_deposit_hash, query_fee_config, query_has_custom_fee,
-    query_incoming_token_mapping, query_incoming_token_mappings, query_is_canceler,
-    query_locked_balance, query_nonce_used, query_operators, query_pending_admin,
-    query_pending_withdraw, query_pending_withdrawals, query_period_usage, query_rate_limit,
-    query_simulate_bridge, query_stats, query_status, query_this_chain_id, query_token,
-    query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
-    query_verify_deposit, query_withdraw_delay,
+    query_account_fee, query_allowed_cw20_code_ids, query_calculate_fee, query_cancelers,
+    query_chain, query_chains, query_compute_transfer_hash, query_compute_withdraw_hash,
+    query_config, query_current_nonce, query_deposit_by_nonce, query_deposit_hash,
+    query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
+    query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_nonce_used,
+    query_operators, query_pending_admin, query_pending_withdraw, query_pending_withdrawals,
+    query_period_usage, query_rate_limit, query_simulate_bridge, query_stats, query_status,
+    query_this_chain_id, query_token, query_token_dest_mapping, query_token_type, query_tokens,
+    query_transaction, query_verify_deposit, query_withdraw_delay,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -252,6 +252,9 @@ pub fn execute(
         } => {
             execute_set_token_destination(deps, info, token, dest_chain, dest_token, dest_decimals)
         }
+        ExecuteMsg::SetAllowedCw20CodeIds { code_ids } => {
+            execute_set_allowed_cw20_code_ids(deps, info, code_ids)
+        }
         ExecuteMsg::SetIncomingTokenMapping {
             src_chain,
             src_token,
@@ -351,7 +354,10 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token,
             amount,
             dest_chain,
-        } => to_json_binary(&query_simulate_bridge(deps, token, amount, dest_chain)?),
+            depositor,
+        } => to_json_binary(&query_simulate_bridge(
+            deps, token, amount, dest_chain, depositor,
+        )?),
 
         // Withdrawal queries (V2)
         QueryMsg::PendingWithdraw { withdraw_hash } => {
@@ -419,6 +425,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
         // Configuration queries
         QueryMsg::ThisChainId {} => to_json_binary(&query_this_chain_id(deps)?),
+        QueryMsg::AllowedCw20CodeIds {} => to_json_binary(&query_allowed_cw20_code_ids(deps)?),
         QueryMsg::WithdrawDelay {} => to_json_binary(&query_withdraw_delay(deps)?),
         QueryMsg::RateLimit { token } => to_json_binary(&query_rate_limit(deps, token)?),
         QueryMsg::PeriodUsage { token } => to_json_binary(&query_period_usage(deps, env, token)?),

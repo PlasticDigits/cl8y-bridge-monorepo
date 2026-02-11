@@ -5,7 +5,7 @@
 
 use common::AssetInfo;
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Addr, Binary, Timestamp, Uint128};
+use cosmwasm_std::{Addr, Binary, Coin, Timestamp, Uint128};
 
 // ============================================================================
 // Instantiate & Migrate
@@ -97,7 +97,7 @@ pub enum ExecuteMsg {
 
     /// Cancel a pending withdrawal (within cancel window)
     ///
-    /// Authorization: Canceler, Operator, or Admin
+    /// Authorization: Canceler only
     ///
     /// Can only cancel after approval and within the cancel window.
     WithdrawCancel {
@@ -157,11 +157,12 @@ pub enum ExecuteMsg {
     // ========================================================================
     // Configuration
     // ========================================================================
-    /// Set the global withdrawal delay
+    /// Set the global withdrawal delay (cancel window for approved withdrawals).
+    /// Valid range: 15 seconds (minimum) to 86400 seconds (24 hours, maximum).
     ///
     /// Authorization: Admin only
     SetWithdrawDelay {
-        /// New delay in seconds (minimum: 60, maximum: 86400)
+        /// New delay in seconds (15–86400)
         delay_seconds: u64,
     },
 
@@ -239,6 +240,18 @@ pub enum ExecuteMsg {
         dest_decimals: u8,
     },
 
+    /// Set allowed CW20 code IDs for token registration
+    ///
+    /// When non-empty, only CW20 contracts instantiated from these code IDs
+    /// can be registered via AddToken. Empty list = no restriction (backward compatible).
+    /// Typical: CW20 base and CW20-mintable code IDs from your deployment.
+    ///
+    /// Authorization: Admin only
+    SetAllowedCw20CodeIds {
+        /// List of allowed code IDs (e.g. [cw20_code_id, cw20_mintable_code_id])
+        code_ids: Vec<u64>,
+    },
+
     /// Set incoming token mapping (incoming: source chain token → local token)
     ///
     /// Registers a mapping so the contract can validate during WithdrawSubmit
@@ -298,10 +311,10 @@ pub enum ExecuteMsg {
         fee_recipient: Option<String>,
     },
 
-    /// Set custom account fee (operator only)
+    /// Set custom account fee (admin only)
     SetCustomAccountFee { account: String, fee_bps: u64 },
 
-    /// Remove custom account fee (operator only)
+    /// Remove custom account fee (admin only)
     RemoveCustomAccountFee { account: String },
 
     // ========================================================================
@@ -414,12 +427,15 @@ pub enum QueryMsg {
     #[returns(Option<PendingAdminResponse>)]
     PendingAdmin {},
 
-    /// Simulate a bridge transaction (calculate fees)
+    /// Simulate a bridge transaction (calculate fees using V2 fee config).
+    /// If depositor is provided, uses CL8Y discount and custom fee rules.
     #[returns(SimulationResponse)]
     SimulateBridge {
         token: String,
         amount: Uint128,
         dest_chain: Binary,
+        /// Optional depositor address for fee calculation (standard fee if omitted)
+        depositor: Option<String>,
     },
 
     // ========================================================================
@@ -508,6 +524,10 @@ pub enum QueryMsg {
     /// Get this chain's predetermined 4-byte V2 chain ID (set at instantiation)
     #[returns(ThisChainIdResponse)]
     ThisChainId {},
+
+    /// Get allowed CW20 code IDs (empty = no restriction)
+    #[returns(AllowedCw20CodeIdsResponse)]
+    AllowedCw20CodeIds {},
 
     /// Get current withdraw delay
     #[returns(WithdrawDelayResponse)]
@@ -673,7 +693,7 @@ pub struct SimulationResponse {
     pub input_amount: Uint128,
     pub fee_amount: Uint128,
     pub output_amount: Uint128,
-    pub fee_bps: u32,
+    pub fee_bps: u64,
 }
 
 // ============================================================================
@@ -692,7 +712,7 @@ pub struct PendingWithdrawResponse {
     pub nonce: u64,
     pub src_decimals: u8,
     pub dest_decimals: u8,
-    pub operator_gas: Uint128,
+    pub operator_funds: Vec<Coin>,
     pub submitted_at: u64,
     pub approved_at: u64,
     pub approved: bool,
@@ -715,7 +735,7 @@ impl Default for PendingWithdrawResponse {
             nonce: 0,
             src_decimals: 0,
             dest_decimals: 0,
-            operator_gas: Uint128::zero(),
+            operator_funds: vec![],
             submitted_at: 0,
             approved_at: 0,
             approved: false,
@@ -740,7 +760,7 @@ pub struct PendingWithdrawalEntry {
     pub nonce: u64,
     pub src_decimals: u8,
     pub dest_decimals: u8,
-    pub operator_gas: Uint128,
+    pub operator_funds: Vec<Coin>,
     pub submitted_at: u64,
     pub approved_at: u64,
     pub approved: bool,
@@ -805,6 +825,12 @@ pub struct IsCancelerResponse {
 pub struct ThisChainIdResponse {
     /// This chain's predetermined 4-byte V2 chain ID (Binary)
     pub chain_id: Binary,
+}
+
+#[cw_serde]
+pub struct AllowedCw20CodeIdsResponse {
+    /// Allowed CW20 code IDs (empty = no restriction)
+    pub code_ids: Vec<u64>,
 }
 
 #[cw_serde]

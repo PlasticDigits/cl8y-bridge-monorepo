@@ -17,6 +17,8 @@ interface IBridge {
         address recipient;
         uint256 amount;
         uint64 nonce;
+        uint8 srcDecimals;
+        uint8 destDecimals;
         uint256 operatorGas;
         uint256 submittedAt;
         uint256 approvedAt;
@@ -90,6 +92,15 @@ interface IBridge {
     /// @notice Emitted when custom account fee is removed
     event CustomAccountFeeRemoved(address indexed account);
 
+    /// @notice Emitted when cancel window is updated
+    event CancelWindowUpdated(uint256 oldWindow, uint256 newWindow);
+
+    /// @notice Emitted when an asset is recovered
+    event AssetRecovered(address indexed token, uint256 amount, address indexed recipient);
+
+    /// @notice Emitted when the guard bridge is updated
+    event GuardBridgeUpdated(address indexed oldGuard, address indexed newGuard);
+
     // ============================================================================
     // Errors
     // ============================================================================
@@ -98,16 +109,24 @@ interface IBridge {
     error ChainNotRegistered(bytes4 chainId);
     error TokenNotRegistered(address token);
     error InvalidAmount(uint256 amount);
+    error InvalidDestAccount();
     error WithdrawNotFound(bytes32 hash);
     error WithdrawAlreadyExecuted(bytes32 hash);
     error WithdrawCancelled(bytes32 hash);
     error WithdrawNotApproved(bytes32 hash);
     error CancelWindowActive(uint256 endsAt);
     error CancelWindowExpired();
+    error CancelWindowOutOfBounds(uint256 provided, uint256 min, uint256 max);
     error InsufficientGasTip(uint256 required, uint256 provided);
     error ContractPaused();
     error FeeExceedsMax(uint256 feeBps, uint256 maxBps);
     error InvalidFeeRecipient();
+    error WrappedNativeNotSet();
+    error DestTokenMappingNotSet(address token, bytes4 destChain);
+    error FeeTransferFailed();
+    error OperatorGasTransferFailed();
+    error WrongTokenType(address token, string expected);
+    error RecoveryTransferFailed();
 
     // ============================================================================
     // Deposit Methods
@@ -141,15 +160,17 @@ interface IBridge {
     /// @param srcAccount Source account (depositor) encoded as bytes32
     /// @param destAccount Destination account (recipient) encoded as bytes32
     /// @param token Token address on this chain
-    /// @param amount Amount to withdraw
+    /// @param amount Amount to withdraw (in source chain decimals)
     /// @param nonce Deposit nonce from source chain
+    /// @param srcDecimals Token decimals on the source chain (for decimal normalization)
     function withdrawSubmit(
         bytes4 srcChain,
         bytes32 srcAccount,
         bytes32 destAccount,
         address token,
         uint256 amount,
-        uint64 nonce
+        uint64 nonce,
+        uint8 srcDecimals
     ) external payable;
 
     /// @notice Operator approves a pending withdrawal

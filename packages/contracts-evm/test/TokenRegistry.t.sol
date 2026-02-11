@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {ITokenRegistry} from "../src/interfaces/ITokenRegistry.sol";
@@ -21,34 +22,33 @@ contract TokenRegistryTest is Test {
     function setUp() public {
         // Deploy ChainRegistry
         ChainRegistry chainImpl = new ChainRegistry();
-        bytes memory chainInitData = abi.encodeCall(ChainRegistry.initialize, (admin, operator));
+        bytes memory chainInitData = abi.encodeCall(ChainRegistry.initialize, (admin));
         ERC1967Proxy chainProxy = new ERC1967Proxy(address(chainImpl), chainInitData);
         chainRegistry = ChainRegistry(address(chainProxy));
 
         // Register chains with predetermined IDs
         chain1 = bytes4(uint32(1));
         chain2 = bytes4(uint32(2));
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_1", chain1);
         chainRegistry.registerChain("terraclassic_columbus-5", chain2);
         vm.stopPrank();
 
         // Deploy TokenRegistry
         TokenRegistry tokenImpl = new TokenRegistry();
-        bytes memory tokenInitData = abi.encodeCall(TokenRegistry.initialize, (admin, operator, chainRegistry));
+        bytes memory tokenInitData = abi.encodeCall(TokenRegistry.initialize, (admin, chainRegistry));
         ERC1967Proxy tokenProxy = new ERC1967Proxy(address(tokenImpl), tokenInitData);
         tokenRegistry = TokenRegistry(address(tokenProxy));
     }
 
     function test_Initialize() public view {
         assertEq(tokenRegistry.owner(), admin);
-        assertTrue(tokenRegistry.operators(operator));
         assertEq(address(tokenRegistry.chainRegistry()), address(chainRegistry));
         assertEq(tokenRegistry.VERSION(), 1);
     }
 
     function test_RegisterToken_LockUnlock() public {
-        vm.prank(operator);
+        vm.prank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         assertTrue(tokenRegistry.isTokenRegistered(token1));
@@ -56,7 +56,7 @@ contract TokenRegistryTest is Test {
     }
 
     function test_RegisterToken_MintBurn() public {
-        vm.prank(operator);
+        vm.prank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.MintBurn);
 
         assertTrue(tokenRegistry.isTokenRegistered(token1));
@@ -64,22 +64,22 @@ contract TokenRegistryTest is Test {
     }
 
     function test_RegisterToken_RevertsDuplicateRegistration() public {
-        vm.prank(operator);
+        vm.prank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(ITokenRegistry.TokenAlreadyRegistered.selector, token1));
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.MintBurn);
     }
 
-    function test_RegisterToken_RevertsIfNotOperator() public {
+    function test_RegisterToken_RevertsIfNotOwner() public {
         vm.prank(user);
-        vm.expectRevert(ITokenRegistry.Unauthorized.selector);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
     }
 
     function test_SetTokenDestination() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         bytes32 destToken = bytes32(uint256(uint160(address(0x3333))));
@@ -90,7 +90,7 @@ contract TokenRegistryTest is Test {
     }
 
     function test_SetTokenDestinationWithDecimals() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         bytes32 destToken = bytes32(uint256(uint160(address(0x3333))));
@@ -105,25 +105,43 @@ contract TokenRegistryTest is Test {
     function test_SetTokenDestination_RevertsIfTokenNotRegistered() public {
         bytes32 destToken = bytes32(uint256(uint160(address(0x3333))));
 
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(ITokenRegistry.TokenNotRegistered.selector, token1));
         tokenRegistry.setTokenDestination(token1, chain1, destToken);
     }
 
     function test_SetTokenDestination_RevertsIfChainNotRegistered() public {
-        vm.prank(operator);
+        vm.prank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         bytes32 destToken = bytes32(uint256(uint160(address(0x3333))));
         bytes4 invalidChain = bytes4(uint32(99));
 
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(ITokenRegistry.DestChainNotRegistered.selector, invalidChain));
         tokenRegistry.setTokenDestination(token1, invalidChain, destToken);
     }
 
+    function test_SetTokenDestination_RevertsIfDestTokenZero() public {
+        vm.prank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+
+        vm.prank(admin);
+        vm.expectRevert(ITokenRegistry.InvalidDestToken.selector);
+        tokenRegistry.setTokenDestination(token1, chain1, bytes32(0));
+    }
+
+    function test_SetTokenDestinationWithDecimals_RevertsIfDestTokenZero() public {
+        vm.prank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+
+        vm.prank(admin);
+        vm.expectRevert(ITokenRegistry.InvalidDestToken.selector);
+        tokenRegistry.setTokenDestinationWithDecimals(token1, chain1, bytes32(0), 6);
+    }
+
     function test_GetTokenDestChains() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         bytes32 destToken1 = bytes32(uint256(uint160(address(0x3333))));
@@ -140,7 +158,7 @@ contract TokenRegistryTest is Test {
     }
 
     function test_SetTokenType() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
         assertEq(uint256(tokenRegistry.getTokenType(token1)), uint256(ITokenRegistry.TokenType.LockUnlock));
 
@@ -150,7 +168,7 @@ contract TokenRegistryTest is Test {
     }
 
     function test_GetAllTokens() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
         tokenRegistry.registerToken(token2, ITokenRegistry.TokenType.MintBurn);
         vm.stopPrank();
@@ -167,9 +185,112 @@ contract TokenRegistryTest is Test {
         tokenRegistry.revertIfTokenNotRegistered(token1);
     }
 
+    // ============================================================================
+    // Token Type Event Tests (L-03)
+    // ============================================================================
+
+    function test_SetTokenType_EmitsEvent() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+
+        vm.expectEmit(true, true, true, true);
+        emit ITokenRegistry.TokenTypeUpdated(
+            token1, ITokenRegistry.TokenType.LockUnlock, ITokenRegistry.TokenType.MintBurn
+        );
+        tokenRegistry.setTokenType(token1, ITokenRegistry.TokenType.MintBurn);
+        vm.stopPrank();
+    }
+
+    // ============================================================================
+    // Unregister Token Tests (L-04)
+    // ============================================================================
+
+    function test_UnregisterToken() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setTokenDestination(token1, chain1, bytes32(uint256(1)));
+
+        tokenRegistry.unregisterToken(token1);
+        vm.stopPrank();
+
+        assertFalse(tokenRegistry.isTokenRegistered(token1));
+        assertEq(tokenRegistry.getTokenCount(), 0);
+    }
+
+    function test_UnregisterToken_CleansUpMappings() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setTokenDestination(token1, chain1, bytes32(uint256(1)));
+        tokenRegistry.setTokenDestination(token1, chain2, bytes32(uint256(2)));
+
+        tokenRegistry.unregisterToken(token1);
+        vm.stopPrank();
+
+        // Dest mappings should be cleaned
+        assertEq(tokenRegistry.getDestToken(token1, chain1), bytes32(0));
+        assertEq(tokenRegistry.getDestToken(token1, chain2), bytes32(0));
+        bytes4[] memory destChains = tokenRegistry.getTokenDestChains(token1);
+        assertEq(destChains.length, 0);
+    }
+
+    function test_UnregisterToken_RemovesFromArray() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.registerToken(token2, ITokenRegistry.TokenType.MintBurn);
+
+        tokenRegistry.unregisterToken(token1);
+        vm.stopPrank();
+
+        address[] memory tokens = tokenRegistry.getAllTokens();
+        assertEq(tokens.length, 1);
+        assertEq(tokens[0], token2);
+    }
+
+    function test_UnregisterToken_RevertsIfNotRegistered() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ITokenRegistry.TokenNotRegistered.selector, token1));
+        tokenRegistry.unregisterToken(token1);
+    }
+
+    function test_UnregisterToken_RevertsIfNotOwner() public {
+        vm.prank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        tokenRegistry.unregisterToken(token1);
+    }
+
+    function test_UnregisterToken_EmitsEvent() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+
+        vm.expectEmit(true, true, true, true);
+        emit ITokenRegistry.TokenUnregistered(token1);
+        tokenRegistry.unregisterToken(token1);
+        vm.stopPrank();
+    }
+
+    function test_UnregisterToken_CanReregister() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.unregisterToken(token1);
+
+        // Should be able to re-register
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.MintBurn);
+        vm.stopPrank();
+
+        assertTrue(tokenRegistry.isTokenRegistered(token1));
+        assertEq(uint256(tokenRegistry.getTokenType(token1)), uint256(ITokenRegistry.TokenType.MintBurn));
+    }
+
+    // ============================================================================
+    // Upgrade Tests
+    // ============================================================================
+
     function test_Upgrade() public {
         // Register a token before upgrade
-        vm.prank(operator);
+        vm.prank(admin);
         tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
 
         // Deploy new implementation

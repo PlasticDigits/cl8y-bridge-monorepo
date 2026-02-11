@@ -31,6 +31,7 @@ contract GuardBridge is IGuardBridge, AccessManaged {
         }
     }
 
+    /// @dev Guard modules may mutate state (e.g., TokenRateLimit updates usage). See OPERATIONAL_NOTES.md.
     function checkDeposit(address token, uint256 amount, address sender) external {
         uint256 length = DATASTORE_ADDRESS.length(address(this), GUARD_MODULES_DEPOSIT);
         for (uint256 i; i < length; i++) {
@@ -39,6 +40,7 @@ contract GuardBridge is IGuardBridge, AccessManaged {
         }
     }
 
+    /// @dev Guard modules may mutate state (e.g., TokenRateLimit updates usage). See OPERATIONAL_NOTES.md.
     function checkWithdraw(address token, uint256 amount, address sender) external {
         uint256 length = DATASTORE_ADDRESS.length(address(this), GUARD_MODULES_WITHDRAW);
         for (uint256 i; i < length; i++) {

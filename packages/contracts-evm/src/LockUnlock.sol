@@ -11,7 +11,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 /// @title LockUnlock
 /// @notice Upgradeable lock/unlock handler for ERC20 tokens
 /// @dev Uses UUPS proxy pattern for upgradeability
-/// @dev Does not support transfer taxed tokens, rebasing tokens, or other balance modifying tokens
+/// @dev Does not support: rebasing tokens, fee-on-transfer tokens, or other balance-modifying tokens.
+///      See OPERATIONAL_NOTES.md for supported token types.
 contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 

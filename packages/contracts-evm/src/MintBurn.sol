@@ -11,7 +11,8 @@ import {IMintable} from "./interfaces/IMintable.sol";
 /// @title MintBurn
 /// @notice Upgradeable mint/burn handler for mintable tokens
 /// @dev Uses UUPS proxy pattern for upgradeability
-/// @dev Does not support transfer taxed tokens, rebasing tokens, or other balance modifying tokens
+/// @dev Does not support: rebasing tokens, fee-on-transfer tokens, or other balance-modifying tokens.
+///      See OPERATIONAL_NOTES.md for supported token types.
 contract MintBurn is Initializable, UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard {
     // ============================================================================
     // Constants

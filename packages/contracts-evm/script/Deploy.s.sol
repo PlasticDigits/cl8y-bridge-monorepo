@@ -26,6 +26,7 @@ contract Deploy is Script {
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address operator = vm.envAddress("OPERATOR_ADDRESS");
         address feeRecipient = vm.envAddress("FEE_RECIPIENT_ADDRESS");
+        address wrappedNative = vm.envAddress("WETH_ADDRESS");
         string memory chainIdentifier = vm.envString("CHAIN_IDENTIFIER");
         bytes4 thisChainId = bytes4(uint32(vm.envUint("THIS_CHAIN_ID")));
 
@@ -33,7 +34,7 @@ contract Deploy is Script {
 
         // Deploy all contracts
         (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(admin, operator, feeRecipient, chainIdentifier, thisChainId);
+            deployAll(admin, operator, feeRecipient, wrappedNative, chainIdentifier, thisChainId);
 
         vm.stopBroadcast();
 
@@ -50,6 +51,7 @@ contract Deploy is Script {
     /// @param admin The admin address
     /// @param operator The operator address
     /// @param feeRecipient The fee recipient address
+    /// @param wrappedNative The WETH/WMATIC/etc address for native deposits (address(0) to disable)
     /// @return chainRegistry_ The chain registry proxy address
     /// @return tokenRegistry_ The token registry proxy address
     /// @return lockUnlock_ The lock/unlock proxy address
@@ -59,6 +61,7 @@ contract Deploy is Script {
         address admin,
         address operator,
         address feeRecipient,
+        address wrappedNative,
         string memory chainIdentifier,
         bytes4 thisChainId
     )
@@ -72,13 +75,13 @@ contract Deploy is Script {
         )
     {
         // 1. Deploy ChainRegistry
-        chainRegistry_ = deployChainRegistry(admin, operator);
+        chainRegistry_ = deployChainRegistry(admin);
 
         // 2. Register this chain with the predetermined chain ID
         ChainRegistry(chainRegistry_).registerChain(chainIdentifier, thisChainId);
 
         // 3. Deploy TokenRegistry
-        tokenRegistry_ = deployTokenRegistry(admin, operator, ChainRegistry(chainRegistry_));
+        tokenRegistry_ = deployTokenRegistry(admin, ChainRegistry(chainRegistry_));
 
         // 4. Deploy LockUnlock
         lockUnlock_ = deployLockUnlock(admin);
@@ -86,11 +89,12 @@ contract Deploy is Script {
         // 5. Deploy MintBurn
         mintBurn_ = deployMintBurn(admin);
 
-        // 6. Deploy Bridge (thisChainId is set during initialization)
+        // 6. Deploy Bridge (thisChainId and wrappedNative set during initialization)
         bridge_ = deployBridge(
             admin,
             operator,
             feeRecipient,
+            wrappedNative,
             ChainRegistry(chainRegistry_),
             TokenRegistry(tokenRegistry_),
             LockUnlock(lockUnlock_),
@@ -106,12 +110,12 @@ contract Deploy is Script {
     }
 
     /// @notice Deploy ChainRegistry with proxy
-    function deployChainRegistry(address admin, address operator) public returns (address proxy) {
+    function deployChainRegistry(address admin) public returns (address proxy) {
         // Deploy implementation
         ChainRegistry implementation = new ChainRegistry();
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(ChainRegistry.initialize, (admin, operator));
+        bytes memory initData = abi.encodeCall(ChainRegistry.initialize, (admin));
         proxy = address(new ERC1967Proxy(address(implementation), initData));
 
         console2.log("ChainRegistry Implementation:", address(implementation));
@@ -119,15 +123,12 @@ contract Deploy is Script {
     }
 
     /// @notice Deploy TokenRegistry with proxy
-    function deployTokenRegistry(address admin, address operator, ChainRegistry chainRegistry)
-        public
-        returns (address proxy)
-    {
+    function deployTokenRegistry(address admin, ChainRegistry chainRegistry) public returns (address proxy) {
         // Deploy implementation
         TokenRegistry implementation = new TokenRegistry();
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(TokenRegistry.initialize, (admin, operator, chainRegistry));
+        bytes memory initData = abi.encodeCall(TokenRegistry.initialize, (admin, chainRegistry));
         proxy = address(new ERC1967Proxy(address(implementation), initData));
 
         console2.log("TokenRegistry Implementation:", address(implementation));
@@ -165,6 +166,7 @@ contract Deploy is Script {
         address admin,
         address operator,
         address feeRecipient,
+        address wrappedNative,
         ChainRegistry chainRegistry,
         TokenRegistry tokenRegistry,
         LockUnlock lockUnlock,
@@ -177,7 +179,17 @@ contract Deploy is Script {
         // Deploy proxy
         bytes memory initData = abi.encodeCall(
             Bridge.initialize,
-            (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn, thisChainId)
+            (
+                admin,
+                operator,
+                feeRecipient,
+                wrappedNative,
+                chainRegistry,
+                tokenRegistry,
+                lockUnlock,
+                mintBurn,
+                thisChainId
+            )
         );
         proxy = address(new ERC1967Proxy(address(implementation), initData));
 

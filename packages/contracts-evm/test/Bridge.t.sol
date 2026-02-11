@@ -14,6 +14,7 @@ import {Bridge} from "../src/Bridge.sol";
 import {IBridge} from "../src/interfaces/IBridge.sol";
 import {ITokenRegistry} from "../src/interfaces/ITokenRegistry.sol";
 import {FeeCalculatorLib} from "../src/lib/FeeCalculatorLib.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract MockERC20 is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
@@ -55,6 +56,7 @@ contract BridgeTest is Test {
     MintBurn public mintBurn;
     Bridge public bridge;
 
+    MockWETH public mockWeth;
     MockERC20 public token;
     MockMintableToken public mintableToken;
     MockCL8Y public cl8yToken;
@@ -72,21 +74,21 @@ contract BridgeTest is Test {
     function setUp() public {
         // Deploy ChainRegistry
         ChainRegistry chainImpl = new ChainRegistry();
-        bytes memory chainInitData = abi.encodeCall(ChainRegistry.initialize, (admin, operator));
+        bytes memory chainInitData = abi.encodeCall(ChainRegistry.initialize, (admin));
         ERC1967Proxy chainProxy = new ERC1967Proxy(address(chainImpl), chainInitData);
         chainRegistry = ChainRegistry(address(chainProxy));
 
         // Register chains with predetermined IDs
         thisChainId = bytes4(uint32(1));
         destChainId = bytes4(uint32(2));
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_31337", thisChainId);
         chainRegistry.registerChain("terraclassic_localterra", destChainId);
         vm.stopPrank();
 
         // Deploy TokenRegistry
         TokenRegistry tokenImpl = new TokenRegistry();
-        bytes memory tokenInitData = abi.encodeCall(TokenRegistry.initialize, (admin, operator, chainRegistry));
+        bytes memory tokenInitData = abi.encodeCall(TokenRegistry.initialize, (admin, chainRegistry));
         ERC1967Proxy tokenProxy = new ERC1967Proxy(address(tokenImpl), tokenInitData);
         tokenRegistry = TokenRegistry(address(tokenProxy));
 
@@ -102,11 +104,28 @@ contract BridgeTest is Test {
         ERC1967Proxy mintProxy = new ERC1967Proxy(address(mintImpl), mintInitData);
         mintBurn = MintBurn(address(mintProxy));
 
-        // Deploy Bridge (thisChainId is set during initialization)
+        // Deploy MockWETH for native deposits
+        mockWeth = new MockWETH();
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(address(mockWeth), ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setTokenDestination(address(mockWeth), destChainId, bytes32(uint256(3)));
+        vm.stopPrank();
+
+        // Deploy Bridge (thisChainId and wrappedNative set during initialization)
         Bridge bridgeImpl = new Bridge();
         bytes memory bridgeInitData = abi.encodeCall(
             Bridge.initialize,
-            (admin, operator, feeRecipient, chainRegistry, tokenRegistry, lockUnlock, mintBurn, thisChainId)
+            (
+                admin,
+                operator,
+                feeRecipient,
+                address(mockWeth),
+                chainRegistry,
+                tokenRegistry,
+                lockUnlock,
+                mintBurn,
+                thisChainId
+            )
         );
         ERC1967Proxy bridgeProxy = new ERC1967Proxy(address(bridgeImpl), bridgeInitData);
         bridge = Bridge(payable(address(bridgeProxy)));
@@ -132,7 +151,7 @@ contract BridgeTest is Test {
         mintableToken.setMinter(address(mintBurn));
 
         // Register tokens
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         tokenRegistry.registerToken(address(token), ITokenRegistry.TokenType.LockUnlock);
         tokenRegistry.setTokenDestination(address(token), destChainId, bytes32(uint256(1)));
 
@@ -174,7 +193,7 @@ contract BridgeTest is Test {
     }
 
     function test_SetFeeParams() public {
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setFeeParams(30, 5, 200e18, address(cl8yToken), feeRecipient);
 
         FeeCalculatorLib.FeeConfig memory config = bridge.getFeeConfig();
@@ -185,7 +204,7 @@ contract BridgeTest is Test {
     }
 
     function test_SetFeeParams_RevertsIfExceedsMax() public {
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IBridge.FeeExceedsMax.selector, 101, 100));
         bridge.setFeeParams(101, 10, 100e18, address(0), feeRecipient);
     }
@@ -197,7 +216,7 @@ contract BridgeTest is Test {
 
     function test_CalculateFee_Discounted() public {
         // Set CL8Y token
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setFeeParams(50, 10, 100e18, address(cl8yToken), feeRecipient);
 
         // Give user CL8Y tokens
@@ -208,7 +227,7 @@ contract BridgeTest is Test {
     }
 
     function test_SetCustomAccountFee() public {
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setCustomAccountFee(user, 25);
 
         assertTrue(bridge.hasCustomFee(user));
@@ -218,7 +237,7 @@ contract BridgeTest is Test {
     }
 
     function test_RemoveCustomAccountFee() public {
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         bridge.setCustomAccountFee(user, 25);
         bridge.removeCustomAccountFee(user);
         vm.stopPrank();
@@ -228,12 +247,12 @@ contract BridgeTest is Test {
 
     function test_CustomFee_Priority() public {
         // Set CL8Y token so user would qualify for discount
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setFeeParams(50, 10, 100e18, address(cl8yToken), feeRecipient);
         cl8yToken.mint(user, 100e18);
 
         // Set custom fee - should take priority
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setCustomAccountFee(user, 5);
 
         uint256 fee = bridge.calculateFee(user, 1000 ether);
@@ -298,6 +317,154 @@ contract BridgeTest is Test {
         bridge.depositERC20(address(token), 0, destChainId, destAccount);
     }
 
+    function test_DepositNative() public {
+
+
+        uint256 fee = bridge.calculateFee(user, 100 ether);
+        uint256 netAmount = 100 ether - fee;
+        uint256 feeRecipientBefore = feeRecipient.balance;
+
+        vm.prank(user);
+        bridge.depositNative{value: 100 ether}(destChainId, destAccount);
+
+        assertEq(bridge.getDepositNonce(), 2);
+        assertEq(address(bridge).balance, netAmount);
+        assertEq(feeRecipient.balance, feeRecipientBefore + fee);
+    }
+
+    function test_DepositNative_RevertsIfWrappedNativeNotSet() public {
+        // Deploy a Bridge with wrappedNative=address(0) to test revert
+        Bridge bridgeImpl2 = new Bridge();
+        bytes memory bridgeInitData = abi.encodeCall(
+            Bridge.initialize,
+            (admin, operator, feeRecipient, address(0), chainRegistry, tokenRegistry, lockUnlock, mintBurn, thisChainId)
+        );
+        ERC1967Proxy bridgeProxy2 = new ERC1967Proxy(address(bridgeImpl2), bridgeInitData);
+        Bridge bridgeNoWeth = Bridge(payable(address(bridgeProxy2)));
+        vm.prank(admin);
+        lockUnlock.addAuthorizedCaller(address(bridgeNoWeth));
+        vm.prank(admin);
+        mintBurn.addAuthorizedCaller(address(bridgeNoWeth));
+
+        vm.prank(user);
+        vm.expectRevert(IBridge.WrappedNativeNotSet.selector);
+        bridgeNoWeth.depositNative{value: 100 ether}(destChainId, destAccount);
+    }
+
+    function test_DepositNative_RevertsIfChainNotRegistered() public {
+        bytes4 invalidChain = bytes4(uint32(99));
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.ChainNotRegistered.selector, invalidChain));
+        bridge.depositNative{value: 100 ether}(invalidChain, destAccount);
+    }
+
+    function test_DepositNative_RevertsIfWrappedNativeNotRegistered() public {
+        // Deploy a Bridge with an unregistered MockWETH
+        MockWETH unregWeth = new MockWETH();
+        Bridge bridgeImpl2 = new Bridge();
+        bytes memory bridgeInitData = abi.encodeCall(
+            Bridge.initialize,
+            (
+                admin,
+                operator,
+                feeRecipient,
+                address(unregWeth),
+                chainRegistry,
+                tokenRegistry,
+                lockUnlock,
+                mintBurn,
+                thisChainId
+            )
+        );
+        ERC1967Proxy bridgeProxy2 = new ERC1967Proxy(address(bridgeImpl2), bridgeInitData);
+        Bridge bridgeUnregWeth = Bridge(payable(address(bridgeProxy2)));
+        vm.prank(admin);
+        lockUnlock.addAuthorizedCaller(address(bridgeUnregWeth));
+        vm.prank(admin);
+        mintBurn.addAuthorizedCaller(address(bridgeUnregWeth));
+        // Intentionally do NOT register unregWeth in tokenRegistry
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.TokenNotRegistered.selector, address(unregWeth)));
+        bridgeUnregWeth.depositNative{value: 100 ether}(destChainId, destAccount);
+    }
+
+    function test_DepositNative_RevertsIfDestMappingNotSet() public {
+        // Deploy a Bridge with MockWETH registered but no dest mapping
+        MockWETH noDestWeth = new MockWETH();
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(address(noDestWeth), ITokenRegistry.TokenType.LockUnlock);
+        // Intentionally do NOT set token destination for destChainId
+        vm.stopPrank();
+
+        Bridge bridgeImpl2 = new Bridge();
+        bytes memory bridgeInitData = abi.encodeCall(
+            Bridge.initialize,
+            (
+                admin,
+                operator,
+                feeRecipient,
+                address(noDestWeth),
+                chainRegistry,
+                tokenRegistry,
+                lockUnlock,
+                mintBurn,
+                thisChainId
+            )
+        );
+        ERC1967Proxy bridgeProxy2 = new ERC1967Proxy(address(bridgeImpl2), bridgeInitData);
+        Bridge bridgeNoDest = Bridge(payable(address(bridgeProxy2)));
+        vm.prank(admin);
+        lockUnlock.addAuthorizedCaller(address(bridgeNoDest));
+        vm.prank(admin);
+        mintBurn.addAuthorizedCaller(address(bridgeNoDest));
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IBridge.DestTokenMappingNotSet.selector, address(noDestWeth), destChainId)
+        );
+        bridgeNoDest.depositNative{value: 100 ether}(destChainId, destAccount);
+    }
+
+    function test_DepositERC20_RevertsIfDestMappingNotSet() public {
+        MockERC20 noDestToken = new MockERC20("No Dest Token", "NDT");
+        noDestToken.mint(user, 100 ether);
+
+        vm.prank(admin);
+        tokenRegistry.registerToken(address(noDestToken), ITokenRegistry.TokenType.LockUnlock);
+        // Intentionally do NOT set destination mapping for destChainId
+
+        vm.startPrank(user);
+        noDestToken.approve(address(bridge), 100 ether);
+        noDestToken.approve(address(lockUnlock), 100 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IBridge.DestTokenMappingNotSet.selector, address(noDestToken), destChainId)
+        );
+        bridge.depositERC20(address(noDestToken), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+    }
+
+    function test_DepositERC20Mintable_RevertsIfDestMappingNotSet() public {
+        MockMintableToken noDestMintable = new MockMintableToken("No Dest Mintable", "NDM");
+        noDestMintable.mint(user, 100 ether);
+        noDestMintable.setMinter(address(mintBurn));
+
+        vm.prank(admin);
+        tokenRegistry.registerToken(address(noDestMintable), ITokenRegistry.TokenType.MintBurn);
+        // Intentionally do NOT set destination mapping for destChainId
+
+        vm.startPrank(user);
+        noDestMintable.approve(address(bridge), 100 ether);
+        noDestMintable.approve(address(mintBurn), 100 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IBridge.DestTokenMappingNotSet.selector, address(noDestMintable), destChainId)
+        );
+        bridge.depositERC20Mintable(address(noDestMintable), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+    }
+
     // ============================================================================
     // Withdraw Flow Tests
     // ============================================================================
@@ -306,7 +473,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         // The hash is computed internally
     }
@@ -316,7 +485,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         // Get withdrawal hash
         bytes32 withdrawHash =
@@ -340,7 +511,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -361,7 +534,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -382,7 +557,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -415,7 +592,9 @@ contract BridgeTest is Test {
         bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
         vm.deal(recipient, 1 ether); // Give recipient some ETH for gas tip
         vm.prank(recipient);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
@@ -435,11 +614,39 @@ contract BridgeTest is Test {
         assertEq(token.balanceOf(recipient), 50 ether);
     }
 
+    function test_WithdrawExecuteMint() public {
+        // Submit withdrawal for mintable token (simulates cross-chain withdraw)
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1, 18);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+
+        bridge.withdrawExecuteMint(withdrawHash);
+
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        assertTrue(w.executed);
+        assertEq(mintableToken.balanceOf(recipient), 50 ether);
+    }
+
     function test_WithdrawExecute_RevertsIfNotApproved() public {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -452,7 +659,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -472,7 +681,9 @@ contract BridgeTest is Test {
         bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
         bytes32 userDestAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        bridge.withdrawSubmit{value: 0.01 ether}(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         bytes32 withdrawHash =
             _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
@@ -754,7 +965,7 @@ contract BridgeTest is Test {
     /// is transferred back to them.
     function test_DepositERC20_FeeRecipientIsSelf() public {
         // Set fee recipient to the user (depositor) — this is the bug scenario
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setFeeParams(50, 10, 100e18, address(0), user);
 
         uint256 balanceBefore = token.balanceOf(user);
@@ -786,7 +997,7 @@ contract BridgeTest is Test {
         // Fee recipient is a separate address (the normal case)
         address separateFeeRecipient = address(0xFEE);
 
-        vm.prank(operator);
+        vm.prank(admin);
         bridge.setFeeParams(50, 10, 100e18, address(0), separateFeeRecipient);
 
         uint256 balanceBefore = token.balanceOf(user);
@@ -813,6 +1024,306 @@ contract BridgeTest is Test {
         // Fee recipient should have received the fee
         uint256 feeRecipientIncrease = feeRecipientBalanceAfter - feeRecipientBalanceBefore;
         assertEq(feeRecipientIncrease, fee, "Fee recipient should receive the fee amount");
+    }
+
+    // ============================================================================
+    // Cancel Window Bounds Tests (L-01)
+    // ============================================================================
+
+    function test_SetCancelWindow_WithinBounds() public {
+        vm.prank(admin);
+        bridge.setCancelWindow(60); // 1 minute
+        assertEq(bridge.getCancelWindow(), 60);
+    }
+
+    function test_SetCancelWindow_MinBound() public {
+        vm.prank(admin);
+        bridge.setCancelWindow(15); // Exact minimum
+        assertEq(bridge.getCancelWindow(), 15);
+    }
+
+    function test_SetCancelWindow_MaxBound() public {
+        vm.prank(admin);
+        bridge.setCancelWindow(24 hours); // Exact maximum
+        assertEq(bridge.getCancelWindow(), 24 hours);
+    }
+
+    function test_SetCancelWindow_RevertsBelowMin() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.CancelWindowOutOfBounds.selector, 14, 15, 24 hours));
+        bridge.setCancelWindow(14);
+    }
+
+    function test_SetCancelWindow_RevertsAboveMax() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.CancelWindowOutOfBounds.selector, 24 hours + 1, 15, 24 hours));
+        bridge.setCancelWindow(24 hours + 1);
+    }
+
+    function test_SetCancelWindow_RevertsAtZero() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.CancelWindowOutOfBounds.selector, 0, 15, 24 hours));
+        bridge.setCancelWindow(0);
+    }
+
+    function test_SetCancelWindow_EmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit IBridge.CancelWindowUpdated(5 minutes, 10 minutes);
+        bridge.setCancelWindow(10 minutes);
+    }
+
+    // ============================================================================
+    // Destination Account Validation Tests (L-02)
+    // ============================================================================
+
+    function test_DepositERC20_RevertsIfDestAccountZero() public {
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+
+        vm.expectRevert(IBridge.InvalidDestAccount.selector);
+        bridge.depositERC20(address(token), 100 ether, destChainId, bytes32(0));
+        vm.stopPrank();
+    }
+
+    function test_DepositNative_RevertsIfDestAccountZero() public {
+        vm.prank(user);
+        vm.expectRevert(IBridge.InvalidDestAccount.selector);
+        bridge.depositNative{value: 1 ether}(destChainId, bytes32(0));
+    }
+
+    function test_DepositERC20Mintable_RevertsIfDestAccountZero() public {
+        vm.startPrank(user);
+        mintableToken.approve(address(bridge), 100 ether);
+        mintableToken.approve(address(mintBurn), 100 ether);
+
+        vm.expectRevert(IBridge.InvalidDestAccount.selector);
+        bridge.depositERC20Mintable(address(mintableToken), 100 ether, destChainId, bytes32(0));
+        vm.stopPrank();
+    }
+
+    // ============================================================================
+    // Token Type Validation Tests (I-05)
+    // ============================================================================
+
+    function test_WithdrawExecuteUnlock_RevertsIfWrongTokenType() public {
+        // mintableToken is MintBurn type — trying to unlock should fail
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1, 18);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+
+        vm.expectRevert(abi.encodeWithSelector(IBridge.WrongTokenType.selector, address(mintableToken), "LockUnlock"));
+        bridge.withdrawExecuteUnlock(withdrawHash);
+    }
+
+    function test_WithdrawExecuteMint_RevertsIfWrongTokenType() public {
+        // token is LockUnlock type — trying to mint should fail
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+
+        vm.expectRevert(abi.encodeWithSelector(IBridge.WrongTokenType.selector, address(token), "MintBurn"));
+        bridge.withdrawExecuteMint(withdrawHash);
+    }
+
+    // ============================================================================
+    // Decimal Normalization Tests
+    // ============================================================================
+
+    function test_WithdrawExecuteUnlock_DecimalNormalization_SameDecimals() public {
+        // Same decimals (18->18) - amount stays the same
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
+        token.approve(address(lockUnlock), 100 ether);
+        bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+        bridge.withdrawExecuteUnlock(withdrawHash);
+
+        assertEq(token.balanceOf(recipient), 50 ether);
+    }
+
+    function test_WithdrawExecuteUnlock_DecimalNormalization_ScaleDown() public {
+        // Source has more decimals (24->18), amount should be divided by 10^6
+        vm.startPrank(user);
+        token.approve(address(bridge), 200 ether);
+        token.approve(address(lockUnlock), 200 ether);
+        bridge.depositERC20(address(token), 200 ether, destChainId, destAccount);
+        vm.stopPrank();
+
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        // Amount in 24-decimal source: 50 * 10^24
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e24, 1, 24);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e24, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+        bridge.withdrawExecuteUnlock(withdrawHash);
+
+        // Should receive 50 * 10^18 (normalized from 24 to 18 decimals)
+        assertEq(token.balanceOf(recipient), 50 ether);
+    }
+
+    function test_WithdrawExecuteMint_DecimalNormalization_ScaleUp() public {
+        // Source has fewer decimals (6->18), amount should be multiplied by 10^12
+        address recipient = address(6);
+        bytes32 srcAccount = bytes32(uint256(uint160(address(0x7777))));
+        bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
+        vm.deal(recipient, 1 ether);
+        vm.prank(recipient);
+        // Amount in 6-decimal source: 50 * 10^6
+        bridge.withdrawSubmit{
+            value: 0.01 ether
+        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1, 6);
+
+        bytes32 withdrawHash =
+            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1);
+
+        vm.prank(operator);
+        bridge.withdrawApprove(withdrawHash);
+
+        vm.warp(block.timestamp + 6 minutes);
+        bridge.withdrawExecuteMint(withdrawHash);
+
+        // Should receive 50 * 10^18 (normalized from 6 to 18 decimals)
+        assertEq(mintableToken.balanceOf(recipient), 50 ether);
+    }
+
+    // ============================================================================
+    // Recover Asset Tests
+    // ============================================================================
+
+    function test_RecoverAsset_ERC20() public {
+        // Send some tokens to the bridge (simulating stuck tokens)
+        token.mint(address(bridge), 10 ether);
+
+        address recipient = address(0xBEEF);
+
+        vm.prank(admin);
+        bridge.pause();
+
+        vm.prank(admin);
+        bridge.recoverAsset(address(token), 10 ether, recipient);
+
+        assertEq(token.balanceOf(recipient), 10 ether);
+    }
+
+    function test_RecoverAsset_NativeETH() public {
+        // Send some ETH to the bridge
+        vm.deal(address(bridge), 5 ether);
+
+        address recipient = address(0xBEEF);
+        uint256 recipientBefore = recipient.balance;
+
+        vm.prank(admin);
+        bridge.pause();
+
+        vm.prank(admin);
+        bridge.recoverAsset(address(0), 5 ether, recipient);
+
+        assertEq(recipient.balance, recipientBefore + 5 ether);
+    }
+
+    function test_RecoverAsset_RevertsIfNotPaused() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        bridge.recoverAsset(address(token), 10 ether, address(0xBEEF));
+    }
+
+    function test_RecoverAsset_RevertsIfNotOwner() public {
+        vm.prank(admin);
+        bridge.pause();
+
+        vm.prank(user);
+        vm.expectRevert();
+        bridge.recoverAsset(address(token), 10 ether, address(0xBEEF));
+    }
+
+    function test_RecoverAsset_EmitsEvent() public {
+        token.mint(address(bridge), 10 ether);
+        address recipient = address(0xBEEF);
+
+        vm.prank(admin);
+        bridge.pause();
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit IBridge.AssetRecovered(address(token), 10 ether, recipient);
+        bridge.recoverAsset(address(token), 10 ether, recipient);
+    }
+
+    // ============================================================================
+    // Guard Bridge Tests
+    // ============================================================================
+
+    function test_SetGuardBridge() public {
+        address mockGuard = address(0x600D);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true);
+        emit IBridge.GuardBridgeUpdated(address(0), mockGuard);
+        bridge.setGuardBridge(mockGuard);
+
+        assertEq(bridge.guardBridge(), mockGuard);
+    }
+
+    function test_SetGuardBridge_RevertsIfNotOwner() public {
+        vm.prank(user);
+        vm.expectRevert();
+        bridge.setGuardBridge(address(0x1));
     }
 
     // ============================================================================

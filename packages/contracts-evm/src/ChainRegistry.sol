@@ -32,13 +32,6 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @notice Mapping of registered chains
     mapping(bytes4 => bool) public registeredChains;
 
-    /// @dev Deprecated: was nextChainId in V1 (auto-increment). Kept for storage layout compatibility.
-    // forge-lint: disable-next-line(mixed-case-variable)
-    bytes4 private __deprecated_nextChainId;
-
-    /// @notice Mapping of operators
-    mapping(address => bool) public operators;
-
     /// @notice Array of registered chain IDs for enumeration
     bytes4[] private _chainIds;
 
@@ -48,18 +41,6 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     // ============================================================================
     // Modifiers
     // ============================================================================
-
-    /// @notice Only operator can call
-    modifier onlyOperator() {
-        _onlyOperator();
-        _;
-    }
-
-    function _onlyOperator() internal view {
-        if (!operators[msg.sender] && msg.sender != owner()) {
-            revert Unauthorized();
-        }
-    }
 
     /// @notice Validate chain is registered
     modifier onlyRegisteredChain(bytes4 chainId) {
@@ -84,35 +65,8 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
 
     /// @notice Initialize the chain registry
     /// @param admin The admin address (owner)
-    /// @param operator The initial operator address
-    function initialize(address admin, address operator) public initializer {
+    function initialize(address admin) public initializer {
         __Ownable_init(admin);
-
-        // Set initial operator
-        operators[operator] = true;
-    }
-
-    // ============================================================================
-    // Operator Management
-    // ============================================================================
-
-    /// @notice Add an operator
-    /// @param operator The operator address
-    function addOperator(address operator) external onlyOwner {
-        operators[operator] = true;
-    }
-
-    /// @notice Remove an operator
-    /// @param operator The operator address
-    function removeOperator(address operator) external onlyOwner {
-        operators[operator] = false;
-    }
-
-    /// @notice Check if address is an operator
-    /// @param account The address to check
-    /// @return isOp True if address is an operator
-    function isOperator(address account) external view returns (bool isOp) {
-        return operators[account] || account == owner();
     }
 
     // ============================================================================
@@ -123,7 +77,7 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @dev Only operator can register chains. The caller specifies the chain ID.
     /// @param identifier The chain identifier (e.g., "evm_1", "terraclassic_columbus-5")
     /// @param chainId The caller-specified 4-byte chain ID (must not be bytes4(0))
-    function registerChain(string calldata identifier, bytes4 chainId) external onlyOperator {
+    function registerChain(string calldata identifier, bytes4 chainId) external onlyOwner {
         // Validate chain ID is not zero (reserved/invalid)
         if (chainId == bytes4(0)) {
             revert InvalidChainId();
@@ -154,7 +108,7 @@ contract ChainRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IC
     /// @notice Unregister an existing chain
     /// @dev Only operator can unregister chains. Clears all mappings and removes from enumeration.
     /// @param chainId The 4-byte chain ID to remove
-    function unregisterChain(bytes4 chainId) external onlyOperator onlyRegisteredChain(chainId) {
+    function unregisterChain(bytes4 chainId) external onlyOwner onlyRegisteredChain(chainId) {
         // Get the hash before clearing
         bytes32 hash = chainIdToHash[chainId];
 

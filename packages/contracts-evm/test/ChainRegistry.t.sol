@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {IChainRegistry} from "../src/interfaces/IChainRegistry.sol";
 
@@ -17,7 +18,7 @@ contract ChainRegistryTest is Test {
         ChainRegistry implementation = new ChainRegistry();
 
         // Deploy proxy
-        bytes memory initData = abi.encodeCall(ChainRegistry.initialize, (admin, operator));
+        bytes memory initData = abi.encodeCall(ChainRegistry.initialize, (admin));
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
 
         chainRegistry = ChainRegistry(address(proxy));
@@ -25,14 +26,13 @@ contract ChainRegistryTest is Test {
 
     function test_Initialize() public view {
         assertEq(chainRegistry.owner(), admin);
-        assertTrue(chainRegistry.operators(operator));
         assertEq(chainRegistry.VERSION(), 1);
     }
 
     function test_RegisterChain() public {
         bytes4 chainId = bytes4(uint32(1));
 
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", chainId);
 
         assertTrue(chainRegistry.isChainRegistered(chainId));
@@ -48,7 +48,7 @@ contract ChainRegistryTest is Test {
         bytes4 chain2 = bytes4(uint32(2));
         bytes4 chain3 = bytes4(uint32(3));
 
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_1", chain1);
         chainRegistry.registerChain("evm_56", chain2);
         chainRegistry.registerChain("terraclassic_columbus-5", chain3);
@@ -68,10 +68,10 @@ contract ChainRegistryTest is Test {
     }
 
     function test_RegisterChain_RevertsDuplicateIdentifier() public {
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
 
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainAlreadyRegistered.selector, "evm_1"));
         chainRegistry.registerChain("evm_1", bytes4(uint32(2)));
     }
@@ -79,23 +79,23 @@ contract ChainRegistryTest is Test {
     function test_RegisterChain_RevertsDuplicateChainId() public {
         bytes4 chainId = bytes4(uint32(1));
 
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", chainId);
 
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainIdAlreadyInUse.selector, chainId));
         chainRegistry.registerChain("evm_56", chainId);
     }
 
     function test_RegisterChain_RevertsZeroChainId() public {
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(IChainRegistry.InvalidChainId.selector);
         chainRegistry.registerChain("evm_1", bytes4(0));
     }
 
-    function test_RegisterChain_RevertsIfNotOperator() public {
+    function test_RegisterChain_RevertsIfNotOwner() public {
         vm.prank(user);
-        vm.expectRevert(IChainRegistry.Unauthorized.selector);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
         chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
     }
 
@@ -109,11 +109,11 @@ contract ChainRegistryTest is Test {
     function test_UnregisterChain() public {
         bytes4 chainId = bytes4(uint32(1));
 
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", chainId);
         assertTrue(chainRegistry.isChainRegistered(chainId));
 
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.unregisterChain(chainId);
 
         // Verify all mappings are cleared
@@ -127,7 +127,7 @@ contract ChainRegistryTest is Test {
         bytes4 chainId1 = bytes4(uint32(1));
         bytes4 chainId2 = bytes4(uint32(2));
 
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_1", chainId1);
         chainRegistry.unregisterChain(chainId1);
 
@@ -142,7 +142,7 @@ contract ChainRegistryTest is Test {
     function test_UnregisterChain_CanReUseChainId() public {
         bytes4 chainId = bytes4(uint32(1));
 
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_1", chainId);
         chainRegistry.unregisterChain(chainId);
 
@@ -156,18 +156,18 @@ contract ChainRegistryTest is Test {
 
     function test_UnregisterChain_RevertsIfNotRegistered() public {
         bytes4 unregistered = bytes4(uint32(99));
-        vm.prank(operator);
+        vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IChainRegistry.ChainNotRegistered.selector, unregistered));
         chainRegistry.unregisterChain(unregistered);
     }
 
-    function test_UnregisterChain_RevertsIfNotOperator() public {
+    function test_UnregisterChain_RevertsIfNotOwner() public {
         bytes4 chainId = bytes4(uint32(1));
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", chainId);
 
         vm.prank(user);
-        vm.expectRevert(IChainRegistry.Unauthorized.selector);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
         chainRegistry.unregisterChain(chainId);
     }
 
@@ -176,7 +176,7 @@ contract ChainRegistryTest is Test {
         bytes4 chain2 = bytes4(uint32(2));
         bytes4 chain3 = bytes4(uint32(3));
 
-        vm.startPrank(operator);
+        vm.startPrank(admin);
         chainRegistry.registerChain("evm_1", chain1);
         chainRegistry.registerChain("evm_56", chain2);
         chainRegistry.registerChain("terraclassic_columbus-5", chain3);
@@ -193,30 +193,6 @@ contract ChainRegistryTest is Test {
         assertEq(chains[1], chain3);
     }
 
-    function test_AddOperator() public {
-        address newOperator = address(4);
-
-        vm.prank(admin);
-        chainRegistry.addOperator(newOperator);
-
-        assertTrue(chainRegistry.operators(newOperator));
-
-        vm.prank(newOperator);
-        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
-        assertTrue(chainRegistry.isChainRegistered(bytes4(uint32(1))));
-    }
-
-    function test_RemoveOperator() public {
-        vm.prank(admin);
-        chainRegistry.removeOperator(operator);
-
-        assertFalse(chainRegistry.operators(operator));
-
-        vm.prank(operator);
-        vm.expectRevert(IChainRegistry.Unauthorized.selector);
-        chainRegistry.registerChain("evm_1", bytes4(uint32(1)));
-    }
-
     function test_RevertIfChainNotRegistered() public {
         bytes4 unregisteredChain = bytes4(uint32(99));
 
@@ -229,16 +205,10 @@ contract ChainRegistryTest is Test {
         assertEq(hash, keccak256(abi.encode("evm_1")));
     }
 
-    function test_IsOperator() public view {
-        assertTrue(chainRegistry.isOperator(operator));
-        assertTrue(chainRegistry.isOperator(admin)); // Admin is always operator
-        assertFalse(chainRegistry.isOperator(user));
-    }
-
     function test_Upgrade() public {
         // Register a chain before upgrade
         bytes4 chainId = bytes4(uint32(1));
-        vm.prank(operator);
+        vm.prank(admin);
         chainRegistry.registerChain("evm_1", chainId);
 
         // Deploy new implementation

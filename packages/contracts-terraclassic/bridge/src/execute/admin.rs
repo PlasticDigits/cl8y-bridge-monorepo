@@ -122,6 +122,11 @@ pub fn execute_cancel_admin_proposal(
 // ============================================================================
 
 /// Recover stuck assets (emergency, requires paused state).
+///
+/// LOCKED_BALANCES is intentionally not updated here. Updating it could cause
+/// underflow if the recovered amount exceeds the tracked locked balance (e.g.
+/// due to prior inconsistencies or dust). The admin must reconcile balances
+/// separately if needed after recovery.
 pub fn execute_recover_asset(
     deps: DepsMut,
     info: MessageInfo,

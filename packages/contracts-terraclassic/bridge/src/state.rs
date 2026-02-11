@@ -4,7 +4,7 @@
 //! including the watchtower security pattern state.
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Timestamp, Uint128};
+use cosmwasm_std::{Addr, Coin, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
 
 // ============================================================================
@@ -160,8 +160,8 @@ pub struct PendingWithdraw {
     pub src_decimals: u8,
     /// Destination chain token decimals (e.g. 6 for Terra native)
     pub dest_decimals: u8,
-    /// Operator gas tip (native tokens sent with WithdrawSubmit)
-    pub operator_gas: Uint128,
+    /// Native tokens sent with WithdrawSubmit (forwarded to operator on approve)
+    pub operator_funds: Vec<Coin>,
     /// Block timestamp when submitted by user
     pub submitted_at: u64,
     /// Block timestamp when approved by operator (0 if not yet approved)
@@ -320,6 +320,16 @@ pub const DEPOSIT_BY_NONCE: Map<u64, [u8; 32]> = Map::new("deposit_by_nonce");
 /// Authorized canceler addresses
 /// Key: Address reference, Value: bool (true if active canceler)
 pub const CANCELERS: Map<&Addr, bool> = Map::new("cancelers");
+
+/// Allowed CW20 code IDs (empty = no restriction, any CW20 allowed)
+///
+/// When non-empty, only CW20 contracts instantiated from these code IDs
+/// can be registered as bridged tokens. Typical values:
+/// - CW20 base (standard cw20): depends on deployment
+/// - CW20 mintable: depends on deployment
+///
+/// Admin configures via SetAllowedCw20CodeIds. Used in AddToken when is_native=false.
+pub const ALLOWED_CW20_CODE_IDS: Item<Vec<u64>> = Item::new("allowed_cw20_code_ids");
 
 /// Per-token rate limit configurations
 /// Key: token identifier, Value: RateLimitConfig

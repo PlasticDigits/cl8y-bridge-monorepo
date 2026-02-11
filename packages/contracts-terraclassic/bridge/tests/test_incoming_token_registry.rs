@@ -129,6 +129,72 @@ fn make_src_account() -> Binary {
 }
 
 // ============================================================================
+// AllowedCw20CodeIds Tests
+// ============================================================================
+
+#[test]
+fn test_allowed_cw20_code_ids_default_empty() {
+    let env = setup();
+
+    let resp: bridge::msg::AllowedCw20CodeIdsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(&env.contract_addr, &QueryMsg::AllowedCw20CodeIds {})
+        .unwrap();
+
+    assert!(
+        resp.code_ids.is_empty(),
+        "Default should be empty (no restriction)"
+    );
+}
+
+#[test]
+fn test_set_allowed_cw20_code_ids_admin_only() {
+    let mut env = setup();
+
+    let res = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::SetAllowedCw20CodeIds {
+            code_ids: vec![100, 101],
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err = res.unwrap_err();
+    assert!(
+        err.root_cause().to_string().contains("Unauthorized"),
+        "Expected Unauthorized, got: {}",
+        err.root_cause()
+    );
+}
+
+#[test]
+fn test_set_allowed_cw20_code_ids_updates_list() {
+    let mut env = setup();
+
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::SetAllowedCw20CodeIds {
+                code_ids: vec![100, 99, 100],
+            },
+            &[],
+        )
+        .unwrap();
+
+    let resp: bridge::msg::AllowedCw20CodeIdsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(&env.contract_addr, &QueryMsg::AllowedCw20CodeIds {})
+        .unwrap();
+
+    assert_eq!(resp.code_ids, vec![99, 100], "Should deduplicate and sort");
+}
+
+// ============================================================================
 // SetIncomingTokenMapping Tests
 // ============================================================================
 

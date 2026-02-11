@@ -23,8 +23,8 @@ use cosmwasm_std::Binary;
 use crate::hash::{hex_to_bytes32, keccak256};
 use crate::state::{
     ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenSrcMapping, TokenType,
-    CANCELERS, CHAINS, CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS, OPERATOR_COUNT, RATE_LIMITS, TOKENS,
-    TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY,
+    ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS,
+    OPERATOR_COUNT, RATE_LIMITS, TOKENS, TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -84,7 +84,7 @@ pub fn execute_set_withdraw_delay(
         return Err(ContractError::Unauthorized);
     }
 
-    // Validate range (60 seconds to 24 hours)
+    // Validate range (15 seconds to 24 hours)
     if !(15..=86400).contains(&delay_seconds) {
         return Err(ContractError::InvalidWithdrawDelay);
     }
@@ -295,6 +295,9 @@ fn parse_token_type(token_type_str: Option<String>) -> TokenType {
 }
 
 /// Add a new supported token.
+///
+/// For CW20 tokens (is_native=false), validates that the contract's code_id
+/// is in the allowed list (when ALLOWED_CW20_CODE_IDS is non-empty).
 #[allow(clippy::too_many_arguments)]
 pub fn execute_add_token(
     deps: DepsMut,
@@ -309,6 +312,34 @@ pub fn execute_add_token(
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
+    }
+
+    // For CW20 tokens, validate code_id is allowed (when restriction is enabled)
+    if !is_native {
+        let allowed = ALLOWED_CW20_CODE_IDS
+            .may_load(deps.storage)?
+            .unwrap_or_default();
+        if !allowed.is_empty() {
+            let token_addr =
+                deps.api
+                    .addr_validate(&token)
+                    .map_err(|_| ContractError::InvalidCw20Contract {
+                        token: token.clone(),
+                    })?;
+            let contract_info =
+                deps.querier
+                    .query_wasm_contract_info(&token_addr)
+                    .map_err(|_| ContractError::InvalidCw20Contract {
+                        token: token.clone(),
+                    })?;
+            let code_id = contract_info.code_id;
+            if !allowed.contains(&code_id) {
+                return Err(ContractError::Cw20CodeIdNotAllowed {
+                    token: token.clone(),
+                    code_id,
+                });
+            }
+        }
     }
 
     let token_type_parsed = parse_token_type(token_type);
@@ -500,6 +531,31 @@ pub fn execute_set_incoming_token_mapping(
         .add_attribute("src_token", format!("0x{}", src_token_key))
         .add_attribute("local_token", local_token)
         .add_attribute("src_decimals", src_decimals.to_string()))
+}
+
+/// Set the list of allowed CW20 code IDs for token registration.
+///
+/// When non-empty, AddToken (for CW20 tokens) will validate that the contract's
+/// code_id is in this list. Empty = no restriction (backward compatible).
+pub fn execute_set_allowed_cw20_code_ids(
+    deps: DepsMut,
+    info: MessageInfo,
+    code_ids: Vec<u64>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    // Deduplicate and save
+    let mut sorted: Vec<u64> = code_ids;
+    sorted.sort_unstable();
+    sorted.dedup();
+    ALLOWED_CW20_CODE_IDS.save(deps.storage, &sorted)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_allowed_cw20_code_ids")
+        .add_attribute("count", sorted.len().to_string()))
 }
 
 /// Remove an incoming token mapping.
@@ -757,6 +813,7 @@ pub fn execute_set_fee_params(
 }
 
 /// Set custom fee for a specific account.
+/// Admin only (operators cannot set custom fees per RBAC).
 pub fn execute_set_custom_account_fee(
     deps: DepsMut,
     info: MessageInfo,
@@ -764,12 +821,7 @@ pub fn execute_set_custom_account_fee(
     fee_bps: u64,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    // Allow both admin and operators to set custom fees
-    let is_operator = crate::state::OPERATORS
-        .may_load(deps.storage, &info.sender)?
-        .unwrap_or(false);
-
-    if info.sender != config.admin && !is_operator {
+    if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
     }
 
@@ -785,18 +837,14 @@ pub fn execute_set_custom_account_fee(
 }
 
 /// Remove custom fee for a specific account.
+/// Admin only (operators cannot remove custom fees per RBAC).
 pub fn execute_remove_custom_account_fee(
     deps: DepsMut,
     info: MessageInfo,
     account: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    // Allow both admin and operators to remove custom fees
-    let is_operator = crate::state::OPERATORS
-        .may_load(deps.storage, &info.sender)?
-        .unwrap_or(false);
-
-    if info.sender != config.admin && !is_operator {
+    if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
     }
 

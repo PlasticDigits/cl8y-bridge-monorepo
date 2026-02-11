@@ -3,6 +3,8 @@
 **A community operated bridge, open to all and secured by CL8Y, for EVM, CosmWasm, Sol, and more.**
 This repo contains the EVM smart contracts for the CL8Y Bridge, licensed under AGPL.
 
+**For deployers and integrators:** See [OPERATIONAL_NOTES.md](OPERATIONAL_NOTES.md) for fee recipient requirements, guard semantics, cancel window behavior, unsupported token types, and operator/registry configuration.
+
 ## Deployments Stable (v1.4)
 
 ### BSC
@@ -37,7 +39,7 @@ FactoryTokenCl8yBridged: `0x4C6e7a15b0CA53408BcB84759877f16e272eeeeA`
 ## instructions
 
 Build: `forge build`
-Test: `forge test`
+Test: `forge test` (includes Bridge invariant tests in `Bridge.inv.t.sol`)
 Coverage: `forge coverage --no-match-coverage "(test|script)/**" --ir-minimum`
 For lcov, add `--report lcov`
 
@@ -50,5 +52,5 @@ Single-command deploy (DeployPart1):
 
 Notes:
 
-- Example: for BSC mainnet (56) in .env set `WETH_ADDRESS_56=0x...`; for Sepolia (11155111) set `WETH_ADDRESS_11155111=0x...`.
+- `Deploy.s.sol` requires `WETH_ADDRESS` in .env (the chain's wrapped native token, e.g., WETH9). Use the canonical address for the target chain. Example: for BSC mainnet set `WETH_ADDRESS=0x...`; for Sepolia set `WETH_ADDRESS=0x...`.
 - Uses CREATE2 salts derived from `DEPLOY_SALT` for deterministic addresses.

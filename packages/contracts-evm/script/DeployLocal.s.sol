@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Script, console2} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
+import {WETH} from "solady/tokens/WETH.sol";
 import {AccessManagerEnumerable} from "../src/AccessManagerEnumerable.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {TokenRegistry} from "../src/TokenRegistry.sol";
@@ -27,14 +28,13 @@ contract DeployLocal is Script {
         // 2. Deploy ChainRegistry (implementation + proxy)
         ChainRegistry crImpl = new ChainRegistry();
         address chainRegistryProxy =
-            address(new ERC1967Proxy(address(crImpl), abi.encodeCall(ChainRegistry.initialize, (deployer, deployer))));
+            address(new ERC1967Proxy(address(crImpl), abi.encodeCall(ChainRegistry.initialize, (deployer))));
 
         // 3. Deploy TokenRegistry (implementation + proxy)
         TokenRegistry trImpl = new TokenRegistry();
         address tokenRegistryProxy = address(
             new ERC1967Proxy(
-                address(trImpl),
-                abi.encodeCall(TokenRegistry.initialize, (deployer, deployer, ChainRegistry(chainRegistryProxy)))
+                address(trImpl), abi.encodeCall(TokenRegistry.initialize, (deployer, ChainRegistry(chainRegistryProxy)))
             )
         );
 
@@ -55,7 +55,10 @@ contract DeployLocal is Script {
         bytes4 evmChainId = bytes4(uint32(1));
         ChainRegistry(chainRegistryProxy).registerChain("evm_31337", evmChainId);
 
-        // 7. Deploy Bridge (implementation + proxy)
+        // 7. Deploy WETH for native deposits (Solady WETH)
+        WETH weth = new WETH();
+
+        // 8. Deploy Bridge (implementation + proxy)
         Bridge bridgeImpl = new Bridge();
         address bridgeProxy = address(
             new ERC1967Proxy(
@@ -66,6 +69,7 @@ contract DeployLocal is Script {
                         deployer,
                         deployer,
                         deployer,
+                        address(weth),
                         ChainRegistry(chainRegistryProxy),
                         TokenRegistry(tokenRegistryProxy),
                         LockUnlock(lockUnlockProxy),
@@ -76,7 +80,7 @@ contract DeployLocal is Script {
             )
         );
 
-        // 8. Configure LockUnlock and MintBurn to authorize Bridge
+        // 9. Configure LockUnlock and MintBurn to authorize Bridge
         LockUnlock(lockUnlockProxy).addAuthorizedCaller(bridgeProxy);
         MintBurn(mintBurnProxy).addAuthorizedCaller(bridgeProxy);
 
@@ -85,6 +89,7 @@ contract DeployLocal is Script {
         // Output proxy addresses in parseable KEY=VALUE format
         console2.log("=== DeployLocal Addresses ===");
         console2.log("DEPLOYED_ACCESS_MANAGER", address(accessManager));
+        console2.log("DEPLOYED_WETH", address(weth));
         console2.log("DEPLOYED_CHAIN_REGISTRY", chainRegistryProxy);
         console2.log("DEPLOYED_TOKEN_REGISTRY", tokenRegistryProxy);
         console2.log("DEPLOYED_LOCK_UNLOCK", lockUnlockProxy);

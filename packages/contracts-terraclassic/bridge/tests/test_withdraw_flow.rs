@@ -396,6 +396,111 @@ fn test_withdraw_decimal_normalization_18_to_6() {
     assert_eq!(amount_attr, "2000000"); // 2e18 / 1e12 = 2e6
 }
 
+/// Test 18-decimal token with 1 quadrillion+ quantity (1e15 raw units).
+/// Normalizes 18→6: 1e15 / 1e12 = 1e3. Verifies Uint256 path handles large amounts.
+#[test]
+fn test_withdraw_18_decimal_quadrillion_quantity() {
+    let mut env = setup();
+
+    deposit_to_build_liquidity(&mut env, 10_000_000);
+
+    // 1 quadrillion = 1e15 in 18-decimal raw units → normalizes to 1e3 (1000) in 6 decimals
+    let withdraw_hash = submit_withdraw(
+        &mut env,
+        "uluna",
+        1_000_000_000_000_000u128, // 1e15
+        1,
+        0,
+    );
+
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    env.app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    let res = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+    assert!(res.is_ok(), "Execute failed: {:?}", res.err());
+
+    let res = res.unwrap();
+    let amount_attr = res
+        .events
+        .iter()
+        .flat_map(|e| &e.attributes)
+        .find(|a| a.key == "amount")
+        .map(|a| a.value.clone())
+        .unwrap();
+    assert_eq!(amount_attr, "1000"); // 1e15 / 1e12 = 1e3
+}
+
+/// Test even larger amount: 1e21 in 18 decimals → 1e9 in 6 decimals (1e21/1e12).
+#[test]
+fn test_withdraw_18_decimal_large_quantity() {
+    let mut env = setup();
+
+    // Need 1e9 liquidity (after fee); deposit 1.5e9 to have enough
+    deposit_to_build_liquidity(&mut env, 1_500_000_000);
+
+    let withdraw_hash = submit_withdraw(
+        &mut env,
+        "uluna",
+        1_000_000_000_000_000_000_000u128, // 1e21 in raw (18 decimals)
+        1,
+        0,
+    );
+
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                withdraw_hash: withdraw_hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    env.app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    let res = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+    assert!(res.is_ok(), "Execute failed: {:?}", res.err());
+
+    let res = res.unwrap();
+    let amount_attr = res
+        .events
+        .iter()
+        .flat_map(|e| &e.attributes)
+        .find(|a| a.key == "amount")
+        .map(|a| a.value.clone())
+        .unwrap();
+    assert_eq!(amount_attr, "1000000000"); // 1e21 / 1e12 = 1e9
+}
+
 // ============================================================================
 // Cancel/Uncancel Cycle Tests
 // ============================================================================
@@ -495,9 +600,9 @@ fn test_uncancel_resets_cancel_window() {
         )
         .unwrap();
 
-    // Wait 200s (within window)
+    // Wait 20s (within 60s cancel window)
     env.app.update_block(|block| {
-        block.time = block.time.plus_seconds(200);
+        block.time = block.time.plus_seconds(20);
     });
 
     // Cancel
@@ -809,7 +914,9 @@ fn test_submit_with_operator_gas_tip() {
         )
         .unwrap();
 
-    assert_eq!(pending.operator_gas, Uint128::from(500_000u128));
+    assert_eq!(pending.operator_funds.len(), 1);
+    assert_eq!(pending.operator_funds[0].denom, "uluna");
+    assert_eq!(pending.operator_funds[0].amount, Uint128::from(500_000u128));
 }
 
 #[test]
@@ -1391,7 +1498,7 @@ fn test_pending_withdrawals_fields_match_single_query() {
     assert_eq!(entry.nonce, single.nonce);
     assert_eq!(entry.src_decimals, single.src_decimals);
     assert_eq!(entry.dest_decimals, single.dest_decimals);
-    assert_eq!(entry.operator_gas, single.operator_gas);
+    assert_eq!(entry.operator_funds, single.operator_funds);
     assert_eq!(entry.submitted_at, single.submitted_at);
     assert_eq!(entry.approved_at, single.approved_at);
     assert_eq!(entry.approved, single.approved);

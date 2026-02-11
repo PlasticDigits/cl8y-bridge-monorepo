@@ -1,13 +1,15 @@
 //! Integration tests for CL8Y Bridge Contract V2 using cw-multi-test.
 //!
-//! These tests verify the V2 withdrawal flow and rate limiting.
+//! These tests verify the V2 withdrawal flow, rate limiting, deposit flows, and RecoverAsset.
 
-use cosmwasm_std::{coins, Addr, Binary, Uint128};
+use cosmwasm_std::{coins, to_json_binary, Addr, Binary, Uint128};
+use cw20::{Cw20Coin, Cw20ExecuteMsg};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
+use bridge::msg::ReceiveMsg;
 use bridge::msg::{
-    ConfigResponse, ExecuteMsg, InstantiateMsg, PendingWithdrawResponse, QueryMsg,
-    ThisChainIdResponse, WithdrawDelayResponse,
+    ConfigResponse, ExecuteMsg, InstantiateMsg, LockedBalanceResponse, PendingWithdrawResponse,
+    QueryMsg, ThisChainIdResponse, WithdrawDelayResponse,
 };
 
 // ============================================================================
@@ -19,6 +21,15 @@ fn contract_bridge() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
         bridge::contract::execute,
         bridge::contract::instantiate,
         bridge::contract::query,
+    );
+    Box::new(contract)
+}
+
+fn contract_cw20() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
+    let contract = ContractWrapper::new(
+        cw20_base::contract::execute,
+        cw20_base::contract::instantiate,
+        cw20_base::contract::query,
     );
     Box::new(contract)
 }
@@ -249,7 +260,9 @@ fn test_withdraw_submit_creates_pending() {
     assert!(!pending.cancelled);
     assert!(!pending.executed);
     assert_eq!(pending.amount, Uint128::from(1_000_000_000_000_000_000u128));
-    assert_eq!(pending.operator_gas, Uint128::from(100u128));
+    assert_eq!(pending.operator_funds.len(), 1);
+    assert_eq!(pending.operator_funds[0].denom, "uluna");
+    assert_eq!(pending.operator_funds[0].amount, Uint128::from(100u128));
 }
 
 #[test]
@@ -500,6 +513,87 @@ fn test_withdraw_cancel_requires_canceler_role() {
     assert!(res.is_err());
 }
 
+#[test]
+fn test_withdraw_cancel_operator_rejected() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Operator tries to cancel — should fail (only canceler can cancel)
+    let res = app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("canceler") || err_str.contains("Canceler"),
+        "Expected canceler-only error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_withdraw_cancel_admin_rejected() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Admin tries to cancel — should fail (only canceler can cancel)
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+}
+
 // ============================================================================
 // WithdrawUncancel Tests
 // ============================================================================
@@ -629,6 +723,7 @@ fn test_execute_unlock_before_window_fails() {
 #[test]
 fn test_execute_unlock_after_window_insufficient_liquidity() {
     let (mut app, contract_addr, operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
 
     let withdraw_hash = submit_withdraw(
         &mut app,
@@ -646,6 +741,19 @@ fn test_execute_unlock_after_window_insufficient_liquidity() {
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
             withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Set rate limit to avoid BankQuery::Supply (not supported in cw-multi-test)
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetRateLimit {
+            token: "uluna".to_string(),
+            max_per_transaction: Uint128::from(10_000_000_000u128),
+            max_per_period: Uint128::from(100_000_000_000u128),
         },
         &[],
     )
@@ -852,4 +960,988 @@ fn test_withdraw_delay_query() {
         .unwrap();
 
     assert_eq!(delay.delay_seconds, 60);
+}
+
+// ============================================================================
+// Deposit Flow Tests
+// ============================================================================
+
+#[test]
+fn test_deposit_native_min_limit_enforced() {
+    let (mut app, contract_addr, _operator, user) = setup();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(500, "uluna"), // Below min_bridge_amount of 1000
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("minimum") || err_str.contains("Minimum"),
+        "Expected min amount error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_deposit_native_max_limit_enforced() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Lower max to test enforcement
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::UpdateLimits {
+            min_bridge_amount: Some(Uint128::from(1000u128)),
+            max_bridge_amount: Some(Uint128::from(1_000_000u128)),
+        },
+        &[],
+    )
+    .unwrap();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(2_000_000, "uluna"), // Above max_bridge_amount of 1_000_000
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("maximum") || err_str.contains("Maximum"),
+        "Expected max amount error, got: {}",
+        err_str
+    );
+}
+
+// ============================================================================
+// Deposit Flow – Fee Edge Cases (Full Flow)
+// ============================================================================
+
+#[test]
+fn test_deposit_native_full_flow_fee_zero_bps() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    // Set custom fee 0 bps
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetCustomAccountFee {
+            account: user.to_string(),
+            fee_bps: 0,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(1_000_000, "uluna"),
+    )
+    .unwrap();
+
+    let locked: LockedBalanceResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::LockedBalance {
+                token: "uluna".to_string(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        locked.amount,
+        Uint128::from(1_000_000u128),
+        "0 bps: full amount locked"
+    );
+}
+
+#[test]
+fn test_deposit_native_full_flow_fee_max_bps() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetCustomAccountFee {
+            account: user.to_string(),
+            fee_bps: 100,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(1_000_000, "uluna"),
+    )
+    .unwrap();
+
+    let locked: LockedBalanceResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::LockedBalance {
+                token: "uluna".to_string(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        locked.amount,
+        Uint128::from(990_000u128),
+        "100 bps: 1% fee, 99% locked"
+    );
+}
+
+#[test]
+fn test_deposit_cw20_lock_full_flow() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let cw20_code_id = app.store_code(contract_cw20());
+    let cw20_addr = app
+        .instantiate_contract(
+            cw20_code_id,
+            admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Test Token".to_string(),
+                symbol: "TST".to_string(),
+                decimals: 6,
+                initial_balances: vec![Cw20Coin {
+                    address: user.to_string(),
+                    amount: Uint128::from(10_000_000u128),
+                }],
+                mint: None,
+                marketing: None,
+            },
+            &[],
+            "cw20-test",
+            None,
+        )
+        .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetAllowedCw20CodeIds {
+            code_ids: vec![cw20_code_id],
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::AddToken {
+            token: cw20_addr.to_string(),
+            is_native: false,
+            token_type: Some("lock_unlock".to_string()),
+            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
+            terra_decimals: 6,
+            evm_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: cw20_addr.to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
+            dest_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    let deposit_msg = ReceiveMsg::DepositCw20Lock {
+        dest_chain: Binary::from(vec![0, 0, 0, 2]),
+        dest_account: Binary::from(dest_account_bytes.to_vec()),
+    };
+
+    app.execute_contract(
+        user.clone(),
+        cw20_addr.clone(),
+        &Cw20ExecuteMsg::Send {
+            contract: contract_addr.to_string(),
+            amount: Uint128::from(1_000_000u128),
+            msg: to_json_binary(&deposit_msg).unwrap(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    let locked: LockedBalanceResponse = app
+        .wrap()
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::LockedBalance {
+                token: cw20_addr.to_string(),
+            },
+        )
+        .unwrap();
+    assert!(locked.amount > Uint128::zero(), "CW20 lock: tokens locked");
+}
+
+#[test]
+fn test_deposit_cw20_burn_full_flow() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let cw20_code_id = app.store_code(contract_cw20());
+    let cw20_addr = app
+        .instantiate_contract(
+            cw20_code_id,
+            admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Mint Token".to_string(),
+                symbol: "MNT".to_string(),
+                decimals: 6,
+                initial_balances: vec![Cw20Coin {
+                    address: user.to_string(),
+                    amount: Uint128::from(10_000_000u128),
+                }],
+                mint: Some(cw20::MinterResponse {
+                    minter: admin.to_string(),
+                    cap: None,
+                }),
+                marketing: None,
+            },
+            &[],
+            "cw20-mint",
+            None,
+        )
+        .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetAllowedCw20CodeIds {
+            code_ids: vec![cw20_code_id],
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::AddToken {
+            token: cw20_addr.to_string(),
+            is_native: false,
+            token_type: Some("mint_burn".to_string()),
+            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000002"
+                .to_string(),
+            terra_decimals: 6,
+            evm_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: cw20_addr.to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "0000000000000000000000000000000000000000000000000000000000000002"
+                .to_string(),
+            dest_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    let deposit_msg = ReceiveMsg::DepositCw20MintableBurn {
+        dest_chain: Binary::from(vec![0, 0, 0, 2]),
+        dest_account: Binary::from(dest_account_bytes.to_vec()),
+    };
+
+    app.execute_contract(
+        user.clone(),
+        cw20_addr.clone(),
+        &Cw20ExecuteMsg::Send {
+            contract: contract_addr.to_string(),
+            amount: Uint128::from(1_000_000u128),
+            msg: to_json_binary(&deposit_msg).unwrap(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    let token_info: cw20::TokenInfoResponse = app
+        .wrap()
+        .query_wasm_smart(&cw20_addr, &cw20::Cw20QueryMsg::TokenInfo {})
+        .unwrap();
+    assert!(
+        token_info.total_supply < Uint128::from(10_000_000u128),
+        "CW20 burn: supply decreased"
+    );
+}
+
+// ============================================================================
+// RecoverAsset Tests
+// ============================================================================
+
+#[test]
+fn test_recover_asset_requires_pause() {
+    let (mut app, contract_addr, _operator, _user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Recover without pause should fail
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::native("uluna"),
+            amount: Uint128::from(1000u128),
+            recipient: admin.to_string(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("paused") || err_str.contains("Recovery"),
+        "Expected recovery requires pause, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_recover_asset_admin_only() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::Pause {},
+        &[],
+    )
+    .unwrap();
+
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::native("uluna"),
+            amount: Uint128::from(1000u128),
+            recipient: user.to_string(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_recover_asset_native_success() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Deposit native tokens (contract receives them)
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(5_000_000, "uluna"),
+    )
+    .unwrap();
+
+    // Pause and recover
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::Pause {},
+        &[],
+    )
+    .unwrap();
+
+    let recover_amount = Uint128::from(1_000_000u128);
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::native("uluna"),
+            amount: recover_amount,
+            recipient: admin.to_string(),
+        },
+        &[],
+    );
+
+    assert!(res.is_ok(), "RecoverAsset failed: {:?}", res.err());
+
+    // Verify admin received the recovered tokens
+    let admin_balance = app.wrap().query_balance(&admin, "uluna").unwrap();
+    assert!(
+        admin_balance.amount >= recover_amount,
+        "Admin should have received recovered amount"
+    );
+}
+
+#[test]
+fn test_recover_asset_exceeds_balance_fails() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(1_000_000, "uluna"),
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::Pause {},
+        &[],
+    )
+    .unwrap();
+
+    // Recover more than contract holds (2M > 1M) — Bank::Send submessage fails
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::native("uluna"),
+            amount: Uint128::from(2_000_000u128),
+            recipient: admin.to_string(),
+        },
+        &[],
+    );
+
+    assert!(
+        res.is_err(),
+        "RecoverAsset should fail when amount exceeds balance"
+    );
+}
+
+#[test]
+fn test_recover_asset_cw20_success() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let cw20_code_id = app.store_code(contract_cw20());
+    let cw20_addr = app
+        .instantiate_contract(
+            cw20_code_id,
+            admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Recover Token".to_string(),
+                symbol: "RCV".to_string(),
+                decimals: 6,
+                initial_balances: vec![Cw20Coin {
+                    address: user.to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                }],
+                mint: None,
+                marketing: None,
+            },
+            &[],
+            "cw20-recover",
+            None,
+        )
+        .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetAllowedCw20CodeIds {
+            code_ids: vec![cw20_code_id],
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::AddToken {
+            token: cw20_addr.to_string(),
+            is_native: false,
+            token_type: Some("lock_unlock".to_string()),
+            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000003"
+                .to_string(),
+            terra_decimals: 6,
+            evm_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: cw20_addr.to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "0000000000000000000000000000000000000000000000000000000000000003"
+                .to_string(),
+            dest_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    let deposit_msg = ReceiveMsg::DepositCw20Lock {
+        dest_chain: Binary::from(vec![0, 0, 0, 2]),
+        dest_account: Binary::from(dest_account_bytes.to_vec()),
+    };
+
+    app.execute_contract(
+        user.clone(),
+        cw20_addr.clone(),
+        &Cw20ExecuteMsg::Send {
+            contract: contract_addr.to_string(),
+            amount: Uint128::from(100_000u128),
+            msg: to_json_binary(&deposit_msg).unwrap(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::Pause {},
+        &[],
+    )
+    .unwrap();
+
+    let recover_amount = Uint128::from(50_000u128);
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::cw20(cw20_addr.clone()),
+            amount: recover_amount,
+            recipient: admin.to_string(),
+        },
+        &[],
+    );
+
+    assert!(res.is_ok(), "RecoverAsset CW20 failed: {:?}", res.err());
+
+    let admin_cw20 = app
+        .wrap()
+        .query_wasm_smart::<cw20::BalanceResponse>(
+            &cw20_addr,
+            &cw20::Cw20QueryMsg::Balance {
+                address: admin.to_string(),
+            },
+        )
+        .unwrap();
+    assert!(
+        admin_cw20.balance >= recover_amount,
+        "Admin should have received recovered CW20"
+    );
+}
+
+#[test]
+fn test_recover_asset_cw20_exceeds_balance_fails() {
+    let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    let cw20_code_id = app.store_code(contract_cw20());
+    let cw20_addr = app
+        .instantiate_contract(
+            cw20_code_id,
+            admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Exceed Token".to_string(),
+                symbol: "EXC".to_string(),
+                decimals: 6,
+                initial_balances: vec![Cw20Coin {
+                    address: user.to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                }],
+                mint: None,
+                marketing: None,
+            },
+            &[],
+            "cw20-exceed",
+            None,
+        )
+        .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetAllowedCw20CodeIds {
+            code_ids: vec![cw20_code_id],
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::AddToken {
+            token: cw20_addr.to_string(),
+            is_native: false,
+            token_type: Some("lock_unlock".to_string()),
+            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000004"
+                .to_string(),
+            terra_decimals: 6,
+            evm_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: cw20_addr.to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "0000000000000000000000000000000000000000000000000000000000000004"
+                .to_string(),
+            dest_decimals: 18,
+        },
+        &[],
+    )
+    .unwrap();
+
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    let deposit_msg = ReceiveMsg::DepositCw20Lock {
+        dest_chain: Binary::from(vec![0, 0, 0, 2]),
+        dest_account: Binary::from(dest_account_bytes.to_vec()),
+    };
+
+    app.execute_contract(
+        user.clone(),
+        cw20_addr.clone(),
+        &Cw20ExecuteMsg::Send {
+            contract: contract_addr.to_string(),
+            amount: Uint128::from(100_000u128),
+            msg: to_json_binary(&deposit_msg).unwrap(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::Pause {},
+        &[],
+    )
+    .unwrap();
+
+    // Recover more than bridge holds (200k > 100k) — Cw20 Transfer submessage fails
+    let res = app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::RecoverAsset {
+            asset: common::AssetInfo::cw20(cw20_addr.clone()),
+            amount: Uint128::from(200_000u128),
+            recipient: admin.to_string(),
+        },
+        &[],
+    );
+
+    assert!(
+        res.is_err(),
+        "RecoverAsset should fail when CW20 amount exceeds balance"
+    );
+}
+
+// ============================================================================
+// Rate Limit Enforcement Tests
+// ============================================================================
+
+#[test]
+fn test_rate_limit_per_transaction_exceeded() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Deposit liquidity
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(10_000_000, "uluna"),
+    )
+    .unwrap();
+
+    // Set strict per-transaction limit: 1_000_000 (6 decimals)
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetRateLimit {
+            token: "uluna".to_string(),
+            max_per_transaction: Uint128::from(1_000_000u128),
+            max_per_period: Uint128::from(100_000_000u128),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Submit withdraw for 2e18 (18 decimals) → 2e6 (6 decimals) payout, exceeds 1e6 limit
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        2_000_000_000_000_000_000u128, // 2e18
+        0,
+        0,
+    );
+
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("Rate") || err_str.contains("rate") || err_str.contains("limit"),
+        "Expected rate limit error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_rate_limit_per_period_exceeded() {
+    let (mut app, contract_addr, operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Deposit liquidity for two withdrawals
+    let mut dest_account_bytes = [0u8; 32];
+    dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::DepositNative {
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_account: Binary::from(dest_account_bytes.to_vec()),
+        },
+        &coins(10_000_000, "uluna"),
+    )
+    .unwrap();
+
+    // Set period limit: 3_000_000 total per 24h
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetRateLimit {
+            token: "uluna".to_string(),
+            max_per_transaction: Uint128::zero(), // No per-tx limit
+            max_per_period: Uint128::from(3_000_000u128),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // First withdrawal: 2e18 → 2e6 payout
+    let hash1 = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        2_000_000_000_000_000_000u128,
+        0,
+        0,
+    );
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: hash1.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+    app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: hash1.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Second withdrawal: another 2e6, total 4e6 > 3e6 period limit
+    let hash2 = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna",
+        2_000_000_000_000_000_000u128,
+        1,
+        0,
+    );
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: hash2.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301); // Past cancel window, same rate limit period
+    });
+
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteUnlock {
+            withdraw_hash: hash2.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("Rate") || err_str.contains("rate") || err_str.contains("limit"),
+        "Expected rate limit error, got: {}",
+        err_str
+    );
+}
+
+// ============================================================================
+// WithdrawExecuteMint Tests
+// ============================================================================
+
+#[test]
+fn test_execute_mint_rejects_lock_unlock_token() {
+    let (mut app, contract_addr, operator, user) = setup();
+
+    let withdraw_hash = submit_withdraw(
+        &mut app,
+        &user,
+        &contract_addr,
+        "uluna", // LockUnlock token
+        1_000_000_000_000_000_000,
+        0,
+        0,
+    );
+
+    app.execute_contract(
+        operator.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawApprove {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+
+    // Call ExecuteMint with LockUnlock token — should fail (wrong token type)
+    let res = app.execute_contract(
+        user.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::WithdrawExecuteMint {
+            withdraw_hash: withdraw_hash.clone(),
+        },
+        &[],
+    );
+
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("mint_burn") || err_str.contains("token type"),
+        "Expected wrong token type for ExecuteMint, got: {}",
+        err_str
+    );
 }

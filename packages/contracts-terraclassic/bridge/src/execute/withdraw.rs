@@ -10,7 +10,7 @@
 
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage,
-    Uint128,
+    Uint128, Uint256, Uint512,
 };
 use cw20::{Cw20ExecuteMsg, Cw20QueryMsg};
 
@@ -18,14 +18,12 @@ use crate::error::ContractError;
 use crate::hash::{
     bytes32_to_hex, compute_transfer_hash, encode_terra_address, encode_token_address,
 };
+use crate::state::DEFAULT_WITHDRAW_DELAY;
 use crate::state::{
     PendingWithdraw, RateLimitWindow, TokenType, CANCELERS, CHAINS, CONFIG, LOCKED_BALANCES,
     OPERATORS, PENDING_WITHDRAWS, RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS,
-    THIS_CHAIN_ID, TOKENS, TOKEN_SRC_MAPPINGS, WITHDRAW_NONCE_USED,
+    THIS_CHAIN_ID, TOKENS, TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY, WITHDRAW_NONCE_USED,
 };
-
-/// Default cancel window: 5 minutes (matches EVM)
-const CANCEL_WINDOW: u64 = 300;
 
 /// Default rate limit when not configured: 0.1% of total supply, or 100 ether if supply is zero
 const DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY: Uint128 = Uint128::new(100_000_000_000_000_000_000);
@@ -37,7 +35,7 @@ const DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY: Uint128 = Uint128::new(100_000_000_000_
 /// User submits a withdrawal request on the destination chain.
 ///
 /// The user provides parameters matching the deposit on the source chain.
-/// Any native tokens sent with the message become the `operator_gas` tip.
+/// All native tokens sent with the message are forwarded to the operator on approval.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_withdraw_submit(
     deps: DepsMut,
@@ -81,20 +79,30 @@ pub fn execute_withdraw_submit(
     let recipient_addr = deps.api.addr_validate(&recipient)?;
     let dest_account_bytes = encode_terra_address(deps.as_ref(), &recipient_addr)?;
 
-    // Validate token is supported and get decimals
+    // Validate token is supported, enabled, and get decimals
     let token_config =
         TOKENS
             .may_load(deps.storage, token.clone())?
             .ok_or(ContractError::TokenNotSupported {
                 token: token.clone(),
             })?;
+    if !token_config.enabled {
+        return Err(ContractError::TokenNotSupported {
+            token: token.clone(),
+        });
+    }
 
-    // Validate source chain is registered
-    CHAINS
-        .may_load(deps.storage, &src_chain_bytes)?
-        .ok_or(ContractError::ChainNotRegistered {
+    // Validate source chain is registered and enabled
+    let chain = CHAINS.may_load(deps.storage, &src_chain_bytes)?.ok_or(
+        ContractError::ChainNotRegistered {
             chain_id: format!("0x{}", hex::encode(src_chain_bytes)),
-        })?;
+        },
+    )?;
+    if !chain.enabled {
+        return Err(ContractError::ChainNotRegistered {
+            chain_id: format!("0x{}", hex::encode(src_chain_bytes)),
+        });
+    }
 
     // Compute destination chain (this chain)
     let dest_chain = THIS_CHAIN_ID.load(deps.storage)?;
@@ -139,13 +147,8 @@ pub fn execute_withdraw_submit(
 
     let recipient = recipient_addr;
 
-    // Operator gas tip = native tokens sent with message
-    let operator_gas = info
-        .funds
-        .iter()
-        .find(|c| c.denom == "uluna")
-        .map(|c| c.amount)
-        .unwrap_or(Uint128::zero());
+    // All native tokens sent with message are forwarded to operator on approve
+    let operator_funds = info.funds.clone();
 
     // Store pending withdrawal
     let pending = PendingWithdraw {
@@ -158,7 +161,7 @@ pub fn execute_withdraw_submit(
         nonce,
         src_decimals: src_mapping.src_decimals,
         dest_decimals: token_config.terra_decimals,
-        operator_gas,
+        operator_funds,
         submitted_at: env.block.time.seconds(),
         approved_at: 0,
         approved: false,
@@ -173,8 +176,7 @@ pub fn execute_withdraw_submit(
         .add_attribute("token", token)
         .add_attribute("recipient", recipient.to_string())
         .add_attribute("amount", amount.to_string())
-        .add_attribute("nonce", nonce.to_string())
-        .add_attribute("operator_gas", operator_gas.to_string()))
+        .add_attribute("nonce", nonce.to_string()))
 }
 
 // ============================================================================
@@ -208,7 +210,7 @@ pub fn execute_withdraw_approve(
         return Err(ContractError::WithdrawAlreadyExecuted);
     }
     if pending.approved {
-        return Err(ContractError::WithdrawAlreadyExecuted); // Already approved
+        return Err(ContractError::WithdrawAlreadyApproved);
     }
 
     // Approve and start cancel window
@@ -220,15 +222,12 @@ pub fn execute_withdraw_approve(
     let nonce_key = (pending.src_chain.as_slice(), pending.nonce);
     WITHDRAW_NONCE_USED.save(deps.storage, nonce_key, &true)?;
 
-    // Transfer operator gas tip
+    // Forward all operator funds to the approving operator
     let mut messages: Vec<CosmosMsg> = vec![];
-    if !pending.operator_gas.is_zero() {
+    if !pending.operator_funds.is_empty() {
         messages.push(CosmosMsg::Bank(BankMsg::Send {
             to_address: info.sender.to_string(),
-            amount: vec![Coin {
-                denom: "uluna".to_string(),
-                amount: pending.operator_gas,
-            }],
+            amount: pending.operator_funds.clone(),
         }));
     }
 
@@ -243,22 +242,18 @@ pub fn execute_withdraw_approve(
 // ============================================================================
 
 /// Canceler cancels a pending withdrawal within the cancel window.
+/// Only cancelers may cancel; operators and admin cannot (RBAC separation).
 pub fn execute_withdraw_cancel(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
     withdraw_hash: Binary,
 ) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    // Verify caller is canceler, operator, or admin
+    // Verify caller is canceler only (not operator or admin)
     let is_canceler = CANCELERS
         .may_load(deps.storage, &info.sender)?
         .unwrap_or(false);
-    let is_operator = OPERATORS
-        .may_load(deps.storage, &info.sender)?
-        .unwrap_or(false);
-    if !is_canceler && !is_operator && info.sender != config.admin {
+    if !is_canceler {
         return Err(ContractError::NotCanceler);
     }
 
@@ -275,8 +270,11 @@ pub fn execute_withdraw_cancel(
         return Err(ContractError::WithdrawNotApproved);
     }
 
-    // Check within cancel window
-    let window_end = pending.approved_at + CANCEL_WINDOW;
+    // Check within cancel window (use configurable WITHDRAW_DELAY)
+    let cancel_window = WITHDRAW_DELAY
+        .may_load(deps.storage)?
+        .unwrap_or(DEFAULT_WITHDRAW_DELAY);
+    let window_end = pending.approved_at + cancel_window;
     if env.block.time.seconds() > window_end {
         return Err(ContractError::CancelWindowExpired);
     }
@@ -351,7 +349,10 @@ pub fn execute_withdraw_execute_unlock(
     }
 
     let hash_bytes = parse_hash(&withdraw_hash)?;
-    let mut pending = load_and_validate_execution(deps.storage, &env, &hash_bytes)?;
+    let cancel_window = WITHDRAW_DELAY
+        .may_load(deps.storage)?
+        .unwrap_or(DEFAULT_WITHDRAW_DELAY);
+    let mut pending = load_and_validate_execution(deps.storage, &env, &hash_bytes, cancel_window)?;
 
     // Verify token type is LockUnlock
     let token_config = TOKENS.load(deps.storage, pending.token.clone())?;
@@ -363,7 +364,7 @@ pub fn execute_withdraw_execute_unlock(
 
     // Normalize amount from source chain decimals to destination chain decimals
     let payout_amount =
-        normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals);
+        normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals)?;
 
     // Check rate limits (resolve limits first to avoid overlapping borrows)
     let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
@@ -447,7 +448,10 @@ pub fn execute_withdraw_execute_mint(
     }
 
     let hash_bytes = parse_hash(&withdraw_hash)?;
-    let mut pending = load_and_validate_execution(deps.storage, &env, &hash_bytes)?;
+    let cancel_window = WITHDRAW_DELAY
+        .may_load(deps.storage)?
+        .unwrap_or(DEFAULT_WITHDRAW_DELAY);
+    let mut pending = load_and_validate_execution(deps.storage, &env, &hash_bytes, cancel_window)?;
 
     // Verify token type is MintBurn
     let token_config = TOKENS.load(deps.storage, pending.token.clone())?;
@@ -459,7 +463,7 @@ pub fn execute_withdraw_execute_mint(
 
     // Normalize amount from source chain decimals to destination chain decimals
     let payout_amount =
-        normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals);
+        normalize_decimals(pending.amount, pending.src_decimals, pending.dest_decimals)?;
 
     // Check rate limits (resolve limits first to avoid overlapping borrows)
     let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
@@ -516,21 +520,30 @@ fn parse_hash(withdraw_hash: &Binary) -> Result<[u8; 32], ContractError> {
 
 /// Normalize amount from source chain decimals to destination chain decimals.
 ///
+/// Uses Uint256 for intermediate computation to support high-decimal tokens (e.g., 18 decimals
+/// with quadrillion+ quantities). Fails the transaction on overflow instead of clamping.
+///
 /// If `src_decimals == dest_decimals` (or both are 0), no conversion is needed.
 /// If `src_decimals > dest_decimals`, divide (truncate towards zero).
 /// If `src_decimals < dest_decimals`, multiply (scale up).
-fn normalize_decimals(amount: Uint128, src_decimals: u8, dest_decimals: u8) -> Uint128 {
+fn normalize_decimals(
+    amount: Uint128,
+    src_decimals: u8,
+    dest_decimals: u8,
+) -> Result<Uint128, ContractError> {
     if src_decimals == dest_decimals {
-        return amount;
+        return Ok(amount);
     }
     if src_decimals > dest_decimals {
         let divisor = 10u128.pow((src_decimals - dest_decimals) as u32);
-        Uint128::new(amount.u128() / divisor)
+        Ok(Uint128::new(amount.u128() / divisor))
     } else {
-        let multiplier = 10u128.pow((dest_decimals - src_decimals) as u32);
-        amount
-            .checked_mul(Uint128::new(multiplier))
-            .unwrap_or(Uint128::MAX)
+        let multiplier = Uint256::from(10u128.pow((dest_decimals - src_decimals) as u32));
+        let amount_256 = Uint256::from(amount.u128());
+        let result_512: Uint512 = amount_256.full_mul(multiplier);
+        let result_128 =
+            Uint128::try_from(result_512).map_err(|_| ContractError::AmountOverflow)?;
+        Ok(result_128)
     }
 }
 
@@ -539,6 +552,7 @@ fn load_and_validate_execution(
     storage: &dyn Storage,
     env: &Env,
     hash_bytes: &[u8; 32],
+    cancel_window_seconds: u64,
 ) -> Result<PendingWithdraw, ContractError> {
     let pending = PENDING_WITHDRAWS
         .may_load(storage, hash_bytes)?
@@ -554,9 +568,9 @@ fn load_and_validate_execution(
         return Err(ContractError::WithdrawCancelled);
     }
 
-    // Check cancel window has passed
-    let window_end = pending.approved_at + CANCEL_WINDOW;
-    if env.block.time.seconds() < window_end {
+    // Check cancel window has passed (exclusive: execute allowed only when timestamp > window_end)
+    let window_end = pending.approved_at + cancel_window_seconds;
+    if env.block.time.seconds() <= window_end {
         return Err(ContractError::CancelWindowActive {
             ends_at: window_end,
         });

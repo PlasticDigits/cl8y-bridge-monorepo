@@ -312,11 +312,11 @@ fn test_set_custom_account_fee() {
 }
 
 #[test]
-fn test_set_custom_fee_by_operator() {
+fn test_set_custom_fee_operator_rejected() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    // Operator can also set custom fees
-    app.execute_contract(
+    // Operator cannot set custom fees (admin only per RBAC)
+    let res = app.execute_contract(
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::SetCustomAccountFee {
@@ -324,19 +324,14 @@ fn test_set_custom_fee_by_operator() {
             fee_bps: 30,
         },
         &[],
-    )
-    .unwrap();
-
-    let has_custom: HasCustomFeeResponse = app
-        .wrap()
-        .query_wasm_smart(
-            &contract_addr,
-            &QueryMsg::HasCustomFee {
-                account: user.to_string(),
-            },
-        )
-        .unwrap();
-    assert!(has_custom.has_custom_fee);
+    );
+    assert!(res.is_err());
+    let err_str = res.unwrap_err().root_cause().to_string();
+    assert!(
+        err_str.contains("Unauthorized") || err_str.contains("admin"),
+        "Expected admin-only error, got: {}",
+        err_str
+    );
 }
 
 #[test]

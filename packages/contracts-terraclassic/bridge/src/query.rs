@@ -6,27 +6,28 @@ use cosmwasm_std::{Addr, Binary, Deps, Env, Order, StdError, StdResult, Uint128}
 use cw_storage_plus::Bound;
 
 use crate::fee_manager::{
-    calculate_fee, get_effective_fee_bps, get_fee_type, has_custom_fee, FeeConfig, FEE_CONFIG,
+    calculate_fee, calculate_fee_from_bps, get_effective_fee_bps, get_fee_type, has_custom_fee,
+    FeeConfig, FEE_CONFIG,
 };
 use crate::hash::compute_transfer_hash;
 #[allow(deprecated)]
 use crate::hash::compute_transfer_id;
 use crate::msg::{
-    AccountFeeResponse, CalculateFeeResponse, CancelersResponse, ChainResponse, ChainsResponse,
-    ComputeHashResponse, ConfigResponse, DepositInfoResponse, FeeConfigResponse,
-    HasCustomFeeResponse, IncomingTokenMappingResponse, IncomingTokenMappingsResponse,
-    IsCancelerResponse, LockedBalanceResponse, NonceResponse, NonceUsedResponse, OperatorsResponse,
-    PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
-    PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse, SimulationResponse,
-    StatsResponse, StatusResponse, ThisChainIdResponse, TokenDestMappingResponse, TokenResponse,
-    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
-    WithdrawDelayResponse,
+    AccountFeeResponse, AllowedCw20CodeIdsResponse, CalculateFeeResponse, CancelersResponse,
+    ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse, DepositInfoResponse,
+    FeeConfigResponse, HasCustomFeeResponse, IncomingTokenMappingResponse,
+    IncomingTokenMappingsResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
+    NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse,
+    PendingWithdrawalEntry, PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse,
+    SimulationResponse, StatsResponse, StatusResponse, ThisChainIdResponse,
+    TokenDestMappingResponse, TokenResponse, TokenTypeResponse, TokensResponse,
+    TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
 };
 use crate::state::{
-    CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES, LOCKED_BALANCES, OPERATORS,
-    OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS, RATE_LIMITS,
-    RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS, TOKEN_DEST_MAPPINGS,
-    TOKEN_SRC_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
+    ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
+    LOCKED_BALANCES, OPERATORS, OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS,
+    RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS,
+    TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -255,12 +256,14 @@ pub fn query_pending_admin(deps: Deps) -> StdResult<Option<PendingAdminResponse>
 // Simulation Queries
 // ============================================================================
 
-/// Simulate a bridge operation.
+/// Simulate a bridge operation using V2 fee config.
+/// Fee is calculated per depositor (CL8Y discount, custom fees) when depositor is provided.
 pub fn query_simulate_bridge(
     deps: Deps,
     token: String,
     amount: Uint128,
     dest_chain: Binary,
+    depositor: Option<String>,
 ) -> StdResult<SimulationResponse> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -270,14 +273,31 @@ pub fn query_simulate_bridge(
     let _chain = CHAINS.load(deps.storage, &dest_chain)?;
     let _token_config = TOKENS.load(deps.storage, token)?;
 
-    let fee_amount = amount.multiply_ratio(config.fee_bps as u128, 10000u128);
-    let output_amount = amount - fee_amount;
+    let fee_config = FEE_CONFIG
+        .may_load(deps.storage)?
+        .unwrap_or_else(|| FeeConfig::default_with_recipient(config.fee_collector.clone()));
+
+    let (fee_amount, fee_bps) = match depositor {
+        Some(d) => {
+            let addr = deps.api.addr_validate(&d)?;
+            let bps = get_effective_fee_bps(deps, &fee_config, &addr)?;
+            let fee = calculate_fee_from_bps(amount, bps);
+            (fee, bps)
+        }
+        None => {
+            let bps = fee_config.standard_fee_bps;
+            let fee = calculate_fee_from_bps(amount, bps);
+            (fee, bps)
+        }
+    };
+
+    let output_amount = amount.checked_sub(fee_amount).unwrap_or(Uint128::zero());
 
     Ok(SimulationResponse {
         input_amount: amount,
         fee_amount,
         output_amount,
-        fee_bps: config.fee_bps,
+        fee_bps,
     })
 }
 
@@ -320,7 +340,7 @@ pub fn query_pending_withdraw(
                 nonce: w.nonce,
                 src_decimals: w.src_decimals,
                 dest_decimals: w.dest_decimals,
-                operator_gas: w.operator_gas,
+                operator_funds: w.operator_funds.clone(),
                 submitted_at: w.submitted_at,
                 approved_at: w.approved_at,
                 approved: w.approved,
@@ -376,7 +396,7 @@ pub fn query_pending_withdrawals(
                 nonce: w.nonce,
                 src_decimals: w.src_decimals,
                 dest_decimals: w.dest_decimals,
-                operator_gas: w.operator_gas,
+                operator_funds: w.operator_funds.clone(),
                 submitted_at: w.submitted_at,
                 approved_at: w.approved_at,
                 approved: w.approved,
@@ -618,6 +638,15 @@ pub fn query_withdraw_delay(deps: Deps) -> StdResult<WithdrawDelayResponse> {
     Ok(WithdrawDelayResponse {
         delay_seconds: delay,
     })
+}
+
+/// Query allowed CW20 code IDs for token registration.
+/// Empty list = no restriction (any CW20 allowed).
+pub fn query_allowed_cw20_code_ids(deps: Deps) -> StdResult<AllowedCw20CodeIdsResponse> {
+    let code_ids = ALLOWED_CW20_CODE_IDS
+        .may_load(deps.storage)?
+        .unwrap_or_default();
+    Ok(AllowedCw20CodeIdsResponse { code_ids })
 }
 
 /// Query rate limit for a token.

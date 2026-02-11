@@ -37,30 +37,11 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @notice Mapping from token to registered destination chains
     mapping(address => bytes4[]) private _tokenDestChains;
 
-    /// @notice Mapping of operators
-    mapping(address => bool) public operators;
-
     /// @notice Array of registered tokens for enumeration
     address[] private _tokens;
 
     /// @notice Reserved storage slots for future upgrades
     uint256[44] private __gap;
-
-    // ============================================================================
-    // Modifiers
-    // ============================================================================
-
-    /// @notice Only operator can call
-    modifier onlyOperator() {
-        _onlyOperator();
-        _;
-    }
-
-    function _onlyOperator() internal view {
-        if (!operators[msg.sender] && msg.sender != owner()) {
-            revert Unauthorized();
-        }
-    }
 
     // ============================================================================
     // Constructor & Initializer
@@ -73,36 +54,11 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
 
     /// @notice Initialize the token registry
     /// @param admin The admin address (owner)
-    /// @param operator The initial operator address
     /// @param _chainRegistry The chain registry contract
-    function initialize(address admin, address operator, ChainRegistry _chainRegistry) public initializer {
+    function initialize(address admin, ChainRegistry _chainRegistry) public initializer {
         __Ownable_init(admin);
 
         chainRegistry = _chainRegistry;
-        operators[operator] = true;
-    }
-
-    // ============================================================================
-    // Operator Management
-    // ============================================================================
-
-    /// @notice Add an operator
-    /// @param operator The operator address
-    function addOperator(address operator) external onlyOwner {
-        operators[operator] = true;
-    }
-
-    /// @notice Remove an operator
-    /// @param operator The operator address
-    function removeOperator(address operator) external onlyOwner {
-        operators[operator] = false;
-    }
-
-    /// @notice Check if address is an operator
-    /// @param account The address to check
-    /// @return isOp True if address is an operator
-    function isOperator(address account) external view returns (bool isOp) {
-        return operators[account] || account == owner();
     }
 
     // ============================================================================
@@ -112,7 +68,7 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @notice Register a new token
     /// @param token The token address
     /// @param tokenType The token type (LockUnlock or MintBurn)
-    function registerToken(address token, TokenType tokenType) external onlyOperator {
+    function registerToken(address token, TokenType tokenType) external onlyOwner {
         if (tokenRegistered[token]) {
             revert TokenAlreadyRegistered(token);
         }
@@ -128,12 +84,15 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @param token The token address
     /// @param destChain The destination chain ID
     /// @param destToken The token address on the destination chain (encoded as bytes32)
-    function setTokenDestination(address token, bytes4 destChain, bytes32 destToken) external onlyOperator {
+    function setTokenDestination(address token, bytes4 destChain, bytes32 destToken) external onlyOwner {
         if (!tokenRegistered[token]) {
             revert TokenNotRegistered(token);
         }
         if (!chainRegistry.isChainRegistered(destChain)) {
             revert DestChainNotRegistered(destChain);
+        }
+        if (destToken == bytes32(0)) {
+            revert InvalidDestToken();
         }
 
         // Add to destination chains if not already present
@@ -161,13 +120,16 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @param destDecimals The decimals of the destination token
     function setTokenDestinationWithDecimals(address token, bytes4 destChain, bytes32 destToken, uint8 destDecimals)
         external
-        onlyOperator
+        onlyOwner
     {
         if (!tokenRegistered[token]) {
             revert TokenNotRegistered(token);
         }
         if (!chainRegistry.isChainRegistered(destChain)) {
             revert DestChainNotRegistered(destChain);
+        }
+        if (destToken == bytes32(0)) {
+            revert InvalidDestToken();
         }
 
         // Add to destination chains if not already present
@@ -191,11 +153,43 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @notice Update token type
     /// @param token The token address
     /// @param tokenType The new token type
-    function setTokenType(address token, TokenType tokenType) external onlyOperator {
+    function setTokenType(address token, TokenType tokenType) external onlyOwner {
         if (!tokenRegistered[token]) {
             revert TokenNotRegistered(token);
         }
+        TokenType oldType = tokenTypes[token];
         tokenTypes[token] = tokenType;
+        emit TokenTypeUpdated(token, oldType, tokenType);
+    }
+
+    /// @notice Unregister a token and clean up all mappings
+    /// @param token The token address
+    function unregisterToken(address token) external onlyOwner {
+        if (!tokenRegistered[token]) {
+            revert TokenNotRegistered(token);
+        }
+
+        tokenRegistered[token] = false;
+        delete tokenTypes[token];
+
+        // Clean up destination chain mappings
+        bytes4[] storage destChains = _tokenDestChains[token];
+        for (uint256 i = 0; i < destChains.length; i++) {
+            delete tokenDestMappings[token][destChains[i]];
+        }
+        delete _tokenDestChains[token];
+
+        // Remove from _tokens array (swap with last element and pop)
+        uint256 len = _tokens.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (_tokens[i] == token) {
+                _tokens[i] = _tokens[len - 1];
+                _tokens.pop();
+                break;
+            }
+        }
+
+        emit TokenUnregistered(token);
     }
 
     // ============================================================================

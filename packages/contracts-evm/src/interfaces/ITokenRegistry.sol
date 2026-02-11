@@ -30,6 +30,12 @@ interface ITokenRegistry {
     /// @notice Emitted when a token destination is set
     event TokenDestinationSet(address indexed token, bytes4 indexed destChain, bytes32 destToken);
 
+    /// @notice Emitted when a token type is updated
+    event TokenTypeUpdated(address indexed token, TokenType oldType, TokenType newType);
+
+    /// @notice Emitted when a token is unregistered
+    event TokenUnregistered(address indexed token);
+
     // ============================================================================
     // Errors
     // ============================================================================
@@ -43,6 +49,9 @@ interface ITokenRegistry {
     /// @notice Thrown when destination chain is not registered
     error DestChainNotRegistered(bytes4 destChain);
 
+    /// @notice Thrown when destToken is zero (invalid mapping)
+    error InvalidDestToken();
+
     /// @notice Thrown when caller is not operator
     error Unauthorized();
 
@@ -54,6 +63,10 @@ interface ITokenRegistry {
     /// @param token The token address
     /// @param tokenType The token type (LockUnlock or MintBurn)
     function registerToken(address token, TokenType tokenType) external;
+
+    /// @notice Unregister a token and clean up all mappings
+    /// @param token The token address
+    function unregisterToken(address token) external;
 
     /// @notice Set the destination mapping for a token
     /// @param token The token address
