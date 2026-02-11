@@ -21,6 +21,7 @@ use cosmrs::{
 use eyre::{eyre, Result, WrapErr};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -34,7 +35,7 @@ pub const DEFAULT_GAS_LIMIT: u64 = 500_000;
 pub const DEFAULT_GAS_PRICE: f64 = 0.015;
 
 /// Configuration for the Terra signer
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TerraSignerConfig {
     /// LCD URL for broadcasting
     pub lcd_url: String,
@@ -46,6 +47,18 @@ pub struct TerraSignerConfig {
     pub gas_limit: Option<u64>,
     /// Custom derivation path (defaults to TERRA_DERIVATION_PATH)
     pub derivation_path: Option<String>,
+}
+
+impl fmt::Debug for TerraSignerConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerraSignerConfig")
+            .field("lcd_url", &self.lcd_url)
+            .field("chain_id", &self.chain_id)
+            .field("mnemonic", &"<redacted>")
+            .field("gas_limit", &self.gas_limit)
+            .field("derivation_path", &self.derivation_path)
+            .finish()
+    }
 }
 
 /// Terra transaction signer with sequence management
@@ -409,11 +422,16 @@ impl TerraSigner {
 
         let coins: Vec<Coin> = funds
             .iter()
-            .map(|(denom, amount)| Coin {
-                denom: denom.parse().unwrap(),
-                amount: *amount,
+            .map(|(denom, amount)| {
+                let denom_parsed = denom
+                    .parse()
+                    .map_err(|e| eyre!("Invalid coin denom '{}': {}", denom, e))?;
+                Ok::<_, eyre::Report>(Coin {
+                    denom: denom_parsed,
+                    amount: *amount,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let execute_msg = cosmrs::cosmwasm::MsgExecuteContract {
             sender: self.address.clone(),
@@ -437,7 +455,9 @@ impl TerraSigner {
 
         let fee = Fee::from_amount_and_gas(
             Coin {
-                denom: "uluna".parse().unwrap(),
+                denom: "uluna"
+                    .parse()
+                    .expect("uluna is a valid constant Terra denom"),
                 amount: gas_estimate.fee_amount,
             },
             gas_estimate.gas_limit,

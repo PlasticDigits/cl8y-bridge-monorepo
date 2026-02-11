@@ -301,11 +301,16 @@ impl TerraClient {
         // Convert funds to coins
         let coins: Vec<Coin> = funds
             .iter()
-            .map(|(denom, amount)| Coin {
-                denom: denom.parse().expect("invalid coin denom"),
-                amount: *amount,
+            .map(|(denom, amount)| {
+                let denom_parsed = denom
+                    .parse()
+                    .map_err(|e| eyre!("Invalid coin denom '{}': {}", denom, e))?;
+                Ok::<_, eyre::Report>(Coin {
+                    denom: denom_parsed,
+                    amount: *amount,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         // Create the MsgExecuteContract
         let execute_msg = cosmrs::cosmwasm::MsgExecuteContract {
@@ -332,7 +337,9 @@ impl TerraClient {
 
         let fee = Fee::from_amount_and_gas(
             Coin {
-                denom: "uluna".parse().unwrap(),
+                denom: "uluna"
+                    .parse()
+                    .expect("uluna is a valid constant Terra denom"),
                 amount: fee_amount,
             },
             gas_limit,

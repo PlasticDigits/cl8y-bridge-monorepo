@@ -7,6 +7,7 @@ on:
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
+      - 'packages/multichain-rs/**'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
+      - 'packages/multichain-rs/**'
       - '.github/workflows/test.yml'
   workflow_dispatch:
 
@@ -160,6 +162,53 @@ jobs:
         env:
           RUST_BACKTRACE: 1
         run: cargo test --release -- --nocapture
+
+  # ==========================================================================
+  # multichain-rs Library (build, test, security audit)
+  # ==========================================================================
+  multichain-rs:
+    name: multichain-rs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/multichain-rs -> target
+
+      - name: Check formatting
+        working-directory: packages/multichain-rs
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        working-directory: packages/multichain-rs
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Build
+        working-directory: packages/multichain-rs
+        run: cargo build --all-features --release
+
+      - name: Run tests
+        working-directory: packages/multichain-rs
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --all-features -- --nocapture
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        working-directory: packages/multichain-rs
+        run: cargo audit
 
   # ==========================================================================
   # Terra Contracts Tests (CosmWasm)

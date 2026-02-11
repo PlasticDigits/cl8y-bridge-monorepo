@@ -19,11 +19,12 @@ use alloy::{
     transports::http::{Client, Http},
 };
 use eyre::{eyre, Result, WrapErr};
+use std::fmt;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Configuration for the EVM signer
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EvmSignerConfig {
     /// RPC URL for the EVM chain
     pub rpc_url: String,
@@ -31,6 +32,16 @@ pub struct EvmSignerConfig {
     pub chain_id: u64,
     /// Private key (hex string, with or without 0x prefix)
     pub private_key: String,
+}
+
+impl fmt::Debug for EvmSignerConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EvmSignerConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("chain_id", &self.chain_id)
+            .field("private_key", &"<redacted>")
+            .finish()
+    }
 }
 
 /// EVM transaction signer with nonce management
