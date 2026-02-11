@@ -20,6 +20,7 @@
 //! ```
 
 use tiny_keccak::{Hasher, Keccak};
+use tracing::warn;
 
 // Re-export address codec functions for convenience
 pub use crate::address_codec::{
@@ -193,16 +194,33 @@ pub fn encode_terra_address_to_bytes32(addr: &str) -> Result<[u8; 32], String> {
 }
 
 /// Decode bytes32 to a Terra bech32 address
+///
+/// Accepts exactly 20-byte (raw wallet address) or 32-byte (left-padded)
+/// inputs. Any other length is rejected with an error and a warning log.
+///
+/// # Security
+///
+/// Restricted to 20 or 32 bytes to prevent ambiguous padding behavior.
+/// Previously accepted 20–31 byte inputs and silently left-padded them,
+/// which could mask upstream bugs. See security review finding F3.
 pub fn decode_bytes32_to_terra_address(bytes: &[u8]) -> Result<String, String> {
-    if bytes.len() < 20 {
-        return Err(format!("Invalid bytes length: {}", bytes.len()));
+    if bytes.len() != 20 && bytes.len() != 32 {
+        warn!(
+            bytes_len = bytes.len(),
+            "decode_bytes32_to_terra_address called with invalid length (expected 20 or 32)"
+        );
+        return Err(format!(
+            "Invalid bytes length: expected 20 or 32 bytes, got {}",
+            bytes.len()
+        ));
     }
 
     let mut arr = [0u8; 32];
-    if bytes.len() >= 32 {
-        arr.copy_from_slice(&bytes[..32]);
+    if bytes.len() == 32 {
+        arr.copy_from_slice(bytes);
     } else {
-        arr[32 - bytes.len()..].copy_from_slice(bytes);
+        // 20-byte address: left-pad with zeros
+        arr[12..32].copy_from_slice(bytes);
     }
 
     let raw = bytes32_to_address(&arr);

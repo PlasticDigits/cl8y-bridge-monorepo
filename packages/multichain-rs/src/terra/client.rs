@@ -289,7 +289,13 @@ impl TerraClient {
 
         // Get gas prices
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or(0.015);
+        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
+            warn!(
+                raw_value = %gas_prices.uluna,
+                "Failed to parse uluna gas price, using default 0.015"
+            );
+            0.015
+        });
 
         // Estimate gas (we'll use a reasonable default and simulate if needed)
         let gas_limit: u64 = 500_000;

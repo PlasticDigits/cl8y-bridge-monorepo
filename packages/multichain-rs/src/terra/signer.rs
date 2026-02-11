@@ -298,7 +298,14 @@ impl TerraSigner {
     /// Estimate gas for a transaction
     pub async fn estimate_gas(&self) -> Result<GasEstimate> {
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or(DEFAULT_GAS_PRICE);
+        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
+            warn!(
+                raw_value = %gas_prices.uluna,
+                default = DEFAULT_GAS_PRICE,
+                "Failed to parse uluna gas price, using default"
+            );
+            DEFAULT_GAS_PRICE
+        });
         let fee_amount = ((self.gas_limit as f64) * gas_price).ceil() as u128;
 
         Ok(GasEstimate {
@@ -311,7 +318,14 @@ impl TerraSigner {
     /// Estimate gas with a custom gas limit
     pub async fn estimate_gas_with_limit(&self, gas_limit: u64) -> Result<GasEstimate> {
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or(DEFAULT_GAS_PRICE);
+        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
+            warn!(
+                raw_value = %gas_prices.uluna,
+                default = DEFAULT_GAS_PRICE,
+                "Failed to parse uluna gas price, using default"
+            );
+            DEFAULT_GAS_PRICE
+        });
         let fee_amount = ((gas_limit as f64) * gas_price).ceil() as u128;
 
         Ok(GasEstimate {
