@@ -367,7 +367,14 @@ pub fn execute_withdraw_execute_unlock(
 
     // Check rate limits (resolve limits first to avoid overlapping borrows)
     let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
-    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount, limits.0, limits.1)?;
+    check_and_update_rate_limit(
+        deps.storage,
+        &env,
+        &pending.token,
+        payout_amount,
+        limits.0,
+        limits.1,
+    )?;
 
     // Check liquidity
     let locked = LOCKED_BALANCES
@@ -456,7 +463,14 @@ pub fn execute_withdraw_execute_mint(
 
     // Check rate limits (resolve limits first to avoid overlapping borrows)
     let limits = resolve_effective_rate_limits(deps.as_ref(), &pending.token)?;
-    check_and_update_rate_limit(deps.storage, &env, &pending.token, payout_amount, limits.0, limits.1)?;
+    check_and_update_rate_limit(
+        deps.storage,
+        &env,
+        &pending.token,
+        payout_amount,
+        limits.0,
+        limits.1,
+    )?;
 
     // Mark as executed
     pending.executed = true;
@@ -563,11 +577,11 @@ fn resolve_effective_rate_limits(
     }
 
     // No limit configured: use default 0.1% of supply, or 100 ether if supply is zero
-    let token_config = TOKENS
-        .may_load(deps.storage, token.to_string())?
-        .ok_or(ContractError::TokenNotSupported {
+    let token_config = TOKENS.may_load(deps.storage, token.to_string())?.ok_or(
+        ContractError::TokenNotSupported {
             token: token.to_string(),
-        })?;
+        },
+    )?;
     let supply = query_token_supply(deps, token, token_config.is_native)?;
     let period_limit = if supply.is_zero() {
         DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY
@@ -642,9 +656,8 @@ fn query_token_supply(
         #[cfg(feature = "cosmwasm_1_2")]
         {
             use cosmwasm_std::{BankQuery, QueryRequest};
-            let res: cosmwasm_std::SupplyResponse = deps
-                .querier
-                .query(&QueryRequest::Bank(BankQuery::Supply {
+            let res: cosmwasm_std::SupplyResponse =
+                deps.querier.query(&QueryRequest::Bank(BankQuery::Supply {
                     denom: token.to_string(),
                 }))?;
             Ok(res.amount.amount)

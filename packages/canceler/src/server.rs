@@ -3,7 +3,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use eyre::eyre;
 use axum::{
     extract::State,
     http::header,
@@ -11,6 +10,7 @@ use axum::{
     routing::get,
     Router,
 };
+use eyre::eyre;
 use prometheus::{Encoder, IntCounter, IntGauge, Registry, TextEncoder};
 use serde::Serialize;
 use tokio::sync::RwLock;

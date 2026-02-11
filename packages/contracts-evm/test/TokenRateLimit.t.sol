@@ -178,7 +178,7 @@ contract TokenRateLimitTest is Test {
         rateLimit.checkWithdraw(tokenB, 1, user);
     }
 
-    function test_CheckAccount_NoOp() public {
+    function test_CheckAccount_NoOp() public view {
         rateLimit.checkAccount(user);
         rateLimit.checkAccount(address(0xBEEF));
     }
@@ -204,7 +204,9 @@ contract TokenRateLimitTest is Test {
         rateLimit.setWithdrawLimit(tokenA, 0);
         vm.warp(block.timestamp + 24 hours); // Reset window
         rateLimit.checkWithdraw(tokenA, 1e24, user);
-        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 1e24, 1e24));
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 1e24, 1e24)
+        );
         rateLimit.checkWithdraw(tokenA, 1, user);
     }
 

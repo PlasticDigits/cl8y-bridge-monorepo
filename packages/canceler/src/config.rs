@@ -125,7 +125,8 @@ impl Config {
                 .unwrap_or(9099),
 
             // Default bind to localhost; set HEALTH_BIND_ADDRESS=0.0.0.0 to expose on all interfaces
-            health_bind_address: env::var("HEALTH_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            health_bind_address: env::var("HEALTH_BIND_ADDRESS")
+                .unwrap_or_else(|_| "127.0.0.1".to_string()),
         })
     }
 }
