@@ -17,7 +17,7 @@ export function AmountInput({
 }: AmountInputProps) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-400 mb-2">Amount</label>
+      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-300">Amount</label>
       <div className="relative">
         <input
           type="number"
@@ -27,19 +27,19 @@ export function AmountInput({
           step="0.000001"
           min="0"
           disabled={disabled}
-          className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 pr-20 text-white text-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+          className="w-full border-2 border-white/20 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:border-cyan-300 focus:outline-none disabled:opacity-50"
         />
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
           {onMax && (
             <button
               type="button"
               onClick={onMax}
-              className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+              className="border border-cyan-400 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300 hover:bg-cyan-400/10"
             >
               MAX
             </button>
           )}
-          <span className="text-gray-500">{symbol}</span>
+          <span className="text-xs uppercase tracking-wide text-gray-400">{symbol}</span>
         </div>
       </div>
     </div>

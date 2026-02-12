@@ -7,14 +7,8 @@
 use lazy_static::lazy_static;
 use prometheus::{
     register_counter_vec, register_gauge, register_gauge_vec, register_histogram_vec, CounterVec,
-    Encoder, Gauge, GaugeVec, HistogramVec, TextEncoder,
+    Gauge, GaugeVec, HistogramVec,
 };
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
 
 lazy_static! {
     // Block processing metrics
@@ -107,90 +101,6 @@ lazy_static! {
         "Total volume bridged (in base units)",
         &["direction", "token"]
     ).unwrap();
-}
-
-/// Maximum concurrent connections to the metrics server.
-const METRICS_MAX_CONNECTIONS: usize = 128;
-
-/// Read timeout for incoming connections.
-const METRICS_READ_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Start the metrics HTTP server
-pub async fn start_metrics_server(addr: SocketAddr) -> eyre::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "Metrics server started");
-
-    // Mark relayer as up
-    UP.set(1.0);
-
-    let semaphore = Arc::new(Semaphore::new(METRICS_MAX_CONNECTIONS));
-
-    loop {
-        let (mut socket, _) = listener.accept().await?;
-        let sem = semaphore.clone();
-
-        tokio::spawn(async move {
-            // Acquire connection permit (bounded concurrency)
-            let _permit = match sem.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-
-            // Read request with timeout
-            let mut buf = [0u8; 4096];
-            let n = match tokio::time::timeout(METRICS_READ_TIMEOUT, socket.read(&mut buf)).await {
-                Ok(Ok(n)) if n > 0 => n,
-                _ => return,
-            };
-
-            // Parse HTTP request line (structured, not substring)
-            let (method, path) = match parse_metrics_request(&buf[..n]) {
-                Some(mp) => mp,
-                None => {
-                    let _ = socket
-                        .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
-                        .await;
-                    return;
-                }
-            };
-
-            match (method.as_str(), path.as_str()) {
-                ("GET", "/metrics") | ("GET", "/") => {
-                    let encoder = TextEncoder::new();
-                    let metric_families = prometheus::gather();
-                    let mut buffer = Vec::new();
-                    let _ = encoder.encode(&metric_families, &mut buffer);
-
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n",
-                        buffer.len()
-                    );
-
-                    let _ = socket.write_all(response.as_bytes()).await;
-                    let _ = socket.write_all(&buffer).await;
-                }
-                ("GET", "/health") => {
-                    let response =
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK";
-                    let _ = socket.write_all(response.as_bytes()).await;
-                }
-                _ => {
-                    let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-                    let _ = socket.write_all(response.as_bytes()).await;
-                }
-            }
-        });
-    }
-}
-
-/// Parse HTTP method and path from raw request bytes (metrics server).
-fn parse_metrics_request(buf: &[u8]) -> Option<(String, String)> {
-    let request = std::str::from_utf8(buf).ok()?;
-    let first_line = request.lines().next()?;
-    let mut parts = first_line.split_whitespace();
-    let method = parts.next()?.to_string();
-    let path = parts.next()?.to_string();
-    Some((method, path))
 }
 
 /// Record a block processed

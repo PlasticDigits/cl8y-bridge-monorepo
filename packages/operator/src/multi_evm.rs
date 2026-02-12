@@ -187,11 +187,19 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             .parse()
             .map_err(|_| eyre!("Invalid {}_CHAIN_ID", prefix))?;
 
-        // 4-byte chain ID (V2) - defaults to native chain ID as u32
+        // 4-byte chain ID (V2) — from ChainRegistry, NOT the native chain ID.
+        // Required: native chain IDs (e.g., 31337) differ from V2 registry IDs
+        // (e.g., 0x00000001), and using the wrong one causes hash mismatches.
         let this_chain_id: u32 = std::env::var(format!("{}_THIS_CHAIN_ID", prefix))
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(chain_id as u32);
+            .map_err(|_| {
+                eyre!(
+                    "{prefix}_THIS_CHAIN_ID is required. Set it to the 4-byte V2 chain ID \
+                     from ChainRegistry (e.g., {prefix}_THIS_CHAIN_ID=1). Do NOT use the \
+                     native chain ID ({chain_id}) — V2 registry IDs are different."
+                )
+            })?
+            .parse()
+            .map_err(|_| eyre!("Invalid {}_THIS_CHAIN_ID — must be a u32", prefix))?;
 
         let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
             .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;

@@ -122,15 +122,23 @@ impl EvmWriter {
                 v2_id
             }
             Err(e) => {
-                let fallback = ChainId::from_u32(evm_config.this_chain_id.unwrap_or(1));
-                warn!(
-                    error = %e,
-                    native_chain_id = evm_config.chain_id,
-                    fallback_v2_id = %fallback,
-                    "EVM writer: failed to query V2 chain ID, using config fallback. \
-                     Set THIS_CHAIN_ID explicitly if this is wrong."
-                );
-                fallback
+                if let Some(configured_id) = evm_config.this_chain_id {
+                    let fallback = ChainId::from_u32(configured_id);
+                    warn!(
+                        error = %e,
+                        native_chain_id = evm_config.chain_id,
+                        configured_v2_id = %fallback,
+                        "EVM writer: failed to query V2 chain ID, using EVM_THIS_CHAIN_ID config"
+                    );
+                    fallback
+                } else {
+                    return Err(eyre::eyre!(
+                        "Cannot resolve EVM V2 chain ID: bridge query failed ({}) and \
+                         EVM_THIS_CHAIN_ID is not set. Set EVM_THIS_CHAIN_ID to the V2 \
+                         chain ID from ChainRegistry (e.g., EVM_THIS_CHAIN_ID=1).",
+                        e
+                    ));
+                }
             }
         };
 
@@ -150,8 +158,17 @@ impl EvmWriter {
 
         let terra_lcd_url = terra_config.map(|t| t.lcd_url.clone());
         let terra_bridge_address = terra_config.map(|t| t.bridge_address.clone());
-        let terra_chain_id =
-            ChainId::from_u32(terra_config.and_then(|t| t.this_chain_id).unwrap_or(2));
+        let terra_chain_id = if let Some(tc) = terra_config {
+            ChainId::from_u32(tc.this_chain_id.ok_or_else(|| {
+                eyre::eyre!(
+                    "TERRA_THIS_CHAIN_ID is required when Terra config is present. \
+                     Set it to the V2 chain ID from ChainRegistry (e.g., TERRA_THIS_CHAIN_ID=2)."
+                )
+            })?)
+        } else {
+            // No Terra config — use a placeholder; Terra paths won't be reached
+            ChainId::from_u32(0)
+        };
 
         info!(delay_seconds = cancel_window, "EVM cancel window");
 
@@ -1043,21 +1060,24 @@ impl EvmWriter {
                 id.copy_from_slice(&v2_bytes[..4]);
                 crate::types::ChainId::from_bytes(id)
             } else {
-                warn!(
-                    deposit_id = deposit.id,
-                    v2_len = v2_bytes.len(),
-                    "src_v2_chain_id is shorter than 4 bytes, falling back to native"
-                );
-                crate::types::ChainId::from_u32(deposit.chain_id as u32)
+                return Err(eyre::eyre!(
+                    "Deposit {} has src_v2_chain_id with {} bytes (expected 4). \
+                     Cannot determine source chain — skipping to avoid wrong hash.",
+                    deposit.id,
+                    v2_bytes.len()
+                ));
             }
         } else {
-            // Legacy: no V2 chain ID stored, use native (may be wrong!)
-            warn!(
-                deposit_id = deposit.id,
-                native_chain_id = deposit.chain_id,
-                "No V2 chain ID stored for deposit, falling back to native chain ID as u32"
-            );
-            crate::types::ChainId::from_u32(deposit.chain_id as u32)
+            // No V2 chain ID stored for this deposit. Using native chain ID would
+            // produce wrong transfer hashes if ChainRegistry uses different IDs
+            // (e.g., native 31337 vs registry 0x00000001). Return error instead.
+            return Err(eyre::eyre!(
+                "Deposit {} has no V2 chain ID stored (src_v2_chain_id is None). \
+                 Cannot safely compute transfer hash. Ensure the EVM watcher stores \
+                 src_v2_chain_id for all deposits. Native chain_id={} is NOT used.",
+                deposit.id,
+                deposit.chain_id
+            ));
         };
 
         debug!(

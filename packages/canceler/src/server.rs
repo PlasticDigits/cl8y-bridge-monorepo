@@ -50,6 +50,8 @@ pub struct Metrics {
     pub terra_pending_queue_depth: IntGauge,
     /// C2: Approvals skipped due to page cap
     pub terra_unprocessed_approvals: IntGauge,
+    /// C6: Approvals with unrecognized source chain (indicates misconfiguration)
+    pub unknown_source_chain_total: IntGauge,
     pub registry: Registry,
 }
 
@@ -123,6 +125,12 @@ impl Metrics {
         )
         .expect("constant metric name is valid");
 
+        let unknown_source_chain_total = IntGauge::new(
+            "canceler_unknown_source_chain_total",
+            "Approvals with unrecognized source chain ID (possible misconfiguration)",
+        )
+        .expect("constant metric name is valid");
+
         // Register all metrics — expect is safe here because names are unique
         // constants and registration is called exactly once at startup
         registry
@@ -155,6 +163,9 @@ impl Metrics {
         registry
             .register(Box::new(terra_unprocessed_approvals.clone()))
             .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(unknown_source_chain_total.clone()))
+            .expect("metric registration must not be called twice");
 
         Self {
             verified_valid_total,
@@ -167,6 +178,7 @@ impl Metrics {
             dedupe_cancelled_size,
             terra_pending_queue_depth,
             terra_unprocessed_approvals,
+            unknown_source_chain_total,
             registry,
         }
     }

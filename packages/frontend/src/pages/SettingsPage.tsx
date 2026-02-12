@@ -13,14 +13,19 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('chains')
 
   return (
-    <div className="space-y-6">
-      <div className="shell-panel-strong">
-        <h2 className="text-2xl font-semibold text-white mb-3">System Settings</h2>
-        <p className="text-muted text-sm mb-6">
+    <div className="mx-auto max-w-5xl space-y-4">
+      <div className="shell-panel-strong relative overflow-hidden">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] bg-[radial-gradient(circle,_rgba(255,255,255,0.14)_0%,_rgba(0,0,0,0)_72%)] blur-2xl"
+        />
+        <div className="relative z-10">
+        <h2 className="mb-2 text-xl font-semibold text-white">System Settings</h2>
+        <p className="mb-4 text-xs uppercase tracking-wide text-gray-300">
           View registered chains, tokens, and bridge configuration. Read-only.
         </p>
 
-        <div className="flex gap-2 border-b-2 border-white/25 pb-2 mb-6" role="tablist">
+        <div className="mb-4 flex flex-wrap gap-2 border border-white/20 bg-black/35 p-2" role="tablist">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -32,8 +37,8 @@ export default function SettingsPage() {
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 text-sm font-medium uppercase tracking-wide border transition-colors ${
                 activeTab === tab.id
-                  ? 'bg-[#b8ff3d] text-black border-black shadow-[2px_2px_0_#000]'
-                  : 'text-slate-300 border-transparent hover:border-white/40 hover:bg-zinc-800/60'
+                  ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
+                  : 'text-slate-300 border-white/20 bg-[#161616] hover:border-white/35 hover:text-white'
               }`}
             >
               {tab.label}
@@ -45,6 +50,7 @@ export default function SettingsPage() {
           {activeTab === 'chains' && <ChainsPanel />}
           {activeTab === 'tokens' && <TokensPanel />}
           {activeTab === 'bridge' && <BridgeConfigPanel />}
+        </div>
         </div>
       </div>
     </div>

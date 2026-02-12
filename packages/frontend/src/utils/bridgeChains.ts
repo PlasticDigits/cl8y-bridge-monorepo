@@ -5,7 +5,7 @@
  * Used by multi-chain hash verification to query deposits/withdraws across chains.
  */
 
-import type { BridgeChainConfig } from '../types/chain'
+import type { BridgeChainConfig, ChainInfo } from '../types/chain'
 import { DEFAULT_NETWORK } from './constants'
 
 export type NetworkTier = 'local' | 'testnet' | 'mainnet'
@@ -111,6 +111,41 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
     },
   },
+}
+
+/** Display info for chains (icon, explorer, currency) keyed by chain id */
+const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeCurrency: { name: string; symbol: string; decimals: number } }> = {
+  ethereum: { icon: '⟠', explorerUrl: 'https://etherscan.io', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+  bsc: { icon: '⬡', explorerUrl: 'https://bscscan.com', nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 } },
+  opbnb: { icon: '⬡', explorerUrl: 'https://opbnb.bscscan.com', nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 } },
+  terra: { icon: '🌙', explorerUrl: 'https://finder.terraclassic.community/mainnet', nativeCurrency: { name: 'Luna Classic', symbol: 'LUNC', decimals: 6 } },
+  anvil: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+  localterra: { icon: '🌙', explorerUrl: '', nativeCurrency: { name: 'Luna', symbol: 'LUNA', decimals: 6 } },
+}
+
+/**
+ * Get chains available for transfers in the current network.
+ * Returns ChainInfo[] suitable for source/dest selectors, including Terra <> EVM and EVM <> EVM routes.
+ */
+export function getChainsForTransfer(): ChainInfo[] {
+  const tier = DEFAULT_NETWORK as NetworkTier
+  return Object.entries(BRIDGE_CHAINS[tier]).map(([id, config]) => {
+    const display = CHAIN_DISPLAY[id] ?? {
+      icon: '○',
+      explorerUrl: '',
+      nativeCurrency: { name: 'Unknown', symbol: '???', decimals: 18 },
+    }
+    return {
+      id,
+      name: config.name,
+      chainId: config.chainId,
+      type: config.type,
+      icon: display.icon,
+      rpcUrl: config.rpcUrl,
+      explorerUrl: display.explorerUrl,
+      nativeCurrency: display.nativeCurrency,
+    }
+  })
 }
 
 /**

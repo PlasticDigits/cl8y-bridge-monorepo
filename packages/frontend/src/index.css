@@ -7,9 +7,9 @@
 :root {
   --bg-0: #0a0a0a;
   --bg-1: #131313;
-  --bg-2: #1d1d1d;
+  --bg-2: #1a1a1a;
   --ink: #f4f4f4;
-  --ink-dim: #c5c5c5;
+  --ink-dim: #d4d4d4;
   --line: rgba(255, 255, 255, 0.35);
   --line-strong: rgba(255, 255, 255, 0.7);
   --cyan: #00f5d4;
@@ -37,8 +37,8 @@
     color: var(--ink);
     font-family: 'IBM Plex Sans', sans-serif;
     background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 32px 32px,
-      linear-gradient(0deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(0deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) 0 0 / 32px 32px,
       linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 38%, var(--bg-0) 100%);
     background-attachment: fixed;
   }
@@ -57,20 +57,21 @@
 @layer components {
   .glass {
     @apply border;
-    background: rgba(20, 20, 20, 0.92);
-    border-color: var(--line-strong);
-    box-shadow: var(--glow);
+    background: rgba(24, 24, 24, 0.94);
+    border-color: rgba(255, 255, 255, 0.62);
+    box-shadow: 0 22px 40px rgba(0, 0, 0, 0.5), var(--glow);
   }
 
   .shell-panel {
-    @apply glass rounded-none p-6;
+    @apply glass rounded-none p-4 md:p-5;
   }
 
   .shell-panel-strong {
-    @apply p-6 border rounded-none;
-    border-color: var(--line-strong);
-    background: #121212;
-    box-shadow: 6px 6px 0 #000;
+    @apply p-4 md:p-5 border rounded-none;
+    border-color: rgba(255, 255, 255, 0.72);
+    background: rgba(26, 26, 26, 0.95);
+    box-shadow: 0 28px 52px rgba(0, 0, 0, 0.56), 4px 4px 0 #000;
+    backdrop-filter: blur(2px);
   }
 
   .btn-primary {
@@ -103,6 +104,14 @@
     box-shadow: 2px 2px 0 #000;
     background: #3a3a3a;
   }
+
+  .btn-cta {
+    box-shadow: 0 0 0 1px rgba(184, 255, 61, 0.45), 0 0 24px rgba(184, 255, 61, 0.28), 3px 3px 0 #000;
+  }
+
+  .btn-cta:hover {
+    box-shadow: 0 0 0 1px rgba(184, 255, 61, 0.55), 0 0 30px rgba(184, 255, 61, 0.36), 2px 2px 0 #000;
+  }
 }
 
 @layer utilities {
@@ -128,6 +137,19 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #3f5da0, #29406f);
+}
+
+/* Hide number input spinners (Chrome, Safari, Edge, Opera) */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Hide number input spinners (Firefox) */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* Animation utilities */

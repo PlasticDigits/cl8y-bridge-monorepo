@@ -142,7 +142,7 @@ export const BRIDGE_CONFIG = {
   // Default withdraw delay in seconds
   withdrawDelay: 300, // 5 minutes
   // Bridge fee percentage
-  feePercent: 0.3,
+  feePercent: 0.5,
   // Minimum transfer amount in micro units
   minTransfer: 1000000, // 1 LUNC
 } as const;
@@ -153,3 +153,6 @@ export const TOAST_DURATION = 5000; // 5 seconds
 
 // WalletConnect Project ID (get from cloud.walletconnect.com)
 export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || '2ce7811b869be33ffad28cff05c93c15';
+
+// Dev mode: when true, allows connecting simulated EVM and Terra wallets (for local dev without extensions)
+export const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';

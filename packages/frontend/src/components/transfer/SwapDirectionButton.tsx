@@ -5,15 +5,15 @@ export interface SwapDirectionButtonProps {
 
 export function SwapDirectionButton({ onClick, disabled }: SwapDirectionButtonProps) {
   return (
-    <div className="flex justify-center">
+    <div className="flex justify-center -mb-3">
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
-        className="p-3 bg-gray-900 border border-gray-700 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="border-2 border-white/20 bg-[#161616] p-2 hover:border-cyan-300 hover:text-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <svg
-          className="w-5 h-5 text-gray-400"
+          className="h-4 w-4 text-gray-300"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"

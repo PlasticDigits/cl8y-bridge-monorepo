@@ -1,11 +1,20 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { Address } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
-import { useBridgeDeposit } from '../../hooks/useBridgeDeposit'
+import {
+  useBridgeDeposit,
+  computeTerraChainKey,
+  computeEvmChainKey,
+  encodeTerraAddress,
+  encodeEvmAddress,
+} from '../../hooks/useBridgeDeposit'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useTransferStore } from '../../stores/transfer'
-import { getEvmChains, getCosmosChains, getChainById } from '../../lib/chains'
+import { getChainById } from '../../lib/chains'
+import { getChainsForTransfer } from '../../utils/bridgeChains'
+import type { ChainInfo } from '../../lib/chains'
+import type { TransferDirection } from '../../types/transfer'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS, NETWORKS } from '../../utils/constants'
 import { parseAmount, formatAmount } from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
@@ -43,10 +52,30 @@ const TOKEN_CONFIGS: Record<string, { address: Address; lockUnlockAddress: Addre
     : undefined,
 }
 
-function getChainIdNumeric(chainId: string): number {
-  const c = getChainById(chainId)
+function getChainIdNumeric(chainId: string, chains: ChainInfo[]): number {
+  const c = chains.find((ch) => ch.id === chainId) ?? getChainById(chainId)
   if (!c) return 31337
   return typeof c.chainId === 'number' ? c.chainId : 31337
+}
+
+/** Derive the transfer direction from the selected source and dest chain types */
+function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefined): TransferDirection {
+  if (!source || !dest) return 'terra-to-evm'
+  if (source.type === 'cosmos' && dest.type === 'evm') return 'terra-to-evm'
+  if (source.type === 'evm' && dest.type === 'cosmos') return 'evm-to-terra'
+  return 'evm-to-evm'
+}
+
+/** Get valid destination chains for a given source chain */
+function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): ChainInfo[] {
+  const source = allChains.find((c) => c.id === sourceChainId)
+  return allChains.filter((c) => {
+    // Can't bridge to the same chain
+    if (c.id === sourceChainId) return false
+    // Cosmos → Cosmos not supported
+    if (source?.type === 'cosmos' && c.type === 'cosmos') return false
+    return true
+  })
 }
 
 export function TransferForm() {
@@ -54,19 +83,47 @@ export function TransferForm() {
   const { connected: isTerraConnected, address: terraAddress, luncBalance } = useWallet()
   const { recordTransfer } = useTransferStore()
 
-  const evmChains = useMemo(() => getEvmChains(), [])
-  const terraChains = useMemo(() => getCosmosChains(), [])
+  const allChains = useMemo(() => getChainsForTransfer(), [])
 
-  const [direction, setDirection] = useState<'evm-to-terra' | 'terra-to-evm'>('terra-to-evm')
-  const [sourceChain, setSourceChain] = useState('terra')
-  const [destChain, setDestChain] = useState('anvil')
+  // Default to Terra -> first EVM (or first chain if no EVM); anvil for local, bsc for mainnet/testnet
+  const [sourceChain, setSourceChain] = useState(() => {
+    const chains = getChainsForTransfer()
+    const terra = chains.find((c) => c.type === 'cosmos')
+    return terra?.id ?? chains[0]?.id ?? 'terra'
+  })
+  const [destChain, setDestChain] = useState(() => {
+    const chains = getChainsForTransfer()
+    const evm = chains.find((c) => c.type === 'evm')
+    return evm?.id ?? chains[0]?.id ?? 'anvil'
+  })
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const sourceChains = direction === 'terra-to-evm' ? terraChains : evmChains
-  const destChains = direction === 'terra-to-evm' ? evmChains : terraChains
+  const sourceChainInfo = useMemo(
+    () => allChains.find((c) => c.id === sourceChain) ?? getChainById(sourceChain),
+    [allChains, sourceChain]
+  )
+  const destChainInfo = useMemo(
+    () => allChains.find((c) => c.id === destChain) ?? getChainById(destChain),
+    [allChains, destChain]
+  )
+  const direction = useMemo(() => deriveDirection(sourceChainInfo, destChainInfo), [sourceChainInfo, destChainInfo])
+
+  // Compute valid destination chains based on source selection
+  const destChains = useMemo(() => getValidDestChains(allChains, sourceChain), [allChains, sourceChain])
+
+  // When source changes, ensure dest is still valid
+  useEffect(() => {
+    const validIds = destChains.map((c) => c.id)
+    if (!validIds.includes(destChain) && validIds.length > 0) {
+      setDestChain(validIds[0])
+    }
+  }, [destChains, destChain])
+
+  const isSourceTerra = direction === 'terra-to-evm'
+  const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm'
 
   const tokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
   const {
@@ -81,9 +138,14 @@ export function TransferForm() {
   )
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
-  const isSourceTerra = direction === 'terra-to-evm'
   const isWalletConnected = isSourceTerra ? isTerraConnected : isEvmConnected
-  const recipientAddr = recipient || (isSourceTerra ? evmAddress ?? '' : terraAddress ?? '')
+
+  // Auto-fill recipient from connected wallet on the destination side
+  const recipientAddr = useMemo(() => {
+    if (recipient) return recipient
+    if (isDestEvm) return evmAddress ?? ''
+    return terraAddress ?? ''
+  }, [recipient, isDestEvm, evmAddress, terraAddress])
 
   const receiveAmount = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return '0'
@@ -105,9 +167,9 @@ export function TransferForm() {
       setTxHash(depositTxHash)
       recordTransfer({
         type: 'deposit',
-        direction: 'evm-to-terra',
+        direction,
         sourceChain,
-        destChain: NETWORKS[DEFAULT_NETWORK].terra.chainId,
+        destChain,
         amount: parseAmount(amount, tokenConfig?.decimals ?? DECIMALS.LUNC),
         status: 'confirmed',
         txHash: depositTxHash,
@@ -117,7 +179,7 @@ export function TransferForm() {
       setError(evmError)
       resetEvm()
     }
-  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, amount, tokenConfig, recordTransfer])
+  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, tokenConfig, recordTransfer, direction])
 
   useEffect(() => {
     if (terraStatus === 'success' && terraTxHash) {
@@ -129,12 +191,29 @@ export function TransferForm() {
     }
   }, [terraStatus, terraTxHash, terraError, resetTerra])
 
-  const handleSwap = () => {
-    setDirection((d) => (d === 'terra-to-evm' ? 'evm-to-terra' : 'terra-to-evm'))
-    setSourceChain(destChain)
-    setDestChain(sourceChain)
+  const handleSwap = useCallback(() => {
+    const prevSource = sourceChain
+    const prevDest = destChain
+    setSourceChain(prevDest)
+    setDestChain(prevSource)
     setError(null)
-  }
+  }, [sourceChain, destChain])
+
+  // Check if the swap would produce an invalid route (cosmos→cosmos)
+  const isSwapDisabled = useMemo(() => {
+    const destInfo = getChainById(destChain)
+    const sourceInfo = getChainById(sourceChain)
+    // Disable swap if swapping would result in cosmos→cosmos
+    return destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos'
+  }, [sourceChain, destChain])
+
+  const handleSourceChange = useCallback(
+    (newSource: string) => {
+      setSourceChain(newSource)
+      setError(null)
+    },
+    []
+  )
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -143,16 +222,17 @@ export function TransferForm() {
 
     if (!isWalletConnected || !amount || !isValidAmount(amount)) return
 
-    const amountMicro = parseAmount(amount, DECIMALS.LUNC)
-
-    if (isSourceTerra) {
+    if (direction === 'terra-to-evm') {
+      // Terra → EVM: lock on Terra
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
         return
       }
-      const destChainId = getChainIdNumeric(destChain)
+      const destChainId = getChainIdNumeric(destChain, allChains)
+      const amountMicro = parseAmount(amount, DECIMALS.LUNC)
       await terraLock({ amountMicro, destChainId, recipientEvm: recipientAddr })
-    } else {
+    } else if (direction === 'evm-to-terra') {
+      // EVM → Terra: deposit on EVM router
       if (!recipientAddr || !recipientAddr.startsWith('terra1')) {
         setError('Please provide a Terra recipient address or connect your Terra wallet')
         return
@@ -161,7 +241,23 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      await evmDeposit(amount, NETWORKS[DEFAULT_NETWORK].terra.chainId, recipientAddr, tokenConfig.decimals)
+      const destChainKey = computeTerraChainKey(NETWORKS[DEFAULT_NETWORK].terra.chainId)
+      const destAccount = encodeTerraAddress(recipientAddr)
+      await evmDeposit(amount, destChainKey, destAccount, tokenConfig.decimals)
+    } else {
+      // EVM → EVM: deposit on EVM router with EVM dest chain key
+      if (!recipientAddr || !recipientAddr.startsWith('0x')) {
+        setError('Please provide an EVM recipient address or connect your EVM wallet')
+        return
+      }
+      if (!tokenConfig) {
+        setError('Token configuration not available for this network')
+        return
+      }
+      const destChainId = getChainIdNumeric(destChain, allChains)
+      const destChainKey = computeEvmChainKey(destChainId)
+      const destAccount = encodeEvmAddress(recipientAddr)
+      await evmDeposit(amount, destChainKey, destAccount, tokenConfig.decimals)
     }
   }
 
@@ -171,29 +267,42 @@ export function TransferForm() {
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
 
+  const sourceLabel = isSourceTerra ? 'LUNC' : tokenConfig?.symbol
+  const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
+
+  const buttonText = !isWalletConnected
+    ? `Connect ${walletLabel} Wallet`
+    : isSubmitting
+    ? 'Processing...'
+    : direction === 'terra-to-evm'
+    ? 'Bridge from Terra'
+    : direction === 'evm-to-evm'
+    ? 'Bridge EVM to EVM'
+    : 'Bridge from EVM'
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-4">
       {txHash && (
-        <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
-          <p className="text-green-400 text-sm font-medium">Transaction submitted!</p>
+        <div className="bg-green-900/30 border-2 border-green-700 p-3">
+          <p className="text-green-300 text-xs font-semibold uppercase tracking-wide">Transaction submitted</p>
           <p className="text-green-500/70 text-xs mt-1 font-mono break-all">{txHash}</p>
         </div>
       )}
       {error && (
-        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-          <p className="text-red-400 text-sm">{error}</p>
-          <button type="button" onClick={() => setError(null)} className="text-red-300 text-xs mt-2 underline">
+        <div className="bg-red-900/30 border-2 border-red-700 p-3">
+          <p className="text-red-300 text-sm">{error}</p>
+          <button type="button" onClick={() => setError(null)} className="text-red-200 text-xs mt-2 underline underline-offset-2">
             Dismiss
           </button>
         </div>
       )}
 
       <SourceChainSelector
-        chains={sourceChains}
+        chains={allChains}
         value={sourceChain}
-        onChange={setSourceChain}
+        onChange={handleSourceChange}
         balance={balanceDisplay}
-        balanceLabel={isSourceTerra ? 'LUNC' : tokenConfig?.symbol}
+        balanceLabel={sourceLabel}
       />
       <AmountInput
         value={amount}
@@ -207,7 +316,7 @@ export function TransferForm() {
         }
         symbol="LUNC"
       />
-      <SwapDirectionButton onClick={handleSwap} />
+      <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled} />
       <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} />
       <RecipientInput value={recipient} onChange={setRecipient} direction={direction} />
       <FeeBreakdown receiveAmount={receiveAmount} />
@@ -215,13 +324,9 @@ export function TransferForm() {
       <button
         type="submit"
         disabled={!isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting}
-        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-all"
+        className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
       >
-        {!isWalletConnected
-          ? `Connect ${isSourceTerra ? 'Terra' : 'EVM'} Wallet`
-          : isSubmitting
-          ? 'Processing...'
-          : `Bridge ${isSourceTerra ? 'from Terra' : 'from EVM'}`}
+        {buttonText}
       </button>
     </form>
   )

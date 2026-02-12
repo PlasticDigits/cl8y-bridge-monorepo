@@ -112,19 +112,32 @@ pub struct CancelerWatcher {
 
 impl CancelerWatcher {
     pub async fn new(config: &Config, stats: SharedStats, metrics: SharedMetrics) -> Result<Self> {
-        // Use V2 chain IDs from config if available, otherwise try to query the bridge
-        let (evm_v2, terra_v2) = Self::resolve_v2_chain_ids(config).await;
+        // Resolve V2 chain IDs — required for correct operation.
+        // Tries config first, then queries bridge contract. Fails if neither works.
+        let (evm_v2, terra_v2) = Self::resolve_v2_chain_ids_required(config).await?;
 
-        let verifier = ApprovalVerifier::with_v2_chain_ids(
+        let verifier = ApprovalVerifier::new_v2(
             &config.evm_rpc_url,
             &config.evm_bridge_address,
-            config.evm_chain_id,
             &config.terra_lcd_url,
             &config.terra_bridge_address,
-            &config.terra_chain_id,
             evm_v2,
             terra_v2,
         );
+
+        // C6: Startup validation — cross-check resolved chain IDs against bridge contract.
+        // If the configured V2 chain ID doesn't match what the bridge contract reports,
+        // the canceler would either miss fraud or (worse) cancel valid approvals.
+        if let Err(e) = Self::validate_chain_ids_against_bridge(config, &verifier).await {
+            error!(
+                error = %e,
+                "CHAIN ID VALIDATION FAILED — the configured V2 chain IDs may not match \
+                 the bridge contract's ChainRegistry. This can cause missed fraud detection \
+                 or false-positive cancellations. Verify EVM_V2_CHAIN_ID and TERRA_V2_CHAIN_ID."
+            );
+            // Continue running (don't abort) — the error log is enough to trigger alerts
+            // and the unknown-chain Pending logic (C6) prevents destructive misaction.
+        }
 
         let evm_client = EvmClient::new(
             &config.evm_rpc_url,
@@ -139,17 +152,8 @@ impl CancelerWatcher {
             &config.terra_mnemonic,
         )?;
 
-        // Use V2 chain ID from config or query from bridge contract
-        let (evm_v2, _terra_v2) = Self::resolve_v2_chain_ids(config).await;
-        let this_chain_id = evm_v2.unwrap_or_else(|| {
-            let fallback = 1u32.to_be_bytes(); // 0x00000001
-            warn!(
-                native_chain_id = config.evm_chain_id,
-                fallback = %hex::encode(fallback),
-                "Could not resolve EVM V2 chain ID, using 0x00000001 as fallback"
-            );
-            fallback
-        });
+        // Use the already-resolved V2 chain ID (guaranteed by resolve_v2_chain_ids_required)
+        let this_chain_id = evm_v2;
 
         // Initialize stats with canceler ID
         {
@@ -188,35 +192,93 @@ impl CancelerWatcher {
         })
     }
 
-    /// Resolve V2 chain IDs: use config if set, otherwise query the EVM bridge contract.
+    /// C6: Validate that the verifier's chain IDs match what the bridge contract reports.
     ///
-    /// The EVM bridge exposes `getThisChainId()` which returns the V2 bytes4 chain ID
-    /// that was registered in ChainRegistry during deployment.
-    async fn resolve_v2_chain_ids(config: &Config) -> (Option<[u8; 4]>, Option<[u8; 4]>) {
-        let mut evm_v2 = config.evm_v2_chain_id;
-        let terra_v2 = config.terra_v2_chain_id;
+    /// Queries `getThisChainId()` from the EVM bridge and compares against the
+    /// verifier's configured EVM V2 chain ID. A mismatch means the canceler is
+    /// using wrong chain IDs, which could cause it to miss fraud or cancel valid
+    /// approvals.
+    async fn validate_chain_ids_against_bridge(
+        config: &Config,
+        verifier: &ApprovalVerifier,
+    ) -> Result<()> {
+        let bridge_chain_id = Self::query_bridge_this_chain_id(config).await?;
+        let configured_evm_id = verifier.evm_chain_id();
 
-        // If EVM V2 chain ID not configured, query the bridge contract
-        if evm_v2.is_none() {
+        if bridge_chain_id != *configured_evm_id {
+            return Err(eyre!(
+                "EVM V2 chain ID MISMATCH: bridge contract reports 0x{} but canceler \
+                 is configured with 0x{}. Set EVM_V2_CHAIN_ID=0x{} to fix.",
+                hex::encode(bridge_chain_id),
+                hex::encode(configured_evm_id),
+                hex::encode(bridge_chain_id)
+            ));
+        }
+
+        info!(
+            bridge_chain_id = %hex::encode(bridge_chain_id),
+            configured_evm_id = %hex::encode(configured_evm_id),
+            "C6: EVM V2 chain ID validated against bridge contract"
+        );
+
+        Ok(())
+    }
+
+    /// Resolve V2 chain IDs: use config if set, otherwise query the EVM bridge contract.
+    /// Returns an error if either chain ID cannot be resolved — no native-ID fallback.
+    ///
+    /// Resolution order for EVM:
+    /// 1. `EVM_V2_CHAIN_ID` env var (explicit config — highest priority)
+    /// 2. `getThisChainId()` query on the EVM bridge contract
+    /// 3. Error (refuse to start)
+    ///
+    /// Resolution order for Terra:
+    /// 1. `TERRA_V2_CHAIN_ID` env var (explicit config)
+    /// 2. Error (refuse to start — no contract query implemented for Terra yet)
+    async fn resolve_v2_chain_ids_required(config: &Config) -> Result<([u8; 4], [u8; 4])> {
+        // --- EVM ---
+        let evm_v2 = if let Some(id) = config.evm_v2_chain_id {
+            info!(
+                evm_v2_chain_id = %hex::encode(id),
+                "Using EVM V2 chain ID from config (EVM_V2_CHAIN_ID)"
+            );
+            id
+        } else {
             match Self::query_bridge_this_chain_id(config).await {
                 Ok(id) => {
                     info!(
                         chain_id = %hex::encode(id),
                         "Queried EVM bridge getThisChainId() — using as EVM V2 chain ID"
                     );
-                    evm_v2 = Some(id);
+                    id
                 }
                 Err(e) => {
-                    warn!(
-                        error = %e,
-                        "Failed to query getThisChainId() from EVM bridge. \
-                         Set EVM_V2_CHAIN_ID env var to the registered bytes4 chain ID."
-                    );
+                    return Err(eyre!(
+                        "Cannot resolve EVM V2 chain ID: EVM_V2_CHAIN_ID not set and bridge \
+                         query failed ({}). Set EVM_V2_CHAIN_ID to the bytes4 value from \
+                         ChainRegistry (e.g., EVM_V2_CHAIN_ID=0x00000001).",
+                        e
+                    ));
                 }
             }
-        }
+        };
 
-        (evm_v2, terra_v2)
+        // --- Terra ---
+        let terra_v2 = if let Some(id) = config.terra_v2_chain_id {
+            info!(
+                terra_v2_chain_id = %hex::encode(id),
+                "Using Terra V2 chain ID from config (TERRA_V2_CHAIN_ID)"
+            );
+            id
+        } else {
+            return Err(eyre!(
+                "Cannot resolve Terra V2 chain ID: TERRA_V2_CHAIN_ID not set. \
+                 Set TERRA_V2_CHAIN_ID to the bytes4 value from ChainRegistry \
+                 (e.g., TERRA_V2_CHAIN_ID=0x00000002)."
+            ));
+        };
+
+        Ok((evm_v2, terra_v2))
     }
 
     /// Query `getThisChainId()` from the EVM bridge contract to get its V2 chain ID.
@@ -289,6 +351,11 @@ impl CancelerWatcher {
         self.metrics
             .dedupe_cancelled_size
             .set(self.cancelled_hashes.len() as i64);
+
+        // C6: Update unknown source chain metric
+        self.metrics
+            .unknown_source_chain_total
+            .set(self.verifier.unknown_source_chain_count() as i64);
 
         Ok(())
     }

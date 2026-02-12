@@ -48,6 +48,7 @@ export function useWallet() {
     connectingWallet,
     showWalletModal,
     connect: storeConnect,
+    connectSimulated: storeConnectSimulated,
     disconnect: storeDisconnect,
     setBalances,
     setConnecting,
@@ -94,6 +95,11 @@ export function useWallet() {
     }
   }, [storeConnect, refreshBalances]);
 
+  // Connect simulated wallet (dev mode - no extensions, cannot sign)
+  const connectSimulated = useCallback(() => {
+    storeConnectSimulated();
+  }, [storeConnectSimulated]);
+
   // Disconnect wallet
   const disconnect = useCallback(async () => {
     await storeDisconnect();
@@ -132,6 +138,7 @@ export function useWallet() {
     
     // Actions
     connect,
+    connectSimulated,
     disconnect,
     refreshBalances,
     setConnecting,

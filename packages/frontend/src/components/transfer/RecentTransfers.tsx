@@ -19,9 +19,9 @@ export function RecentTransfers({ limit = 5 }: RecentTransfersProps) {
   if (transfers.length === 0) return null
 
   return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-medium text-gray-400">Recent Transfers</h3>
-      <div className="space-y-2">
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Recent Transfers</h3>
+      <div className="space-y-1.5">
         {transfers.slice(0, limit).map((tx) => (
           <RecentTransferItem key={tx.id} tx={tx} />
         ))}
@@ -34,25 +34,25 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
   const explorerUrl = tx.txHash ? getExplorerTxUrl(tx.sourceChain, tx.txHash) : null
 
   return (
-    <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700/50 flex items-center justify-between">
+    <div className="flex items-center justify-between border-2 border-white/20 bg-[#161616] p-2.5">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-white font-medium">
+          <span className="text-sm font-semibold text-white">
             {formatAmount(tx.amount, DECIMALS.LUNC)} LUNC
           </span>
           <TransferStatusBadge status={tx.status} />
         </div>
-        <p className="text-xs text-gray-500 mt-0.5">
+        <p className="mt-0.5 text-xs text-gray-300">
           {tx.sourceChain} → {tx.destChain}
         </p>
-        <p className="text-xs text-gray-600">{formatTime(tx.timestamp)}</p>
+        <p className="text-[11px] text-gray-400">{formatTime(tx.timestamp)}</p>
       </div>
       {explorerUrl && (
         <a
           href={explorerUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-blue-400 hover:text-blue-300 text-xs flex-shrink-0 ml-2"
+          className="ml-2 shrink-0 text-xs text-cyan-300 hover:text-cyan-200"
         >
           View →
         </a>

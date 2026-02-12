@@ -20,16 +20,16 @@ export function ChainCard({ name, chainId, type, rpcUrl, lcdUrl, explorerUrl }: 
       <div className="flex items-start justify-between gap-4">
         <div>
           <h4 className="font-medium text-white">{name}</h4>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="mt-1 text-sm text-gray-400">
             ID: {chainId} · {type === 'evm' ? 'EVM' : 'Cosmos'}
           </p>
           {rpcUrl && type === 'evm' && (
-            <p className="text-gray-400 text-xs mt-2 font-mono truncate max-w-full" title={rpcUrl}>
+            <p className="mt-2 max-w-full truncate font-mono text-xs text-gray-300" title={rpcUrl}>
               RPC: {rpcUrl}
             </p>
           )}
           {lcdUrl && type === 'cosmos' && (
-            <p className="text-gray-400 text-xs mt-2 font-mono truncate max-w-full" title={lcdUrl}>
+            <p className="mt-2 max-w-full truncate font-mono text-xs text-gray-300" title={lcdUrl}>
               LCD: {lcdUrl}
             </p>
           )}
@@ -38,7 +38,7 @@ export function ChainCard({ name, chainId, type, rpcUrl, lcdUrl, explorerUrl }: 
               href={explorerUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 text-xs mt-2 inline-block"
+              className="mt-2 inline-block text-xs text-cyan-300 hover:text-cyan-200"
             >
               Explorer →
             </a>

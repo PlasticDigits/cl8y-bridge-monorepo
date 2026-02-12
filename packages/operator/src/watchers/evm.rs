@@ -66,14 +66,23 @@ impl EvmWatcher {
                 v2_id
             }
             Err(e) => {
-                let fallback = ChainId::from_u32(config.this_chain_id.unwrap_or(1));
-                tracing::warn!(
-                    error = %e,
-                    native_chain_id = config.chain_id,
-                    fallback_v2_id = %fallback,
-                    "Failed to query V2 chain ID from bridge, using config fallback"
-                );
-                fallback
+                if let Some(configured_id) = config.this_chain_id {
+                    let fallback = ChainId::from_u32(configured_id);
+                    tracing::warn!(
+                        error = %e,
+                        native_chain_id = config.chain_id,
+                        configured_v2_id = %fallback,
+                        "Failed to query V2 chain ID from bridge, using EVM_THIS_CHAIN_ID config"
+                    );
+                    fallback
+                } else {
+                    return Err(eyre::eyre!(
+                        "Cannot resolve EVM V2 chain ID: bridge query failed ({}) and \
+                         EVM_THIS_CHAIN_ID is not set. Set EVM_THIS_CHAIN_ID to the V2 \
+                         chain ID from ChainRegistry (e.g., EVM_THIS_CHAIN_ID=1).",
+                        e
+                    ));
+                }
             }
         };
 

@@ -6,10 +6,10 @@ import { DECIMALS } from '../../utils/constants'
 function AddressList({ label, addresses }: { label: string; addresses: string[] }) {
   return (
     <>
-      <dt className="text-gray-500">{label}</dt>
+      <dt className="text-[11px] uppercase tracking-wide text-gray-400">{label}</dt>
       <dd className="text-white">
         {addresses.length === 0 ? (
-          <span className="text-gray-600">None</span>
+          <span className="text-xs uppercase tracking-wide text-gray-500">None</span>
         ) : (
           <ul className="space-y-1">
             {addresses.map((addr) => (
@@ -40,7 +40,7 @@ export function BridgeConfigPanel() {
 
   if (error) {
     return (
-      <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-4">
+      <div className="border-2 border-red-700/60 bg-red-900/20 p-3">
         <p className="text-red-400 text-sm">
           Failed to load bridge config: {error instanceof Error ? error.message : 'Unknown error'}
         </p>
@@ -53,38 +53,38 @@ export function BridgeConfigPanel() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+      <h3 className="text-sm font-medium uppercase tracking-wider text-gray-300">
         Bridge Configuration
       </h3>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="bg-gray-900/50 rounded-lg border border-gray-700/50 p-4">
-          <h4 className="font-medium text-white mb-3">Terra Bridge</h4>
+        <div className="border-2 border-white/20 bg-[#161616] p-3">
+          <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white">Terra Bridge</h4>
           <dl className="space-y-2 text-sm">
             {terra.config && (
               <>
-                <dt className="text-gray-500">Status</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Status</dt>
                 <dd className="text-white">
                   {terra.config.paused ? (
                     <span className="text-red-400">Paused</span>
                   ) : (
-                    <span className="text-green-400">Active</span>
+                    <span className="text-[#b8ff3d]">Active</span>
                   )}
                 </dd>
-                <dt className="text-gray-500">Min transfer</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Min transfer</dt>
                 <dd className="text-white">
                   {formatAmount(terra.config.min_bridge_amount, DECIMALS.LUNC)} LUNC
                 </dd>
-                <dt className="text-gray-500">Max transfer</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Max transfer</dt>
                 <dd className="text-white">
                   {formatAmount(terra.config.max_bridge_amount, DECIMALS.LUNC)} LUNC
                 </dd>
-                <dt className="text-gray-500">Fee</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Fee</dt>
                 <dd className="text-white">{(terra.config.fee_bps / 100).toFixed(2)}%</dd>
-                <dt className="text-gray-500">Admin</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Admin</dt>
                 <dd className="text-white font-mono text-xs truncate" title={terra.config.admin}>
                   {terra.config.admin}
                 </dd>
-                <dt className="text-gray-500">Fee collector</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Fee collector</dt>
                 <dd className="text-white font-mono text-xs truncate" title={terra.config.fee_collector}>
                   {terra.config.fee_collector}
                 </dd>
@@ -92,7 +92,7 @@ export function BridgeConfigPanel() {
             )}
             {terra.withdrawDelay != null && (
               <>
-                <dt className="text-gray-500">Withdraw delay</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Withdraw delay</dt>
                 <dd className="text-white">{terra.withdrawDelay} seconds</dd>
               </>
             )}
@@ -104,21 +104,21 @@ export function BridgeConfigPanel() {
             )}
           </dl>
           {!terra.loaded && !terra.config && (
-            <p className="text-gray-500 text-xs mt-2">Terra bridge not configured</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-gray-400">Terra bridge not configured</p>
           )}
         </div>
-        <div className="bg-gray-900/50 rounded-lg border border-gray-700/50 p-4">
-          <h4 className="font-medium text-white mb-3">EVM Bridge</h4>
+        <div className="border-2 border-white/20 bg-[#161616] p-3">
+          <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white">EVM Bridge</h4>
           <dl className="space-y-2 text-sm">
             {evm.cancelWindowSeconds != null && (
               <>
-                <dt className="text-gray-500">Cancel window</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-gray-400">Cancel window</dt>
                 <dd className="text-white">{evm.cancelWindowSeconds} seconds</dd>
               </>
             )}
           </dl>
           {!evm.loaded && evm.cancelWindowSeconds == null && (
-            <p className="text-gray-500 text-xs mt-2">EVM bridge not configured</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-gray-400">EVM bridge not configured</p>
           )}
         </div>
       </div>

@@ -57,7 +57,8 @@ function getWalletIcon(connector: Connector): React.ReactNode {
 }
 
 export function EvmWalletOption({ connector, onClick, isLoading, disabled }: EvmWalletOptionProps) {
-  const displayName = connector.name || 'Wallet'
+  const displayName =
+    connector.type === 'mock' ? 'Simulated EVM Wallet' : connector.name || 'Wallet'
 
   return (
     <button

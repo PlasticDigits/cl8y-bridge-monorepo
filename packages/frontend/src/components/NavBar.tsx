@@ -5,20 +5,35 @@ import { WalletButton } from './WalletButton'
 export function NavBar() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between min-h-16 py-3 gap-3">
-        <div className="flex items-center gap-3 md:gap-6 min-w-0">
-          <NavLink to="/" className="flex items-center gap-3 group">
-            <div className="w-8 h-8 border-2 border-black bg-[#b8ff3d] shadow-[3px_3px_0_#000] group-hover:translate-x-[1px] group-hover:translate-y-[1px] transition-transform" />
-            <span className="hidden sm:inline text-xl font-semibold text-slate-100 tracking-[0.08em] uppercase">CL8Y Bridge</span>
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between min-h-14 py-2 gap-2">
+        <div className="flex items-center shrink-0">
+          <NavLink to="/" className="flex items-center group -my-1">
+            <img
+              src="/logo-header.png"
+              alt="CL8Y Bridge"
+              className="h-10 xl:h-12 w-auto max-w-[150px] object-contain object-left group-hover:translate-x-[1px] group-hover:translate-y-[1px] transition-transform"
+            />
           </NavLink>
-          <nav className="flex gap-1 border-2 border-white/30 bg-black/80 p-1 overflow-x-auto">
-            <NavLink
+        </div>
+
+        <div className="hidden min-[480px]:flex items-center gap-2 xl:hidden shrink-0">
+          <WalletButton />
+          <ConnectWallet />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 w-full min-[480px]:hidden [&>button]:w-full [&>button]:justify-center">
+          <WalletButton />
+          <ConnectWallet />
+        </div>
+
+        <nav className="flex gap-1 border-2 border-white/30 bg-black/80 p-1 min-w-0 w-full xl:w-auto xl:flex-1">
+          <NavLink
               to="/"
               end
               className={({ isActive }) =>
-                `px-2.5 md:px-3.5 py-2 text-xs md:text-sm font-medium whitespace-nowrap uppercase tracking-wide border ${
+                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
-                    ? 'bg-[#b8ff3d] text-black border-black shadow-[2px_2px_0_#000]'
+                    ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
@@ -28,9 +43,9 @@ export function NavBar() {
             <NavLink
               to="/history"
               className={({ isActive }) =>
-                `px-2.5 md:px-3.5 py-2 text-xs md:text-sm font-medium whitespace-nowrap uppercase tracking-wide border ${
+                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
-                    ? 'bg-[#b8ff3d] text-black border-black shadow-[2px_2px_0_#000]'
+                    ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
@@ -40,9 +55,9 @@ export function NavBar() {
             <NavLink
               to="/verify"
               className={({ isActive }) =>
-                `px-2.5 md:px-3.5 py-2 text-xs md:text-sm font-medium whitespace-nowrap uppercase tracking-wide border ${
+                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
-                    ? 'bg-[#b8ff3d] text-black border-black shadow-[2px_2px_0_#000]'
+                    ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
@@ -52,18 +67,17 @@ export function NavBar() {
             <NavLink
               to="/settings"
               className={({ isActive }) =>
-                `px-2.5 md:px-3.5 py-2 text-xs md:text-sm font-medium whitespace-nowrap uppercase tracking-wide border ${
+                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
-                    ? 'bg-[#b8ff3d] text-black border-black shadow-[2px_2px_0_#000]'
+                    ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
             >
               Settings
-            </NavLink>
-          </nav>
-        </div>
-        <div className="flex items-center gap-2 sm:gap-3">
+          </NavLink>
+        </nav>
+        <div className="hidden xl:flex items-center gap-2 shrink-0">
           <WalletButton />
           <ConnectWallet />
         </div>

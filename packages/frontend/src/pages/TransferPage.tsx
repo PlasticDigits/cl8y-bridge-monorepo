@@ -1,19 +1,14 @@
-import { WalletStatusBar, TransferForm, ActiveTransferCard, RecentTransfers } from '../components/transfer'
-import { useUIStore } from '../stores/ui'
-import { useWalletStore } from '../stores/wallet'
+import { TransferForm, ActiveTransferCard, RecentTransfers } from '../components/transfer'
 
 export default function TransferPage() {
-  const setShowEvmModal = useUIStore((s) => s.setShowEvmWalletModal)
-  const setShowTerraModal = useWalletStore((s) => s.setShowWalletModal)
-
   return (
-    <div className="space-y-6">
-      <div className="shell-panel-strong">
-        <WalletStatusBar
-          onConnectEvm={() => setShowEvmModal(true)}
-          onConnectTerra={() => setShowTerraModal(true)}
+    <div className="space-y-4">
+      <div className="relative mx-auto max-w-[520px]">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-6 top-8 h-[78%] rounded-[28px] bg-[radial-gradient(circle,_rgba(255,255,255,0.12)_0%,_rgba(0,0,0,0)_72%)] blur-2xl"
         />
-        <div className="mt-6">
+        <div className="shell-panel-strong relative z-10">
           <TransferForm />
         </div>
       </div>

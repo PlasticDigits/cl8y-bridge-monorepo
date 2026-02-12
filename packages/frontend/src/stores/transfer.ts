@@ -3,7 +3,7 @@ import type { TransferRecord, TransferStatus } from '../types/transfer'
 
 export interface ActiveTransfer {
   id: string
-  direction: 'evm-to-terra' | 'terra-to-evm'
+  direction: 'evm-to-terra' | 'terra-to-evm' | 'evm-to-evm'
   sourceChain: string
   destChain: string
   amount: string

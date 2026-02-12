@@ -40,7 +40,7 @@ export function HashComparisonPanel({
 
   if (error) {
     return (
-      <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
+      <div className="border-2 border-red-700/80 bg-red-900/30 p-4">
         <p className="text-red-400">{error}</p>
       </div>
     )
@@ -48,7 +48,7 @@ export function HashComparisonPanel({
 
   if (!source && !dest) {
     return (
-      <div className="text-center py-12 text-gray-500">
+      <div className="border-2 border-white/20 bg-[#161616] py-12 text-center text-gray-400">
         Enter a transfer hash and click Verify to look up source and destination data.
       </div>
     )

@@ -10,6 +10,13 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TransferForm } from './TransferForm'
 
+const mockChainsForTransfer = [
+  { id: 'terra', name: 'Terra Classic', chainId: 'columbus-5', type: 'cosmos' as const, icon: '🌙', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Luna Classic', symbol: 'LUNC', decimals: 6 } },
+  { id: 'ethereum', name: 'Ethereum', chainId: 1, type: 'evm' as const, icon: '⟠', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+  { id: 'bsc', name: 'BNB Chain', chainId: 56, type: 'evm' as const, icon: '⬡', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 } },
+  { id: 'anvil', name: 'Anvil (Local)', chainId: 31337, type: 'evm' as const, icon: '🔨', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+]
+
 vi.mock('wagmi', () => ({
   useAccount: () => ({
     isConnected: false,
@@ -34,6 +41,10 @@ vi.mock('../../hooks/useBridgeDeposit', () => ({
     deposit: vi.fn(),
     reset: vi.fn(),
   }),
+  computeTerraChainKey: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
+  computeEvmChainKey: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
+  encodeTerraAddress: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
+  encodeEvmAddress: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
 }))
 
 vi.mock('../../hooks/useTerraDeposit', () => ({
@@ -50,6 +61,10 @@ vi.mock('../../stores/transfer', () => ({
   useTransferStore: () => ({
     recordTransfer: vi.fn(),
   }),
+}))
+
+vi.mock('../../utils/bridgeChains', () => ({
+  getChainsForTransfer: () => mockChainsForTransfer,
 }))
 
 describe('TransferForm', () => {
@@ -107,6 +122,17 @@ describe('TransferForm', () => {
       const submitButton = screen.getByRole('button', { name: /Connect|Bridge/i })
       expect(submitButton).toBeInTheDocument()
     })
+
+    it('should show all chain types in source selector', () => {
+      render(<TransferForm />)
+      const selects = screen.getAllByRole('combobox')
+      const sourceSelect = selects[0]
+      const options = sourceSelect.querySelectorAll('option')
+      const optionTexts = Array.from(options).map((o) => o.textContent)
+      // Should include both Terra and EVM chains
+      expect(optionTexts.some((t) => t?.includes('Terra'))).toBe(true)
+      expect(optionTexts.some((t) => t?.includes('Ethereum') || t?.includes('BNB') || t?.includes('Anvil'))).toBe(true)
+    })
   })
 
   describe('Submit Button States', () => {
@@ -142,7 +168,7 @@ describe('TransferForm', () => {
       render(<TransferForm />)
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
-      expect(screen.getByText(/99\.7.*LUNC/)).toBeInTheDocument()
+      expect(screen.getByText(/99\.5.*LUNC/)).toBeInTheDocument()
     })
   })
 
@@ -161,9 +187,46 @@ describe('TransferForm', () => {
         await user.click(swapButton)
         const newSource = sourceSelect.querySelector('option:checked')?.textContent
         const newDest = destSelect.querySelector('option:checked')?.textContent
+        // After swap, the old source should now be the destination
         expect(newSource).toBe(initialDest)
         expect(newDest).toBe(initialSource)
       }
+    })
+
+    it('should support selecting EVM source for evm-to-evm transfer', async () => {
+      const user = userEvent.setup()
+      render(<TransferForm />)
+      const selects = screen.getAllByRole('combobox')
+      const sourceSelect = selects[0]
+      const destSelect = selects[1]
+
+      // Select an EVM chain as source
+      await user.selectOptions(sourceSelect, 'bsc')
+
+      // Dest should have other chains but not BSC (same chain filtered out)
+      const destOptions = Array.from(destSelect.querySelectorAll('option')).map((o) => o.getAttribute('value'))
+      expect(destOptions).not.toContain('bsc')
+      // Should include other EVM chains and Terra
+      expect(destOptions.some((v) => v === 'ethereum' || v === 'anvil')).toBe(true)
+      expect(destOptions).toContain('terra')
+    })
+
+    it('should filter out cosmos dest when source is cosmos', async () => {
+      const user = userEvent.setup()
+      render(<TransferForm />)
+      const selects = screen.getAllByRole('combobox')
+      const sourceSelect = selects[0]
+      const destSelect = selects[1]
+
+      // Source defaults to terra (cosmos), check dest does NOT include other cosmos chains
+      // and only includes EVM chains
+      await user.selectOptions(sourceSelect, 'terra')
+      const destOptions = Array.from(destSelect.querySelectorAll('option')).map((o) => o.getAttribute('value'))
+      expect(destOptions).not.toContain('terra')
+      expect(destOptions.every((v) => {
+        const chain = mockChainsForTransfer.find((c) => c.id === v)
+        return chain?.type === 'evm'
+      })).toBe(true)
     })
   })
 
@@ -172,8 +235,8 @@ describe('TransferForm', () => {
       const user = userEvent.setup()
       render(<TransferForm />)
       const recipientInput = screen.getByPlaceholderText(/terra1|0x/i)
-      await user.type(recipientInput, 'terra1abc123')
-      expect(recipientInput).toHaveValue('terra1abc123')
+      await user.type(recipientInput, '0x1234567890abcdef')
+      expect(recipientInput).toHaveValue('0x1234567890abcdef')
     })
 
     it('should show helper text about optional recipient', () => {
@@ -183,9 +246,9 @@ describe('TransferForm', () => {
   })
 
   describe('Fee Display', () => {
-    it('should show 0.3% fee', () => {
+    it('should show 0.5% fee', () => {
       render(<TransferForm />)
-      expect(screen.getByText('0.3%')).toBeInTheDocument()
+      expect(screen.getByText('0.5%')).toBeInTheDocument()
     })
 
     it('should show estimated time', () => {

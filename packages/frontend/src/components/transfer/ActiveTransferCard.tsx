@@ -14,25 +14,25 @@ export function ActiveTransferCard() {
     : null
 
   return (
-    <div className="bg-amber-900/20 border border-amber-500/30 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-amber-400 font-medium">Transfer in progress</span>
+    <div className="border-2 border-amber-500/40 bg-amber-900/20 p-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-amber-300">Transfer in progress</span>
         <TransferStatusBadge status={activeTransfer.status} />
       </div>
-      <div className="text-sm text-gray-400 space-y-1">
+      <div className="space-y-1 text-sm text-gray-300">
         <p>
           {formatAmount(activeTransfer.amount, DECIMALS.LUNC)} LUNC {activeTransfer.direction === 'terra-to-evm' ? '→' : '←'}{' '}
           {activeTransfer.sourceChain} to {activeTransfer.destChain}
         </p>
         {activeTransfer.txHash && (
-          <p className="font-mono text-xs break-all">
+          <p className="break-all font-mono text-xs text-gray-400">
             Tx: {activeTransfer.txHash}
             {explorerUrl && (
               <a
                 href={explorerUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="ml-2 text-blue-400 hover:text-blue-300"
+                className="ml-2 text-cyan-300 hover:text-cyan-200"
               >
                 View →
               </a>

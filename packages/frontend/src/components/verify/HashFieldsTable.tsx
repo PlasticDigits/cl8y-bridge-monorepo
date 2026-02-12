@@ -37,27 +37,27 @@ export function HashFieldsTable({ source, dest }: HashFieldsTableProps) {
   ]
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-700">
+    <div className="overflow-x-auto border-2 border-white/20">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-700 bg-gray-900/50">
-            <th className="px-4 py-2 text-left text-gray-400 font-medium">Field</th>
-            <th className="px-4 py-2 text-left text-gray-400 font-medium">Source</th>
-            <th className="px-4 py-2 text-left text-gray-400 font-medium">Dest</th>
+          <tr className="border-b border-white/20 bg-[#161616]">
+            <th className="px-4 py-2 text-left font-medium text-gray-300">Field</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-300">Source</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-300">Dest</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
             const cellClass =
               r.match === true
-                ? 'text-green-400/90'
+                ? 'text-[#b8ff3d]'
                 : r.match === false
                 ? 'text-red-400 bg-red-900/20'
-                : 'text-gray-400'
+                : 'text-gray-300'
             const indicator = r.match === true ? ' ✓' : r.match === false ? ' ✗' : ''
             return (
-              <tr key={r.label} className="border-b border-gray-700/50">
-                <td className="px-4 py-2 text-gray-500 font-mono">{r.label}</td>
+              <tr key={r.label} className="border-b border-white/10">
+                <td className="px-4 py-2 font-mono text-gray-400">{r.label}</td>
                 <td className={`px-4 py-2 font-mono ${cellClass}`}>
                   {r.srcVal}{indicator}
                 </td>

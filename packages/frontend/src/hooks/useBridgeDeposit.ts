@@ -15,7 +15,7 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
 } from 'wagmi'
-import { parseUnits, encodeAbiParameters, keccak256, toHex, Address } from 'viem'
+import { parseUnits, encodeAbiParameters, keccak256, toHex, pad, Address } from 'viem'
 import { CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
 
 // Configuration
@@ -115,6 +115,19 @@ export function computeTerraChainKey(chainId: string): `0x${string}` {
 }
 
 /**
+ * Compute the EVM chain key for a given numeric chain ID
+ * Matches contract: keccak256(abi.encode("EVM", bytes32(chainId)))
+ */
+export function computeEvmChainKey(chainId: number): `0x${string}` {
+  const chainIdBytes32 = pad(toHex(BigInt(chainId)), { size: 32 })
+  const encoded = encodeAbiParameters(
+    [{ type: 'string' }, { type: 'bytes32' }],
+    ['EVM', chainIdBytes32]
+  )
+  return keccak256(encoded)
+}
+
+/**
  * Encode a Terra address as bytes32
  * Uses keccak256 hash of the address for consistent 32-byte output
  */
@@ -122,6 +135,14 @@ export function encodeTerraAddress(terraAddress: string): `0x${string}` {
   // Terra addresses are 44 chars, too long for bytes32
   // Use keccak256 hash to get consistent 32-byte representation
   return keccak256(toHex(new TextEncoder().encode(terraAddress)))
+}
+
+/**
+ * Encode an EVM address as bytes32
+ * Left-pads the 20-byte address to 32 bytes
+ */
+export function encodeEvmAddress(evmAddress: string): `0x${string}` {
+  return pad(evmAddress as `0x${string}`, { size: 32 })
 }
 
 export function useBridgeDeposit(params?: UseDepositParams) {
@@ -243,11 +264,16 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   /**
    * Execute the deposit flow: approve (if needed) → deposit
    * Uses proper receipt waiting with timeout handling
+   *
+   * @param amount - Human-readable amount string
+   * @param destChainKey - Pre-computed destination chain key (bytes32)
+   * @param destAccount - Pre-encoded destination account (bytes32)
+   * @param tokenDecimals - Token decimals for amount parsing
    */
   const deposit = useCallback(async (
     amount: string,
-    destTerraChainId: string,
-    destTerraAddress: string,
+    destChainKey: `0x${string}`,
+    destAccount: `0x${string}`,
     tokenDecimals: number = DECIMALS.LUNC
   ) => {
     if (!isConnected || !userAddress) {
@@ -269,8 +295,6 @@ export function useBridgeDeposit(params?: UseDepositParams) {
 
     try {
       const amountWei = parseUnits(amount, tokenDecimals)
-      const destChainKey = computeTerraChainKey(destTerraChainId)
-      const destAccount = encodeTerraAddress(destTerraAddress)
 
       // Step 1: Check allowance
       setState({ status: 'checking-allowance' })

@@ -284,30 +284,33 @@ pub async fn terra_deposit_exists(pool: &PgPool, tx_hash: &str, nonce: i64) -> R
 
 /// Insert a new approval
 pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i64> {
-    use tracing::{debug, warn};
+    use eyre::eyre;
+    use tracing::debug;
 
-    // Pre-validate fields that have VARCHAR limits in the schema
+    // Strictly validate fields against VARCHAR(42) schema limits.
+    // Reject invalid data rather than silently truncating — truncation can
+    // corrupt addresses and create security/integrity risks.
     if approval.token.len() > 42 {
-        warn!(
-            token_len = approval.token.len(),
-            token = %approval.token,
-            "Approval token exceeds VARCHAR(42) limit, truncating to 42 chars"
-        );
+        return Err(eyre!(
+            "Approval token exceeds VARCHAR(42) limit: {} chars (value: {})",
+            approval.token.len(),
+            approval.token,
+        ));
     }
     if approval.recipient.len() > 42 {
-        warn!(
-            recipient_len = approval.recipient.len(),
-            recipient = %approval.recipient,
-            "Approval recipient exceeds VARCHAR(42) limit, truncating to 42 chars"
-        );
+        return Err(eyre!(
+            "Approval recipient exceeds VARCHAR(42) limit: {} chars (value: {})",
+            approval.recipient.len(),
+            approval.recipient,
+        ));
     }
     if let Some(ref fr) = approval.fee_recipient {
         if fr.len() > 42 {
-            warn!(
-                fee_recipient_len = fr.len(),
-                fee_recipient = %fr,
-                "Approval fee_recipient exceeds VARCHAR(42) limit, truncating to 42 chars"
-            );
+            return Err(eyre!(
+                "Approval fee_recipient exceeds VARCHAR(42) limit: {} chars (value: {})",
+                fr.len(),
+                fr,
+            ));
         }
     }
 
@@ -324,24 +327,9 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
         "Inserting approval into database"
     );
 
-    // Truncate fields to fit VARCHAR(42) — prevents silent DB errors
-    let token = if approval.token.len() > 42 {
-        &approval.token[..42]
-    } else {
-        &approval.token
-    };
-    let recipient = if approval.recipient.len() > 42 {
-        &approval.recipient[..42]
-    } else {
-        &approval.recipient
-    };
-    let fee_recipient = approval.fee_recipient.as_ref().map(|fr| {
-        if fr.len() > 42 {
-            &fr[..42]
-        } else {
-            fr.as_str()
-        }
-    });
+    let token = &approval.token;
+    let recipient = &approval.recipient;
+    let fee_recipient = approval.fee_recipient.as_deref();
 
     // Note: amount and fee are stored as NUMERIC(78,0) in the database, so we cast the text values
     // Use ON CONFLICT to handle duplicate inserts gracefully:

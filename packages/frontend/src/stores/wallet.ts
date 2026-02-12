@@ -18,6 +18,7 @@ import {
   WalletType,
   TerraWalletType,
 } from '../services/terra';
+import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
 
 // Re-export for convenience
 export { WalletName, WalletType };
@@ -45,6 +46,7 @@ export interface WalletState {
   
   // Actions
   connect: (walletName: WalletName, walletType?: WalletType) => Promise<void>;
+  connectSimulated: () => void;
   disconnect: () => Promise<void>;
   setBalances: (balances: { lunc?: string }) => void;
   setConnecting: (connecting: boolean) => void;
@@ -78,6 +80,21 @@ export const useWalletStore = create<WalletState>()(
       luncBalance: '0',
       connectingWallet: null,
       showWalletModal: false,
+
+      // Connect to simulated wallet (dev mode only - no real extension, cannot sign)
+      connectSimulated: () => {
+        const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
+        set({
+          connected: true,
+          connecting: false,
+          connectingWallet: null,
+          address: 'terra1development0mode0simulated0wallet00addr0',
+          walletType: 'station' as TerraWalletType,
+          connectionType: WalletType.EXTENSION,
+          chainId,
+          luncBalance: '0',
+        })
+      },
 
       // Connect to wallet
       connect: async (walletName: WalletName, walletTypeParam: WalletType = WalletType.EXTENSION) => {

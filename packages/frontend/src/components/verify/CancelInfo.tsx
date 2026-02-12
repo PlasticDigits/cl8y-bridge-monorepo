@@ -6,12 +6,12 @@ export interface CancelInfoProps {
 export function CancelInfo({ canceledAt, reason }: CancelInfoProps) {
   const date = new Date(canceledAt).toLocaleString()
   return (
-    <div className="bg-gray-700/30 border border-gray-500 rounded-lg p-4">
-      <p className="text-gray-400 font-medium flex items-center gap-2">
+    <div className="border-2 border-gray-400/40 bg-gray-700/20 p-4">
+      <p className="flex items-center gap-2 font-medium text-gray-300">
         <span>⊗</span> Withdrawal canceled
       </p>
-      <p className="text-gray-500 text-sm mt-1">{date}</p>
-      {reason && <p className="text-gray-500 text-sm mt-0.5">Reason: {reason}</p>}
+      <p className="mt-1 text-sm text-gray-400">{date}</p>
+      {reason && <p className="mt-0.5 text-sm text-gray-400">Reason: {reason}</p>}
     </div>
   )
 }

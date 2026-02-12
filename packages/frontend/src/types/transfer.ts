@@ -2,7 +2,7 @@ export type HashStatus = 'verified' | 'pending' | 'canceled' | 'fraudulent' | 'u
 
 export type TransferStatus = 'pending' | 'confirmed' | 'failed'
 
-export type TransferDirection = 'evm-to-terra' | 'terra-to-evm'
+export type TransferDirection = 'evm-to-terra' | 'terra-to-evm' | 'evm-to-evm'
 
 export interface TransferRecord {
   id: string

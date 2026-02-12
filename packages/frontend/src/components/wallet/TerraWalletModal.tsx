@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet'
 import { Modal } from '../ui'
 import { TerraWalletOption, getTerraWalletIcon } from './TerraWalletOption'
+import { DEV_MODE } from '../../utils/constants'
 
 export interface TerraWalletModalProps {
   isOpen: boolean
@@ -17,6 +18,7 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     isLeapAvailable,
     isCosmostationAvailable,
     connect,
+    connectSimulated,
     cancelConnection,
   } = useWallet()
 
@@ -77,7 +79,27 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={closeModal} title="Connect Wallet">
       <div className="p-6 space-y-3">
-        <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Browser Extension</p>
+        {DEV_MODE && (
+          <>
+            <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Dev Mode</p>
+            <TerraWalletOption
+              name="Simulated Terra Wallet"
+              description="No extension required (cannot sign transactions)"
+              available={true}
+              loading={false}
+              onClick={() => {
+                connectSimulated()
+                onClose()
+              }}
+              disabled={connecting}
+              icon="🔧"
+            />
+            <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">Browser Extension</p>
+          </>
+        )}
+        {!DEV_MODE && (
+          <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Browser Extension</p>
+        )}
         {wallets.slice(0, 4).map((w) => (
           <TerraWalletOption
             key={w.walletName}

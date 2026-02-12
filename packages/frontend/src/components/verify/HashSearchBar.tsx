@@ -35,21 +35,21 @@ export function HashSearchBar({ onSearch, disabled, placeholder }: HashSearchBar
           }}
           placeholder={placeholder ?? '0x... (64 hex chars)'}
           disabled={disabled}
-          className={`flex-1 bg-gray-900 border rounded-lg px-4 py-3 text-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
-            invalid ? 'border-red-500' : 'border-gray-700'
+          className={`flex-1 border-2 bg-[#161616] px-3 py-2 text-sm font-mono text-white focus:outline-none disabled:opacity-50 ${
+            invalid ? 'border-red-500 focus:border-red-500' : 'border-white/20 focus:border-cyan-300'
           }`}
           aria-invalid={invalid}
         />
         <button
           type="submit"
           disabled={disabled || !value.trim()}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-cta px-4 py-2 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
         >
           Verify
         </button>
       </div>
       {invalid && (
-        <p className="text-red-400 text-xs">Invalid transfer hash. Expected 64 hex characters (with or without 0x).</p>
+        <p className="text-xs text-red-400">Invalid transfer hash. Expected 64 hex characters (with or without 0x).</p>
       )}
     </form>
   )

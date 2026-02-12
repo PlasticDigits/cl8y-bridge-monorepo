@@ -100,8 +100,18 @@ describe('RecipientInput', () => {
     expect(screen.getByPlaceholderText('0x...')).toBeInTheDocument()
   })
 
+  it('should show 0x placeholder for evm-to-evm direction', () => {
+    render(<RecipientInput value="" onChange={() => {}} direction="evm-to-evm" />)
+    expect(screen.getByPlaceholderText('0x...')).toBeInTheDocument()
+  })
+
   it('should show validation error for invalid EVM address', () => {
     render(<RecipientInput value="not-valid" onChange={() => {}} direction="terra-to-evm" />)
+    expect(screen.getByText('Invalid address')).toBeInTheDocument()
+  })
+
+  it('should show validation error for invalid EVM address in evm-to-evm direction', () => {
+    render(<RecipientInput value="not-valid" onChange={() => {}} direction="evm-to-evm" />)
     expect(screen.getByText('Invalid address')).toBeInTheDocument()
   })
 
@@ -120,7 +130,7 @@ describe('FeeBreakdown', () => {
   it('should show bridge fee percentage', () => {
     render(<FeeBreakdown receiveAmount="99.7" />)
     expect(screen.getByText('Bridge Fee')).toBeInTheDocument()
-    expect(screen.getByText('0.3%')).toBeInTheDocument()
+    expect(screen.getByText('0.5%')).toBeInTheDocument()
   })
 
   it('should show estimated time', () => {

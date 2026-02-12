@@ -105,6 +105,10 @@ export function getCosmosChains(): ChainInfo[] {
   return supportedChains.filter((chain) => chain.type === 'cosmos')
 }
 
+export function getAllChains(): ChainInfo[] {
+  return [...supportedChains]
+}
+
 export function getExplorerTxUrl(chainId: string, txHash: string): string {
   const chain = getChainById(chainId)
   if (!chain || !chain.explorerUrl) return ''

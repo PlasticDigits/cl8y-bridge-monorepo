@@ -21,7 +21,8 @@ use base64::Engine;
 use eyre::Result;
 use reqwest::Client;
 use std::str::FromStr;
-use tracing::{debug, info, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{debug, error, info, warn};
 
 use crate::hash::{bytes32_to_hex, compute_transfer_hash};
 
@@ -109,83 +110,59 @@ pub struct ApprovalVerifier {
     evm_chain_id: [u8; 4],
     /// Terra's 4-byte chain ID
     terra_chain_id: [u8; 4],
+    /// C6: Counter for unknown source chain events (aids alerting)
+    unknown_source_chain_count: AtomicU64,
 }
 
 impl ApprovalVerifier {
-    /// Legacy constructor — uses native chain IDs. Prefer `with_v2_chain_ids` for V2.
+    /// Legacy constructor for tests — uses native chain IDs converted to V2 bytes.
+    ///
+    /// WARNING: Only use in tests where native == V2. In production,
+    /// use `new_v2()` with explicitly resolved chain IDs.
     #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new(
         evm_rpc_url: &str,
         evm_bridge_address: &str,
         evm_chain_id: u64,
         terra_lcd_url: &str,
         terra_bridge_address: &str,
-        _terra_chain_id: &str, // Legacy param, we use numeric IDs now
+        _terra_chain_id: &str,
     ) -> Self {
-        Self::with_v2_chain_ids(
+        Self::new_v2(
             evm_rpc_url,
             evm_bridge_address,
-            evm_chain_id,
             terra_lcd_url,
             terra_bridge_address,
-            _terra_chain_id,
-            None,
-            None,
+            (evm_chain_id as u32).to_be_bytes(),
+            2u32.to_be_bytes(),
         )
     }
 
     /// Create a verifier with explicit V2 chain IDs from ChainRegistry.
     ///
-    /// The V2 chain IDs are the 4-byte IDs assigned by ChainRegistry (e.g. 0x00000001),
-    /// NOT the native chain IDs (e.g. 31337 for Anvil). Using the correct V2 IDs is
-    /// critical for fraud detection: if the verifier can't identify the source chain,
-    /// it marks the approval as Pending instead of Invalid, preventing cancellation.
+    /// Both V2 chain IDs are **required**. The caller must resolve them from
+    /// configuration or by querying the bridge contract before constructing the
+    /// verifier. No fallback to native chain IDs is performed here — using native
+    /// IDs silently causes the verifier to misidentify chains, which can lead to
+    /// missed fraud detection or (prior to C6 fix) mass false-positive cancellations.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_v2_chain_ids(
+    pub fn new_v2(
         evm_rpc_url: &str,
         evm_bridge_address: &str,
-        evm_chain_id: u64,
         terra_lcd_url: &str,
         terra_bridge_address: &str,
-        _terra_chain_id: &str,
-        evm_v2_chain_id: Option<[u8; 4]>,
-        terra_v2_chain_id: Option<[u8; 4]>,
+        evm_v2_chain_id: [u8; 4],
+        terra_v2_chain_id: [u8; 4],
     ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| Client::new());
 
-        // Use V2 chain IDs from ChainRegistry if provided, otherwise fall back
-        // to native chain ID conversion (which may be wrong for V2 systems!)
-        let evm_chain_id_bytes = evm_v2_chain_id.unwrap_or_else(|| {
-            let native = (evm_chain_id as u32).to_be_bytes();
-            warn!(
-                native_chain_id = evm_chain_id,
-                native_bytes = %hex::encode(native),
-                "EVM_V2_CHAIN_ID not set — falling back to native chain ID. \
-                 This will fail if ChainRegistry uses different IDs (e.g. 0x00000001). \
-                 Set EVM_V2_CHAIN_ID to the bytes4 value from ChainRegistry."
-            );
-            native
-        });
-
-        let terra_chain_id_bytes = terra_v2_chain_id.unwrap_or_else(|| {
-            // Default to V2 ChainRegistry ID 2 for Terra
-            // Previously used 5 (localterra native) or 4 (columbus-5) which were WRONG
-            let default_v2 = 2u32.to_be_bytes();
-            warn!(
-                terra_chain_id = _terra_chain_id,
-                default_v2_bytes = %hex::encode(default_v2),
-                "TERRA_V2_CHAIN_ID not set — falling back to default V2 ID 0x00000002. \
-                 Set TERRA_V2_CHAIN_ID to the bytes4 value from ChainRegistry."
-            );
-            default_v2
-        });
-
         info!(
-            evm_v2_chain_id = %hex::encode(evm_chain_id_bytes),
-            terra_v2_chain_id = %hex::encode(terra_chain_id_bytes),
+            evm_v2_chain_id = %hex::encode(evm_v2_chain_id),
+            terra_v2_chain_id = %hex::encode(terra_v2_chain_id),
             "ApprovalVerifier initialized with V2 chain IDs"
         );
 
@@ -195,8 +172,9 @@ impl ApprovalVerifier {
             evm_bridge_address: evm_bridge_address.to_string(),
             terra_lcd_url: terra_lcd_url.to_string(),
             terra_bridge_address: terra_bridge_address.to_string(),
-            evm_chain_id: evm_chain_id_bytes,
-            terra_chain_id: terra_chain_id_bytes,
+            evm_chain_id: evm_v2_chain_id,
+            terra_chain_id: terra_v2_chain_id,
+            unknown_source_chain_count: AtomicU64::new(0),
         }
     }
 
@@ -245,27 +223,34 @@ impl ApprovalVerifier {
             return self.verify_terra_deposit(approval).await;
         }
 
-        // Unknown source chain — cannot verify, mark as invalid.
-        // In V2, if the source chain ID is not one of our configured chains,
-        // we cannot look up the deposit. This is likely fraud (spoofed src_chain)
-        // or a misconfiguration (V2 chain IDs not matching ChainRegistry values).
-        warn!(
+        // C6 FIX: Unknown source chain — return Pending, NOT Invalid.
+        //
+        // Returning Invalid here would trigger a cancellation transaction. If the
+        // chain IDs are misconfigured (e.g., wrong V2 chain ID in env vars), this
+        // would cause the canceler to cancel ALL valid approvals — a catastrophic
+        // false-positive. Instead, we return Pending so the approval is retried
+        // but no destructive action is taken.
+        //
+        // This can happen when:
+        // - V2 chain IDs are misconfigured (check EVM_V2_CHAIN_ID / TERRA_V2_CHAIN_ID)
+        // - A new chain was added to the bridge but the canceler hasn't been updated
+        // - Genuinely spoofed src_chain (but hash check above already caught that)
+        let count = self
+            .unknown_source_chain_count
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        error!(
             src_chain_id = %hex::encode(approval.src_chain_id),
             known_evm_id = %hex::encode(self.evm_chain_id),
             known_terra_id = %hex::encode(self.terra_chain_id),
             withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
             nonce = approval.nonce,
-            "Unknown source chain ID — cannot verify deposit. \
-             If this is unexpected, check EVM_V2_CHAIN_ID and TERRA_V2_CHAIN_ID config."
+            unknown_chain_count = count,
+            "UNKNOWN SOURCE CHAIN — cannot verify deposit, returning Pending (not cancelling). \
+             If this persists, check EVM_V2_CHAIN_ID and TERRA_V2_CHAIN_ID configuration. \
+             A sustained count indicates misconfiguration or a new unmonitored chain."
         );
-        Ok(VerificationResult::Invalid {
-            reason: format!(
-                "Unknown source chain 0x{} (known: EVM=0x{}, Terra=0x{})",
-                hex::encode(approval.src_chain_id),
-                hex::encode(self.evm_chain_id),
-                hex::encode(self.terra_chain_id)
-            ),
-        })
+        Ok(VerificationResult::Pending)
     }
 
     /// Verify a deposit exists on EVM source chain (V2)
@@ -514,6 +499,21 @@ impl ApprovalVerifier {
     fn is_terra_chain(&self, id: &[u8; 4]) -> bool {
         *id == self.terra_chain_id
     }
+
+    /// C6: Return the count of unknown source chain events (for metrics/alerting)
+    pub fn unknown_source_chain_count(&self) -> u64 {
+        self.unknown_source_chain_count.load(Ordering::Relaxed)
+    }
+
+    /// Return the configured EVM V2 chain ID (for startup validation)
+    pub fn evm_chain_id(&self) -> &[u8; 4] {
+        &self.evm_chain_id
+    }
+
+    /// Return the configured Terra V2 chain ID (for startup validation)
+    pub fn terra_chain_id(&self) -> &[u8; 4] {
+        &self.terra_chain_id
+    }
 }
 
 #[cfg(test)]
@@ -564,15 +564,13 @@ mod tests {
         let evm_v2: [u8; 4] = 1u32.to_be_bytes(); // 0x00000001
         let terra_v2: [u8; 4] = 2u32.to_be_bytes(); // 0x00000002
 
-        let verifier = ApprovalVerifier::with_v2_chain_ids(
+        let verifier = ApprovalVerifier::new_v2(
             "http://localhost:8545",
             "0x0000000000000000000000000000000000000001",
-            31337,
             "http://localhost:1317",
             "terra1...",
-            "localterra",
-            Some(evm_v2),
-            Some(terra_v2),
+            evm_v2,
+            terra_v2,
         );
 
         // V2 IDs should match
@@ -708,29 +706,104 @@ mod tests {
         );
     }
 
-    /// Test that an approval from an unknown chain is marked Invalid (not Pending).
+    /// C6: Test that an approval from an unknown chain returns Pending (safe),
+    /// NOT Invalid (which would trigger cancellation of potentially valid approvals).
     ///
-    /// Previously, unknown chains returned Pending, which meant the canceler
-    /// would retry forever but never actually cancel. Now unknown chains
-    /// return Invalid, triggering immediate cancellation.
+    /// History: Originally returned Pending (infinite retry), then was changed to
+    /// Invalid (mass cancellation risk on misconfiguration). Now returns Pending
+    /// with error-level logging to alert operators without taking destructive action.
+    ///
+    /// Note: If the hash check fails first (parameters don't match claimed hash),
+    /// that still returns Invalid — which is correct because the on-chain data
+    /// itself is inconsistent, regardless of chain ID configuration.
     #[tokio::test]
-    async fn test_unknown_chain_returns_invalid() {
-        let verifier = ApprovalVerifier::with_v2_chain_ids(
+    async fn test_unknown_chain_returns_pending_not_invalid() {
+        use crate::hash::compute_transfer_hash;
+
+        let verifier = ApprovalVerifier::new_v2(
             "http://localhost:8545",
             "0x0000000000000000000000000000000000000001",
-            31337,
             "http://localhost:1317",
             "terra1...",
-            "localterra",
-            Some(1u32.to_be_bytes()),
-            Some(2u32.to_be_bytes()),
+            1u32.to_be_bytes(),
+            2u32.to_be_bytes(),
         );
 
         // Create an approval with an unknown source chain (0x000000FF)
+        // but with a VALID hash (so the hash check passes and we reach
+        // the unknown-chain branch)
         let unknown_chain: [u8; 4] = [0, 0, 0, 0xFF];
+        let dest_chain: [u8; 4] = [0, 0, 0, 1];
+        let src_account = [0u8; 32];
+        let dest_account = [0u8; 32];
+        let dest_token = [0u8; 32];
+        let amount: u128 = 1000;
+        let nonce: u64 = 1;
+
+        let valid_hash = compute_transfer_hash(
+            &unknown_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &dest_token,
+            amount,
+            nonce,
+        );
+
         let approval = PendingApproval {
-            withdraw_hash: [0u8; 32], // Will fail hash check first
+            withdraw_hash: valid_hash,
             src_chain_id: unknown_chain,
+            dest_chain_id: dest_chain,
+            src_account,
+            dest_account,
+            dest_token,
+            amount,
+            nonce,
+            approved_at_timestamp: 0,
+            cancel_window: 300,
+        };
+
+        let result = verifier.verify(&approval).await.unwrap();
+        match result {
+            VerificationResult::Pending => {
+                // Correct: unknown chain returns Pending, no destructive action
+            }
+            VerificationResult::Invalid { reason } => {
+                panic!(
+                    "C6 regression: unknown chain should return Pending, not Invalid! Got: {}",
+                    reason
+                );
+            }
+            VerificationResult::Valid => {
+                panic!("Unknown chain should not return Valid!");
+            }
+        }
+
+        // Verify the counter was incremented
+        assert_eq!(
+            verifier.unknown_source_chain_count(),
+            1,
+            "Unknown source chain counter should be incremented"
+        );
+    }
+
+    /// Test that a hash mismatch still returns Invalid (this is safe because
+    /// the on-chain data itself is inconsistent, not a config issue).
+    #[tokio::test]
+    async fn test_hash_mismatch_returns_invalid() {
+        let verifier = ApprovalVerifier::new_v2(
+            "http://localhost:8545",
+            "0x0000000000000000000000000000000000000001",
+            "http://localhost:1317",
+            "terra1...",
+            1u32.to_be_bytes(),
+            2u32.to_be_bytes(),
+        );
+
+        // Approval with zeroed hash that won't match computed hash
+        let approval = PendingApproval {
+            withdraw_hash: [0u8; 32],
+            src_chain_id: [0, 0, 0, 0xFF],
             dest_chain_id: [0, 0, 0, 1],
             src_account: [0u8; 32],
             dest_account: [0u8; 32],
@@ -744,21 +817,13 @@ mod tests {
         let result = verifier.verify(&approval).await.unwrap();
         match result {
             VerificationResult::Invalid { reason } => {
-                // The hash check will fail first (computed hash != all-zeros withdraw_hash),
-                // which is also Invalid. Either way, we get Invalid not Pending.
                 assert!(
-                    reason.contains("Hash does not match")
-                        || reason.contains("Unknown source chain"),
-                    "Expected hash mismatch or unknown chain error, got: {}",
+                    reason.contains("Hash does not match"),
+                    "Expected hash mismatch error, got: {}",
                     reason
                 );
             }
-            VerificationResult::Pending => {
-                panic!("Unknown chain should return Invalid, not Pending!");
-            }
-            VerificationResult::Valid => {
-                panic!("Unknown chain should not return Valid!");
-            }
+            _ => panic!("Hash mismatch should return Invalid"),
         }
     }
 }

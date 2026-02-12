@@ -15,7 +15,7 @@ export function TokensPanel() {
 
   if (error) {
     return (
-      <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-4">
+      <div className="border-2 border-red-700/70 bg-red-900/25 p-4">
         <p className="text-red-400 text-sm">
           Failed to load tokens: {error instanceof Error ? error.message : 'Unknown error'}
         </p>
@@ -25,7 +25,7 @@ export function TokensPanel() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+      <h3 className="text-sm font-medium uppercase tracking-wider text-gray-300">
         Registered Tokens
       </h3>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -34,7 +34,7 @@ export function TokensPanel() {
         ))}
       </div>
       {(!tokens || tokens.length === 0) && (
-        <p className="text-gray-500 text-sm">No tokens registered on this network.</p>
+        <p className="text-sm text-gray-400">No tokens registered on this network.</p>
       )}
     </div>
   )

@@ -17,27 +17,27 @@ export function TokenCard({ token }: TokenCardProps) {
   }
 
   return (
-    <div className="bg-gray-900/50 rounded-lg border border-gray-700/50 p-4">
+    <div className="border-2 border-white/20 bg-[#161616] p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h4 className="font-medium text-white">
             {token.token}
             {!token.enabled && (
-              <span className="ml-2 text-xs text-yellow-500">(disabled)</span>
+              <span className="ml-2 text-xs text-amber-300">(disabled)</span>
             )}
           </h4>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="mt-1 text-sm text-gray-400">
             {bridgeMode} · Terra decimals: {token.terra_decimals} · EVM decimals: {token.evm_decimals}
           </p>
           {token.evm_token_address && (
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-gray-400 text-xs font-mono truncate max-w-[200px]">
+              <span className="max-w-[200px] truncate font-mono text-xs text-gray-300">
                 EVM: {token.evm_token_address}
               </span>
               <CopyButton text={token.evm_token_address} label="Copy EVM address" />
             </div>
           )}
-          <p className="text-gray-500 text-xs mt-2">
+          <p className="mt-2 text-xs text-gray-400">
             Chains: {chains.join(', ')}
           </p>
         </div>

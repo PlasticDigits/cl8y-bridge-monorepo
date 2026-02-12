@@ -119,17 +119,12 @@ impl TerraWriter {
                     id
                 }
                 Err(e) => {
-                    // Default to ChainRegistry ID 2 for Terra (matches local setup)
-                    // Previously used 5 (localterra native) or 4 (columbus-5) which were WRONG
-                    let default_id = ChainId::from_u32(2);
-                    warn!(
-                        error = %e,
-                        default_v2_id = %default_id.to_hex(),
-                        terra_chain_id = %terra_config.chain_id,
-                        "Failed to query chain ID from contract; using default V2 ID. \
-                         Set TERRA_THIS_CHAIN_ID explicitly if this is wrong."
-                    );
-                    default_id
+                    return Err(eyre::eyre!(
+                        "Cannot resolve Terra V2 chain ID: contract query failed ({}) and \
+                         TERRA_THIS_CHAIN_ID is not set. Set TERRA_THIS_CHAIN_ID to the V2 \
+                         chain ID from ChainRegistry (e.g., TERRA_THIS_CHAIN_ID=2).",
+                        e
+                    ));
                 }
             }
         };

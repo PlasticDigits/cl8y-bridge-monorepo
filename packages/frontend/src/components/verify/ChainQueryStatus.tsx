@@ -22,8 +22,8 @@ export function ChainQueryStatus({
   const allChains = [...new Set([...queriedChains, ...failedChains])]
 
   return (
-    <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
-      <h4 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+    <div className="border-2 border-white/20 bg-[#161616] p-4">
+      <h4 className="mb-3 text-sm font-medium uppercase tracking-wider text-gray-300">
         Queried Chains
       </h4>
       <div className="space-y-2">
@@ -41,21 +41,21 @@ export function ChainQueryStatus({
             color = 'text-red-400'
           } else if (isSource || isDest) {
             icon = '●'
-            color = isSource ? 'text-blue-400' : 'text-green-400'
+            color = isSource ? 'text-cyan-300' : 'text-[#b8ff3d]'
           } else if (queried && !loading) {
             icon = '○'
             color = 'text-gray-500'
           } else if (loading && queried) {
             icon = '⏳'
-            color = 'text-yellow-400'
+            color = 'text-amber-300'
           }
 
           return (
             <div key={chainName} className="flex items-center gap-2 text-sm">
               <span className={color}>{icon}</span>
               <span className="text-gray-300">{chainName}</span>
-              {isSource && <span className="text-blue-400 text-xs">(source)</span>}
-              {isDest && <span className="text-green-400 text-xs">(destination)</span>}
+              {isSource && <span className="text-cyan-300 text-xs">(source)</span>}
+              {isDest && <span className="text-[#b8ff3d] text-xs">(destination)</span>}
               {failed && <span className="text-red-400 text-xs">(RPC error)</span>}
             </div>
           )

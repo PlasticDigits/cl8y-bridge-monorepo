@@ -67,6 +67,12 @@ src/
     └── terra.rs      # Terra transaction submitter
 ```
 
+## Security
+
+### API and TLS
+
+The operator exposes an HTTP API (health, metrics, status, pending) on port 9092 by default. **The API does not support TLS.** If the API is exposed beyond localhost (e.g. by setting `OPERATOR_API_BIND_ADDRESS` to `0.0.0.0`), it **must** be placed behind a TLS-terminating reverse proxy (Nginx, Traefik, Caddy, etc.). Otherwise, bearer tokens (when `OPERATOR_API_TOKEN` is set) and response data are transmitted in plain text.
+
 ## Documentation
 
 See [docs/operator.md](../../docs/operator.md) for detailed documentation.

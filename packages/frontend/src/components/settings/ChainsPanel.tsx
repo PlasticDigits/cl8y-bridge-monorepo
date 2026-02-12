@@ -16,7 +16,7 @@ export function ChainsPanel() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
+      <h3 className="text-sm font-medium uppercase tracking-wider text-gray-300">
         Registered Chains
       </h3>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -33,7 +33,7 @@ export function ChainsPanel() {
         ))}
       </div>
       {chainsWithExplorer.length === 0 && (
-        <p className="text-gray-500 text-sm">No chains configured for this network.</p>
+        <p className="text-sm text-gray-400">No chains configured for this network.</p>
       )}
     </div>
   )

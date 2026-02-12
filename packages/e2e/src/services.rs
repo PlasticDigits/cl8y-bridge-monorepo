@@ -482,6 +482,10 @@ impl ServiceManager {
             ),
             // Skip migrations since e2e setup already ran them
             ("SKIP_MIGRATIONS".to_string(), "true".to_string()),
+            // V2 chain IDs from ChainRegistry (required after security hardening)
+            // EVM chain gets 0x00000001, Terra chain gets 0x00000002 in local setup
+            ("EVM_THIS_CHAIN_ID".to_string(), "1".to_string()),
+            ("TERRA_THIS_CHAIN_ID".to_string(), "2".to_string()),
         ];
 
         // Add Terra mnemonic if available
@@ -591,7 +595,7 @@ impl ServiceManager {
             if let Some(pid) = self.read_pid_file(OPERATOR_PID_FILE) {
                 if !self.is_process_running(pid) {
                     // Dump operator log tail for diagnosis
-                    let log_path = self.project_root.join("operator.log");
+                    let log_path = self.project_root.join(".operator.log");
                     if log_path.exists() {
                         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
                             let last_lines: Vec<&str> =

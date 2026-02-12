@@ -331,6 +331,116 @@ async fn test_amount_conversion() {
     println!("1 wLUNA (wei): {}", evm_amount);
 }
 
+// ============================================================================
+// Amount Precision Tests (NUMERIC(78,0) / u128 / U256 boundary values)
+// ============================================================================
+//
+// The DB stores amounts as NUMERIC(78,0), which can hold up to 2^256-1.
+// Amounts are read as TEXT and parsed by u128 or U256. These tests ensure
+// edge cases and weird values behave correctly to avoid financial accounting
+// errors or silent overflow/truncation.
+
+#[tokio::test]
+async fn test_amount_parsing_u128_edge_cases() {
+    // Zero
+    let s: &str = "0";
+    assert_eq!(s.parse::<u128>().unwrap(), 0u128);
+
+    // One
+    let s = "1";
+    assert_eq!(s.parse::<u128>().unwrap(), 1u128);
+
+    // u128::MAX (2^128 - 1) - must round-trip exactly
+    let max_s = "340282366920938463463374607431768211455";
+    let parsed = max_s.parse::<u128>().unwrap();
+    assert_eq!(parsed, u128::MAX);
+    assert_eq!(
+        parsed.to_string(),
+        max_s,
+        "u128::MAX must round-trip via decimal string"
+    );
+
+    // Value larger than u128::MAX - parse fails (overflow)
+    let overflow_s = "340282366920938463463374607431768211456";
+    assert!(
+        overflow_s.parse::<u128>().is_err(),
+        "Values > u128::MAX must fail to parse"
+    );
+
+    // Empty string fails
+    assert!("".parse::<u128>().is_err());
+
+    // Negative fails
+    assert!("-1".parse::<u128>().is_err());
+
+    // Decimal point fails for u128 (integer parse)
+    assert!("1.5".parse::<u128>().is_err());
+
+    // Leading zeros - valid, should parse
+    assert_eq!("000123".parse::<u128>().unwrap(), 123u128);
+}
+
+#[tokio::test]
+async fn test_amount_parsing_u256_edge_cases() {
+    use alloy::primitives::U256;
+    use std::str::FromStr;
+
+    // Zero
+    assert_eq!(U256::from_str("0").unwrap(), U256::ZERO);
+
+    // One
+    assert_eq!(U256::from_str("1").unwrap(), U256::from(1u64));
+
+    // U256::MAX (2^256 - 1) - NUMERIC(78,0) can hold this
+    let max_u256_s =
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    let parsed = U256::from_str(max_u256_s).unwrap();
+    assert_eq!(parsed, U256::MAX);
+    assert_eq!(
+        parsed.to_string(),
+        max_u256_s,
+        "U256::MAX must round-trip via decimal string"
+    );
+
+    // Fee calculation formula: amount * fee_bps / 10000 (matches EvmWriter::calculate_fee)
+    let fee_bps: u32 = 30;
+    let amount = U256::from_str("1000000").unwrap();
+    let fee = amount * U256::from(fee_bps) / U256::from(10000u64);
+    assert_eq!(fee, U256::from(3000u64), "30 bps of 1_000_000 = 3000");
+
+    // Zero amount -> zero fee
+    let amount_zero = U256::ZERO;
+    let fee_zero = amount_zero * U256::from(fee_bps) / U256::from(10000u64);
+    assert_eq!(fee_zero, U256::ZERO);
+
+    // Large amount -> fee truncates (integer division, no rounding)
+    let large = U256::from_str(max_u256_s).unwrap();
+    let fee_large = large * U256::from(fee_bps) / U256::from(10000u64);
+    assert!(fee_large > U256::ZERO);
+    assert!(fee_large < large);
+}
+
+#[tokio::test]
+async fn test_amount_string_roundtrip_preserves_precision() {
+    // When DB stores amount as NUMERIC(78,0) and reads as TEXT, the string must
+    // represent the exact integer. No scientific notation, no trailing zeros.
+    // These strings are what Postgres NUMERIC::text produces for typical values.
+
+    let cases = [
+        "0",
+        "1",
+        "1000000",
+        "1000000000000000000",                     // 1e18
+        "340282366920938463463374607431768211455", // u128::MAX
+    ];
+
+    for s in cases {
+        let u: u128 = s.parse().expect("valid u128");
+        let round_trip = u.to_string();
+        assert_eq!(round_trip, s, "Round-trip for {} must preserve string", s);
+    }
+}
+
 #[tokio::test]
 async fn test_keccak256_computation() {
     // Test keccak256 produces expected output

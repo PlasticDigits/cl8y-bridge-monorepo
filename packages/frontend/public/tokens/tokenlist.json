@@ -1,0 +1,73 @@
+{
+  "name": "USTR CMM Token List",
+  "version": "1.0.0",
+  "tokens": [
+    {
+      "symbol": "USTC",
+      "name": "TerraClassicUSD",
+      "denom": "uusd",
+      "type": "native",
+      "decimals": 6,
+      "gradient": "from-blue-500 to-cyan-500",
+      "iconColor": "text-blue-400"
+    },
+    {
+      "symbol": "LUNC",
+      "name": "Terra Luna Classic",
+      "denom": "uluna",
+      "type": "native",
+      "decimals": 6,
+      "gradient": "from-yellow-500 to-orange-500",
+      "iconColor": "text-yellow-400"
+    },
+    {
+      "symbol": "USTR",
+      "name": "USTR Token",
+      "address": "terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv",
+      "type": "cw20",
+      "decimals": 18,
+      "gradient": "from-amber-500 to-orange-500",
+      "iconColor": "text-amber-400"
+    },
+    {
+      "symbol": "ALPHA",
+      "name": "Alpha Token",
+      "address": "terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz",
+      "type": "cw20",
+      "decimals": 6,
+      "gradient": "from-purple-500 to-pink-500",
+      "iconColor": "text-purple-400",
+      "website": "https://luncuniverse.com/"
+    },
+    {
+      "symbol": "USTRIX",
+      "name": "USTRIX Token",
+      "address": "terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5",
+      "type": "cw20",
+      "decimals": 6,
+      "pool": {
+        "address": "terra1rvrywq2wxmzve8dm7sae2zx6er5969qnsl68pnh2xu2y6atdwq6qq9zq05",
+        "dex": "garuda",
+        "name": "GARUDA DEFI USTRIX/LUNC"
+      },
+      "website": "https://burnix.top",
+      "gradient": "from-red-500 to-blue-500",
+      "iconColor": "text-red-400"
+    },
+    {
+      "symbol": "SpaceUSD",
+      "name": "SpaceUSD Token",
+      "address": "terra1cvd5cgrs8rrl96hte34n57497u5f9cwuv3e6ztxgetkx4uzmcdyswv79zl",
+      "type": "cw20",
+      "decimals": 6,
+      "pool": {
+        "address": "terra1r6fvrss6na4wv3w6d0v3akpfrykuvycd65nfm4q0g02xccqcnr2shl5fmc",
+        "dex": "terraport",
+        "name": "Terraport SpaceUSD/USTC",
+        "quoteAsset": "ustc"
+      },
+      "gradient": "from-orange-500 to-slate-700",
+      "iconColor": "text-orange-400"
+    }
+  ]
+}
