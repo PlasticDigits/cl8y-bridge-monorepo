@@ -32,8 +32,9 @@ export function HashComparisonPanel({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Spinner />
+      <div className="flex flex-col items-center justify-center gap-3 py-12">
+        <Spinner branded size="lg" />
+        <span className="text-sm text-gray-400">Verifying across chains…</span>
       </div>
     )
   }
@@ -48,8 +49,15 @@ export function HashComparisonPanel({
 
   if (!source && !dest) {
     return (
-      <div className="border-2 border-white/20 bg-[#161616] py-12 text-center text-gray-400">
-        Enter a transfer hash and click Verify to look up source and destination data.
+      <div className="border-2 border-white/20 bg-[#161616] py-12 text-center">
+        <img
+          src="/assets/empty-verify.png"
+          alt=""
+          className="mx-auto mb-4 max-h-[414px] max-w-[446px] w-2/3 object-contain opacity-80"
+        />
+        <p className="text-gray-400">
+          Enter a transfer hash and click Verify to look up source and destination data.
+        </p>
       </div>
     )
   }

@@ -89,10 +89,17 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
       </p>
 
       {filtered.length === 0 ? (
-        <div className="border-2 border-white/20 bg-[#161616] p-4 text-center text-sm text-gray-400">
-          {records.length === 0
-            ? 'No verifications yet. Enter a hash above and verify to populate this monitor.'
-            : `No hashes match the "${filter}" filter.`}
+        <div className="border-2 border-white/20 bg-[#161616] p-8 text-center">
+          <img
+            src="/assets/empty-recent.png"
+            alt=""
+            className="mx-auto mb-4 max-h-[500px] max-w-[500px] w-full object-contain opacity-80"
+          />
+          <p className="text-sm text-gray-400">
+            {records.length === 0
+              ? 'No verifications yet. Enter a hash above and verify to populate this monitor.'
+              : `No hashes match the "${filter}" filter.`}
+          </p>
         </div>
       ) : (
         <div className="overflow-x-auto border-2 border-white/20">

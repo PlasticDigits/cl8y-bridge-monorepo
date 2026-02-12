@@ -31,49 +31,53 @@ export function NavBar() {
               to="/"
               end
               className={({ isActive }) =>
-                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
             >
+              <img src="/assets/nav-bridge.png" alt="" className="h-4 w-4 shrink-0 object-contain" />
               Bridge
             </NavLink>
             <NavLink
               to="/history"
               className={({ isActive }) =>
-                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
             >
+              <img src="/assets/nav-history.png" alt="" className="h-4 w-4 shrink-0 object-contain" />
               History
             </NavLink>
             <NavLink
               to="/verify"
               className={({ isActive }) =>
-                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
             >
+              <img src="/assets/nav-verify.png" alt="" className="h-4 w-4 shrink-0 object-contain" />
               Verify
             </NavLink>
             <NavLink
               to="/settings"
               className={({ isActive }) =>
-                `max-[479px]:flex-1 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
                 }`
               }
             >
+              <img src="/assets/nav-settings.png" alt="" className="h-4 w-4 shrink-0 object-contain" />
               Settings
           </NavLink>
         </nav>

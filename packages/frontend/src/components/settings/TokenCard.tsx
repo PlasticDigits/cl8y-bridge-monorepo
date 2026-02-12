@@ -1,5 +1,5 @@
 import type { TokenEntry } from '../../hooks/useTokenRegistry'
-import { CopyButton } from '../ui'
+import { CopyButton, TokenLogo } from '../ui'
 
 export interface TokenCardProps {
   token: TokenEntry
@@ -20,7 +20,8 @@ export function TokenCard({ token }: TokenCardProps) {
     <div className="border-2 border-white/20 bg-[#161616] p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h4 className="font-medium text-white">
+          <h4 className="flex items-center gap-2 font-medium text-white">
+            <TokenLogo tokenId={token.token} size={24} />
             {token.token}
             {!token.enabled && (
               <span className="ml-2 text-xs text-amber-300">(disabled)</span>

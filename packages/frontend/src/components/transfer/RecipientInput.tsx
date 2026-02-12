@@ -7,6 +7,7 @@ export interface RecipientInputProps {
   direction: TransferDirection
   placeholder?: string
   disabled?: boolean
+  onAutofill?: () => void
 }
 
 export function RecipientInput({
@@ -15,6 +16,7 @@ export function RecipientInput({
   direction,
   placeholder,
   disabled,
+  onAutofill,
 }: RecipientInputProps) {
   const isTerraDest = direction === 'evm-to-terra'
   const isEvmDest = direction === 'terra-to-evm' || direction === 'evm-to-evm'
@@ -30,7 +32,7 @@ export function RecipientInput({
   return (
     <div>
       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-300">
-        Recipient Address (optional)
+        Recipient Address
       </label>
       <input
         type="text"
@@ -45,7 +47,16 @@ export function RecipientInput({
       {value && !isValid && (
         <p className="mt-1 text-xs text-red-400">Invalid address</p>
       )}
-      <p className="mt-1 text-[11px] uppercase tracking-wide text-gray-400">Leave empty to use your connected wallet address</p>
+      {onAutofill && (
+        <button
+          type="button"
+          onClick={onAutofill}
+          disabled={disabled}
+          className="mt-1 text-xs font-medium text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-cyan-400"
+        >
+          Autofill with connected wallet
+        </button>
+      )}
     </div>
   )
 }

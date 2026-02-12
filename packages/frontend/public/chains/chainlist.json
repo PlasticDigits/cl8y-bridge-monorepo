@@ -1,0 +1,89 @@
+{
+  "name": "CL8Y Bridge Chain List",
+  "version": "1.0.0",
+  "chains": [
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "chainId": 31337,
+      "type": "evm",
+      "icon": "/chains/anvil-icon.png",
+      "rpcUrl": "http://localhost:8545",
+      "explorerUrl": "",
+      "tier": "local"
+    },
+    {
+      "id": "anvil2",
+      "name": "Anvil 2",
+      "chainId": 31338,
+      "type": "evm",
+      "icon": "/chains/anvil2-icon.png",
+      "rpcUrl": "http://localhost:8546",
+      "explorerUrl": "",
+      "tier": "local"
+    },
+    {
+      "id": "localterra",
+      "name": "LocalTerra",
+      "chainId": "localterra",
+      "type": "cosmos",
+      "icon": "/chains/localterra-icon.png",
+      "rpcUrl": "http://localhost:26657",
+      "lcdUrl": "http://localhost:1317",
+      "explorerUrl": "",
+      "tier": "local"
+    },
+    {
+      "id": "localterra2",
+      "name": "LocalTerra 2",
+      "chainId": "localterra2",
+      "type": "cosmos",
+      "icon": "/chains/localterra2-icon.png",
+      "rpcUrl": "http://localhost:26658",
+      "lcdUrl": "http://localhost:1318",
+      "explorerUrl": "",
+      "tier": "local"
+    },
+    {
+      "id": "ethereum",
+      "name": "Ethereum",
+      "chainId": 1,
+      "type": "evm",
+      "icon": "/chains/ethereum-icon.png",
+      "rpcUrl": "https://eth.llamarpc.com",
+      "explorerUrl": "https://etherscan.io",
+      "tier": "mainnet"
+    },
+    {
+      "id": "binancesmartchain",
+      "name": "BNB Chain",
+      "chainId": 56,
+      "type": "evm",
+      "icon": "/chains/binancesmartchain-icon.png",
+      "rpcUrl": "https://bsc-dataseed1.binance.org",
+      "explorerUrl": "https://bscscan.com",
+      "tier": "mainnet"
+    },
+    {
+      "id": "opbnb",
+      "name": "opBNB",
+      "chainId": 204,
+      "type": "evm",
+      "icon": "/chains/opbnb-icon.png",
+      "rpcUrl": "https://opbnb-mainnet-rpc.bnbchain.org",
+      "explorerUrl": "https://opbnb.bscscan.com",
+      "tier": "mainnet"
+    },
+    {
+      "id": "terraclassic",
+      "name": "Terra Classic",
+      "chainId": "columbus-5",
+      "type": "cosmos",
+      "icon": "/chains/terraclassic-icon.png",
+      "rpcUrl": "https://terra-classic-rpc.publicnode.com",
+      "lcdUrl": "https://terra-classic-lcd.publicnode.com",
+      "explorerUrl": "https://finder.terraclassic.community/mainnet",
+      "tier": "mainnet"
+    }
+  ]
+}

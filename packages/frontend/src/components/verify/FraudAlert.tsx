@@ -7,7 +7,8 @@ export function FraudAlert({ indicators }: FraudAlertProps) {
   return (
     <div className="bg-red-900/40 border border-red-600 rounded-lg p-4 animate-pulse">
       <p className="text-red-400 font-medium flex items-center gap-2">
-        <span>⚠</span> Fraud indicators detected
+        <img src="/assets/verify-fraud.png" alt="" className="h-5 w-5 shrink-0 object-contain" />
+        Fraud indicators detected
       </p>
       <ul className="mt-2 text-red-300/90 text-sm list-disc list-inside space-y-0.5">
         {indicators.map((ind, i) => (

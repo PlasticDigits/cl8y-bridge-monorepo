@@ -1,4 +1,5 @@
 import { BRIDGE_CONFIG } from '../../utils/constants'
+import { TokenLogo } from '../ui'
 
 export interface FeeBreakdownProps {
   receiveAmount: string
@@ -16,9 +17,12 @@ export function FeeBreakdown({ receiveAmount, symbol = 'LUNC' }: FeeBreakdownPro
         <span className="text-gray-300">Estimated Time</span>
         <span className="text-white">~{Math.ceil(BRIDGE_CONFIG.withdrawDelay / 60)} minutes</span>
       </div>
-      <div className="flex justify-between border-t border-white/20 pt-2 text-xs uppercase tracking-wide">
+      <div className="flex justify-between items-center gap-2 border-t border-white/20 pt-2 text-xs uppercase tracking-wide">
         <span className="text-gray-300">You will receive</span>
-        <span className="font-semibold text-[#b8ff3d]">{receiveAmount} {symbol}</span>
+        <span className="flex items-center gap-1.5 font-semibold text-[#b8ff3d]">
+          <TokenLogo symbol={symbol} size={16} />
+          {receiveAmount} {symbol}
+        </span>
       </div>
     </div>
   )

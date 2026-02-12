@@ -27,6 +27,11 @@ export function EvmWalletModal({ isOpen, onClose }: EvmWalletModalProps) {
 
   const handleConnect = (connector: Connector) => {
     setConnectingUid(connector.uid)
+    // Close our modal when WalletConnect is selected so its QR modal is visible
+    // (WalletConnect's modal would otherwise be hidden behind ours due to z-index)
+    if (connector.type === 'walletConnect') {
+      onClose()
+    }
     connect({ connector })
   }
 

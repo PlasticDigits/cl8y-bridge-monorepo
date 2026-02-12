@@ -3,10 +3,12 @@
  *
  * Per-network configuration for all supported bridge chains.
  * Used by multi-chain hash verification to query deposits/withdraws across chains.
+ * Display info (name, icon) comes from chainlist.json when available.
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
 import { DEFAULT_NETWORK } from './constants'
+import { getChainlist, getChainlistEntry } from './chainlist'
 
 export type NetworkTier = 'local' | 'testnet' | 'mainnet'
 
@@ -126,10 +128,13 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
 /**
  * Get chains available for transfers in the current network.
  * Returns ChainInfo[] suitable for source/dest selectors, including Terra <> EVM and EVM <> EVM routes.
+ * Uses chainlist.json for name and icon when available, otherwise falls back to CHAIN_DISPLAY.
  */
 export function getChainsForTransfer(): ChainInfo[] {
   const tier = DEFAULT_NETWORK as NetworkTier
+  const chainlist = getChainlist()
   return Object.entries(BRIDGE_CHAINS[tier]).map(([id, config]) => {
+    const chainlistEntry = getChainlistEntry(chainlist, id, config.chainId)
     const display = CHAIN_DISPLAY[id] ?? {
       icon: '○',
       explorerUrl: '',
@@ -137,12 +142,12 @@ export function getChainsForTransfer(): ChainInfo[] {
     }
     return {
       id,
-      name: config.name,
+      name: chainlistEntry?.name ?? config.name,
       chainId: config.chainId,
       type: config.type,
-      icon: display.icon,
+      icon: chainlistEntry?.icon ?? display.icon,
       rpcUrl: config.rpcUrl,
-      explorerUrl: display.explorerUrl,
+      explorerUrl: chainlistEntry?.explorerUrl ?? display.explorerUrl,
       nativeCurrency: display.nativeCurrency,
     }
   })

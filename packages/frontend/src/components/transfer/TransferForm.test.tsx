@@ -29,6 +29,7 @@ vi.mock('../../hooks/useWallet', () => ({
     connected: false,
     address: undefined,
     luncBalance: '0',
+    setShowWalletModal: vi.fn(),
   }),
 }))
 
@@ -119,16 +120,18 @@ describe('TransferForm', () => {
 
     it('should render submit button', () => {
       render(<TransferForm />)
-      const submitButton = screen.getByRole('button', { name: /Connect|Bridge/i })
+      const submitButton = document.querySelector('form button[type="submit"]')
       expect(submitButton).toBeInTheDocument()
     })
 
-    it('should show all chain types in source selector', () => {
+    it('should show all chain types in source selector', async () => {
+      const user = userEvent.setup()
       render(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
       const sourceSelect = selects[0]
-      const options = sourceSelect.querySelectorAll('option')
-      const optionTexts = Array.from(options).map((o) => o.textContent)
+      await user.click(sourceSelect)
+      const options = screen.getAllByRole('option')
+      const optionTexts = options.map((o) => o.textContent)
       // Should include both Terra and EVM chains
       expect(optionTexts.some((t) => t?.includes('Terra'))).toBe(true)
       expect(optionTexts.some((t) => t?.includes('Ethereum') || t?.includes('BNB') || t?.includes('Anvil'))).toBe(true)
@@ -138,13 +141,13 @@ describe('TransferForm', () => {
   describe('Submit Button States', () => {
     it('should show Connect Wallet when not connected', () => {
       render(<TransferForm />)
-      const submitButton = screen.getByRole('button', { name: /Connect.*Wallet/i })
-      expect(submitButton).toBeInTheDocument()
+      const submitButton = document.querySelector('form button[type="submit"]')
+      expect(submitButton).toHaveTextContent(/Connect (Terra|EVM) Wallet/)
     })
 
     it('should be disabled when wallet not connected', () => {
       render(<TransferForm />)
-      const submitButton = screen.getByRole('button', { name: /Connect|Bridge/i })
+      const submitButton = document.querySelector('form button[type="submit"]')
       expect(submitButton).toBeDisabled()
     })
   })
@@ -179,18 +182,14 @@ describe('TransferForm', () => {
       const selects = screen.getAllByRole('combobox')
       const sourceSelect = selects[0]
       const destSelect = selects[1]
-      const initialSource = sourceSelect.querySelector('option:checked')?.textContent
-      const initialDest = destSelect.querySelector('option:checked')?.textContent
-      const buttons = screen.getAllByRole('button')
-      const swapButton = buttons.find((btn) => btn.querySelector('svg') && !btn.textContent?.includes('Bridge'))
-      if (swapButton) {
-        await user.click(swapButton)
-        const newSource = sourceSelect.querySelector('option:checked')?.textContent
-        const newDest = destSelect.querySelector('option:checked')?.textContent
-        // After swap, the old source should now be the destination
-        expect(newSource).toBe(initialDest)
-        expect(newDest).toBe(initialSource)
-      }
+      const initialSourceText = sourceSelect.textContent
+      const initialDestText = destSelect.textContent
+      const swapButton = screen.getAllByRole('button').find((btn) => btn.querySelector('svg') && !btn.textContent?.includes('Bridge'))
+      expect(swapButton).toBeInTheDocument()
+      await user.click(swapButton!)
+      // After swap, source shows previous dest and vice versa
+      expect(sourceSelect.textContent).toBe(initialDestText)
+      expect(destSelect.textContent).toBe(initialSourceText)
     })
 
     it('should support selecting EVM source for evm-to-evm transfer', async () => {
@@ -200,30 +199,31 @@ describe('TransferForm', () => {
       const sourceSelect = selects[0]
       const destSelect = selects[1]
 
-      // Select an EVM chain as source
-      await user.selectOptions(sourceSelect, 'bsc')
+      // Select BSC as source via custom dropdown
+      await user.click(sourceSelect)
+      await user.click(screen.getByRole('option', { name: /BNB Chain/ }))
 
       // Dest should have other chains but not BSC (same chain filtered out)
-      const destOptions = Array.from(destSelect.querySelectorAll('option')).map((o) => o.getAttribute('value'))
-      expect(destOptions).not.toContain('bsc')
-      // Should include other EVM chains and Terra
-      expect(destOptions.some((v) => v === 'ethereum' || v === 'anvil')).toBe(true)
-      expect(destOptions).toContain('terra')
+      await user.click(destSelect)
+      const destOptions = screen.getAllByRole('option')
+      const destChainIds = destOptions.map((o) => o.getAttribute('data-chainid'))
+      expect(destChainIds).not.toContain('bsc')
+      expect(destChainIds.some((v) => v === 'ethereum' || v === 'anvil')).toBe(true)
+      expect(destChainIds).toContain('terra')
     })
 
     it('should filter out cosmos dest when source is cosmos', async () => {
       const user = userEvent.setup()
       render(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
-      const sourceSelect = selects[0]
       const destSelect = selects[1]
 
-      // Source defaults to terra (cosmos), check dest does NOT include other cosmos chains
-      // and only includes EVM chains
-      await user.selectOptions(sourceSelect, 'terra')
-      const destOptions = Array.from(destSelect.querySelectorAll('option')).map((o) => o.getAttribute('value'))
-      expect(destOptions).not.toContain('terra')
-      expect(destOptions.every((v) => {
+      // Source defaults to terra (cosmos), open dest dropdown and check only EVM chains
+      await user.click(destSelect)
+      const destOptions = screen.getAllByRole('option')
+      const destChainIds = destOptions.map((o) => o.getAttribute('data-chainid'))
+      expect(destChainIds).not.toContain('terra')
+      expect(destChainIds.every((v) => {
         const chain = mockChainsForTransfer.find((c) => c.id === v)
         return chain?.type === 'evm'
       })).toBe(true)
@@ -239,9 +239,9 @@ describe('TransferForm', () => {
       expect(recipientInput).toHaveValue('0x1234567890abcdef')
     })
 
-    it('should show helper text about optional recipient', () => {
+    it('should show autofill button for recipient', () => {
       render(<TransferForm />)
-      expect(screen.getByText(/Leave empty to use your connected wallet/i)).toBeInTheDocument()
+      expect(screen.getByText('Autofill with connected wallet')).toBeInTheDocument()
     })
   })
 

@@ -4,6 +4,7 @@ import { DECIMALS } from '../../utils/constants'
 import { TransferStatusBadge } from './TransferStatusBadge'
 import { getExplorerTxUrl } from '../../lib/chains'
 import type { TransferRecord } from '../../types/transfer'
+import { TokenLogo } from '../ui'
 
 export interface RecentTransfersProps {
   limit?: number
@@ -37,6 +38,7 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
     <div className="flex items-center justify-between border-2 border-white/20 bg-[#161616] p-2.5">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
+          <TokenLogo symbol="LUNC" size={18} />
           <span className="text-sm font-semibold text-white">
             {formatAmount(tx.amount, DECIMALS.LUNC)} LUNC
           </span>

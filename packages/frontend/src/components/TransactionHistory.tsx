@@ -39,16 +39,16 @@ export function TransactionHistory() {
     }
   }
 
-  const getStatusIcon = (status: Transaction['status']) => {
+  const getStatusIconSrc = (status: Transaction['status']) => {
     switch (status) {
       case 'confirmed':
-        return '✓'
+        return '/assets/status-success.png'
       case 'pending':
-        return '⏳'
+        return '/assets/status-pending.png'
       case 'failed':
-        return '✗'
+        return '/assets/status-failed.png'
       default:
-        return '?'
+        return null
     }
   }
 
@@ -60,21 +60,11 @@ export function TransactionHistory() {
   if (transactions.length === 0) {
     return (
       <div className="text-center py-12">
-        <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-          <svg
-            className="w-8 h-8 text-gray-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-            />
-          </svg>
-        </div>
+        <img
+          src="/assets/empty-history.png"
+          alt=""
+          className="mx-auto mb-4 max-h-[485px] max-w-[500px] w-full object-contain opacity-90"
+        />
         <h3 className="text-lg font-medium text-white mb-2">No transactions yet</h3>
         <p className="text-gray-400 text-sm">
           Your bridge transactions will appear here
@@ -95,9 +85,15 @@ export function TransactionHistory() {
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <span className={getStatusColor(tx.status)}>
-                  {getStatusIcon(tx.status)}
-                </span>
+                {getStatusIconSrc(tx.status) ? (
+                  <img
+                    src={getStatusIconSrc(tx.status)!}
+                    alt=""
+                    className="h-4 w-4 shrink-0 object-contain"
+                  />
+                ) : (
+                  <span className={getStatusColor(tx.status)}>?</span>
+                )}
                 <span className="text-white font-medium">
                   {tx.amount} LUNA
                 </span>

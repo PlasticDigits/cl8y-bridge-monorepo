@@ -11,8 +11,20 @@ const variantMap: Record<TransferStatus, 'success' | 'warning' | 'error' | 'neut
   failed: 'error',
 }
 
+const statusIconMap: Record<TransferStatus, string> = {
+  pending: '/assets/status-pending.png',
+  confirmed: '/assets/status-success.png',
+  failed: '/assets/status-failed.png',
+}
+
 export function TransferStatusBadge({ status }: TransferStatusBadgeProps) {
   const variant = variantMap[status] ?? 'neutral'
   const label = status.charAt(0).toUpperCase() + status.slice(1)
-  return <Badge variant={variant}>{label}</Badge>
+  const iconSrc = statusIconMap[status]
+  return (
+    <Badge variant={variant} className="inline-flex items-center gap-1.5">
+      {iconSrc && <img src={iconSrc} alt="" className="h-3.5 w-3.5 shrink-0 object-contain" />}
+      {label}
+    </Badge>
+  )
 }

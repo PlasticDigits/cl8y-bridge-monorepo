@@ -11,6 +11,7 @@ import {
 } from '../../hooks/useBridgeDeposit'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useTransferStore } from '../../stores/transfer'
+import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer } from '../../utils/bridgeChains'
 import type { ChainInfo } from '../../lib/chains'
@@ -80,7 +81,8 @@ function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): Chai
 
 export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
-  const { connected: isTerraConnected, address: terraAddress, luncBalance } = useWallet()
+  const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
+  const { setShowEvmWalletModal } = useUIStore()
   const { recordTransfer } = useTransferStore()
 
   const allChains = useMemo(() => getChainsForTransfer(), [])
@@ -318,7 +320,20 @@ export function TransferForm() {
       />
       <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled} />
       <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} />
-      <RecipientInput value={recipient} onChange={setRecipient} direction={direction} />
+      <RecipientInput
+        value={recipient}
+        onChange={setRecipient}
+        direction={direction}
+        onAutofill={() => {
+          if (isDestEvm) {
+            if (evmAddress) setRecipient(evmAddress)
+            else setShowEvmWalletModal(true)
+          } else {
+            if (terraAddress) setRecipient(terraAddress)
+            else setShowWalletModal(true)
+          }
+        }}
+      />
       <FeeBreakdown receiveAmount={receiveAmount} />
 
       <button

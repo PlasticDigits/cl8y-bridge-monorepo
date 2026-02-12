@@ -3,6 +3,7 @@ import { TransferStatusBadge } from './TransferStatusBadge'
 import { getExplorerTxUrl } from '../../lib/chains'
 import { formatAmount } from '../../utils/format'
 import { DECIMALS } from '../../utils/constants'
+import { TokenLogo } from '../ui'
 
 export function ActiveTransferCard() {
   const { activeTransfer } = useTransferStore()
@@ -16,11 +17,19 @@ export function ActiveTransferCard() {
   return (
     <div className="border-2 border-amber-500/40 bg-amber-900/20 p-3">
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-amber-300">Transfer in progress</span>
+        <div className="flex items-center gap-2">
+          <img
+            src="/assets/status-pending.png"
+            alt=""
+            className="h-4 w-4 shrink-0 object-contain"
+          />
+          <span className="text-xs font-semibold uppercase tracking-wide text-amber-300">Transfer in progress</span>
+        </div>
         <TransferStatusBadge status={activeTransfer.status} />
       </div>
       <div className="space-y-1 text-sm text-gray-300">
-        <p>
+        <p className="flex items-center gap-1.5">
+          <TokenLogo symbol="LUNC" size={18} />
           {formatAmount(activeTransfer.amount, DECIMALS.LUNC)} LUNC {activeTransfer.direction === 'terra-to-evm' ? '→' : '←'}{' '}
           {activeTransfer.sourceChain} to {activeTransfer.destChain}
         </p>

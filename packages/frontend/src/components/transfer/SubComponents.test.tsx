@@ -26,16 +26,20 @@ describe('SourceChainSelector', () => {
     expect(screen.getByText('From')).toBeInTheDocument()
   })
 
-  it('should render chain options', () => {
+  it('should render chain options', async () => {
+    const user = userEvent.setup()
     render(<SourceChainSelector chains={mockChains} value="ethereum" onChange={() => {}} />)
     expect(screen.getByText(/Ethereum/)).toBeInTheDocument()
+    await user.click(screen.getByRole('combobox'))
     expect(screen.getByText(/BNB Chain/)).toBeInTheDocument()
   })
 
-  it('should call onChange when selection changes', () => {
+  it('should call onChange when selection changes', async () => {
+    const user = userEvent.setup()
     const onChange = vi.fn()
     render(<SourceChainSelector chains={mockChains} value="ethereum" onChange={onChange} />)
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'bsc' } })
+    await user.click(screen.getByRole('combobox'))
+    await user.click(screen.getByRole('option', { name: /BNB Chain/ }))
     expect(onChange).toHaveBeenCalledWith('bsc')
   })
 
@@ -120,9 +124,16 @@ describe('RecipientInput', () => {
     expect(screen.queryByText('Invalid address')).not.toBeInTheDocument()
   })
 
-  it('should show helper text', () => {
+  it('should show autofill button when onAutofill is provided', () => {
+    render(
+      <RecipientInput value="" onChange={() => {}} direction="terra-to-evm" onAutofill={() => {}} />
+    )
+    expect(screen.getByText('Autofill with connected wallet')).toBeInTheDocument()
+  })
+
+  it('should not show autofill button when onAutofill is not provided', () => {
     render(<RecipientInput value="" onChange={() => {}} direction="terra-to-evm" />)
-    expect(screen.getByText(/Leave empty to use your connected wallet/)).toBeInTheDocument()
+    expect(screen.queryByText('Autofill with connected wallet')).not.toBeInTheDocument()
   })
 })
 

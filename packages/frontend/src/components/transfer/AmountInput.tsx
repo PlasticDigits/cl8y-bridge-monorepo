@@ -1,3 +1,5 @@
+import { TokenLogo } from '../ui'
+
 export interface AmountInputProps {
   value: string
   onChange: (value: string) => void
@@ -39,6 +41,7 @@ export function AmountInput({
               MAX
             </button>
           )}
+          <TokenLogo symbol={symbol} size={18} />
           <span className="text-xs uppercase tracking-wide text-gray-400">{symbol}</span>
         </div>
       </div>

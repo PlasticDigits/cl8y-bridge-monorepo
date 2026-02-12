@@ -80,11 +80,11 @@ export function WalletButton() {
             </>
           ) : (
             <>
-              <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" />
-              </svg>
-              <span className="hidden sm:inline">Connect Wallet</span>
-              <span className="sm:hidden">Connect</span>
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
+                <img src="/chains/terraclassic-icon.png" alt="" className="h-full w-full object-contain" />
+              </span>
+              <span className="hidden sm:inline">CONNECT TC</span>
+              <span className="sm:hidden">TC</span>
             </>
           )}
         </span>
