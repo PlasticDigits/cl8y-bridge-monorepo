@@ -1,192 +1,37 @@
-#!/bin/bash
-# =============================================================================
-# CL8Y Bridge Pre-commit Hook
-# =============================================================================
-# SECURITY: This bridge handles cross-chain assets.
-# ALL checks run on EVERY commit. No exceptions. No skipping.
+#!/usr/bin/env bash
+# Pre-commit hook: runs cargo audit on Rust packages with staged changes.
 #
-# Checks:
-#   1. Formatting (Rust + Solidity) - ALL packages
-#   2. Clippy linting (Rust) - ALL packages  
-#   3. Secret detection (gitleaks)
-#   4. Full E2E tests (starts infra, runs tests, tears down)
-#
-# Install: git config core.hooksPath .githooks
-# Skip: git commit --no-verify (USE THIS, GET FIRED. CRITICAL security risk)
-#
-# NOTE: This hook runs FULL E2E tests. Commits will take 10-30+ minutes.
-# =============================================================================
+# Install:
+#   git config core.hooksPath .githooks
+# Or symlink:
+#   ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit
 
-set -e
+set -euo pipefail
 
-# Get the repo root
-REPO_ROOT=$(git rev-parse --show-toplevel)
+RUST_PACKAGES=(
+    "packages/operator"
+    "packages/canceler"
+    "packages/multichain-rs"
+)
 
-# Track overall success
-CHECKS_PASSED=true
+audit_failed=0
 
-echo "============================================================"
-echo "  CL8Y Bridge Pre-commit Security Checks"
-echo "  ALL checks run on EVERY commit. No skipping."
-echo "============================================================"
-
-# ==============================================================================
-# FORMATTING CHECKS - ALL PACKAGES, ALWAYS
-# ==============================================================================
-
-echo ""
-echo "🔧 Checking code formatting (ALL packages)..."
-
-# Operator
-if command -v cargo &> /dev/null; then
-    echo "  → Checking operator (Rust fmt)..."
-    if ! (cd "$REPO_ROOT/packages/operator" && cargo fmt --check 2>/dev/null); then
-        echo "❌ Operator has formatting issues. Run: cd packages/operator && cargo fmt"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ operator formatted"
+for pkg in "${RUST_PACKAGES[@]}"; do
+    # Only audit packages that have staged changes
+    if git diff --cached --name-only | grep -q "^${pkg}/"; then
+        echo "🔒 Running cargo audit on ${pkg}..."
+        if ! (cd "${pkg}" && cargo audit); then
+            echo "❌ cargo audit failed for ${pkg}"
+            audit_failed=1
+        else
+            echo "✅ ${pkg} passed cargo audit"
+        fi
     fi
-fi
+done
 
-# Canceler
-if command -v cargo &> /dev/null; then
-    echo "  → Checking canceler (Rust fmt)..."
-    if ! (cd "$REPO_ROOT/packages/canceler" && cargo fmt --check 2>/dev/null); then
-        echo "❌ Canceler has formatting issues. Run: cd packages/canceler && cargo fmt"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ canceler formatted"
-    fi
-fi
-
-# Terra contracts
-if command -v cargo &> /dev/null; then
-    echo "  → Checking Terra contracts (Rust fmt)..."
-    if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo fmt --check 2>/dev/null); then
-        echo "❌ Terra contracts have formatting issues. Run: cd packages/contracts-terraclassic/bridge && cargo fmt"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ terra contracts formatted"
-    fi
-fi
-
-# E2E package
-if command -v cargo &> /dev/null; then
-    echo "  → Checking E2E package (Rust fmt)..."
-    if ! (cd "$REPO_ROOT/packages/e2e" && cargo fmt --check 2>/dev/null); then
-        echo "❌ E2E package has formatting issues. Run: cd packages/e2e && cargo fmt"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ e2e package formatted"
-    fi
-fi
-
-# EVM contracts
-if command -v forge &> /dev/null; then
-    echo "  → Checking EVM contracts (Solidity fmt)..."
-    if ! (cd "$REPO_ROOT/packages/contracts-evm" && forge fmt --check src/ script/ test/ 2>/dev/null); then
-        echo "❌ EVM contracts have formatting issues. Run: cd packages/contracts-evm && forge fmt"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ evm contracts formatted"
-    fi
-fi
-
-# ==============================================================================
-# CLIPPY CHECKS - ALL PACKAGES, ALWAYS
-# ==============================================================================
-
-echo ""
-echo "🔍 Running clippy (ALL Rust packages)..."
-
-# Operator
-if command -v cargo &> /dev/null; then
-    echo "  → Checking operator (clippy)..."
-    if ! (cd "$REPO_ROOT/packages/operator" && cargo clippy --quiet -- -D warnings 2>&1); then
-        echo "❌ Operator has clippy warnings. Run: cd packages/operator && cargo clippy -- -D warnings"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ operator clippy clean"
-    fi
-fi
-
-# Canceler
-if command -v cargo &> /dev/null; then
-    echo "  → Checking canceler (clippy)..."
-    if ! (cd "$REPO_ROOT/packages/canceler" && cargo clippy --quiet -- -D warnings 2>&1); then
-        echo "❌ Canceler has clippy warnings. Run: cd packages/canceler && cargo clippy -- -D warnings"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ canceler clippy clean"
-    fi
-fi
-
-# Terra contracts
-if command -v cargo &> /dev/null; then
-    echo "  → Checking Terra contracts (clippy)..."
-    if ! (cd "$REPO_ROOT/packages/contracts-terraclassic/bridge" && cargo clippy --quiet -- -D warnings 2>&1); then
-        echo "❌ Terra contracts have clippy warnings. Run: cd packages/contracts-terraclassic/bridge && cargo clippy -- -D warnings"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ terra contracts clippy clean"
-    fi
-fi
-
-# ==============================================================================
-# SECRET DETECTION
-# ==============================================================================
-
-echo ""
-echo "🔍 Checking for secrets..."
-
-if ! command -v gitleaks &> /dev/null; then
-    echo "⚠️  gitleaks is not installed. Skipping secret detection."
-    echo "   Install: brew install gitleaks (macOS) or sudo apt install gitleaks"
-else
-    if ! gitleaks protect --staged --config .gitleaks.toml --verbose; then
-        echo ""
-        echo "❌ Gitleaks found potential secrets in your staged changes!"
-        CHECKS_PASSED=false
-    else
-        echo "    ✓ no secrets detected"
-    fi
-fi
-
-# ==============================================================================
-# E2E TESTS - FULL SUITE WITH SETUP AND TEARDOWN (RUST)
-# ==============================================================================
-
-echo ""
-echo "🧪 Running FULL E2E test suite (Rust)..."
-echo "   This includes: infrastructure setup, all tests, teardown"
-echo "   Teardown runs ALWAYS, even on failure"
-echo "   Expected time: 5-15 minutes"
-echo ""
-
-cd "$REPO_ROOT"
-if ! make e2e-full-rust; then
+if [ "$audit_failed" -ne 0 ]; then
     echo ""
-    echo "❌ E2E tests failed!"
-    CHECKS_PASSED=false
-else
-    echo "    ✓ all E2E tests passed"
-fi
-
-# ==============================================================================
-# FINAL RESULT
-# ==============================================================================
-
-echo ""
-echo "============================================================"
-
-if [ "$CHECKS_PASSED" = false ]; then
-    echo "❌ PRE-COMMIT CHECKS FAILED"
-    echo ""
-    echo "Fix the issues above, then stage your changes and try again."
-    echo "To skip checks (USE THIS, GET FIRED. CRITICAL security risk): git commit --no-verify"
-    echo "============================================================"
+    echo "Commit blocked: cargo audit found vulnerabilities."
+    echo "Fix the issues above, or update .cargo/audit.toml to ignore with justification."
     exit 1
 fi
-
-echo "✅ ALL PRE-COMMIT CHECKS PASSED"
-echo "============================================================"

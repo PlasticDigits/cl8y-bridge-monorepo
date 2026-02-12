@@ -78,15 +78,22 @@ pub struct EvmWriter {
     last_polled_block: u64,
     /// Hashes already approved by this operator (avoid re-processing)
     approved_hashes: HashMap<[u8; 32], Instant>,
+    /// Source chain verification endpoints, keyed by V2 4-byte chain ID.
+    /// Used for routing cross-chain deposit verification to the correct source chain RPC/bridge.
+    source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
 }
 
 impl EvmWriter {
     /// Create a new EVM writer
+    ///
+    /// `source_chain_endpoints` maps V2 4-byte chain IDs to (rpc_url, bridge_address)
+    /// for routing cross-chain deposit verification to the correct source chain.
     pub async fn new(
         evm_config: &EvmConfig,
         terra_config: Option<&TerraConfig>,
         fee_config: &FeeConfig,
         db: PgPool,
+        source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     ) -> Result<Self> {
         let bridge_address =
             Address::from_str(&evm_config.bridge_address).wrap_err("Invalid bridge address")?;
@@ -164,6 +171,7 @@ impl EvmWriter {
             pending_executions: HashMap::new(),
             last_polled_block: 0,
             approved_hashes: HashMap::new(),
+            source_chain_endpoints,
         })
     }
 
@@ -394,13 +402,13 @@ impl EvmWriter {
         Ok(())
     }
 
-    /// Verify a deposit exists on the source chain
+    /// Verify a deposit exists on the source chain.
     ///
-    /// For EVM source chains: calls getDeposit(hash) on this chain's bridge
-    /// (in local setup, source and dest are the same Anvil chain).
-    /// For Terra source chains: queries Terra LCD for deposit verification.
-    ///
-    /// Returns true if deposit is verified, false if not found.
+    /// Routes verification to the correct chain:
+    /// - Terra source → Terra LCD query
+    /// - This chain (self) → local RPC/bridge
+    /// - Known multi-EVM source → source chain's RPC/bridge
+    /// - Unknown source → **fail closed** (refuse to approve)
     async fn verify_deposit_on_source(
         &self,
         withdraw_hash: &[u8; 32],
@@ -417,13 +425,47 @@ impl EvmWriter {
             return self.verify_terra_deposit(withdraw_hash).await;
         }
 
-        // EVM-source withdrawals are verified via getDeposit(hash) on EVM.
-        // In multi-EVM production this should route to the source chain RPC.
+        // Determine which RPC/bridge to use for EVM-source verification.
+        let (rpc_url, bridge_address) = if src_chain_id == self.this_chain_id.as_bytes() {
+            // Same chain: use own RPC/bridge (local setup, single-chain)
+            (self.rpc_url.as_str(), self.bridge_address)
+        } else if let Some((url, addr)) = self.source_chain_endpoints.get(src_chain_id) {
+            // Known multi-EVM source chain: route to its RPC/bridge
+            info!(
+                src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                rpc = %url,
+                bridge = %addr,
+                "Routing deposit verification to configured source chain"
+            );
+            (url.as_str(), *addr)
+        } else {
+            // Unknown source chain: fail closed — refuse to approve
+            warn!(
+                hash = %bytes32_to_hex(withdraw_hash),
+                src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                known_chains = self.source_chain_endpoints.len(),
+                "Unknown source chain ID — refusing to approve (fail closed). \
+                 Configure the source chain in EVM_CHAINS or EVM_THIS_CHAIN_ID."
+            );
+            return Ok(false);
+        };
 
-        let provider =
-            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        self.verify_evm_deposit_on_chain(rpc_url, bridge_address, withdraw_hash)
+            .await
+    }
 
-        let contract = Bridge::new(self.bridge_address, &provider);
+    /// Verify a deposit exists on a specific EVM chain by querying `getDeposit(hash)`.
+    ///
+    /// Returns `true` if the deposit record has a non-zero timestamp.
+    async fn verify_evm_deposit_on_chain(
+        &self,
+        rpc_url: &str,
+        bridge_address: Address,
+        withdraw_hash: &[u8; 32],
+    ) -> Result<bool> {
+        let provider = ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        let contract = Bridge::new(bridge_address, &provider);
 
         let deposit_hash = FixedBytes::from(*withdraw_hash);
         match contract.getDeposit(deposit_hash).call().await {
@@ -432,7 +474,7 @@ impl EvmWriter {
                 if deposit.timestamp.is_zero() {
                     debug!(
                         hash = %bytes32_to_hex(withdraw_hash),
-                        src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                        rpc = rpc_url,
                         "No deposit found on source chain (timestamp=0)"
                     );
                     return Ok(false);
@@ -443,6 +485,7 @@ impl EvmWriter {
                     nonce = deposit.nonce,
                     amount = %deposit.amount,
                     dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
+                    rpc = rpc_url,
                     "Deposit verified on source chain"
                 );
                 Ok(true)
@@ -451,6 +494,7 @@ impl EvmWriter {
                 warn!(
                     error = %e,
                     hash = %bytes32_to_hex(withdraw_hash),
+                    rpc = rpc_url,
                     "Failed to query getDeposit on source chain"
                 );
                 Err(eyre!("Failed to verify deposit: {}", e))

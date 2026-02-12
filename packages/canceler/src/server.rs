@@ -40,6 +40,16 @@ pub struct Metrics {
     pub cancelled_total: IntCounter,
     pub last_evm_block: IntGauge,
     pub last_terra_height: IntGauge,
+    /// C4: Times the EVM pre-check circuit breaker tripped
+    pub evm_precheck_circuit_breaker_trips_total: IntCounter,
+    /// C3: Current entries in verified-hashes cache
+    pub dedupe_verified_size: IntGauge,
+    /// C3: Current entries in cancelled-hashes cache
+    pub dedupe_cancelled_size: IntGauge,
+    /// C2: Total pending Terra withdrawals seen this poll
+    pub terra_pending_queue_depth: IntGauge,
+    /// C2: Approvals skipped due to page cap
+    pub terra_unprocessed_approvals: IntGauge,
     pub registry: Registry,
 }
 
@@ -57,46 +67,94 @@ impl Metrics {
             "canceler_approvals_verified_valid_total",
             "Total number of approvals verified as valid",
         )
-        .unwrap();
+        .expect("constant metric name is valid");
 
         let verified_invalid_total = IntCounter::new(
             "canceler_approvals_verified_invalid_total",
             "Total number of approvals verified as invalid (fraudulent)",
         )
-        .unwrap();
+        .expect("constant metric name is valid");
 
         let cancelled_total = IntCounter::new(
             "canceler_approvals_cancelled_total",
             "Total number of cancel transactions submitted",
         )
-        .unwrap();
+        .expect("constant metric name is valid");
 
         let last_evm_block = IntGauge::new(
             "canceler_last_evm_block_processed",
             "Last EVM block number processed",
         )
-        .unwrap();
+        .expect("constant metric name is valid");
 
         let last_terra_height = IntGauge::new(
             "canceler_last_terra_height_processed",
             "Last Terra block height processed",
         )
-        .unwrap();
+        .expect("constant metric name is valid");
 
-        // Register all metrics
+        let evm_precheck_circuit_breaker_trips_total = IntCounter::new(
+            "canceler_evm_precheck_circuit_breaker_trips_total",
+            "Times the EVM pre-check circuit breaker tripped",
+        )
+        .expect("constant metric name is valid");
+
+        let dedupe_verified_size = IntGauge::new(
+            "canceler_dedupe_verified_size",
+            "Current entries in verified-hashes cache",
+        )
+        .expect("constant metric name is valid");
+
+        let dedupe_cancelled_size = IntGauge::new(
+            "canceler_dedupe_cancelled_size",
+            "Current entries in cancelled-hashes cache",
+        )
+        .expect("constant metric name is valid");
+
+        let terra_pending_queue_depth = IntGauge::new(
+            "canceler_terra_pending_queue_depth",
+            "Total pending Terra withdrawals seen this poll",
+        )
+        .expect("constant metric name is valid");
+
+        let terra_unprocessed_approvals = IntGauge::new(
+            "canceler_terra_unprocessed_approvals",
+            "Approvals skipped due to Terra pagination page cap",
+        )
+        .expect("constant metric name is valid");
+
+        // Register all metrics — expect is safe here because names are unique
+        // constants and registration is called exactly once at startup
         registry
             .register(Box::new(verified_valid_total.clone()))
-            .unwrap();
+            .expect("metric registration must not be called twice");
         registry
             .register(Box::new(verified_invalid_total.clone()))
-            .unwrap();
+            .expect("metric registration must not be called twice");
         registry
             .register(Box::new(cancelled_total.clone()))
-            .unwrap();
-        registry.register(Box::new(last_evm_block.clone())).unwrap();
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(last_evm_block.clone()))
+            .expect("metric registration must not be called twice");
         registry
             .register(Box::new(last_terra_height.clone()))
-            .unwrap();
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(evm_precheck_circuit_breaker_trips_total.clone()))
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(dedupe_verified_size.clone()))
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(dedupe_cancelled_size.clone()))
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(terra_pending_queue_depth.clone()))
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(terra_unprocessed_approvals.clone()))
+            .expect("metric registration must not be called twice");
 
         Self {
             verified_valid_total,
@@ -104,6 +162,11 @@ impl Metrics {
             cancelled_total,
             last_evm_block,
             last_terra_height,
+            evm_precheck_circuit_breaker_trips_total,
+            dedupe_verified_size,
+            dedupe_cancelled_size,
+            terra_pending_queue_depth,
+            terra_unprocessed_approvals,
             registry,
         }
     }
@@ -189,10 +252,17 @@ async fn prometheus_metrics(State(state): State<AppState>) -> Response {
             .into_response();
     }
 
-    Response::builder()
+    match Response::builder()
         .header(header::CONTENT_TYPE, encoder.format_type())
         .body(axum::body::Body::from(buffer))
-        .unwrap()
+    {
+        Ok(resp) => resp,
+        Err(_) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build metrics response",
+        )
+            .into_response(),
+    }
 }
 
 /// Start the HTTP server for health and metrics

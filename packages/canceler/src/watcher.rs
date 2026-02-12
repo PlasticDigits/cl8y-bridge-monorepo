@@ -19,8 +19,10 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
+
+use crate::bounded_cache::BoundedHashCache;
 
 use alloy::primitives::{Address, FixedBytes};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -88,10 +90,10 @@ pub struct CancelerWatcher {
     verifier: ApprovalVerifier,
     evm_client: EvmClient,
     terra_client: TerraClient,
-    /// Hashes we've already verified
-    verified_hashes: HashSet<[u8; 32]>,
-    /// Hashes we've cancelled
-    cancelled_hashes: HashSet<[u8; 32]>,
+    /// Hashes we've already verified (C3: bounded)
+    verified_hashes: BoundedHashCache,
+    /// Hashes we've cancelled (C3: bounded)
+    cancelled_hashes: BoundedHashCache,
     /// Last polled EVM block
     last_evm_block: u64,
     /// Last polled Terra height
@@ -102,6 +104,10 @@ pub struct CancelerWatcher {
     stats: SharedStats,
     /// Prometheus metrics
     metrics: SharedMetrics,
+    /// C4: Consecutive EVM can_cancel pre-check failures
+    evm_precheck_consecutive_failures: AtomicU32,
+    /// C4: Circuit breaker open — skip EVM cancel attempts until next success
+    evm_precheck_circuit_open: AtomicBool,
 }
 
 impl CancelerWatcher {
@@ -164,13 +170,21 @@ impl CancelerWatcher {
             verifier,
             evm_client,
             terra_client,
-            verified_hashes: HashSet::new(),
-            cancelled_hashes: HashSet::new(),
+            verified_hashes: BoundedHashCache::new(
+                config.dedupe_cache_max_size,
+                config.dedupe_cache_ttl_secs,
+            ),
+            cancelled_hashes: BoundedHashCache::new(
+                config.dedupe_cache_max_size,
+                config.dedupe_cache_ttl_secs,
+            ),
             last_evm_block: 0,
             last_terra_height: 0,
             this_chain_id,
             stats,
             metrics,
+            evm_precheck_consecutive_failures: AtomicU32::new(0),
+            evm_precheck_circuit_open: AtomicBool::new(false),
         })
     }
 
@@ -267,6 +281,14 @@ impl CancelerWatcher {
 
         // Poll Terra bridge for approvals
         self.poll_terra_approvals().await?;
+
+        // C3: Update dedupe cache size gauges
+        self.metrics
+            .dedupe_verified_size
+            .set(self.verified_hashes.len() as i64);
+        self.metrics
+            .dedupe_cancelled_size
+            .set(self.cancelled_hashes.len() as i64);
 
         Ok(())
     }
@@ -490,8 +512,12 @@ impl CancelerWatcher {
     async fn poll_terra_approvals(&mut self) -> Result<()> {
         debug!("Polling Terra approvals");
 
-        // Query LCD for current height
-        let client = reqwest::Client::new();
+        // Query LCD for current height — use explicit timeout to avoid blocking
+        // the poll loop if Terra LCD is unresponsive (security review C3)
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| eyre!("Failed to build HTTP client: {}", e))?;
         let status_url = format!(
             "{}/cosmos/base/tendermint/v1beta1/blocks/latest",
             self.config.terra_lcd_url
@@ -540,112 +566,167 @@ impl CancelerWatcher {
             "Querying Terra pending approvals (V2)"
         );
 
-        // Query the bridge contract for pending withdrawals (V2)
-        let query = serde_json::json!({
-            "pending_withdrawals": {
-                "limit": 50
-            }
-        });
+        // C2: Paginate until exhaustion or page cap
+        let page_size = self.config.terra_poll_page_size;
+        let max_pages = self.config.terra_poll_max_pages;
+        let mut all_approvals: Vec<PendingApproval> = Vec::new();
+        let mut total_seen: u64 = 0;
+        let mut start_after_b64: Option<String> = None;
+        let mut pages_fetched: u32 = 0;
+        let mut unprocessed: u64 = 0;
+        let mut last_page_count: usize = 0;
 
-        let query_b64 =
-            base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&query)?);
-
-        let url = format!(
-            "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
-            self.config.terra_lcd_url, self.config.terra_bridge_address, query_b64
-        );
-
-        match client.get(&url).send().await {
-            Ok(resp) => {
-                let json: serde_json::Value = resp
-                    .json()
-                    .await
-                    .map_err(|e| eyre!("Failed to parse withdrawals: {}", e))?;
-
-                // Parse pending withdrawals from response
-                if let Some(withdrawals) = json["data"]["withdrawals"].as_array() {
-                    info!(count = withdrawals.len(), "Found pending Terra withdrawals");
-
-                    for withdrawal_json in withdrawals {
-                        // Parse withdraw_hash from base64
-                        let withdraw_hash_b64 =
-                            withdrawal_json["withdraw_hash"].as_str().unwrap_or("");
-
-                        let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
-                            .decode(withdraw_hash_b64)
-                            .unwrap_or_default();
-
-                        if withdraw_hash_bytes.len() != 32 {
-                            continue;
-                        }
-
-                        let mut withdraw_hash = [0u8; 32];
-                        withdraw_hash.copy_from_slice(&withdraw_hash_bytes);
-
-                        // Skip if already processed
-                        if self.verified_hashes.contains(&withdraw_hash)
-                            || self.cancelled_hashes.contains(&withdraw_hash)
-                        {
-                            continue;
-                        }
-
-                        // Parse other fields (V2 format)
-                        let src_chain_id =
-                            self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
-                        let dest_chain_id =
-                            self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
-                        let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
-                        let src_account =
-                            self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
-                        let dest_account =
-                            self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
-
-                        let amount: u128 = withdrawal_json["amount"]
-                            .as_str()
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
-
-                        let nonce: u64 = withdrawal_json["nonce"].as_u64().unwrap_or(0);
-
-                        let approved_at_timestamp: u64 =
-                            withdrawal_json["approved_at"].as_u64().unwrap_or(0);
-
-                        let cancel_window: u64 =
-                            withdrawal_json["cancel_window"].as_u64().unwrap_or(300);
-
-                        info!(
-                            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                            nonce = nonce,
-                            amount = amount,
-                            "Processing Terra withdrawal"
-                        );
-
-                        let approval = PendingApproval {
-                            withdraw_hash,
-                            src_chain_id,
-                            dest_chain_id,
-                            src_account,
-                            dest_token,
-                            dest_account,
-                            amount,
-                            nonce,
-                            approved_at_timestamp,
-                            cancel_window,
-                        };
-
-                        // Verify and potentially cancel
-                        if let Err(e) = self.verify_and_cancel(&approval).await {
-                            error!(
-                                error = %e,
-                                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-                                "Failed to verify Terra withdrawal"
-                            );
-                        }
-                    }
+        loop {
+            if pages_fetched >= max_pages {
+                if last_page_count >= page_size as usize {
+                    unprocessed = page_size as u64;
                 }
+                warn!(
+                    max_pages,
+                    total_seen,
+                    unprocessed,
+                    "Terra pagination hit page cap; some approvals may be unprocessed"
+                );
+                break;
             }
-            Err(e) => {
-                warn!(error = %e, "Failed to query Terra withdrawals");
+
+            let mut query_obj = serde_json::json!({
+                "pending_withdrawals": {
+                    "limit": page_size
+                }
+            });
+            if let Some(ref cursor) = start_after_b64 {
+                query_obj["pending_withdrawals"]["start_after"] = serde_json::json!(cursor);
+            }
+
+            let query_b64 = base64::engine::general_purpose::STANDARD
+                .encode(serde_json::to_string(&query_obj)?);
+
+            let url = format!(
+                "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+                self.config.terra_lcd_url, self.config.terra_bridge_address, query_b64
+            );
+
+            let resp = match client.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "Failed to query Terra withdrawals");
+                    break;
+                }
+            };
+
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| eyre!("Failed to parse withdrawals: {}", e))?;
+
+            let withdrawals = match json["data"]["withdrawals"].as_array() {
+                Some(arr) => arr,
+                None => break,
+            };
+
+            let count = withdrawals.len();
+            last_page_count = count;
+            pages_fetched += 1;
+            total_seen += count as u64;
+
+            if count == 0 {
+                break;
+            }
+
+            info!(
+                page = pages_fetched,
+                count, total_seen, "Fetched Terra pending withdrawals page"
+            );
+
+            let mut last_hash_b64: Option<String> = None;
+            for withdrawal_json in withdrawals {
+                let withdraw_hash_b64 = withdrawal_json["withdraw_hash"].as_str().unwrap_or("");
+                last_hash_b64 = Some(withdraw_hash_b64.to_string());
+
+                let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(withdraw_hash_b64)
+                    .unwrap_or_default();
+
+                if withdraw_hash_bytes.len() != 32 {
+                    continue;
+                }
+
+                let mut withdraw_hash = [0u8; 32];
+                withdraw_hash.copy_from_slice(&withdraw_hash_bytes);
+
+                if self.verified_hashes.contains(&withdraw_hash)
+                    || self.cancelled_hashes.contains(&withdraw_hash)
+                {
+                    continue;
+                }
+
+                let src_chain_id = self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
+                let dest_chain_id = self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
+                let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
+                let src_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
+                let dest_account = self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
+
+                let amount: u128 = withdrawal_json["amount"]
+                    .as_str()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+
+                let nonce: u64 = withdrawal_json["nonce"].as_u64().unwrap_or(0);
+
+                let approved_at_timestamp: u64 =
+                    withdrawal_json["approved_at"].as_u64().unwrap_or(0);
+
+                let cancel_window: u64 = withdrawal_json["cancel_window"].as_u64().unwrap_or(300);
+
+                let approval = PendingApproval {
+                    withdraw_hash,
+                    src_chain_id,
+                    dest_chain_id,
+                    src_account,
+                    dest_token,
+                    dest_account,
+                    amount,
+                    nonce,
+                    approved_at_timestamp,
+                    cancel_window,
+                };
+
+                all_approvals.push(approval);
+            }
+
+            if count < page_size as usize {
+                break; // Exhausted
+            }
+
+            start_after_b64 = last_hash_b64;
+        }
+
+        // C2: Update Terra queue metrics
+        self.metrics
+            .terra_pending_queue_depth
+            .set(total_seen as i64);
+        self.metrics
+            .terra_unprocessed_approvals
+            .set(unprocessed as i64);
+
+        // C2: Sort by approved_at ascending (oldest first)
+        all_approvals.sort_by_key(|a| a.approved_at_timestamp);
+
+        for approval in &all_approvals {
+            info!(
+                withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                nonce = approval.nonce,
+                amount = approval.amount,
+                "Processing Terra withdrawal"
+            );
+
+            if let Err(e) = self.verify_and_cancel(approval).await {
+                error!(
+                    error = %e,
+                    withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    "Failed to verify Terra withdrawal"
+                );
             }
         }
 
@@ -722,6 +803,7 @@ impl CancelerWatcher {
                     "Approval verified as VALID — deposit found on source chain"
                 );
                 self.verified_hashes.insert(approval.withdraw_hash);
+                self.maybe_warn_dedupe_capacity("verified");
 
                 // Update stats and metrics
                 {
@@ -755,6 +837,7 @@ impl CancelerWatcher {
                     );
                 } else {
                     self.cancelled_hashes.insert(approval.withdraw_hash);
+                    self.maybe_warn_dedupe_capacity("cancelled");
 
                     // Update cancelled count and metrics
                     {
@@ -775,7 +858,7 @@ impl CancelerWatcher {
         Ok(())
     }
 
-    /// Submit cancel transaction to the appropriate chain
+    /// Submit cancel transaction to the appropriate chain (C4: EVM pre-check safety)
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
         let withdraw_hash = approval.withdraw_hash;
 
@@ -785,53 +868,100 @@ impl CancelerWatcher {
             "Attempting to submit cancellation transaction"
         );
 
-        // Check if it's an EVM chain (try EVM first)
-        let can_cancel_evm = match self.evm_client.can_cancel(withdraw_hash).await {
-            Ok(can) => {
-                debug!(
-                    hash = %bytes32_to_hex(&withdraw_hash),
-                    can_cancel = can,
-                    "Checked EVM can_cancel status"
-                );
-                can
+        // C4: If circuit breaker is open, skip EVM cancel attempts
+        if self.evm_precheck_circuit_open.load(Ordering::Relaxed) {
+            debug!(
+                hash = %bytes32_to_hex(&withdraw_hash),
+                "EVM pre-check circuit breaker is OPEN — skipping EVM cancel path"
+            );
+        } else {
+            // C4: Retry can_cancel with exponential backoff; on error set can_cancel_evm = false
+            let mut can_cancel_evm = false;
+            let mut last_err = None;
+            for attempt in 0..=self.config.evm_precheck_max_retries {
+                match self.evm_client.can_cancel(withdraw_hash).await {
+                    Ok(can) => {
+                        can_cancel_evm = can;
+                        self.evm_precheck_consecutive_failures
+                            .store(0, Ordering::Relaxed);
+                        if self
+                            .evm_precheck_circuit_open
+                            .swap(false, Ordering::Relaxed)
+                        {
+                            info!(
+                                hash = %bytes32_to_hex(&withdraw_hash),
+                                "EVM pre-check circuit breaker CLOSED"
+                            );
+                        }
+                        debug!(
+                            hash = %bytes32_to_hex(&withdraw_hash),
+                            can_cancel = can,
+                            "Checked EVM can_cancel status"
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if attempt < self.config.evm_precheck_max_retries {
+                            let delay_ms = 500 * 2u64.pow(attempt);
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        }
+                    }
+                }
             }
-            Err(e) => {
+
+            if let Some(e) = last_err {
+                let prev = self
+                    .evm_precheck_consecutive_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                let count = prev + 1;
                 warn!(
                     error = %e,
                     hash = %bytes32_to_hex(&withdraw_hash),
-                    "Failed to check can_cancel on EVM, will try anyway"
+                    consecutive_failures = count,
+                    "EVM can_cancel pre-check failed; skipping cancel attempt this cycle (will retry)"
                 );
-                true // Try anyway
-            }
-        };
-
-        if can_cancel_evm {
-            info!(
-                hash = %bytes32_to_hex(&withdraw_hash),
-                canceler_address = %self.evm_client.address(),
-                "Submitting withdrawCancel transaction to EVM"
-            );
-
-            match self
-                .evm_client
-                .cancel_withdraw_approval(withdraw_hash)
-                .await
-            {
-                Ok(tx_hash) => {
-                    info!(
-                        tx_hash = %tx_hash,
+                if count >= self.config.evm_precheck_circuit_breaker_threshold {
+                    self.evm_precheck_circuit_open
+                        .store(true, Ordering::Relaxed);
+                    self.metrics.evm_precheck_circuit_breaker_trips_total.inc();
+                    error!(
                         hash = %bytes32_to_hex(&withdraw_hash),
-                        "EVM cancellation transaction SUCCEEDED"
+                        threshold = self.config.evm_precheck_circuit_breaker_threshold,
+                        "EVM pre-check circuit breaker OPEN — skipping all EVM cancel attempts \
+                         until a successful pre-check"
                     );
-                    return Ok(());
                 }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        hash = %bytes32_to_hex(&withdraw_hash),
-                        canceler_address = %self.evm_client.address(),
-                        "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
-                    );
+            }
+
+            if can_cancel_evm {
+                info!(
+                    hash = %bytes32_to_hex(&withdraw_hash),
+                    canceler_address = %self.evm_client.address(),
+                    "Submitting withdrawCancel transaction to EVM"
+                );
+
+                match self
+                    .evm_client
+                    .cancel_withdraw_approval(withdraw_hash)
+                    .await
+                {
+                    Ok(tx_hash) => {
+                        info!(
+                            tx_hash = %tx_hash,
+                            hash = %bytes32_to_hex(&withdraw_hash),
+                            "EVM cancellation transaction SUCCEEDED"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            hash = %bytes32_to_hex(&withdraw_hash),
+                            canceler_address = %self.evm_client.address(),
+                            "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
+                        );
+                    }
                 }
             }
         }
@@ -871,5 +1001,56 @@ impl CancelerWatcher {
     /// Get statistics
     pub fn stats(&self) -> (usize, usize) {
         (self.verified_hashes.len(), self.cancelled_hashes.len())
+    }
+
+    /// C3: Warn when dedupe cache reaches 80% capacity
+    fn maybe_warn_dedupe_capacity(&self, which: &str) {
+        let (len, max) = match which {
+            "verified" => self.verified_hashes.capacity_info(),
+            "cancelled" => self.cancelled_hashes.capacity_info(),
+            _ => return,
+        };
+        if max > 0 && len * 100 / max >= 80 {
+            warn!(
+                cache = %which,
+                len,
+                max,
+                "Dedupe cache at or above 80% capacity"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::verifier::PendingApproval;
+
+    /// C2: Terra approvals are processed oldest-first by approved_at_timestamp
+    #[test]
+    fn test_terra_approval_sort_order() {
+        let make_approval = |approved_at: u64, nonce: u64| PendingApproval {
+            withdraw_hash: [nonce as u8; 32],
+            src_chain_id: [0, 0, 0, 1],
+            dest_chain_id: [0, 0, 0, 2],
+            src_account: [0u8; 32],
+            dest_account: [0u8; 32],
+            dest_token: [0u8; 32],
+            amount: 1000,
+            nonce,
+            approved_at_timestamp: approved_at,
+            cancel_window: 300,
+        };
+
+        let mut approvals = vec![
+            make_approval(2000, 3),
+            make_approval(1000, 1),
+            make_approval(1500, 2),
+        ];
+        approvals.sort_by_key(|a| a.approved_at_timestamp);
+
+        assert_eq!(approvals[0].approved_at_timestamp, 1000);
+        assert_eq!(approvals[0].nonce, 1);
+        assert_eq!(approvals[1].approved_at_timestamp, 1500);
+        assert_eq!(approvals[2].approved_at_timestamp, 2000);
     }
 }

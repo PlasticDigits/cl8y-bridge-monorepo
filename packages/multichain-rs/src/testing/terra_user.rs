@@ -86,6 +86,7 @@ impl TerraUser {
     /// Deposit native tokens (uluna) to the Terra bridge
     ///
     /// Calls the bridge contract's deposit function with uluna funds attached
+    #[allow(clippy::too_many_arguments)]
     pub async fn deposit_native(
         &self,
         lcd_url: &str,
@@ -128,6 +129,7 @@ impl TerraUser {
     /// Deposit CW20 tokens to the Terra bridge
     ///
     /// Sends CW20 tokens to the bridge contract with a deposit message
+    #[allow(clippy::too_many_arguments)]
     pub async fn deposit_cw20(
         &self,
         lcd_url: &str,
@@ -176,6 +178,7 @@ impl TerraUser {
     // =========================================================================
 
     /// Submit a withdrawal on Terra (V2 user-initiated flow)
+    #[allow(clippy::too_many_arguments)]
     pub async fn withdraw_submit(
         &self,
         lcd_url: &str,

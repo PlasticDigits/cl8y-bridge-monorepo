@@ -24,13 +24,26 @@ use alloy::{
 // EVM User
 // ============================================================================
 
-/// Represents an EVM user account for testing
-#[derive(Debug, Clone)]
+/// Represents an EVM user account for testing.
+///
+/// The `private_key` field is intentionally private to prevent accidental
+/// leakage in logs or debug output. Use [`EvmUser::private_key()`] if you
+/// need read access. See security review finding F6.
+#[derive(Clone)]
 pub struct EvmUser {
-    /// Private key (hex string with 0x prefix)
-    pub private_key: String,
+    /// Private key (hex string with 0x prefix) — kept private to avoid leakage
+    private_key: String,
     /// Address
     pub address: Address,
+}
+
+impl std::fmt::Debug for EvmUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvmUser")
+            .field("private_key", &"<redacted>")
+            .field("address", &self.address)
+            .finish()
+    }
 }
 
 impl EvmUser {
@@ -49,6 +62,14 @@ impl EvmUser {
             private_key: format!("0x{}", pk),
             address,
         })
+    }
+
+    /// Get the private key (hex string with 0x prefix).
+    ///
+    /// Intentionally requires an explicit method call rather than field access
+    /// to reduce the risk of accidental logging.
+    pub fn private_key(&self) -> &str {
+        &self.private_key
     }
 
     /// Get address as hex string
@@ -117,6 +138,7 @@ impl EvmUser {
     /// Deposit ERC20 tokens to the bridge contract (lock/unlock mode)
     ///
     /// Calls `erc20.approve(bridge, amount)` then `bridge.depositERC20(token, amount, destChain, destAccount)`
+    #[allow(clippy::too_many_arguments)]
     pub async fn deposit_erc20(
         &self,
         rpc_url: &str,
@@ -173,6 +195,7 @@ impl EvmUser {
     }
 
     /// Deposit mintable ERC20 tokens to the bridge contract (mint/burn mode)
+    #[allow(clippy::too_many_arguments)]
     pub async fn deposit_erc20_mintable(
         &self,
         rpc_url: &str,
@@ -236,6 +259,7 @@ impl EvmUser {
     ///
     /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce, srcDecimals)`
     /// with operator gas payment.
+    #[allow(clippy::too_many_arguments)]
     pub async fn withdraw_submit(
         &self,
         rpc_url: &str,

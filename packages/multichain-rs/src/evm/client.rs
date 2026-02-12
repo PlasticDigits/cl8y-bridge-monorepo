@@ -67,6 +67,7 @@ impl EvmClientReadOnly {
 /// EVM RPC client with signing capabilities
 pub struct EvmClientWithSigner {
     /// The alloy provider with wallet
+    #[allow(clippy::type_complexity)]
     provider: alloy::providers::fillers::FillProvider<
         alloy::providers::fillers::JoinFill<
             alloy::providers::Identity,

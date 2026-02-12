@@ -1,0 +1,21 @@
+# Cargo-audit configuration — packages/multichain-rs
+#
+# Advisories listed here cannot be fixed without upstream dependency upgrades
+# or a Rust toolchain bump. Re-evaluate when upgrading cosmrs/tendermint or Rust toolchain.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.0 timing variability.
+    # Transitive via cosmwasm ecosystem. Requires cosmwasm upgrade to curve25519-dalek >=4.1.3.
+    # Review date: 2026-02-12
+    "RUSTSEC-2024-0344",
+
+    # rsa 0.9.10 Marvin timing side-channel. No fixed version available.
+    # Review date: 2026-02-12
+    "RUSTSEC-2023-0071",
+
+    # time 0.3.x stack exhaustion DoS. Fix requires Rust >=1.88.
+    # Transitive via tendermint stack.
+    # Review date: 2026-02-12
+    "RUSTSEC-2026-0009",
+]

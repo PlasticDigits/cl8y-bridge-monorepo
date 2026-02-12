@@ -58,6 +58,7 @@ pub struct EvmSigner {
     /// Signer's address
     address: Address,
     /// Provider with wallet attached
+    #[allow(clippy::type_complexity)]
     provider: alloy::providers::fillers::FillProvider<
         alloy::providers::fillers::JoinFill<
             alloy::providers::Identity,
@@ -138,6 +139,7 @@ impl EvmSigner {
     }
 
     /// Get a reference to the provider with wallet
+    #[allow(clippy::type_complexity)]
     pub fn provider(
         &self,
     ) -> &alloy::providers::fillers::FillProvider<

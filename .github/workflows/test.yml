@@ -123,6 +123,13 @@ jobs:
           RUST_BACKTRACE: 1
         run: cargo test --release -- --nocapture
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        working-directory: packages/operator
+        run: cargo audit
+
   # ==========================================================================
   # Rust Canceler Tests
   # ==========================================================================
@@ -162,6 +169,13 @@ jobs:
         env:
           RUST_BACKTRACE: 1
         run: cargo test --release -- --nocapture
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        working-directory: packages/canceler
+        run: cargo audit
 
   # ==========================================================================
   # multichain-rs Library (build, test, security audit)

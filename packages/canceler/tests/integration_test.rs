@@ -442,8 +442,6 @@ mod hash {
     }
 }
 
-use base64::Engine;
-
 // ============================================================================
 // PendingApproval Construction Tests (Category A verification)
 //

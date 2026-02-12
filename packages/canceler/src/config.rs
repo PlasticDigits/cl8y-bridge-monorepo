@@ -2,9 +2,14 @@
 
 use eyre::{eyre, Result};
 use std::env;
+use std::fmt;
+use url::Url;
 
 /// Canceler configuration
-#[derive(Debug, Clone)]
+///
+/// NOTE: `Debug` is manually implemented to redact sensitive fields
+/// (`evm_private_key`, `terra_mnemonic`). Do NOT re-add `#[derive(Debug)]`.
+#[derive(Clone)]
 pub struct Config {
     /// Unique canceler instance ID for multi-canceler deployments
     pub canceler_id: String,
@@ -47,6 +52,82 @@ pub struct Config {
     pub health_port: u16,
     /// Health server bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)
     pub health_bind_address: String,
+
+    /// C2: Terra pending_withdrawals page size (default 50)
+    pub terra_poll_page_size: u32,
+    /// C2: Max Terra pagination pages per poll cycle (default 20)
+    pub terra_poll_max_pages: u32,
+
+    /// C3: Max entries in each dedupe hash cache (default 100_000)
+    pub dedupe_cache_max_size: usize,
+    /// C3: Seconds before a dedupe entry is eligible for eviction (default 86400)
+    pub dedupe_cache_ttl_secs: u64,
+
+    /// Max retries for EVM can_cancel pre-check on failure (default 2)
+    pub evm_precheck_max_retries: u32,
+    /// Consecutive pre-check failures before circuit breaker opens (default 10)
+    pub evm_precheck_circuit_breaker_threshold: u32,
+}
+
+/// Custom Debug impl that redacts sensitive fields (evm_private_key, terra_mnemonic)
+/// to prevent accidental leakage in logs or error messages.
+/// See canceler security review finding C1.
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("canceler_id", &self.canceler_id)
+            .field("evm_rpc_url", &self.evm_rpc_url)
+            .field("evm_chain_id", &self.evm_chain_id)
+            .field("evm_bridge_address", &self.evm_bridge_address)
+            .field("evm_private_key", &"<redacted>")
+            .field("evm_v2_chain_id", &self.evm_v2_chain_id)
+            .field("terra_v2_chain_id", &self.terra_v2_chain_id)
+            .field("terra_lcd_url", &self.terra_lcd_url)
+            .field("terra_rpc_url", &self.terra_rpc_url)
+            .field("terra_chain_id", &self.terra_chain_id)
+            .field("terra_bridge_address", &self.terra_bridge_address)
+            .field("terra_mnemonic", &"<redacted>")
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field("health_port", &self.health_port)
+            .field("health_bind_address", &self.health_bind_address)
+            .field("terra_poll_page_size", &self.terra_poll_page_size)
+            .field("terra_poll_max_pages", &self.terra_poll_max_pages)
+            .field("dedupe_cache_max_size", &self.dedupe_cache_max_size)
+            .field("dedupe_cache_ttl_secs", &self.dedupe_cache_ttl_secs)
+            .field("evm_precheck_max_retries", &self.evm_precheck_max_retries)
+            .field(
+                "evm_precheck_circuit_breaker_threshold",
+                &self.evm_precheck_circuit_breaker_threshold,
+            )
+            .finish()
+    }
+}
+
+/// Validates that a URL uses http/https and has a host (C5: URL hardening).
+pub(crate) fn validate_rpc_url(url_str: &str, name: &str) -> Result<()> {
+    let parsed = Url::parse(url_str).map_err(|e| eyre!("{} must be a valid URL: {}", name, e))?;
+
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(eyre!(
+            "{} must use http:// or https:// scheme, got {}",
+            name,
+            scheme
+        ));
+    }
+
+    if parsed.host_str().is_none() {
+        return Err(eyre!("{} must have a host component", name));
+    }
+
+    if scheme == "http" {
+        tracing::warn!(
+            "{} uses unencrypted http:// — use https:// in production",
+            name
+        );
+    }
+
+    Ok(())
 }
 
 impl Config {
@@ -85,10 +166,33 @@ impl Config {
             }
         });
 
+        let evm_rpc_url = env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?;
+        validate_rpc_url(&evm_rpc_url, "EVM_RPC_URL")?;
+
+        let terra_lcd_url =
+            env::var("TERRA_LCD_URL").map_err(|_| eyre!("TERRA_LCD_URL required"))?;
+        validate_rpc_url(&terra_lcd_url, "TERRA_LCD_URL")?;
+
+        let terra_rpc_url =
+            env::var("TERRA_RPC_URL").map_err(|_| eyre!("TERRA_RPC_URL required"))?;
+        validate_rpc_url(&terra_rpc_url, "TERRA_RPC_URL")?;
+
+        let health_bind_address =
+            env::var("HEALTH_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
+
+        if health_bind_address != "127.0.0.1" && health_bind_address != "::1" {
+            tracing::warn!(
+                health_bind_address = %health_bind_address,
+                "HEALTH_BIND_ADDRESS is set to a non-localhost address — health and metrics \
+                 endpoints will be accessible from the network. Use firewall rules or a reverse \
+                 proxy to restrict access in production."
+            );
+        }
+
         Ok(Self {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
-            evm_rpc_url: env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?,
+            evm_rpc_url,
             evm_chain_id: env::var("EVM_CHAIN_ID")
                 .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
                 .parse()
@@ -101,10 +205,8 @@ impl Config {
             evm_v2_chain_id,
             terra_v2_chain_id,
 
-            terra_lcd_url: env::var("TERRA_LCD_URL")
-                .map_err(|_| eyre!("TERRA_LCD_URL required"))?,
-            terra_rpc_url: env::var("TERRA_RPC_URL")
-                .map_err(|_| eyre!("TERRA_RPC_URL required"))?,
+            terra_lcd_url,
+            terra_rpc_url,
             terra_chain_id: env::var("TERRA_CHAIN_ID")
                 .map_err(|_| eyre!("TERRA_CHAIN_ID required"))?,
             terra_bridge_address: env::var("TERRA_BRIDGE_ADDRESS")
@@ -125,8 +227,113 @@ impl Config {
                 .unwrap_or(9099),
 
             // Default bind to localhost; set HEALTH_BIND_ADDRESS=0.0.0.0 to expose on all interfaces
-            health_bind_address: env::var("HEALTH_BIND_ADDRESS")
-                .unwrap_or_else(|_| "127.0.0.1".to_string()),
+            health_bind_address,
+
+            terra_poll_page_size: env::var("TERRA_POLL_PAGE_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50),
+            terra_poll_max_pages: env::var("TERRA_POLL_MAX_PAGES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+
+            dedupe_cache_max_size: env::var("DEDUPE_CACHE_MAX_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100_000),
+            dedupe_cache_ttl_secs: env::var("DEDUPE_CACHE_TTL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(86400),
+
+            evm_precheck_max_retries: env::var("EVM_PRECHECK_MAX_RETRIES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2),
+            evm_precheck_circuit_breaker_threshold: env::var(
+                "EVM_PRECHECK_CIRCUIT_BREAKER_THRESHOLD",
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_rpc_url, Config};
+
+    #[test]
+    fn test_evm_precheck_config_from_env() {
+        // Set required vars for Config::load (use valid URLs per C5)
+        let required = [
+            ("EVM_RPC_URL", "http://localhost:8545"),
+            ("EVM_CHAIN_ID", "31337"),
+            ("EVM_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001"),
+            ("EVM_PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            ("TERRA_LCD_URL", "http://localhost:1317"),
+            ("TERRA_RPC_URL", "http://localhost:26657"),
+            ("TERRA_CHAIN_ID", "localterra"),
+            ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+            ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
+        ];
+        for (k, v) in &required {
+            std::env::set_var(k, v);
+        }
+        std::env::set_var("EVM_PRECHECK_MAX_RETRIES", "5");
+        std::env::set_var("EVM_PRECHECK_CIRCUIT_BREAKER_THRESHOLD", "3");
+        std::env::set_var("TERRA_POLL_PAGE_SIZE", "100");
+        std::env::set_var("TERRA_POLL_MAX_PAGES", "10");
+
+        let config = Config::load().expect("Config should load with test env");
+        assert_eq!(config.evm_precheck_max_retries, 5);
+        assert_eq!(config.evm_precheck_circuit_breaker_threshold, 3);
+        assert_eq!(config.terra_poll_page_size, 100);
+        assert_eq!(config.terra_poll_max_pages, 10);
+
+        for (k, _) in &required {
+            std::env::remove_var(k);
+        }
+        std::env::remove_var("EVM_PRECHECK_MAX_RETRIES");
+        std::env::remove_var("EVM_PRECHECK_CIRCUIT_BREAKER_THRESHOLD");
+        std::env::remove_var("TERRA_POLL_PAGE_SIZE");
+        std::env::remove_var("TERRA_POLL_MAX_PAGES");
+    }
+
+    #[test]
+    fn test_validate_rpc_url_accepts_http() {
+        assert!(validate_rpc_url("http://localhost:8545", "TEST").is_ok());
+        assert!(validate_rpc_url("http://127.0.0.1:1317", "TEST").is_ok());
+    }
+
+    #[test]
+    fn test_validate_rpc_url_accepts_https() {
+        assert!(validate_rpc_url("https://rpc.example.com", "TEST").is_ok());
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_file_scheme() {
+        let err = validate_rpc_url("file:///etc/passwd", "TEST").unwrap_err();
+        assert!(err.to_string().contains("http:// or https://"));
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_ftp_scheme() {
+        let err = validate_rpc_url("ftp://example.com", "TEST").unwrap_err();
+        assert!(err.to_string().contains("http:// or https://"));
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_empty_host() {
+        let err = validate_rpc_url("http://", "TEST").unwrap_err();
+        assert!(err.to_string().contains("host"));
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_invalid_url() {
+        let err = validate_rpc_url("not-a-url", "TEST").unwrap_err();
+        assert!(err.to_string().contains("valid URL"));
     }
 }

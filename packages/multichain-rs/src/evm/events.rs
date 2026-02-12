@@ -38,6 +38,7 @@ pub struct DepositEvent {
 
 impl DepositEvent {
     /// Create from alloy log data
+    #[allow(clippy::too_many_arguments)]
     pub fn from_log(
         dest_chain: FixedBytes<4>,
         dest_account: FixedBytes<32>,
@@ -96,6 +97,7 @@ pub struct WithdrawSubmitEvent {
 
 impl WithdrawSubmitEvent {
     /// Create from alloy log data
+    #[allow(clippy::too_many_arguments)]
     pub fn from_log(
         withdraw_hash: FixedBytes<32>,
         src_chain: FixedBytes<4>,

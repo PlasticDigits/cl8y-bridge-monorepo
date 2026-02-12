@@ -112,8 +112,15 @@ pub struct TerraTxResult {
     pub tx_hash: String,
     /// Block height (if confirmed)
     pub height: Option<u64>,
-    /// Whether the transaction was successful
+    /// Whether the transaction was successful.
+    /// `false` when the chain returned a non-zero code **or** when
+    /// confirmation timed out (see `confirmed` field).
     pub success: bool,
+    /// Whether the transaction was confirmed in a block.
+    /// `false` means the broadcast succeeded but we could not verify
+    /// inclusion within the timeout window. Callers should treat
+    /// unconfirmed transactions as pending, not as successful.
+    pub confirmed: bool,
     /// Raw log from the chain
     pub raw_log: Option<String>,
 }
@@ -563,12 +570,20 @@ impl TerraSigner {
         match self.wait_for_tx_confirmation(&txhash).await {
             Ok(result) => Ok(result),
             Err(e) => {
-                warn!(txhash = %txhash, error = %e, "Failed to confirm, but broadcast succeeded");
+                warn!(
+                    txhash = %txhash,
+                    error = %e,
+                    "Broadcast succeeded but confirmation timed out — treating as unconfirmed"
+                );
                 Ok(TerraTxResult {
                     tx_hash: txhash,
                     height: None,
-                    success: true,
-                    raw_log: None,
+                    success: false,
+                    confirmed: false,
+                    raw_log: Some(format!(
+                        "Broadcast succeeded, confirmation timed out: {}",
+                        e
+                    )),
                 })
             }
         }
@@ -619,6 +634,7 @@ impl TerraSigner {
                                     tx_hash: txhash.to_string(),
                                     height,
                                     success: true,
+                                    confirmed: true,
                                     raw_log,
                                 });
                             } else {
@@ -626,6 +642,7 @@ impl TerraSigner {
                                     tx_hash: txhash.to_string(),
                                     height,
                                     success: false,
+                                    confirmed: true,
                                     raw_log,
                                 });
                             }

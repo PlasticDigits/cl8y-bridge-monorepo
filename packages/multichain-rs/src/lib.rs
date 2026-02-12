@@ -27,6 +27,7 @@
 pub mod address_codec;
 pub mod discovery;
 pub mod hash;
+pub mod redact;
 pub mod types;
 
 // Chain-specific modules (feature-gated)

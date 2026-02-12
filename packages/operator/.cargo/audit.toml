@@ -1,0 +1,29 @@
+# Cargo-audit configuration — packages/operator
+#
+# Advisories listed here cannot be fixed without upstream dependency upgrades
+# or a Rust toolchain bump. Each entry includes a justification and review date.
+# Re-evaluate when upgrading cosmrs/tendermint, sqlx, or Rust toolchain.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.0 timing variability in Scalar29::sub / Scalar52::sub.
+    # Transitive via: cosmwasm-crypto -> cosmwasm-std -> cl8y-operator.
+    # Requires cosmwasm ecosystem upgrade to curve25519-dalek >=4.1.3.
+    # Compensating control: no direct use of scalar arithmetic at application layer.
+    # Review date: 2026-02-12
+    "RUSTSEC-2024-0344",
+
+    # rsa 0.9.10 Marvin timing side-channel.
+    # No fixed upstream version available.
+    # Transitive via: sqlx-mysql -> sqlx-macros-core (compile-time only, MySQL not used at runtime).
+    # Compensating control: operator uses Postgres exclusively; RSA code path is never executed.
+    # Review date: 2026-02-12
+    "RUSTSEC-2023-0071",
+
+    # time 0.3.41 stack exhaustion DoS.
+    # Fix (>=0.3.47) requires Rust 1.88; current toolchain is 1.85.
+    # Transitive via: tendermint / tendermint-proto / tendermint-rpc.
+    # Compensating control: time parsing operates on trusted chain data, not arbitrary user input.
+    # Review date: 2026-02-12
+    "RUSTSEC-2026-0009",
+]

@@ -562,7 +562,7 @@ pub fn parse_deposit_log(log: &alloy::rpc::types::Log) -> Option<DepositEvent> {
 
     let block_number = log.block_number?;
     let tx_hash = log.transaction_hash?;
-    let log_index = log.log_index? as u64;
+    let log_index = log.log_index?;
 
     // topic[1] = destChain (bytes4, left-padded to bytes32)
     let dest_chain_bytes = topics[1];
@@ -637,7 +637,7 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
 
     let block_number = log.block_number?;
     let tx_hash = log.transaction_hash?;
-    let log_index = log.log_index? as u64;
+    let log_index = log.log_index?;
 
     // topic[1] = withdrawHash (bytes32)
     let withdraw_hash = topics[1];
@@ -693,7 +693,7 @@ pub fn parse_withdraw_approve_log(log: &alloy::rpc::types::Log) -> Option<Withdr
 
     let block_number = log.block_number?;
     let tx_hash = log.transaction_hash?;
-    let log_index = log.log_index? as u64;
+    let log_index = log.log_index?;
 
     let withdraw_hash = topics[1];
 
@@ -716,7 +716,7 @@ pub fn parse_withdraw_cancel_log(log: &alloy::rpc::types::Log) -> Option<Withdra
 
     let block_number = log.block_number?;
     let tx_hash = log.transaction_hash?;
-    let log_index = log.log_index? as u64;
+    let log_index = log.log_index?;
 
     let withdraw_hash = topics[1];
 
@@ -748,7 +748,7 @@ pub fn parse_withdraw_execute_log(log: &alloy::rpc::types::Log) -> Option<Withdr
 
     let block_number = log.block_number?;
     let tx_hash = log.transaction_hash?;
-    let log_index = log.log_index? as u64;
+    let log_index = log.log_index?;
 
     let withdraw_hash = topics[1];
 

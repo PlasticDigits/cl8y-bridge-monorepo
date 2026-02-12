@@ -405,21 +405,12 @@ impl FeeCalculator {
 }
 
 /// Operator gas (tip) handling for V2 withdrawals
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OperatorGasConfig {
     /// Minimum operator gas required for withdrawal submission
     pub min_operator_gas: u128,
     /// Default operator gas to use if not specified
     pub default_operator_gas: u128,
-}
-
-impl Default for OperatorGasConfig {
-    fn default() -> Self {
-        Self {
-            min_operator_gas: 0,
-            default_operator_gas: 0,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -25,6 +25,19 @@ The library does not validate these URLs. Malicious or misconfigured URLs could 
 
 ---
 
+## BIP39 Passphrase (Terra Mnemonic)
+
+The Terra signer derives keys using `mnemonic.to_seed("")` — an **empty BIP39 passphrase**.
+This is the standard convention for Cosmos SDK wallets (e.g., `terrad keys add`).
+
+Implications:
+
+- If the mnemonic is compromised, there is no additional passphrase barrier protecting the derived key.
+- For high-security deployments, consider supporting an optional BIP39 passphrase if upstream `cosmrs`/`bip39` crates support it.
+- This does **not** weaken the cryptographic strength of the derived key; it only means there is no second factor beyond the mnemonic itself.
+
+---
+
 ## Dependency Scanning
 
 Run `cargo audit` regularly. CI runs `cargo audit` for this package on each push/PR.

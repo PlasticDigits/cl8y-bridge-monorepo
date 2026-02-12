@@ -6,6 +6,7 @@
 
 use eyre::{eyre, Result};
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::types::ChainId;
 
@@ -61,11 +62,22 @@ impl EvmChainConfig {
 }
 
 /// Multi-EVM configuration manager
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MultiEvmConfig {
     chains: Vec<EvmChainConfig>,
     chain_id_map: HashMap<[u8; 4], usize>,
     private_key: String,
+}
+
+/// Custom Debug that redacts private_key to prevent accidental log leakage.
+impl fmt::Debug for MultiEvmConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiEvmConfig")
+            .field("chains", &self.chains)
+            .field("chain_id_map", &self.chain_id_map)
+            .field("private_key", &"<redacted>")
+            .finish()
+    }
 }
 
 impl MultiEvmConfig {

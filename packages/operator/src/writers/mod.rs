@@ -1,8 +1,12 @@
-use eyre::Result;
+use alloy::primitives::Address;
+use eyre::{Result, WrapErr};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+use crate::types::ChainId;
 
 pub mod evm;
 pub mod retry;
@@ -61,8 +65,44 @@ impl WriterManager {
     /// for each enabled chain in the multi-EVM configuration. These writers
     /// handle EVM→EVM transfers by submitting approvals on the destination chain.
     pub async fn new(config: &crate::config::Config, db: PgPool) -> Result<Self> {
-        let evm_writer =
-            EvmWriter::new(&config.evm, Some(&config.terra), &config.fees, db.clone()).await?;
+        // Build source chain endpoints for cross-chain deposit verification routing (O1).
+        // Each EvmWriter gets this map so it can verify deposits on any known source chain,
+        // routing to the correct RPC/bridge instead of always using its own.
+        let mut source_chain_endpoints: HashMap<[u8; 4], (String, Address)> = HashMap::new();
+
+        // Add primary EVM chain (if V2 chain ID is configured)
+        if let Some(v2_id) = config.evm.this_chain_id {
+            let bridge = Address::from_str(&config.evm.bridge_address)
+                .wrap_err("Invalid primary EVM bridge address")?;
+            source_chain_endpoints.insert(
+                ChainId::from_u32(v2_id).0,
+                (config.evm.rpc_url.clone(), bridge),
+            );
+        }
+
+        // Add multi-EVM chains
+        if let Some(ref multi) = config.multi_evm {
+            for chain in multi.enabled_chains() {
+                let bridge = Address::from_str(&chain.bridge_address)
+                    .wrap_err_with(|| format!("Invalid bridge address for chain {}", chain.name))?;
+                source_chain_endpoints
+                    .insert(chain.this_chain_id.0, (chain.rpc_url.clone(), bridge));
+            }
+        }
+
+        tracing::info!(
+            source_chains = source_chain_endpoints.len(),
+            "Built source chain verification endpoints for deposit routing"
+        );
+
+        let evm_writer = EvmWriter::new(
+            &config.evm,
+            Some(&config.terra),
+            &config.fees,
+            db.clone(),
+            source_chain_endpoints.clone(),
+        )
+        .await?;
         let terra_writer = TerraWriter::new(&config.terra, &config.evm, db.clone()).await?;
 
         // Create per-chain EVM writers from MultiEvmConfig
@@ -75,6 +115,7 @@ impl WriterManager {
                     Some(&config.terra),
                     &config.fees,
                     db.clone(),
+                    source_chain_endpoints.clone(),
                 )
                 .await
                 {

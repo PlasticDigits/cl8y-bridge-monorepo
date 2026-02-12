@@ -27,8 +27,8 @@ tendermint-rpc = { version = "0.37", features = ["http-client"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 
-# Database
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono", "bigdecimal"] }
+# Database (≥0.8.1 fixes RUSTSEC-2024-0363 protocol-level truncation)
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "bigdecimal"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -57,8 +57,8 @@ bip39 = "2.0"
 bech32 = "0.9"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
-# Metrics
-prometheus = "0.13"
+# Metrics (disable protobuf feature to drop vulnerable protobuf 2.x dep — we use TextEncoder only)
+prometheus = { version = "0.13", default-features = false }
 lazy_static = "1.4"
 
 [dev-dependencies]

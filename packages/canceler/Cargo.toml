@@ -32,7 +32,7 @@ bip39 = "2.0"
 axum = "0.8"
 
 # Prometheus metrics
-prometheus = "0.13"
+prometheus = { version = "0.13", default-features = false }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
@@ -58,3 +58,4 @@ base64 = "0.22"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 hostname = "0.4"
 libc = "0.2"
+url = "2"

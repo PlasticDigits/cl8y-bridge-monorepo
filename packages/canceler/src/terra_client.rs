@@ -209,7 +209,9 @@ impl TerraClient {
 
         let fee = Fee::from_amount_and_gas(
             Coin {
-                denom: "uluna".parse().unwrap(),
+                denom: "uluna"
+                    .parse()
+                    .expect("uluna is a valid constant Terra denom"),
                 amount: fee_amount,
             },
             gas_limit,

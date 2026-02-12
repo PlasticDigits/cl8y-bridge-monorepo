@@ -3,6 +3,7 @@
 use eyre::{eyre, Result, WrapErr};
 use serde::Deserialize;
 use std::env;
+use std::fmt;
 use std::path::Path;
 
 use crate::multi_evm::MultiEvmConfig;
@@ -23,13 +24,22 @@ pub struct Config {
 }
 
 /// Database configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
 }
 
+/// Custom Debug that redacts the database URL (may contain credentials).
+impl fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DatabaseConfig")
+            .field("url", &"<redacted>")
+            .finish()
+    }
+}
+
 /// EVM configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct EvmConfig {
     pub rpc_url: String,
     pub chain_id: u64,
@@ -47,8 +57,23 @@ pub struct EvmConfig {
     pub use_v2_events: Option<bool>,
 }
 
+/// Custom Debug that redacts private_key to prevent accidental log leakage.
+impl fmt::Debug for EvmConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EvmConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("chain_id", &self.chain_id)
+            .field("bridge_address", &self.bridge_address)
+            .field("private_key", &"<redacted>")
+            .field("finality_blocks", &self.finality_blocks)
+            .field("this_chain_id", &self.this_chain_id)
+            .field("use_v2_events", &self.use_v2_events)
+            .finish()
+    }
+}
+
 /// Terra configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct TerraConfig {
     pub rpc_url: String,
     pub lcd_url: String,
@@ -66,6 +91,22 @@ pub struct TerraConfig {
     /// Defaults to false for backward compatibility
     #[serde(default)]
     pub use_v2: Option<bool>,
+}
+
+/// Custom Debug that redacts mnemonic to prevent accidental log leakage.
+impl fmt::Debug for TerraConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TerraConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("lcd_url", &self.lcd_url)
+            .field("chain_id", &self.chain_id)
+            .field("bridge_address", &self.bridge_address)
+            .field("mnemonic", &"<redacted>")
+            .field("fee_recipient", &self.fee_recipient)
+            .field("this_chain_id", &self.this_chain_id)
+            .field("use_v2", &self.use_v2)
+            .finish()
+    }
 }
 
 /// Relayer configuration

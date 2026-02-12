@@ -176,6 +176,7 @@ impl TerraQueryClient {
     }
 
     /// Compute transfer hash via on-chain query (V2 unified 7-field)
+    #[allow(clippy::too_many_arguments)]
     pub async fn compute_transfer_hash_v2(
         &self,
         src_chain: &ChainId,

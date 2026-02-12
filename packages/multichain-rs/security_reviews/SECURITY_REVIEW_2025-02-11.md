@@ -19,12 +19,12 @@ The multichain-rs package is a shared cross-chain library for the CL8Y Bridge, p
 
 | ID | Severity | Category | Description | Status |
 |----|----------|----------|-------------|--------|
-| F1 | Medium | Sensitive Data | Terra broadcast returns success when confirmation times out | Open |
-| F2 | Low | Cryptography | Terra mnemonic uses empty BIP39 passphrase | Open |
+| F1 | Medium | Sensitive Data | Terra broadcast returns success when confirmation times out | **Fixed** |
+| F2 | Low | Cryptography | Terra mnemonic uses empty BIP39 passphrase | **Documented** |
 | F3 | Low | Input Validation | `decode_bytes32_to_terra_address` accepts 20–31 bytes | **Fixed** |
 | F4 | Low | Error Handling | `serde_json::to_string` unwrap in contracts/tokens | **Acceptable** (test-only) |
 | F5 | Low | Error Handling | `gas_prices.uluna.parse().unwrap_or` in Terra modules | **Fixed** |
-| F6 | Informational | Sensitive Data | EvmUser has `pub private_key` in testing module | Open |
+| F6 | Informational | Sensitive Data | EvmUser has `pub private_key` in testing module | **Fixed** |
 | F7 | Informational | Cryptography | `generate_test_private_key` uses DefaultHasher | Acceptable |
 | F8 | Informational | Dependencies | Run cargo audit in CI | **Fixed** |
 | F9 | Informational | Sensitive Data | Debug leakage on signer configs | **Fixed** |
@@ -296,13 +296,14 @@ See `security_reviews/ADR_001_ZEROIZE_EVALUATION.md`. Decision: defer `secrecy`/
 
 After implementing recommendations:
 
-- [ ] Terra broadcast returns explicit unconfirmed status when confirmation times out
+- [x] Terra broadcast returns explicit unconfirmed status when confirmation times out
 - [x] `serde_json::to_string().unwrap()` confirmed test-only; no production unwrap paths
 - [x] Gas price parse failure is logged with `warn!`
-- [ ] `SECURITY.md` documents BIP39 passphrase behavior
+- [x] `SECURITY.md` documents BIP39 passphrase behavior
 - [x] `decode_bytes32_to_terra_address` restricted to 20 or 32 bytes with `warn!` on violation
 - [x] `cargo audit` runs in CI and passes
 - [x] No Debug output exposes `private_key` or `mnemonic`
+- [x] `EvmUser.private_key` is private with getter; custom Debug redacts it
 
 ---
 
