@@ -34,18 +34,14 @@ export default defineConfig({
             return 'wallet-terra'
           }
           
-          // EVM wallet libraries
+          // EVM wallet libraries (includes WalletConnect/Reown to avoid circular chunks)
           if (id.includes('wagmi') ||
               id.includes('viem') ||
-              id.includes('@wagmi')) {
-            return 'wallet-evm'
-          }
-          
-          // WalletConnect / Reown (heavy, lazy-loadable)
-          if (id.includes('@walletconnect') ||
+              id.includes('@wagmi') ||
+              id.includes('@walletconnect') ||
               id.includes('@reown') ||
               id.includes('walletconnect')) {
-            return 'walletconnect'
+            return 'wallet-evm'
           }
           
           // Query and state management

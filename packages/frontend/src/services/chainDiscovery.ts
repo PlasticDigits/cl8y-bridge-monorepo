@@ -1,0 +1,147 @@
+/**
+ * Chain Discovery Service
+ *
+ * Resolves bytes4 chain IDs to bridge chain configurations.
+ * Uses a static map for well-known chains, with optional RPC discovery for unknown chains.
+ */
+
+import type { BridgeChainConfig } from '../types/chain'
+import { getAllBridgeChains, getBridgeChainByBytes4 } from '../utils/bridgeChains'
+import { createPublicClient, http } from 'viem'
+import type { Address } from 'viem'
+
+// Static map of well-known bytes4 chain IDs
+const WELL_KNOWN_CHAIN_IDS: Record<string, string> = {
+  '0x00000001': 'ethereum',
+  '0x00000038': 'bsc', // 56
+  '0x000000cc': 'opbnb', // 204
+  '0x00007a69': 'anvil', // 31337
+  '0x00000061': 'bsc-testnet', // 97
+  '0x000015eb': 'opbnb-testnet', // 5611
+}
+
+// Bridge view ABI for getThisChainId
+const BRIDGE_ABI = [
+  {
+    name: 'getThisChainId',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'bytes4' }],
+  },
+] as const
+
+/**
+ * Discover bytes4 chain IDs from bridge contracts via RPC.
+ * Queries each EVM bridge's getThisChainId() function.
+ *
+ * @param chains - Bridge chain configs to discover
+ * @returns Map of bytes4 hex string -> BridgeChainConfig
+ */
+export async function discoverChainIds(
+  chains: BridgeChainConfig[]
+): Promise<Map<string, BridgeChainConfig>> {
+  const result = new Map<string, BridgeChainConfig>()
+
+  // First, populate static map for well-known chains
+  for (const chain of chains) {
+    if (chain.bytes4ChainId) {
+      const normalized = chain.bytes4ChainId.toLowerCase()
+      result.set(normalized, chain)
+    } else if (chain.type === 'evm') {
+      // Check if this chain ID matches a well-known mapping
+      const chainIdHex = typeof chain.chainId === 'number'
+        ? `0x${chain.chainId.toString(16).padStart(8, '0')}`
+        : null
+      if (chainIdHex && WELL_KNOWN_CHAIN_IDS[chainIdHex]) {
+        result.set(chainIdHex.toLowerCase(), chain)
+      }
+    }
+  }
+
+  // Then, discover unknown EVM chains via RPC
+  const evmChains = chains.filter((c) => c.type === 'evm' && !result.has(c.bytes4ChainId?.toLowerCase() || ''))
+  
+  if (evmChains.length === 0) {
+    return result
+  }
+
+  const discoveryPromises = evmChains.map(async (chain) => {
+    if (!chain.bridgeAddress || !chain.rpcUrl) {
+      return null
+    }
+
+    try {
+      const client = createPublicClient({
+        transport: http(chain.rpcUrl, { timeout: 5000 }),
+        chain: {
+          id: chain.chainId as number,
+          name: chain.name,
+          nativeCurrency: { decimals: 18, name: 'ETH', symbol: 'ETH' },
+          rpcUrls: { default: { http: [chain.rpcUrl] } },
+        },
+      })
+
+      const bytes4 = await client.readContract({
+        address: chain.bridgeAddress as Address,
+        abi: BRIDGE_ABI,
+        functionName: 'getThisChainId',
+      })
+
+      const bytes4Hex = `0x${bytes4.slice(2).padStart(8, '0')}`.toLowerCase()
+      return { bytes4Hex, chain }
+    } catch (err) {
+      console.warn(`Failed to discover chain ID for ${chain.name}:`, err)
+      return null
+    }
+  })
+
+  const discoveries = await Promise.allSettled(discoveryPromises)
+  
+  for (const discovery of discoveries) {
+    if (discovery.status === 'fulfilled' && discovery.value) {
+      const { bytes4Hex, chain } = discovery.value
+      result.set(bytes4Hex, chain)
+    }
+  }
+
+  return result
+}
+
+/**
+ * Resolve a bytes4 chain ID to a bridge chain config.
+ * First checks static map, then falls back to discovery if needed.
+ *
+ * @param bytes4Hex - bytes4 chain ID as hex string (e.g., "0x00000001")
+ * @param chains - Optional chain list (defaults to getAllBridgeChains())
+ * @returns BridgeChainConfig or undefined
+ */
+export async function resolveChainByBytes4(
+  bytes4Hex: string,
+  chains?: BridgeChainConfig[]
+): Promise<BridgeChainConfig | undefined> {
+  const normalized = bytes4Hex.toLowerCase()
+  
+  // Try static lookup first
+  const staticResult = getBridgeChainByBytes4(normalized)
+  if (staticResult) {
+    return staticResult
+  }
+
+  // If not found and chains provided, try discovery
+  if (chains) {
+    const discoveryMap = await discoverChainIds(chains)
+    return discoveryMap.get(normalized)
+  }
+
+  return undefined
+}
+
+/**
+ * Build a complete bytes4 -> chain config map for all configured chains.
+ * Uses static map + discovery for unknown chains.
+ */
+export async function buildChainIdMap(): Promise<Map<string, BridgeChainConfig>> {
+  const chains = getAllBridgeChains()
+  return discoverChainIds(chains)
+}

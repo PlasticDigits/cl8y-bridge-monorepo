@@ -17,7 +17,7 @@ import {
   WalletName,
   WalletType,
   TerraWalletType,
-} from '../services/wallet';
+} from '../services/terra';
 
 // Re-export for convenience
 export { WalletName, WalletType };

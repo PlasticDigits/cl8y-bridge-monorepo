@@ -1,0 +1,194 @@
+/**
+ * Terra Bridge Query Service
+ *
+ * LCD queries for Terra bridge deposits and pending withdrawals.
+ * Normalizes Terra contract responses to match EVM DepositData/PendingWithdrawData formats.
+ */
+
+import { queryContract } from './lcdClient'
+import { base64ToHex, hexToBase64, chainIdToBytes32 } from './hashVerification'
+import type { DepositData, PendingWithdrawData } from '../hooks/useTransferLookup'
+import type { BridgeChainConfig } from '../types/chain'
+import type { Hex } from 'viem'
+
+// Terra contract query message types
+interface TerraDepositHashQuery {
+  deposit_hash: {
+    deposit_hash: string // base64-encoded 32-byte hash
+  }
+}
+
+interface TerraPendingWithdrawQuery {
+  pending_withdraw: {
+    withdraw_hash: string // base64-encoded 32-byte hash
+  }
+}
+
+// Terra contract response types (from LCD JSON)
+interface TerraDepositInfoResponse {
+  deposit_hash: string // base64 Binary
+  dest_chain_key: string // base64 Binary (bytes4 in V2, but named "key" for legacy)
+  src_account: string // base64 Binary (32 bytes)
+  dest_token_address: string // base64 Binary (32 bytes)
+  dest_account: string // base64 Binary (32 bytes)
+  amount: string // Uint128 as string
+  nonce: number // u64
+  deposited_at: {
+    seconds: string // Timestamp
+    nanos?: number
+  }
+}
+
+interface TerraPendingWithdrawResponse {
+  exists: boolean
+  src_chain: string // base64 Binary (bytes4)
+  src_account: string // base64 Binary (32 bytes)
+  dest_account: string // base64 Binary (32 bytes)
+  token: string // Token denom or CW20 address
+  recipient: string // Terra bech32 address
+  amount: string // Uint128 as string
+  nonce: number // u64
+  src_decimals: number // u8
+  dest_decimals: number // u8
+  submitted_at: number // u64 (seconds)
+  approved_at: number // u64 (seconds)
+  approved: boolean
+  cancelled: boolean
+  executed: boolean
+  cancel_window_remaining?: number // u64 (seconds)
+}
+
+/**
+ * Query Terra bridge deposit by hash.
+ * Returns null if deposit not found.
+ */
+export async function queryTerraDeposit(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  hash: Hex,
+  terraChainConfig: BridgeChainConfig
+): Promise<DepositData | null> {
+  try {
+    const hashBase64 = hexToBase64(hash)
+
+    const query: TerraDepositHashQuery = {
+      deposit_hash: {
+        deposit_hash: hashBase64,
+      },
+    }
+
+    const response = await queryContract<TerraDepositInfoResponse>(
+      lcdUrls,
+      bridgeAddress,
+      query
+    )
+
+    if (!response || !response.deposit_hash) {
+      return null
+    }
+
+    // Decode base64 Binary fields to hex
+    const destChainHex = base64ToHex(response.dest_chain_key)
+    const srcAccountHex = base64ToHex(response.src_account)
+    const destAccountHex = base64ToHex(response.dest_account)
+    const tokenHex = base64ToHex(response.dest_token_address)
+
+    // For Terra deposits, srcChain is Terra's bytes4 chain ID
+    // We need to get this from the chain config or query it
+    // For now, use a placeholder - will be resolved properly in Phase 2 integration
+    const srcChainHex = terraChainConfig.bytes4ChainId
+      ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
+      : ('0x' + '0'.repeat(64)) as Hex
+
+    const amount = BigInt(response.amount)
+    const nonce = BigInt(response.nonce)
+    const timestamp = BigInt(response.deposited_at.seconds)
+
+    return {
+      chainId: typeof terraChainConfig.chainId === 'number' ? terraChainConfig.chainId : 0,
+      srcChain: srcChainHex,
+      destChain: destChainHex,
+      srcAccount: srcAccountHex,
+      destAccount: destAccountHex,
+      token: tokenHex,
+      amount,
+      nonce,
+      timestamp,
+    }
+  } catch (err) {
+    // Contract query failed (e.g., deposit not found, LCD error)
+    return null
+  }
+}
+
+/**
+ * Query Terra bridge pending withdrawal by hash.
+ * Returns null if withdraw not found or exists=false.
+ */
+export async function queryTerraPendingWithdraw(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  hash: Hex,
+  terraChainConfig: BridgeChainConfig
+): Promise<PendingWithdrawData | null> {
+  try {
+    const hashBase64 = hexToBase64(hash)
+
+    const query: TerraPendingWithdrawQuery = {
+      pending_withdraw: {
+        withdraw_hash: hashBase64,
+      },
+    }
+
+    const response = await queryContract<TerraPendingWithdrawResponse>(
+      lcdUrls,
+      bridgeAddress,
+      query
+    )
+
+    if (!response || !response.exists) {
+      return null
+    }
+
+    // Decode base64 Binary fields to hex
+    const srcChainHex = base64ToHex(response.src_chain)
+    const srcAccountHex = base64ToHex(response.src_account)
+    const destAccountHex = base64ToHex(response.dest_account)
+
+    // Token encoding: if it's a denom (uluna), use keccak256("uluna"), otherwise decode as address
+    // For now, assume native uluna if token is "uluna"
+    const tokenHex: Hex =
+      response.token === 'uluna'
+        ? ('0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da' as Hex)
+        : ('0x' + '0'.repeat(64)) as Hex // TODO: Handle CW20 addresses properly
+
+    // For Terra withdrawals, destChain is Terra's bytes4 chain ID
+    const destChainHex = terraChainConfig.bytes4ChainId
+      ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
+      : ('0x' + '0'.repeat(64)) as Hex
+
+    const amount = BigInt(response.amount)
+    const nonce = BigInt(response.nonce)
+    const submittedAt = BigInt(response.submitted_at)
+    const approvedAt = BigInt(response.approved_at)
+
+    return {
+      chainId: typeof terraChainConfig.chainId === 'number' ? terraChainConfig.chainId : 0,
+      srcChain: srcChainHex,
+      destChain: destChainHex,
+      srcAccount: srcAccountHex,
+      destAccount: destAccountHex,
+      token: tokenHex,
+      amount,
+      nonce,
+      submittedAt,
+      approvedAt,
+      approved: response.approved,
+      cancelled: response.cancelled,
+      executed: response.executed,
+    }
+  } catch (err) {
+    // Contract query failed (e.g., withdraw not found, LCD error)
+    return null
+  }
+}

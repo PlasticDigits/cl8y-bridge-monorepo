@@ -1,5 +1,7 @@
 import { http, createConfig } from 'wagmi'
-import { mainnet, bsc, polygon, sepolia } from 'wagmi/chains'
+import { mainnet, bsc, opBNB } from 'wagmi/chains'
+import { walletConnect, coinbaseWallet } from 'wagmi/connectors'
+import { WC_PROJECT_ID } from '../utils/constants'
 
 // Custom Anvil chain for local development
 const anvil = {
@@ -19,12 +21,16 @@ const anvil = {
 } as const
 
 export const config = createConfig({
-  chains: [mainnet, bsc, polygon, sepolia, anvil],
+  chains: [mainnet, bsc, opBNB, anvil],
+  connectors: [
+    walletConnect({ projectId: WC_PROJECT_ID }),
+    coinbaseWallet(),
+  ],
+  multiInjectedProviderDiscovery: true,
   transports: {
     [mainnet.id]: http(),
     [bsc.id]: http(),
-    [polygon.id]: http(),
-    [sepolia.id]: http(),
+    [opBNB.id]: http(),
     [anvil.id]: http('http://localhost:8545'),
   },
 })

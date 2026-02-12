@@ -121,6 +121,12 @@ export const CHAIN_INFO = {
     icon: '🔧',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   },
+  opbnb: {
+    id: 'opbnb',
+    name: 'opBNB',
+    icon: '⬡',
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+  },
 } as const;
 
 // Token decimals

@@ -1,17 +1,6 @@
-export interface ChainInfo {
-  id: string
-  name: string
-  chainId: number | string
-  type: 'evm' | 'cosmos'
-  icon: string
-  rpcUrl: string
-  explorerUrl: string
-  nativeCurrency: {
-    name: string
-    symbol: string
-    decimals: number
-  }
-}
+import type { ChainInfo } from '../types/chain'
+
+export type { ChainInfo }
 
 export const supportedChains: ChainInfo[] = [
   {
@@ -43,16 +32,16 @@ export const supportedChains: ChainInfo[] = [
     },
   },
   {
-    id: 'polygon',
-    name: 'Polygon',
-    chainId: 137,
+    id: 'opbnb',
+    name: 'opBNB',
+    chainId: 204,
     type: 'evm',
-    icon: '⬢',
-    rpcUrl: 'https://polygon-rpc.com',
-    explorerUrl: 'https://polygonscan.com',
+    icon: '⬡',
+    rpcUrl: 'https://opbnb-mainnet-rpc.bnbchain.org',
+    explorerUrl: 'https://opbnb.bscscan.com',
     nativeCurrency: {
-      name: 'MATIC',
-      symbol: 'MATIC',
+      name: 'BNB',
+      symbol: 'BNB',
       decimals: 18,
     },
   },

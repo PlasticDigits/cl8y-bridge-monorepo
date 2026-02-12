@@ -1,60 +1,145 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --bg-0: #0a0a0a;
+  --bg-1: #131313;
+  --bg-2: #1d1d1d;
+  --ink: #f4f4f4;
+  --ink-dim: #c5c5c5;
+  --line: rgba(255, 255, 255, 0.35);
+  --line-strong: rgba(255, 255, 255, 0.7);
+  --cyan: #00f5d4;
+  --violet: #7f5af0;
+  --mint: #b8ff3d;
+  --glow: 4px 4px 0 #000;
   line-height: 1.5;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #1a1a1a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(0deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 38%, var(--bg-0) 100%);
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: 'Chakra Petch', sans-serif;
+    letter-spacing: 0.01em;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply border;
+    background: rgba(20, 20, 20, 0.92);
+    border-color: var(--line-strong);
+    box-shadow: var(--glow);
+  }
+
+  .shell-panel {
+    @apply glass rounded-none p-6;
+  }
+
+  .shell-panel-strong {
+    @apply p-6 border rounded-none;
+    border-color: var(--line-strong);
+    background: #121212;
+    box-shadow: 6px 6px 0 #000;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-none px-4 py-2 text-sm font-semibold transition-all duration-150 border-2;
+    color: #050505;
+    background: var(--mint);
+    border-color: #000;
+    box-shadow: 3px 3px 0 #000;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .btn-primary:hover {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 #000;
+  }
+
+  .btn-muted {
+    @apply inline-flex items-center gap-2 rounded-none px-4 py-2 text-sm font-medium transition-all duration-150 border-2;
+    border-color: #000;
+    color: var(--ink);
+    background: #2b2b2b;
+    box-shadow: 3px 3px 0 #000;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .btn-muted:hover {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 #000;
+    background: #3a3a3a;
+  }
+}
+
+@layer utilities {
+  .text-muted {
+    color: var(--ink-dim);
+  }
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1a1a;
+  background: #0a101d;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a5568;
-  border-radius: 4px;
+  background: linear-gradient(180deg, #2f4473, #1e2b4a);
+  border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #718096;
+  background: linear-gradient(180deg, #3f5da0, #29406f);
 }
 
 /* Animation utilities */
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .animate-spin-slow {
   animation: spin 3s linear infinite;
-}
-
-/* Glass effect */
-.glass {
-  @apply bg-white/5 backdrop-blur-md border border-white/10;
-}
-
-/* Gradient text */
-.gradient-text {
-  @apply bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent;
 }

@@ -6,44 +6,21 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG, POLLING_INTERVAL } from '../utils/constants';
+import { NETWORKS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants';
+import { fetchLcd, queryContract as queryContractLcd } from '../services/lcdClient';
 
 // ============================================
 // LCD Query Helpers
 // ============================================
 
 const networkConfig = NETWORKS[DEFAULT_NETWORK].terra;
+const lcdUrls = [...(networkConfig.lcdFallbacks || [networkConfig.lcd])];
 
 /**
- * Fetch from LCD with fallbacks
- */
-async function fetchLcd<T>(path: string): Promise<T> {
-  for (const lcd of networkConfig.lcdFallbacks) {
-    try {
-      const response = await fetch(`${lcd}${path}`, {
-        signal: AbortSignal.timeout(LCD_CONFIG.requestTimeout),
-      });
-      
-      if (!response.ok) continue;
-      
-      return await response.json();
-    } catch {
-      continue;
-    }
-  }
-  
-  throw new Error(`All LCD endpoints failed for ${path}`);
-}
-
-/**
- * Query a smart contract
+ * Query a smart contract (wrapper for backward compatibility)
  */
 async function queryContract<T>(contractAddress: string, query: object): Promise<T> {
-  const queryBase64 = btoa(JSON.stringify(query));
-  const result = await fetchLcd<{ data: T }>(
-    `/cosmwasm/wasm/v1/contract/${contractAddress}/smart/${queryBase64}`
-  );
-  return result.data;
+  return queryContractLcd<T>(lcdUrls, contractAddress, query);
 }
 
 // ============================================
@@ -98,6 +75,7 @@ export function useNativeBalance(
     queryKey: ['nativeBalance', walletAddress, denom],
     queryFn: async () => {
       const result = await fetchLcd<{ balance: { amount: string } }>(
+        lcdUrls,
         `/cosmos/bank/v1beta1/balances/${walletAddress}/by_denom?denom=${denom}`
       );
       return result.balance?.amount || '0';
