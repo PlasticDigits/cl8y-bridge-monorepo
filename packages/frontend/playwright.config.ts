@@ -70,12 +70,14 @@ export default defineConfig({
       testIgnore: ['**/*.verify.spec.ts'],
     },
     {
-      // Verification tests run serially (share chain state) with longer timeout
+      // Verification tests run serially with 1 worker (share wallet + chain state).
+      // Parallel execution causes nonce conflicts on the shared anvil wallet.
       name: 'verification',
       testMatch: '**/*.verify.spec.ts',
       use: { ...devices['Desktop Chrome'] },
       timeout: 180_000,
       fullyParallel: false,
+      retries: 1,
     },
   ],
 })

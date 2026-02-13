@@ -415,7 +415,10 @@ mod tests {
 
     #[test]
     fn test_multi_evm_config_creation() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
         assert_eq!(config.enabled_count(), 2);
@@ -424,7 +427,10 @@ mod tests {
 
     #[test]
     fn test_lookup_by_native_id() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
         let chain = config.get_chain(31337).unwrap();
@@ -438,7 +444,10 @@ mod tests {
 
     #[test]
     fn test_lookup_by_v2_id() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
         let chain = config.get_chain_by_v2_id(&ChainId::from_u32(1)).unwrap();
@@ -462,19 +471,22 @@ mod tests {
 
     #[test]
     fn test_lookup_by_name() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
-        assert_eq!(
-            config.get_chain_by_name("anvil1").unwrap().chain_id,
-            31338
-        );
+        assert_eq!(config.get_chain_by_name("anvil1").unwrap().chain_id, 31338);
         assert!(config.get_chain_by_name("unknown").is_none());
     }
 
     #[test]
     fn test_source_chain_endpoints() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
         let endpoints = config.source_chain_endpoints();
@@ -490,7 +502,10 @@ mod tests {
 
     #[test]
     fn test_disabled_chain_excluded_from_endpoints() {
-        let mut chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let mut chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         chains[1].enabled = false;
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
@@ -537,7 +552,10 @@ mod tests {
 
     #[test]
     fn test_v2_chain_ids_list() {
-        let chains = vec![make_chain("anvil", 31337, 1), make_chain("anvil1", 31338, 3)];
+        let chains = vec![
+            make_chain("anvil", 31337, 1),
+            make_chain("anvil1", 31338, 3),
+        ];
         let config = MultiEvmConfig::new(chains, test_private_key()).unwrap();
 
         let v2_ids: Vec<u32> = config.v2_chain_ids().iter().map(|id| id.to_u32()).collect();

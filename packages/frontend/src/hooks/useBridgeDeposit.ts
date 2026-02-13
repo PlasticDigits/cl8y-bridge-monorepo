@@ -421,14 +421,6 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         }))
       })
 
-      // Wait briefly for the receipt handler useEffect to fire
-      await new Promise<void>((resolve) => {
-        const checkStatus = setInterval(() => {
-          resolve()
-          clearInterval(checkStatus)
-        }, 5000)
-      })
-
     } catch (error) {
       console.error('Deposit error:', error)
       clearTimeout(timeoutRef.current!)

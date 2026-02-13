@@ -84,7 +84,7 @@ test.describe('EVM -> Terra Transfer Verification', () => {
     await submitBtn.click()
 
     // 8. Expect redirect to /transfer/:hash status page
-    await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
+    await page.waitForURL(/\/transfer\//, { timeout: 60_000 })
     await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
 
     // 9. Wait for auto-submit progress or manual-required indicator

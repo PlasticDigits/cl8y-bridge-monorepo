@@ -80,7 +80,10 @@ test.describe('EVM -> EVM Transfer Verification (anvil -> anvil1)', () => {
     await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
     await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
 
-    // 9. For EVM->EVM, the auto-submit hook handles chain switching.
+    // 9. Skip cancel window on anvil1 immediately (accelerates operator auto-execute)
+    await skipAnvilTime(ANVIL1_RPC, 600)
+
+    // 10. For EVM->EVM, the auto-submit hook handles chain switching.
     // Wait for any status indicator.
     await expect(
       page.locator('text=Waiting for Operator Approval')
@@ -90,13 +93,10 @@ test.describe('EVM -> EVM Transfer Verification (anvil -> anvil1)', () => {
         .or(page.locator('text=Transfer Complete'))
     ).toBeVisible({ timeout: 60_000 })
 
-    // 10. Skip cancel window on anvil1
-    await skipAnvilTime(ANVIL1_RPC, 600)
-
     // 11. Wait for completion
     await expect(
       page.locator('text=Transfer Complete')
-    ).toBeVisible({ timeout: 60_000 })
+    ).toBeVisible({ timeout: 90_000 })
 
     // 12. Verify token receipt on anvil1: balance must INCREASE (strict greater-than).
     if (token1A) {

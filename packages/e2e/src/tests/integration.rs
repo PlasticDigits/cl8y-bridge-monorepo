@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::helpers::{
-    approve_erc20, create_fraudulent_approval, encode_terra_address, execute_deposit,
-    get_terra_chain_key, is_approval_cancelled, query_deposit_nonce,
+    create_fraudulent_approval, encode_terra_address, execute_deposit, get_terra_chain_key,
+    is_approval_cancelled, query_deposit_nonce,
 };
 use super::operator_helpers::{
     calculate_evm_fee, poll_terra_for_approval, submit_withdraw_on_terra, TERRA_APPROVAL_TIMEOUT,

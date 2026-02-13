@@ -532,8 +532,7 @@ impl ApprovalVerifier {
                     "Registered additional EVM chain for verification"
                 );
             }
-            self.known_evm_chains
-                .insert(chain.v2_chain_id, chain);
+            self.known_evm_chains.insert(chain.v2_chain_id, chain);
         }
         info!(
             total_evm_chains = self.known_evm_chains.len(),

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use super::helpers::{
-    approve_erc20, encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
+    encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
     query_deposit_nonce,
 };
 

@@ -125,16 +125,21 @@ function buildTransferTokens(
 }
 
 /**
- * Convert a bytes32 hex string (64 chars) to a checksummed 20-byte EVM address.
+ * Convert a bytes32 hex string (64 chars) or 20-byte address to a checksummed EVM address.
  * The Terra bridge stores EVM addresses left-padded to 32 bytes.
- * e.g. "0000000000000000000000000b306bf915c4d645ff596e518faf3f9669b97016"
- * → "0x0b306BF915C4d645ff596E518fAf3F9669b97016"
+ * Invalid/short input returns zero address to avoid crashing on malformed registry data.
  */
 function bytes32ToAddress(hex: string): Address {
-  // Strip 0x prefix if present, take last 40 chars (20 bytes)
-  const clean = hex.replace(/^0x/, '')
+  const clean = hex.replace(/^0x/, '').toLowerCase()
+  if (!/^[0-9a-f]*$/.test(clean) || clean.length < 40) {
+    return '0x0000000000000000000000000000000000000000' as Address
+  }
   const addr = clean.length > 40 ? clean.slice(-40) : clean
-  return getAddress(`0x${addr}`)
+  try {
+    return getAddress(`0x${addr}`)
+  } catch {
+    return '0x0000000000000000000000000000000000000000' as Address
+  }
 }
 
 /** Get EVM token config for deposit/balance from selected token id */

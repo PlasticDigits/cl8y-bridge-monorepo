@@ -154,7 +154,11 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     // Real multi-EVM transfer tests (require evm2 to be configured)
     {
         let evm_token = config.evm.contracts.test_token;
-        let evm_token_opt = if evm_token != Address::ZERO { Some(evm_token) } else { None };
+        let evm_token_opt = if evm_token != Address::ZERO {
+            Some(evm_token)
+        } else {
+            None
+        };
         results.push(evm_to_evm::test_real_evm1_to_evm2_transfer(config, evm_token_opt).await);
         results.push(evm_to_evm::test_real_evm2_to_evm1_return_trip(config, evm_token_opt).await);
     }

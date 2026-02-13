@@ -180,6 +180,7 @@ export default async function setup(): Promise<void> {
       '',
       '# Network',
       'VITE_NETWORK=local',
+      'VITE_POLLING_INTERVAL=5000',
       '',
     ].join('\n')
 
@@ -193,6 +194,7 @@ export default async function setup(): Promise<void> {
       `# Generated at ${new Date().toISOString()}`,
       '',
       `VITE_NETWORK=local`,
+      'VITE_POLLING_INTERVAL=5000',
       `VITE_EVM_BRIDGE_ADDRESS=${anvilContracts.bridgeAddress}`,
       `VITE_EVM_ROUTER_ADDRESS=${anvilContracts.bridgeAddress}`,
       `VITE_EVM1_BRIDGE_ADDRESS=${anvil1Contracts.bridgeAddress}`,

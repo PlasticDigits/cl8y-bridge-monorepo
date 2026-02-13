@@ -627,13 +627,7 @@ impl E2eSetup {
                     {
                         let private_key =
                             format!("0x{:x}", self.config.test_accounts.evm_private_key);
-                        let rpc2 = self
-                            .config
-                            .evm2
-                            .as_ref()
-                            .unwrap()
-                            .rpc_url
-                            .to_string();
+                        let rpc2 = self.config.evm2.as_ref().unwrap().rpc_url.to_string();
                         let _ = chain_config::set_cancel_window(
                             deployed2.bridge,
                             15,
@@ -647,9 +641,7 @@ impl E2eSetup {
                     let _ = self.grant_roles_evm2(&deployed2).await;
 
                     // Cross-chain registration
-                    let _ = self
-                        .register_cross_chain(&deployed, &deployed2)
-                        .await;
+                    let _ = self.register_cross_chain(&deployed, &deployed2).await;
 
                     // Deploy and register test token on anvil1 with cross-chain mappings
                     if let Some(primary_token) = deployed.test_token {

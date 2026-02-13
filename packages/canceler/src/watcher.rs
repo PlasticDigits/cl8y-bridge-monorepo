@@ -193,22 +193,22 @@ impl CancelerWatcher {
         // Build additional chain poll states from multi-EVM config.
         // The primary chain is polled via poll_evm_approvals(); additional chains
         // are polled separately via poll_additional_evm_approvals().
-        let additional_evm_chains: Vec<EvmChainPollState> = if let Some(ref multi) = config.multi_evm
-        {
-            multi
-                .enabled_chains()
-                .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip primary chain
-                .map(|c| EvmChainPollState {
-                    v2_chain_id: c.this_chain_id.0,
-                    name: c.name.clone(),
-                    rpc_url: c.rpc_url.clone(),
-                    bridge_address: c.bridge_address.clone(),
-                    last_block: 0,
-                })
-                .collect()
-        } else {
-            vec![]
-        };
+        let additional_evm_chains: Vec<EvmChainPollState> =
+            if let Some(ref multi) = config.multi_evm {
+                multi
+                    .enabled_chains()
+                    .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip primary chain
+                    .map(|c| EvmChainPollState {
+                        v2_chain_id: c.this_chain_id.0,
+                        name: c.name.clone(),
+                        rpc_url: c.rpc_url.clone(),
+                        bridge_address: c.bridge_address.clone(),
+                        last_block: 0,
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
 
         info!(
             canceler_id = %config.canceler_id,
@@ -666,12 +666,12 @@ impl CancelerWatcher {
                 continue;
             }
 
-            let from_block = if chain_state.last_block == 0 || current_block < chain_state.last_block
-            {
-                0
-            } else {
-                chain_state.last_block + 1
-            };
+            let from_block =
+                if chain_state.last_block == 0 || current_block < chain_state.last_block {
+                    0
+                } else {
+                    chain_state.last_block + 1
+                };
             let to_block = current_block;
 
             let bridge_address = match Address::from_str(bridge_addr_str) {

@@ -42,7 +42,7 @@ describe('useTokenRegistry', () => {
       {
         token: 'uluna',
         is_native: true,
-        evm_token_address: '0x1234',
+        evm_token_address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
         terra_decimals: 6,
         evm_decimals: 18,
         enabled: true,

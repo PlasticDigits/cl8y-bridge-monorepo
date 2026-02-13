@@ -8,16 +8,22 @@ CosmWasm smart contracts for the CL8Y Bridge on Terra Classic.
 
 ## Setup
 
-*Coming soon*
+Requires Rust 1.75+ and CosmWasm toolchain. See monorepo root for Docker-based LocalTerra setup.
 
 ## Build
 
 ```bash
-# TBD
+# From monorepo root:
+make build-terra
+
+# Or from this directory:
+cargo build --release --target wasm32-unknown-unknown
+
+# Optimized WASM (for deployment): make build-terra-optimized
 ```
 
 ## Test
 
 ```bash
-# TBD
+cd bridge && cargo test
 ```

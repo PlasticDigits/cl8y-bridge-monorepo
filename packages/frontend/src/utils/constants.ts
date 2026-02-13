@@ -148,7 +148,8 @@ export const BRIDGE_CONFIG = {
 } as const;
 
 // UI constants
-export const POLLING_INTERVAL = 10000; // 10 seconds
+// Configurable via VITE_POLLING_INTERVAL for faster E2E tests (e.g., 5000 for 5s)
+export const POLLING_INTERVAL = parseInt(import.meta.env.VITE_POLLING_INTERVAL || '10000', 10)
 export const TOAST_DURATION = 5000; // 5 seconds
 
 // WalletConnect Project ID (get from cloud.walletconnect.com)

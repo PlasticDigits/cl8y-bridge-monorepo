@@ -24,6 +24,7 @@ import { useWallet } from './useWallet'
 import { useWithdrawSubmit } from './useWithdrawSubmit'
 import { useTransferStore } from '../stores/transfer'
 import { BRIDGE_WITHDRAW_VIEW_ABI } from '../services/evm/withdrawSubmit'
+import { queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
 import { getDestToken, bytes32ToAddress } from '../services/evm/tokenRegistry'
 import {
   chainIdToBytes4,
@@ -277,51 +278,75 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
   /**
    * Poll destination chain for approval and execution.
+   * Supports both EVM (RPC) and Terra (LCD) destinations.
    */
   const startPolling = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current)
 
     pollingRef.current = setInterval(async () => {
-      if (!transfer?.transferHash || !publicClient) return
+      if (!transfer?.transferHash) return
+
+      const destChainConfig = getDestChainConfig()
+      if (!destChainConfig || !destChainConfig.bridgeAddress) return
 
       try {
-        const destChainConfig = getDestChainConfig()
-        if (!destChainConfig || destChainConfig.type !== 'evm') {
-          // For Terra destination, we'd need LCD polling (simplified for now)
-          return
-        }
+        if (destChainConfig.type === 'evm') {
+          // EVM destination: query via RPC
+          if (!publicClient) return
 
-        const bridgeAddress = destChainConfig.bridgeAddress as Address
-        if (!bridgeAddress) return
+          const bridgeAddress = destChainConfig.bridgeAddress as Address
+          const result = await publicClient.readContract({
+            address: bridgeAddress,
+            abi: BRIDGE_WITHDRAW_VIEW_ABI,
+            functionName: 'getPendingWithdraw',
+            args: [transfer.transferHash as Hex],
+          }) as { submittedAt: bigint; approvedAt: bigint; approved: boolean; executed: boolean }
 
-        // Query getPendingWithdraw to check status
-        const result = await publicClient.readContract({
-          address: bridgeAddress,
-          abi: BRIDGE_WITHDRAW_VIEW_ABI,
-          functionName: 'getPendingWithdraw',
-          args: [transfer.transferHash as Hex],
-        }) as { submittedAt: bigint; approvedAt: bigint; approved: boolean; executed: boolean }
-
-        if (result.executed) {
-          // Execution complete! Tokens have been delivered.
-          if (transfer.lifecycle !== 'executed') {
-            updateTransferRecord(transfer.id, { lifecycle: 'executed' })
-            setPhase('complete')
-            // Stop polling — transfer is done
+          if (result.executed) {
+            if (transfer.lifecycle !== 'executed') {
+              updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+              setPhase('complete')
+            }
             if (pollingRef.current) {
               clearInterval(pollingRef.current)
               pollingRef.current = null
             }
+          } else if (result.approved || result.approvedAt > 0n) {
+            if (transfer.lifecycle === 'hash-submitted') {
+              updateTransferRecord(transfer.id, { lifecycle: 'approved' })
+              setPhase('waiting-execution')
+            }
           }
-        } else if (result.approved || result.approvedAt > 0n) {
-          // Approved but not yet executed
-          if (transfer.lifecycle === 'hash-submitted') {
-            updateTransferRecord(transfer.id, { lifecycle: 'approved' })
-            setPhase('waiting-execution')
+        } else if (destChainConfig.type === 'cosmos') {
+          // Terra destination: query via LCD
+          const lcdUrls = destChainConfig.lcdFallbacks || (destChainConfig.lcdUrl ? [destChainConfig.lcdUrl] : [])
+          if (lcdUrls.length === 0) return
+
+          const result = await queryTerraPendingWithdraw(
+            lcdUrls,
+            destChainConfig.bridgeAddress,
+            transfer.transferHash as Hex,
+            destChainConfig
+          )
+
+          if (result?.executed) {
+            if (transfer.lifecycle !== 'executed') {
+              updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+              setPhase('complete')
+            }
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current)
+              pollingRef.current = null
+            }
+          } else if (result?.approved) {
+            if (transfer.lifecycle === 'hash-submitted') {
+              updateTransferRecord(transfer.id, { lifecycle: 'approved' })
+              setPhase('waiting-execution')
+            }
           }
         }
       } catch {
-        // Polling error, continue
+        // Polling error, continue on next interval
       }
     }, POLLING_INTERVAL)
   }, [transfer, publicClient, updateTransferRecord, getDestChainConfig])

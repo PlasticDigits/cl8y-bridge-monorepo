@@ -84,48 +84,37 @@ Supporting infrastructure:
 | Terra→EVM destToken missing | `transferRecord.destToken` not set, `withdrawSubmit` passed zero address | Set from `registryTokens[].evm_token_address` |
 | Hash computation for bytes32 fields | `evmAddressToBytes32()` called on already-bytes32 strings | Length-check before padding |
 | Terra watcher crash | Transient "could not find results for height" error | Retry with break instead of crash |
+| evm-to-terra "Transfer Complete" never shows | useAutoWithdrawSubmit only polled EVM, not Terra LCD | Added Terra destination polling via queryTerraPendingWithdraw |
 
 ---
 
 ## What Remains (Ordered by Priority)
 
-### P0 — Terra Contract V2 Alignment (Not Started)
+### P0 — Terra Contract V2 Alignment (COMPLETE)
 
-These are the highest-priority remaining tasks from `docs/HANDOFF_NEXT_AGENT.md`. The EVM side is complete; the Terra CosmWasm contract still uses the V1 naming and structures.
+**Status:** Implemented. See `docs/BRIDGE_OVERHAUL_BREAKING.md` for details. The Terra CosmWasm contract has V2 withdrawal flow, chain ID system, and fee system.
 
-1. **Task 1: Terra V2 Withdrawal Flow** — Add `WithdrawSubmit`, rename `ApproveWithdraw` → `WithdrawApprove`, add `PendingWithdraw` struct with `executed`/`cancelled` fields, split unlock vs mint execution. This is the largest remaining change.
+### P1 — Terra Deposit Naming (COMPLETE)
 
-2. **Task 2: Terra Chain ID System** — Switch from `chain_id: u64` to `chain_id: [u8; 4]` registered chain IDs. Update `ChainConfig`, add `RegisterChain`.
+**Status:** `DepositNative`, `DepositCw20Lock`, `DepositCw20MintableBurn` with bytes32 addresses are implemented.
 
-3. **Task 3: Terra Fee System Wiring** — `fee_manager.rs` exists but is unwired. Connect it to deposit handlers, add execute/query message handlers for fee management.
+### P2 — Flaky Playwright Tests (FIXED 2026-02-14)
 
-### P1 — Terra Deposit Naming
+Fixes applied:
+- **Terra destination polling**: `useAutoWithdrawSubmit` now polls Terra via LCD (`queryTerraPendingWithdraw`) so evm-to-terra transfers correctly show "Transfer Complete". Previously only EVM destinations were polled.
+- **EVM→Terra**: `waitForURL` timeout increased from 30s to 60s.
+- **EVM→EVM**: "Transfer Complete" timeout increased from 60s to 90s; `skipAnvilTime` moved earlier (right after status page load) to accelerate cancel window.
+- **E2E polling**: `VITE_POLLING_INTERVAL=5000` set in E2E setup for faster status updates during tests.
 
-4. **Task 4: Deposit Naming** — Rename `Lock` → `DepositNative`, distinguish `DepositCw20Lock` vs `DepositCw20MintableBurn`, use bytes32 universal addresses.
+### P2 — Code Quality / LOC Refactoring (COMPLETE)
 
-### P2 — Flaky Playwright Tests
-
-The EVM→Terra and EVM→EVM verification tests are **flaky** — they pass on retry but not always on first attempt. Root causes:
-
-- **EVM→Terra (`transfer-evm-to-terra.verify.spec.ts`)**: The `page.waitForURL(/\/transfer\//)` times out at 30s. The deposit transaction succeeds but the React router navigation to the status page is slow or doesn't trigger. Consider increasing the timeout or adding an explicit navigation after deposit confirmation.
-
-- **EVM→EVM (`transfer-evm-to-evm.verify.spec.ts`)**: The "Transfer Complete" text doesn't appear within 60s. The operator approves and executes successfully, but the frontend polling sometimes doesn't detect the `executed` state quickly enough. The cancel window is 15s wall-clock, but operator poll interval + frontend poll interval can compound.
-
-Potential fixes:
-- Increase timeouts in flaky specs (e.g., 90s for "Transfer Complete")
-- Add a retry/recheck in `useAutoWithdrawSubmit` when `submittedAt > 0` but `executed` is still false
-- Use `page.reload()` as a fallback to force re-query
-- Reduce operator poll interval in test config
-
-### P2 — Code Quality / LOC Refactoring
-
-From `HANDOFF_NEXT_AGENT.md`, several files exceed the 900 LOC hard cap and need splitting. See that document for specific splitting plans.
+Setup, integration, and user_eoa splits are done. All files under 900 LOC.
 
 ### P3 — Polish
 
 - Terra cw2 version tracking
-- Cross-chain decimal normalization (`src_decimals`/`dest_decimals` in `PendingWithdraw`)
-- Update README files across packages
+- Cross-chain decimal normalization — done in `PendingWithdraw`
+- README updates — canceler README added
 
 ---
 

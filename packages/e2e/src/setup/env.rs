@@ -87,7 +87,10 @@ impl E2eSetup {
             content.push_str(&format!("EVM2_V2_CHAIN_ID={}\n", evm2.v2_chain_id));
             content.push_str(&format!("EVM2_BRIDGE_ADDRESS={}\n", evm2.contracts.bridge));
             if evm2.contracts.test_token != alloy::primitives::Address::ZERO {
-                content.push_str(&format!("EVM2_TEST_TOKEN_ADDRESS={}\n", evm2.contracts.test_token));
+                content.push_str(&format!(
+                    "EVM2_TEST_TOKEN_ADDRESS={}\n",
+                    evm2.contracts.test_token
+                ));
             }
         }
 

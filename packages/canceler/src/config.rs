@@ -373,12 +373,18 @@ mod tests {
         std::env::set_var("EVM_CHAIN_1_CHAIN_ID", "31337");
         std::env::set_var("EVM_CHAIN_1_THIS_CHAIN_ID", "1");
         std::env::set_var("EVM_CHAIN_1_RPC_URL", "http://localhost:8545");
-        std::env::set_var("EVM_CHAIN_1_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001");
+        std::env::set_var(
+            "EVM_CHAIN_1_BRIDGE_ADDRESS",
+            "0x0000000000000000000000000000000000000001",
+        );
         std::env::set_var("EVM_CHAIN_2_NAME", "anvil1");
         std::env::set_var("EVM_CHAIN_2_CHAIN_ID", "31338");
         std::env::set_var("EVM_CHAIN_2_THIS_CHAIN_ID", "3");
         std::env::set_var("EVM_CHAIN_2_RPC_URL", "http://localhost:8546");
-        std::env::set_var("EVM_CHAIN_2_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000002");
+        std::env::set_var(
+            "EVM_CHAIN_2_BRIDGE_ADDRESS",
+            "0x0000000000000000000000000000000000000002",
+        );
 
         let config = Config::load().expect("Config should load");
         assert!(config.multi_evm.is_some());
@@ -391,10 +397,16 @@ mod tests {
         }
         for k in [
             "EVM_CHAINS_COUNT",
-            "EVM_CHAIN_1_NAME", "EVM_CHAIN_1_CHAIN_ID", "EVM_CHAIN_1_THIS_CHAIN_ID",
-            "EVM_CHAIN_1_RPC_URL", "EVM_CHAIN_1_BRIDGE_ADDRESS",
-            "EVM_CHAIN_2_NAME", "EVM_CHAIN_2_CHAIN_ID", "EVM_CHAIN_2_THIS_CHAIN_ID",
-            "EVM_CHAIN_2_RPC_URL", "EVM_CHAIN_2_BRIDGE_ADDRESS",
+            "EVM_CHAIN_1_NAME",
+            "EVM_CHAIN_1_CHAIN_ID",
+            "EVM_CHAIN_1_THIS_CHAIN_ID",
+            "EVM_CHAIN_1_RPC_URL",
+            "EVM_CHAIN_1_BRIDGE_ADDRESS",
+            "EVM_CHAIN_2_NAME",
+            "EVM_CHAIN_2_CHAIN_ID",
+            "EVM_CHAIN_2_THIS_CHAIN_ID",
+            "EVM_CHAIN_2_RPC_URL",
+            "EVM_CHAIN_2_BRIDGE_ADDRESS",
         ] {
             std::env::remove_var(k);
         }
