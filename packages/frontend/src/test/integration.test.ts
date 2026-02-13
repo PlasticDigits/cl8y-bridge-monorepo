@@ -1,13 +1,29 @@
 /**
  * Integration Tests for CL8Y Bridge Frontend
- * 
- * These tests require real infrastructure:
- * - LocalTerra running on localhost:1317
- * - Anvil running on localhost:8545
- * - Anvil1 running on localhost:8546
- * 
- * Run with: npm run test:integration
- * Skip with: SKIP_INTEGRATION=true npm run test
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │  REQUIRES LOCAL INFRASTRUCTURE TO BE RUNNING BEFORE EXECUTION.     │
+ * │                                                                    │
+ * │  You need ALL of the following:                                    │
+ * │    1. Anvil        (EVM devnet)       → localhost:8545             │
+ * │    2. Anvil1       (second EVM chain) → localhost:8546             │
+ * │    3. LocalTerra   (Cosmos devnet)    → localhost:1317 (LCD)       │
+ * │    4. PostgreSQL   (operator DB)      → localhost:5433             │
+ * │    5. Operator     (cl8y-relayer)     → localhost:9092             │
+ * │                                                                    │
+ * │  Quick start:                                                      │
+ * │    make test-bridge-integration                                    │
+ * │                                                                    │
+ * │  Or manually:                                                      │
+ * │    docker compose up -d anvil anvil1 localterra postgres           │
+ * │    npx vitest run --config vitest.config.integration.ts            │
+ * │                                                                    │
+ * │  Teardown:                                                         │
+ * │    docker compose down -v                                          │
+ * │                                                                    │
+ * │  DO NOT run these via the default `npx vitest run`.                │
+ * │  They are excluded from vitest.config.ts on purpose.               │
+ * └─────────────────────────────────────────────────────────────────────┘
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -20,7 +36,7 @@ const EVM1_RPC = 'http://localhost:8546'
 // Test configuration
 const INTEGRATION_TIMEOUT = 30000 // 30 seconds for network calls
 
-// Skip integration tests if infrastructure not available or SKIP_INTEGRATION is set
+// Skip integration tests if SKIP_INTEGRATION is set
 const skipIntegration = process.env.SKIP_INTEGRATION === 'true'
 
 /**
@@ -83,28 +99,56 @@ async function isAnvil1Running(): Promise<boolean> {
   }
 }
 
+/**
+ * Hard-fail preflight check. Runs once before ALL describe blocks in this file.
+ * If any service is unreachable, the entire file aborts with a clear message
+ * so devs aren't left wondering why 15 tests "expected true, received false".
+ */
+beforeAll(async () => {
+  if (skipIntegration) return
+
+  const [terra, anvil, anvil1] = await Promise.all([
+    isLocalTerraRunning(),
+    isAnvilRunning(),
+    isAnvil1Running(),
+  ])
+
+  const missing: string[] = []
+  if (!terra)  missing.push('LocalTerra  (localhost:1317)  → docker compose up -d localterra')
+  if (!anvil)  missing.push('Anvil       (localhost:8545)  → docker compose up -d anvil')
+  if (!anvil1) missing.push('Anvil1      (localhost:8546)  → docker compose up -d anvil1')
+
+  if (missing.length > 0) {
+    const msg = [
+      '',
+      '╔══════════════════════════════════════════════════════════════════╗',
+      '║  INTEGRATION TESTS ABORTED — infrastructure not running        ║',
+      '╠══════════════════════════════════════════════════════════════════╣',
+      ...missing.map((m) => `║  ✗ ${m.padEnd(60)}║`),
+      '╠══════════════════════════════════════════════════════════════════╣',
+      '║  Quick start:  make test-bridge-integration                    ║',
+      '║  Or manually:  docker compose up -d anvil anvil1 localterra    ║',
+      '║  Then run:     npx vitest run --config vitest.config.integration.ts ║',
+      '╚══════════════════════════════════════════════════════════════════╝',
+      '',
+    ].join('\n')
+    throw new Error(msg)
+  }
+}, INTEGRATION_TIMEOUT)
+
 describe.skipIf(skipIntegration)('Infrastructure Connectivity', () => {
   it('LocalTerra is running', async () => {
     const running = await isLocalTerraRunning()
-    if (!running) {
-      console.warn('LocalTerra not running - start with: docker compose up -d localterra')
-    }
     expect(running).toBe(true)
   }, INTEGRATION_TIMEOUT)
 
   it('Anvil is running', async () => {
     const running = await isAnvilRunning()
-    if (!running) {
-      console.warn('Anvil not running - start with: docker compose up -d anvil')
-    }
     expect(running).toBe(true)
   }, INTEGRATION_TIMEOUT)
 
   it('Anvil1 is running', async () => {
     const running = await isAnvil1Running()
-    if (!running) {
-      console.warn('Anvil1 not running - start with: docker compose up -d anvil1')
-    }
     expect(running).toBe(true)
   }, INTEGRATION_TIMEOUT)
 })

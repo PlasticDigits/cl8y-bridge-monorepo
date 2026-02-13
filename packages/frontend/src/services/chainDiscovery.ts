@@ -10,12 +10,16 @@ import { getAllBridgeChains, getBridgeChainByBytes4 } from '../utils/bridgeChain
 import { createPublicClient, http } from 'viem'
 import type { Address } from 'viem'
 
-// Static map of well-known bytes4 chain IDs
+// Static map of well-known V2 bytes4 chain IDs.
+// NOTE: These are V2 ChainRegistry IDs, NOT native chain IDs.
+// In local mode anvil=0x00000001, which overlaps with ethereum mainnet.
+// The tier-aware getBridgeChainByBytes4() should be preferred for lookups.
 const WELL_KNOWN_CHAIN_IDS: Record<string, string> = {
-  '0x00000001': 'ethereum',
+  '0x00000001': 'ethereum', // Also anvil in local mode
+  '0x00000002': 'terra',
+  '0x00000003': 'anvil1',   // Local-only second EVM chain
   '0x00000038': 'bsc', // 56
   '0x000000cc': 'opbnb', // 204
-  '0x00007a69': 'anvil', // 31337
   '0x00000061': 'bsc-testnet', // 97
   '0x000015eb': 'opbnb-testnet', // 5611
 }

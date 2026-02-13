@@ -14,7 +14,10 @@ import {Bridge} from "../src/Bridge.sol";
 
 /// @title DeployLocal
 /// @notice Simplified deployment script for local testing and E2E tests
-/// @dev Uses msg.sender as admin, operator, and fee recipient (no env vars needed).
+/// @dev Uses msg.sender as admin, operator, and fee recipient.
+///      Reads optional env vars:
+///        THIS_V2_CHAIN_ID  – the globally-unique V2 chain ID for this chain (default 1)
+///        THIS_CHAIN_LABEL  – human-readable label registered in ChainRegistry (default "evm_31337")
 ///      Outputs proxy addresses in KEY=VALUE format for Rust-side parsing.
 contract DeployLocal is Script {
     function run() public {
@@ -48,12 +51,13 @@ contract DeployLocal is Script {
         address mintBurnProxy =
             address(new ERC1967Proxy(address(mbImpl), abi.encodeCall(MintBurn.initialize, (deployer))));
 
-        // 6. Register the local EVM chain with a predetermined chain ID
-        //    This must happen before Bridge deployment so the chain ID can be
-        //    validated in Bridge.initialize().
-        //    Chain ID 0x00000001 is used for the local EVM (Anvil) chain.
-        bytes4 evmChainId = bytes4(uint32(1));
-        ChainRegistry(chainRegistryProxy).registerChain("evm_31337", evmChainId);
+        // 6. Register this chain with its globally-unique V2 chain ID.
+        //    Defaults to 1 for backward compat with existing Rust E2E tests.
+        //    For multi-EVM setups, set THIS_V2_CHAIN_ID env var (e.g. 3 for anvil1).
+        uint32 thisChainIdNum = uint32(vm.envOr("THIS_V2_CHAIN_ID", uint256(1)));
+        bytes4 evmChainId = bytes4(thisChainIdNum);
+        string memory chainLabel = vm.envOr("THIS_CHAIN_LABEL", string("evm_31337"));
+        ChainRegistry(chainRegistryProxy).registerChain(chainLabel, evmChainId);
 
         // 7. Deploy WETH for native deposits (Solady WETH)
         WETH weth = new WETH();
@@ -95,5 +99,6 @@ contract DeployLocal is Script {
         console2.log("DEPLOYED_LOCK_UNLOCK", lockUnlockProxy);
         console2.log("DEPLOYED_MINT_BURN", mintBurnProxy);
         console2.log("DEPLOYED_BRIDGE", bridgeProxy);
+        console2.log("DEPLOYED_V2_CHAIN_ID", thisChainIdNum);
     }
 }

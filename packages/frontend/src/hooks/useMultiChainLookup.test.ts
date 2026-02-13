@@ -35,7 +35,7 @@ const evmChain: BridgeChainConfig = {
   name: 'Anvil',
   rpcUrl: 'http://localhost:8545',
   bridgeAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
-  bytes4ChainId: '0x00007a69',
+  bytes4ChainId: '0x00000001', // V2 chain ID
 }
 
 const terraChain: BridgeChainConfig = {
@@ -83,7 +83,7 @@ describe('useMultiChainLookup', () => {
   it('should return source when deposit found on EVM chain', async () => {
     const mockDeposit = {
       chainId: 31337,
-      srcChain: '0x00007a6900000000000000000000000000000000000000000000000000000000' as Hex,
+      srcChain: '0x0000000100000000000000000000000000000000000000000000000000000000' as Hex,
       destChain: '0x0000003800000000000000000000000000000000000000000000000000000000' as Hex,
       srcAccount: ('0x' + '0'.repeat(64)) as Hex,
       destAccount: ('0x' + '0'.repeat(64)) as Hex,

@@ -1,11 +1,13 @@
 /**
- * useBridgeDeposit Hook for CL8Y Bridge
- * 
- * Handles EVM → Terra deposits with approve → deposit flow.
- * Supports both ERC20/BEP20 token deposits.
- * 
- * Uses wagmi's useWaitForTransactionReceipt for proper receipt handling
- * with configurable timeout and retry support.
+ * useBridgeDeposit Hook for CL8Y Bridge V2
+ *
+ * Handles EVM-sourced deposits (EVM→Terra, EVM→EVM) via the V2 Bridge contract.
+ * Flow: approve token → call Bridge.depositERC20(token, amount, destChain, destAccount)
+ *
+ * V2 changes from V1:
+ * - Calls Bridge.depositERC20 directly (BridgeRouter was deleted)
+ * - Chain IDs are raw bytes4 (not keccak256 hashes)
+ * - Terra addresses are bech32-decoded + left-padded to bytes32 (not keccak256 hashed)
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -15,39 +17,30 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
 } from 'wagmi'
-import { parseUnits, encodeAbiParameters, keccak256, toHex, pad, Address } from 'viem'
+import { parseUnits, pad, type Address, type Hex } from 'viem'
 import { CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
+import { terraAddressToBytes32 } from '../services/hashVerification'
 
 // Configuration
 const TRANSACTION_TIMEOUT_MS = 120_000 // 2 minutes default timeout
 
-// Router ABI for deposit function
-const ROUTER_ABI = [
+// V2 Bridge ABI -- depositERC20 is the primary deposit function
+const BRIDGE_DEPOSIT_ABI = [
   {
-    name: 'deposit',
+    name: 'depositERC20',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'token', type: 'address' },
       { name: 'amount', type: 'uint256' },
-      { name: 'destChainKey', type: 'bytes32' },
-      { name: 'destAccount', type: 'bytes32' },
-    ],
-    outputs: [],
-  },
-  {
-    name: 'depositNative',
-    type: 'function',
-    stateMutability: 'payable',
-    inputs: [
-      { name: 'destChainKey', type: 'bytes32' },
+      { name: 'destChain', type: 'bytes4' },
       { name: 'destAccount', type: 'bytes32' },
     ],
     outputs: [],
   },
 ] as const
 
-// ERC20 ABI for approve and allowance
+// ERC20 ABI for approve, allowance, and balanceOf
 const ERC20_ABI = [
   {
     name: 'approve',
@@ -78,9 +71,7 @@ const ERC20_ABI = [
   },
 ] as const
 
-// Note: LockUnlock is the contract that tokens must approve (not the router)
-
-export type DepositStatus = 
+export type DepositStatus =
   | 'idle'
   | 'checking-allowance'
   | 'approving'
@@ -102,54 +93,64 @@ export interface UseDepositParams {
   lockUnlockAddress: Address
 }
 
+// ---------------------------------------------------------------------------
+// V2 Encoding Helpers
+// ---------------------------------------------------------------------------
+
 /**
- * Compute the Terra chain key for a given chain ID
- * keccak256(abi.encode("COSMOS", chainId, "terra"))
+ * Encode a numeric chain ID to bytes4 hex (big-endian).
+ * E.g., 31337 -> "0x00007a69", 56 -> "0x00000038"
  */
-export function computeTerraChainKey(chainId: string): `0x${string}` {
-  const encoded = encodeAbiParameters(
-    [{ type: 'string' }, { type: 'string' }, { type: 'string' }],
-    ['COSMOS', chainId, 'terra']
-  )
-  return keccak256(encoded)
+export function encodeChainIdBytes4(chainId: number): Hex {
+  if (chainId < 0 || chainId > 0xffffffff) {
+    throw new Error(`Chain ID ${chainId} out of bytes4 range`)
+  }
+  return `0x${chainId.toString(16).padStart(8, '0')}` as Hex
 }
 
 /**
- * Compute the EVM chain key for a given numeric chain ID
- * Matches contract: keccak256(abi.encode("EVM", bytes32(chainId)))
+ * Encode an EVM address as bytes32 (left-padded with zeros).
+ * Matches HashLib.addressToBytes32 in the V2 contract.
  */
-export function computeEvmChainKey(chainId: number): `0x${string}` {
-  const chainIdBytes32 = pad(toHex(BigInt(chainId)), { size: 32 })
-  const encoded = encodeAbiParameters(
-    [{ type: 'string' }, { type: 'bytes32' }],
-    ['EVM', chainIdBytes32]
-  )
-  return keccak256(encoded)
-}
-
-/**
- * Encode a Terra address as bytes32
- * Uses keccak256 hash of the address for consistent 32-byte output
- */
-export function encodeTerraAddress(terraAddress: string): `0x${string}` {
-  // Terra addresses are 44 chars, too long for bytes32
-  // Use keccak256 hash to get consistent 32-byte representation
-  return keccak256(toHex(new TextEncoder().encode(terraAddress)))
-}
-
-/**
- * Encode an EVM address as bytes32
- * Left-pads the 20-byte address to 32 bytes
- */
-export function encodeEvmAddress(evmAddress: string): `0x${string}` {
+export function encodeEvmAddress(evmAddress: string): Hex {
   return pad(evmAddress as `0x${string}`, { size: 32 })
 }
+
+/**
+ * Encode a Terra bech32 address as bytes32 (bech32-decoded, left-padded).
+ * Matches encode_terra_address in the V2 Terra contract.
+ * Re-exports from hashVerification for backward compatibility.
+ */
+export function encodeTerraAddress(terraAddress: string): Hex {
+  return terraAddressToBytes32(terraAddress)
+}
+
+/**
+ * Compute the destination chain bytes4 for a Terra chain.
+ * Terra Classic uses a fixed chain ID of 2 in the bridge protocol.
+ */
+export function computeTerraChainBytes4(): Hex {
+  return '0x00000002' as Hex
+}
+
+/**
+ * Compute the destination chain bytes4 for an EVM chain.
+ * Simply encodes the numeric chain ID as bytes4.
+ */
+export function computeEvmChainBytes4(chainId: number): Hex {
+  return encodeChainIdBytes4(chainId)
+}
+
+// Keep old function names as aliases for backward compatibility in tests
+export const computeTerraChainKey = computeTerraChainBytes4
+export const computeEvmChainKey = computeEvmChainBytes4
 
 export function useBridgeDeposit(params?: UseDepositParams) {
   const { address: userAddress, isConnected } = useAccount()
   const [state, setState] = useState<DepositState>({ status: 'idle' })
 
-  const routerAddress = CONTRACTS[DEFAULT_NETWORK].evmRouter as Address
+  // V2: deposit directly on the Bridge contract, not the Router
+  const bridgeAddress = CONTRACTS[DEFAULT_NETWORK].evmBridge as Address
 
   // Contract write hooks
   const { writeContractAsync: writeApprove } = useWriteContract()
@@ -159,8 +160,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [isTimedOut, setIsTimedOut] = useState(false)
 
-  // Wait for approval transaction receipt with proper status tracking
-  const { 
+  // Wait for approval transaction receipt
+  const {
     isLoading: isApprovalPending,
     isSuccess: isApprovalSuccess,
     isError: isApprovalError,
@@ -172,8 +173,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     },
   })
 
-  // Wait for deposit transaction receipt with proper status tracking
-  const { 
+  // Wait for deposit transaction receipt
+  const {
     isLoading: isDepositPending,
     isSuccess: isDepositSuccess,
     isError: isDepositError,
@@ -189,7 +190,6 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   useEffect(() => {
     if (state.status === 'waiting-approval') {
       if (isApprovalSuccess) {
-        // Approval confirmed, proceed to deposit
         clearTimeout(timeoutRef.current!)
         setIsTimedOut(false)
       } else if (isApprovalError) {
@@ -224,16 +224,16 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     }
   }, [state.status, isDepositSuccess, isDepositError, depositReceiptError])
 
-  // Read current allowance
+  // Read current allowance (tokens must approve the Bridge contract in V2)
   const { data: currentAllowance, refetch: refetchAllowance } = useReadContract({
     address: params?.tokenAddress,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: userAddress && params?.lockUnlockAddress 
-      ? [userAddress, params.lockUnlockAddress] 
+    args: userAddress && bridgeAddress
+      ? [userAddress, bridgeAddress]
       : undefined,
     query: {
-      enabled: !!userAddress && !!params?.tokenAddress && !!params?.lockUnlockAddress,
+      enabled: !!userAddress && !!params?.tokenAddress && !!bridgeAddress,
     },
   })
 
@@ -248,13 +248,9 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     },
   })
 
-  /**
-   * Start timeout for transaction
-   */
+  /** Start timeout for transaction */
   const startTimeout = useCallback((onTimeout: () => void) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     timeoutRef.current = setTimeout(() => {
       setIsTimedOut(true)
       onTimeout()
@@ -262,18 +258,17 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   }, [])
 
   /**
-   * Execute the deposit flow: approve (if needed) → deposit
-   * Uses proper receipt waiting with timeout handling
+   * Execute the V2 deposit flow: approve (if needed) → Bridge.depositERC20
    *
    * @param amount - Human-readable amount string
-   * @param destChainKey - Pre-computed destination chain key (bytes32)
-   * @param destAccount - Pre-encoded destination account (bytes32)
+   * @param destChainBytes4 - Destination chain ID as bytes4 hex (e.g., "0x00007a69")
+   * @param destAccount - Destination account as bytes32 hex (left-padded address)
    * @param tokenDecimals - Token decimals for amount parsing
    */
   const deposit = useCallback(async (
     amount: string,
-    destChainKey: `0x${string}`,
-    destAccount: `0x${string}`,
+    destChainBytes4: Hex,
+    destAccount: Hex,
     tokenDecimals: number = DECIMALS.LUNC
   ) => {
     if (!isConnected || !userAddress) {
@@ -281,13 +276,13 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       return
     }
 
-    if (!params?.tokenAddress || !params?.lockUnlockAddress) {
-      setState({ status: 'error', error: 'Token or LockUnlock address not configured' })
+    if (!params?.tokenAddress) {
+      setState({ status: 'error', error: 'Token address not configured' })
       return
     }
 
-    if (!routerAddress) {
-      setState({ status: 'error', error: 'Router address not configured' })
+    if (!bridgeAddress) {
+      setState({ status: 'error', error: 'Bridge address not configured' })
       return
     }
 
@@ -296,36 +291,33 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     try {
       const amountWei = parseUnits(amount, tokenDecimals)
 
-      // Step 1: Check allowance
+      // Step 1: Check allowance (V2: approve the Bridge contract directly)
       setState({ status: 'checking-allowance' })
       const { data: freshAllowance } = await refetchAllowance()
-      
       const allowance = freshAllowance ?? currentAllowance ?? 0n
-      
+
       // Step 2: Approve if needed
       if (allowance < amountWei) {
         setState({ status: 'approving' })
-        
+
         let approveTx: `0x${string}`
         try {
           approveTx = await writeApprove({
             address: params.tokenAddress,
             abi: ERC20_ABI,
             functionName: 'approve',
-            args: [params.lockUnlockAddress, amountWei],
+            args: [bridgeAddress, amountWei],
           })
         } catch (error) {
-          // User rejected or other error
           if (error instanceof Error && error.message.includes('rejected')) {
             setState({ status: 'error', error: 'Transaction rejected by user' })
             return
           }
           throw error
         }
-        
+
         setState({ status: 'waiting-approval', approvalTxHash: approveTx })
-        
-        // Start timeout for approval
+
         startTimeout(() => {
           setState(prev => ({
             ...prev,
@@ -333,13 +325,11 @@ export function useBridgeDeposit(params?: UseDepositParams) {
             error: 'Approval transaction timed out after 2 minutes',
           }))
         })
-        
-        // Wait for approval receipt via useEffect handler
-        // Poll for allowance change as backup
+
+        // Poll for allowance change
         await new Promise<void>((resolve, reject) => {
           let attempts = 0
-          const maxAttempts = 60 // 2 minutes at 2s intervals
-          
+          const maxAttempts = 60
           const checkAllowance = setInterval(async () => {
             attempts++
             try {
@@ -359,44 +349,35 @@ export function useBridgeDeposit(params?: UseDepositParams) {
             }
           }, 2000)
         })
-        
+
         clearTimeout(timeoutRef.current!)
       }
 
-      // Step 3: Execute deposit
-      setState(prev => ({ 
-        ...prev,
-        status: 'depositing' 
-      }))
-      
+      // Step 3: Execute deposit on V2 Bridge
+      setState(prev => ({ ...prev, status: 'depositing' }))
+
       let depositTx: `0x${string}`
       try {
         depositTx = await writeDeposit({
-          address: routerAddress,
-          abi: ROUTER_ABI,
-          functionName: 'deposit',
-          args: [params.tokenAddress, amountWei, destChainKey, destAccount],
+          address: bridgeAddress,
+          abi: BRIDGE_DEPOSIT_ABI,
+          functionName: 'depositERC20',
+          args: [params.tokenAddress, amountWei, destChainBytes4, destAccount],
         })
       } catch (error) {
-        // User rejected or other error
         if (error instanceof Error && error.message.includes('rejected')) {
-          setState(prev => ({ 
-            ...prev,
-            status: 'error', 
-            error: 'Transaction rejected by user' 
-          }))
+          setState(prev => ({ ...prev, status: 'error', error: 'Transaction rejected by user' }))
           return
         }
         throw error
       }
 
-      setState(prev => ({ 
-        status: 'waiting-deposit', 
+      setState(prev => ({
+        status: 'waiting-deposit',
         depositTxHash: depositTx,
         approvalTxHash: prev.approvalTxHash,
       }))
 
-      // Start timeout for deposit
       startTimeout(() => {
         setState(prev => ({
           ...prev,
@@ -405,12 +386,9 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         }))
       })
 
-      // The receipt will be handled by the useEffect above
-      // But we also wait here for the UI flow
+      // Wait briefly for the receipt handler useEffect to fire
       await new Promise<void>((resolve) => {
         const checkStatus = setInterval(() => {
-          // This will be resolved by the useEffect when isDepositSuccess changes
-          // For now, just wait a reasonable time
           resolve()
           clearInterval(checkStatus)
         }, 5000)
@@ -419,51 +397,37 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     } catch (error) {
       console.error('Deposit error:', error)
       clearTimeout(timeoutRef.current!)
-      
-      // Check if it's a user rejection
       const errorMessage = error instanceof Error ? error.message : 'Deposit failed'
-      const isUserRejection = errorMessage.toLowerCase().includes('rejected') || 
+      const isUserRejection = errorMessage.toLowerCase().includes('rejected') ||
                               errorMessage.toLowerCase().includes('denied')
-      
-      setState({ 
-        status: 'error', 
+      setState({
+        status: 'error',
         error: isUserRejection ? 'Transaction rejected by user' : errorMessage,
       })
     }
   }, [
-    isConnected, 
-    userAddress, 
-    params, 
-    routerAddress, 
-    currentAllowance, 
+    isConnected,
+    userAddress,
+    params,
+    bridgeAddress,
+    currentAllowance,
     refetchAllowance,
-    writeApprove, 
+    writeApprove,
     writeDeposit,
     startTimeout,
   ])
 
-  /**
-   * Reset the deposit state
-   */
+  /** Reset the deposit state */
   const reset = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     setIsTimedOut(false)
     setState({ status: 'idle' })
   }, [])
 
-  /**
-   * Retry the last failed transaction
-   * Only available after an error (not after user rejection)
-   */
+  /** Retry after error */
   const retry = useCallback(() => {
     if (state.status !== 'error') return
-    
-    // Clear error and reset to allow retry
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     setIsTimedOut(false)
     setState({ status: 'idle' })
   }, [state.status])
@@ -471,30 +435,21 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
   }, [])
 
   return {
-    // State
     status: state.status,
     approvalTxHash: state.approvalTxHash,
     depositTxHash: state.depositTxHash,
     error: state.error,
     isLoading: isApprovalPending || isDepositPending,
     isTimedOut,
-    
-    // Receipt status
     isApprovalConfirmed: isApprovalSuccess,
     isDepositConfirmed: isDepositSuccess,
-    
-    // Data
     currentAllowance,
     tokenBalance,
-    
-    // Actions
     deposit,
     reset,
     retry,

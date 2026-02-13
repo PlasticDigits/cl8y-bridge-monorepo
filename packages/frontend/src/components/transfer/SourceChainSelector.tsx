@@ -17,7 +17,7 @@ export function SourceChainSelector({
   balanceLabel,
 }: SourceChainSelectorProps) {
   return (
-    <div>
+    <div data-testid="source-chain">
       <ChainSelect
         chains={chains}
         value={value}

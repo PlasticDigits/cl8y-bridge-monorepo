@@ -28,11 +28,13 @@ export function useTransferHistory(limit: number = DEFAULT_LIMIT) {
     const handler = () => load()
     // Listen for cross-tab storage events
     window.addEventListener('storage', handler)
-    // Listen for same-tab custom events dispatched by recordTransfer
+    // Listen for same-tab custom events dispatched by recordTransfer / updateTransferRecord
     window.addEventListener('cl8y-transfer-recorded', handler)
+    window.addEventListener('cl8y-transfer-updated', handler)
     return () => {
       window.removeEventListener('storage', handler)
       window.removeEventListener('cl8y-transfer-recorded', handler)
+      window.removeEventListener('cl8y-transfer-updated', handler)
     }
   }, [load])
 

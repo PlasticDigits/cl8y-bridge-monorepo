@@ -22,11 +22,14 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.ts',
     globalSetup: './src/test/e2e-infra/setup.ts',
-    include: ['src/**/*.integration.test.{ts,tsx}'],
+    include: [
+      'src/**/*.integration.test.{ts,tsx}',
+      'src/test/transfers/**/*.bridge.test.{ts,tsx}',
+    ],
     exclude: ['node_modules/', 'dist/'],
-    // Chain interactions are slower than unit tests
-    testTimeout: 60_000,
-    hookTimeout: 30_000,
+    // Bridge transfers with operator relay can take a while
+    testTimeout: 120_000,
+    hookTimeout: 60_000,
   },
   resolve: {
     alias: {

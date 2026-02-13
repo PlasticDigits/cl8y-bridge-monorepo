@@ -34,6 +34,7 @@ export function AmountInput({
       <div className="relative">
         <input
           type="number"
+          data-testid="amount-input"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}

@@ -9,7 +9,17 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['node_modules/', 'dist/'],
+    exclude: [
+      'node_modules/',
+      'dist/',
+      // Integration & bridge tests require local infrastructure (Anvil, Anvil1,
+      // LocalTerra, PostgreSQL, operator). They will crash with a clear error if
+      // run without infra. Run them via:
+      //   npx vitest run --config vitest.config.integration.ts
+      //   make test-bridge-integration
+      'src/test/',
+      'src/**/*.integration.test.{ts,tsx}',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

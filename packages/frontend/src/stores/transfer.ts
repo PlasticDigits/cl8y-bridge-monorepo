@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { TransferRecord, TransferStatus } from '../types/transfer'
 
+const STORAGE_KEY = 'cl8y-bridge-transactions'
+
 export interface ActiveTransfer {
   id: string
   direction: 'evm-to-terra' | 'terra-to-evm' | 'evm-to-evm'
@@ -17,7 +19,24 @@ export interface TransferState {
   activeTransfer: ActiveTransfer | null
   setActiveTransfer: (transfer: ActiveTransfer | null) => void
   updateActiveTransfer: (updates: Partial<ActiveTransfer>) => void
-  recordTransfer: (record: Omit<TransferRecord, 'id' | 'timestamp'>) => void
+  recordTransfer: (record: Omit<TransferRecord, 'id' | 'timestamp'>) => string
+  updateTransferRecord: (id: string, updates: Partial<TransferRecord>) => void
+  getTransferByHash: (transferHash: string) => TransferRecord | null
+  getTransferById: (id: string) => TransferRecord | null
+  getAllTransfers: () => TransferRecord[]
+}
+
+function readTransfers(): TransferRecord[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? JSON.parse(stored) : []
+  } catch {
+    return []
+  }
+}
+
+function writeTransfers(list: TransferRecord[]): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 100)))
 }
 
 export const useTransferStore = create<TransferState>((set) => ({
@@ -34,16 +53,41 @@ export const useTransferStore = create<TransferState>((set) => ({
     }),
 
   recordTransfer: (record) => {
+    const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     const fullRecord: TransferRecord = {
       ...record,
-      id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id,
       timestamp: Date.now(),
+      lifecycle: record.lifecycle || 'deposited',
     }
-    const stored = localStorage.getItem('cl8y-bridge-transactions')
-    const list: TransferRecord[] = stored ? JSON.parse(stored) : []
+    const list = readTransfers()
     list.unshift(fullRecord)
-    localStorage.setItem('cl8y-bridge-transactions', JSON.stringify(list.slice(0, 100)))
+    writeTransfers(list)
     // Notify same-tab listeners (storage event only fires cross-tab)
     window.dispatchEvent(new CustomEvent('cl8y-transfer-recorded'))
+    return id
+  },
+
+  updateTransferRecord: (id, updates) => {
+    const list = readTransfers()
+    const idx = list.findIndex((t) => t.id === id)
+    if (idx === -1) return
+    list[idx] = { ...list[idx], ...updates }
+    writeTransfers(list)
+    window.dispatchEvent(new CustomEvent('cl8y-transfer-updated', { detail: { id } }))
+  },
+
+  getTransferByHash: (transferHash) => {
+    const list = readTransfers()
+    return list.find((t) => t.transferHash === transferHash) || null
+  },
+
+  getTransferById: (id) => {
+    const list = readTransfers()
+    return list.find((t) => t.id === id) || null
+  },
+
+  getAllTransfers: () => {
+    return readTransfers()
   },
 }))

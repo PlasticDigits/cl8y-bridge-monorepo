@@ -10,6 +10,7 @@ import './index.css'
 const queryClient = new QueryClient()
 
 const TransferPage = lazy(() => import('./pages/TransferPage'))
+const TransferStatusPage = lazy(() => import('./pages/TransferStatusPage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage'))
 const HashVerificationPage = lazy(() => import('./pages/HashVerificationPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
@@ -24,6 +25,14 @@ function App() {
             element={
               <Suspense fallback={<PageFallback />}>
                 <TransferPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/transfer/:transferHash"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <TransferStatusPage />
               </Suspense>
             }
           />

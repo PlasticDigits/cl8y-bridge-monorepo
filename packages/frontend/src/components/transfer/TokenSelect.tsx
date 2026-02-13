@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import { TokenLogo } from '../ui'
-import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 
 export interface TokenOption {
   id: string
@@ -50,6 +49,7 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
         id={id}
         type="button"
         role="combobox"
+        data-testid="token-select"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={`${id}-listbox`}

@@ -9,12 +9,14 @@ export interface DestChainSelectorProps {
 
 export function DestChainSelector({ chains, value, onChange }: DestChainSelectorProps) {
   return (
-    <ChainSelect
-      chains={chains}
-      value={value}
-      onChange={onChange}
-      label="To"
-      id="dest-chain-select"
-    />
+    <div data-testid="dest-chain">
+      <ChainSelect
+        chains={chains}
+        value={value}
+        onChange={onChange}
+        label="To"
+        id="dest-chain-select"
+      />
+    </div>
   )
 }

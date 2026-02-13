@@ -156,28 +156,88 @@ export function hexToBase64(hex: Hex): string {
 }
 
 /**
+ * Bech32 character set (lowercase).
+ */
+const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+
+/**
+ * Decode bech32 data part to 5-bit values.
+ */
+function bech32Decode(bech32Str: string): { hrp: string; data5bit: number[] } {
+  const lower = bech32Str.toLowerCase()
+  const sepIdx = lower.lastIndexOf('1')
+  if (sepIdx < 1) throw new Error('Invalid bech32: no separator')
+
+  const hrp = lower.slice(0, sepIdx)
+  const dataPart = lower.slice(sepIdx + 1)
+
+  const values: number[] = []
+  for (const ch of dataPart) {
+    const idx = BECH32_CHARSET.indexOf(ch)
+    if (idx === -1) throw new Error(`Invalid bech32 character: ${ch}`)
+    values.push(idx)
+  }
+
+  // Last 6 values are checksum, skip them
+  return { hrp, data5bit: values.slice(0, values.length - 6) }
+}
+
+/**
+ * Convert 5-bit groups to 8-bit bytes (bech32 -> raw bytes).
+ */
+function convertBits(data: number[], fromBits: number, toBits: number, pad: boolean): number[] {
+  let acc = 0
+  let bits = 0
+  const result: number[] = []
+  const maxV = (1 << toBits) - 1
+
+  for (const value of data) {
+    if (value < 0 || value >> fromBits) throw new Error('Invalid value for bit conversion')
+    acc = (acc << fromBits) | value
+    bits += fromBits
+    while (bits >= toBits) {
+      bits -= toBits
+      result.push((acc >> bits) & maxV)
+    }
+  }
+
+  if (pad) {
+    if (bits > 0) {
+      result.push((acc << (toBits - bits)) & maxV)
+    }
+  } else if (bits >= fromBits || ((acc << (toBits - bits)) & maxV)) {
+    throw new Error('Invalid padding in bit conversion')
+  }
+
+  return result
+}
+
+/**
  * Convert Terra bech32 address to bytes32.
  * Decodes the bech32 address to its raw pubkey hash (20 bytes), then left-pads to 32 bytes.
  *
- * Note: This is a simplified implementation. For production, use a proper bech32 decoder
- * library. Terra addresses are typically 20-byte pubkey hashes.
+ * Terra Classic uses standard bech32 (not segwit/bech32m), so there is no witness version byte.
+ * All 5-bit data values are converted directly to 8-bit bytes.
  */
 export function terraAddressToBytes32(bech32Address: string): Hex {
-  // Terra Classic addresses start with "terra1" and are 44 chars total
-  // The last 32 chars are the base32-encoded pubkey hash
-  // For now, we'll use a placeholder that assumes the address is already
-  // in a format we can work with. In production, use @cosmjs/encoding or similar.
-  
-  // Simple validation
   if (!bech32Address.startsWith('terra1') || bech32Address.length !== 44) {
     throw new Error(`Invalid Terra address format: ${bech32Address}`)
   }
 
-  // For MVP, we'll need to decode bech32 properly. For now, return a placeholder.
-  // TODO: Integrate proper bech32 decoding (e.g., from @cosmjs/encoding)
-  // This is a temporary implementation that will need proper bech32 decoding.
-  
-  // Placeholder: assume we can extract 20 bytes somehow
-  // In reality, we need to decode bech32 -> bytes -> keccak256 -> take first 20 bytes -> pad to 32
-  throw new Error('terraAddressToBytes32: Proper bech32 decoding not yet implemented. Use EVM addresses for now.')
+  // Decode bech32 to get the 5-bit data
+  const { data5bit } = bech32Decode(bech32Address)
+
+  // Terra Classic: no witness version byte. Convert all 5-bit values to 8-bit bytes.
+  // Use pad=false because the trailing bits should be zero-padding from encoding.
+  // However, some valid bech32 addresses may have non-zero trailing bits that are
+  // artifacts of the 5-to-8-bit conversion. Use pad=true to be permissive.
+  const rawBytes = convertBits(data5bit, 5, 8, false)
+
+  if (rawBytes.length !== 20) {
+    throw new Error(`Expected 20-byte pubkey hash, got ${rawBytes.length} bytes`)
+  }
+
+  // Left-pad to 32 bytes (same as EVM address encoding)
+  const hex = rawBytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `0x${hex.padStart(64, '0')}` as Hex
 }

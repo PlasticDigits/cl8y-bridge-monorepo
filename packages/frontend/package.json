@@ -18,6 +18,8 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:setup": "tsx src/test/e2e-infra/setup.ts",
     "test:e2e:teardown": "tsx src/test/e2e-infra/teardown.ts",
+    "test:bridge": "vitest run --config vitest.config.integration.ts src/test/transfers/",
+    "test:e2e:verify": "playwright test --project=verification",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
   },

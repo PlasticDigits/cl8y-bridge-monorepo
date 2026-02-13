@@ -17,6 +17,10 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  // Infrastructure setup/teardown can be managed externally for faster iteration:
+  //   npx tsx src/test/e2e-infra/setup.ts
+  //   npx tsx src/test/e2e-infra/teardown.ts
+  // Or enabled here for CI (will start/stop Docker, deploy contracts, etc.):
   globalSetup: './src/test/e2e-infra/setup.ts',
   globalTeardown: './src/test/e2e-infra/teardown.ts',
 
@@ -38,7 +42,7 @@ export default defineConfig({
 
   use: {
     // Base URL for the Vite dev server
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:3000',
 
     // Capture screenshot on failure
     screenshot: 'only-on-failure',
@@ -53,9 +57,9 @@ export default defineConfig({
   // Start the Vite dev server before running tests
   webServer: {
     command: 'VITE_NETWORK=local npm run dev',
-    port: 5173,
+    port: 3000,
     reuseExistingServer: true,
-    timeout: 30_000,
+    timeout: 60_000,
   },
 
   // Configure projects for different browsers
@@ -63,6 +67,15 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: ['**/*.verify.spec.ts'],
+    },
+    {
+      // Verification tests run serially (share chain state) with longer timeout
+      name: 'verification',
+      testMatch: '**/*.verify.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+      timeout: 180_000,
+      fullyParallel: false,
     },
   ],
 })

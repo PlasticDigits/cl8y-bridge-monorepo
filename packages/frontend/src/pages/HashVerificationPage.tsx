@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useHashVerification } from '../hooks/useHashVerification'
+import { useTransferStore } from '../stores/transfer'
 import {
   HashSearchBar,
   HashComparisonPanel,
@@ -26,6 +28,8 @@ export default function HashVerificationPage() {
     failedChains,
   } = useHashVerification()
 
+  const { getTransferByHash } = useTransferStore()
+
   const handleSearch = async (hash: string) => {
     recordVerification(hash)
     await verify(hash)
@@ -48,6 +52,12 @@ export default function HashVerificationPage() {
   const handleSelectHash = (hash: string) => {
     verify(hash)
   }
+
+  // Check if this hash has a local transfer record that needs submission
+  const localTransfer = inputHash ? getTransferByHash(inputHash) : null
+  const needsSubmit = localTransfer?.lifecycle === 'deposited'
+  // dest is null means no PendingWithdraw found on dest chain => not submitted
+  const notSubmittedOnChain = inputHash && !loading && source && !dest
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -92,6 +102,33 @@ export default function HashVerificationPage() {
           loading={loading}
           error={error}
         />
+
+        {/* WithdrawSubmit prompt when hash not submitted to destination */}
+        {notSubmittedOnChain && (
+          <div className="mt-4 bg-yellow-900/20 border border-yellow-700/50 p-4">
+            <p className="text-yellow-300 text-xs font-semibold uppercase tracking-wide mb-2">
+              Hash Not Submitted to Destination
+            </p>
+            <p className="text-yellow-400/70 text-xs mb-3">
+              This transfer has been deposited on the source chain but{' '}
+              <code className="text-yellow-300">withdrawSubmit</code> has not been called on the
+              destination chain yet. The operator cannot approve until it is submitted.
+            </p>
+            {needsSubmit || localTransfer ? (
+              <Link
+                to={`/transfer/${inputHash}`}
+                className="btn-primary inline-flex text-xs"
+              >
+                Submit Hash Now
+              </Link>
+            ) : (
+              <p className="text-yellow-400/50 text-xs">
+                To submit, navigate to the transfer status page with this hash or connect your
+                wallet on the destination chain.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="shell-panel-strong">

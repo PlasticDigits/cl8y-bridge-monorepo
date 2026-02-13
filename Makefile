@@ -44,6 +44,10 @@ help:
 	@echo "  make test-frontend-e2e-teardown     - Teardown E2E infrastructure"
 	@echo "  make test-frontend-integration-chains - Run vitest integration tests with real chains"
 	@echo ""
+	@echo "Bridge Verification Testing:"
+	@echo "  make test-bridge-integration        - Vitest bridge tests (full transfer lifecycle)"
+	@echo "  make test-e2e-verify                - Playwright verification (auto-submit UX + balance)"
+	@echo ""
 	@echo "E2E Testing (Bash - Legacy):"
 	@echo "  make e2e-test           - MASTER TEST: Run ALL E2E tests (bash)"
 	@echo "  make e2e-test-quick     - Quick connectivity tests only (bash)"
@@ -429,6 +433,14 @@ test-frontend-e2e-teardown:
 # Frontend integration tests with real chains (vitest + globalSetup)
 test-frontend-integration-chains:
 	cd packages/frontend && npx vitest run --config vitest.config.integration.ts
+
+# Bridge integration tests (Vitest - tests full transfer lifecycle via CLI)
+test-bridge-integration:
+	cd packages/frontend && npm run test:bridge
+
+# Playwright verification tests (E2E - tests auto-submit UX with balance verification)
+test-e2e-verify:
+	cd packages/frontend && npm run test:e2e:verify
 
 # Bundle analysis
 analyze-bundle:

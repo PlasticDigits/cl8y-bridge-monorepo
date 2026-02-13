@@ -16,7 +16,7 @@ const terraConfig: BridgeChainConfig = {
   lcdUrl: 'http://localhost:1317',
   lcdFallbacks: ['http://localhost:1317'],
   bridgeAddress: 'terra1bridge',
-  bytes4ChainId: '0x00007a69',
+  bytes4ChainId: '0x00000002', // V2 chain ID for Terra
 }
 
 const hash = ('0x' + 'ab'.repeat(32)) as Hex

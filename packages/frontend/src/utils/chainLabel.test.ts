@@ -21,12 +21,13 @@ describe('chainLabel', () => {
   })
 
   describe('bytes4ChainIdToLabel', () => {
-    it('should return Anvil for 0x00007a69', () => {
-      expect(bytes4ChainIdToLabel('0x00007a69')).toBe('Anvil')
+    it('should return Anvil for V2 chain ID 0x00000001 in local mode', () => {
+      // In local mode, V2 chain ID 1 = Anvil
+      expect(bytes4ChainIdToLabel('0x00000001')).toBe('Anvil')
     })
 
-    it('should return Ethereum for 0x00000001', () => {
-      expect(bytes4ChainIdToLabel('0x00000001')).toBe('Ethereum')
+    it('should return Anvil1 for V2 chain ID 0x00000003 in local mode', () => {
+      expect(bytes4ChainIdToLabel('0x00000003')).toBe('Anvil1')
     })
 
     it('should parse numeric ID from bytes4', () => {
@@ -44,8 +45,8 @@ describe('chainLabel', () => {
       expect(chainIdToLabel(1)).toBe('Ethereum')
     })
 
-    it('should handle bytes4 hex string', () => {
-      expect(chainIdToLabel('0x00007a69')).toBe('Anvil')
+    it('should handle V2 bytes4 hex string', () => {
+      expect(chainIdToLabel('0x00000001')).toBe('Anvil')
     })
 
     it('should handle Cosmos chain ID string', () => {

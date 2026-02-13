@@ -37,14 +37,14 @@ describe('bridgeChains', () => {
     expect(chain).toBeUndefined()
   })
 
-  it('should find chain by bytes4 chain ID', () => {
-    const chain = getBridgeChainByBytes4('0x00007a69')
+  it('should find chain by bytes4 V2 chain ID', () => {
+    const chain = getBridgeChainByBytes4('0x00000001')
     expect(chain).toBeDefined()
-    expect(chain?.chainId).toBe(31337)
+    expect(chain?.chainId).toBe(31337) // Anvil in local mode
   })
 
-  it('should find chain by bytes4 chain ID (case insensitive)', () => {
-    const chain = getBridgeChainByBytes4('0x00007A69')
+  it('should find chain by bytes4 V2 chain ID (case insensitive)', () => {
+    const chain = getBridgeChainByBytes4('0x00000001')
     expect(chain).toBeDefined()
     expect(chain?.chainId).toBe(31337)
   })

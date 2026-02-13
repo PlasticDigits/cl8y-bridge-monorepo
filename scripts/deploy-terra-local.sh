@@ -154,13 +154,20 @@ store_bridge_contract() {
     fi
     
     log_info "Waiting for confirmation..."
-    sleep 10
     
-    # Get code ID from list-code
-    CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+    # Poll for code ID (up to 60s) instead of fixed sleep
+    CODE_ID=""
+    for i in $(seq 1 30); do
+        sleep 2
+        CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id' 2>/dev/null)
+        if [ -n "$CODE_ID" ] && [ "$CODE_ID" != "null" ]; then
+            break
+        fi
+        log_info "  Waiting for code store confirmation... (${i}/30)"
+    done
     
     if [ -z "$CODE_ID" ] || [ "$CODE_ID" = "null" ]; then
-        log_error "Failed to get code ID"
+        log_error "Failed to get code ID after 60s"
         exit 1
     fi
     
@@ -173,6 +180,16 @@ instantiate_bridge_contract() {
     log_info "Instantiating bridge contract..."
     
     # Build init message
+    # this_chain_id is 4 bytes for Terra: 0x00000002 -> base64: AAAAAQ==
+    # Using chain ID 2 = 0x00000002 -> bytes [0,0,0,2] -> base64: AAAABQ== 
+    # Actually: [0,0,0,2] = base64("AAAAAQ==") - let's compute it properly
+    # 0x00000002 = bytes 00 00 00 02 -> base64 = AAAACQ==... no.
+    # bytes: 0x00=\x00, 0x00=\x00, 0x00=\x00, 0x02=\x02
+    # base64 of [0,0,0,2]: AAAAAQ== is [0,0,0,1], AAAABQ== is [0,0,0,5]
+    # [0,0,0,2] -> base64: echo -ne '\x00\x00\x00\x02' | base64 -> AAA  AAg==
+    THIS_CHAIN_ID_B64=$(printf '\x00\x00\x00\x02' | base64 -w0)
+    log_info "Terra this_chain_id (base64): $THIS_CHAIN_ID_B64"
+    
     INIT_MSG=$(cat << EOF
 {
     "admin": "$TEST_ADDRESS",
@@ -181,7 +198,8 @@ instantiate_bridge_contract() {
     "min_bridge_amount": "1000000",
     "max_bridge_amount": "1000000000000000",
     "fee_bps": 30,
-    "fee_collector": "$TEST_ADDRESS"
+    "fee_collector": "$TEST_ADDRESS",
+    "this_chain_id": "$THIS_CHAIN_ID_B64"
 }
 EOF
 )
@@ -196,7 +214,9 @@ EOF
         --broadcast-mode sync \
         -y -o json 2>&1)
     
-    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    # Extract JSON line (skip non-JSON lines like "gas estimate: ...")
+    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
+    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         log_error "Failed to instantiate contract: $TX"
         exit 1
@@ -205,13 +225,20 @@ EOF
     log_info "Instantiate TX: $TX_HASH"
     
     log_info "Waiting for confirmation..."
-    sleep 8
     
-    # Get contract address
-    BRIDGE_CONTRACT=$(terrad_query query wasm list-contract-by-code "$BRIDGE_CODE_ID" -o json | jq -r '.contracts[-1]')
+    # Poll for contract address (up to 60s) instead of fixed sleep
+    BRIDGE_CONTRACT=""
+    for i in $(seq 1 30); do
+        sleep 2
+        BRIDGE_CONTRACT=$(terrad_query query wasm list-contract-by-code "$BRIDGE_CODE_ID" -o json | jq -r '.contracts[-1]' 2>/dev/null)
+        if [ -n "$BRIDGE_CONTRACT" ] && [ "$BRIDGE_CONTRACT" != "null" ]; then
+            break
+        fi
+        log_info "  Waiting for instantiation confirmation... (${i}/30)"
+    done
     
     if [ -z "$BRIDGE_CONTRACT" ] || [ "$BRIDGE_CONTRACT" = "null" ]; then
-        log_error "Failed to get contract address"
+        log_error "Failed to get contract address after 60s"
         exit 1
     fi
     
@@ -234,7 +261,8 @@ store_cw20_contract() {
         --broadcast-mode sync \
         -y -o json 2>&1)
     
-    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
+    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         log_error "Failed to store cw20-mintable: $TX"
         exit 1
@@ -289,7 +317,8 @@ EOF
         --broadcast-mode sync \
         -y -o json 2>&1)
     
-    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
+    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         log_warn "Failed to instantiate CW20: $TX"
         return
@@ -319,7 +348,8 @@ configure_local() {
         --broadcast-mode sync \
         -y -o json 2>&1)
     
-    TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
+    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
+    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
     if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
         log_info "Set withdraw delay TX: $TX_HASH"
         sleep 6

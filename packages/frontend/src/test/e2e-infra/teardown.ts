@@ -9,13 +9,24 @@
 
 import { execSync } from 'child_process'
 import { unlinkSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { stopOperator } from './operator'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
 export default async function teardown(): Promise<void> {
   console.log('=== E2E Test Infrastructure Teardown ===\n')
+
+  // 0. Stop operator first (before docker compose down)
+  console.log('[teardown] Stopping operator...')
+  try {
+    await stopOperator()
+  } catch (error) {
+    console.warn('[teardown] Operator stop failed:', (error as Error).message?.slice(0, 200))
+  }
 
   // 1. Stop Docker containers and remove volumes
   console.log('[teardown] Stopping Docker containers...')
@@ -36,7 +47,7 @@ export default async function teardown(): Promise<void> {
   }
 
   // 3. Kill any orphaned processes on test ports
-  const ports = [8545, 8546, 26657, 1317, 9090, 9091]
+  const ports = [8545, 8546, 26657, 1317, 9090, 9091, 9092, 5433]
   for (const port of ports) {
     try {
       execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null || true`, {
@@ -52,7 +63,9 @@ export default async function teardown(): Promise<void> {
 }
 
 // Allow running directly: npx tsx src/test/e2e-infra/teardown.ts
-if (require.main === module) {
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^\//, ''))
+  || process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain) {
   teardown().catch((err) => {
     console.error(err)
     process.exit(1)

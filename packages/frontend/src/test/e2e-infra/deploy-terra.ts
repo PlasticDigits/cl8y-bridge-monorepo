@@ -4,8 +4,10 @@
  */
 
 import { execSync } from 'child_process'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPTS_DIR = resolve(__dirname, '../../../../../scripts')
 const TERRA_LCD = 'http://localhost:1317'
 
@@ -45,7 +47,7 @@ interface Cw20DeployResult {
  * Deploy a CW20 token to LocalTerra via terrad in the Docker container.
  */
 export function deployCw20Token(
-  bridgeAddress: string,
+  _bridgeAddress: string,
   name: string,
   symbol: string,
   decimals: number = 6,

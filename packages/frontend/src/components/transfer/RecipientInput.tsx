@@ -36,6 +36,7 @@ export function RecipientInput({
       </label>
       <input
         type="text"
+        data-testid="recipient-input"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder ?? defaultPlaceholder}
@@ -50,6 +51,7 @@ export function RecipientInput({
       {onAutofill && (
         <button
           type="button"
+          data-testid="autofill-recipient"
           onClick={onAutofill}
           disabled={disabled}
           className="mt-1 text-xs font-medium text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-cyan-400"

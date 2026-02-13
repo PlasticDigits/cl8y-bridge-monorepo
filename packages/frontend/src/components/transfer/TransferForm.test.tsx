@@ -8,7 +8,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { TransferForm } from './TransferForm'
+
+function renderWithRouter(ui: React.ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>)
+}
 
 const mockChainsForTransfer = [
   { id: 'terra', name: 'Terra Classic', chainId: 'columbus-5', type: 'cosmos' as const, icon: '🌙', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Luna Classic', symbol: 'LUNC', decimals: 6 } },
@@ -22,6 +27,7 @@ vi.mock('wagmi', () => ({
     isConnected: false,
     address: undefined,
   }),
+  usePublicClient: () => undefined,
 }))
 
 vi.mock('../../hooks/useWallet', () => ({
@@ -48,8 +54,10 @@ vi.mock('../../hooks/useBridgeDeposit', () => ({
     deposit: vi.fn(),
     reset: vi.fn(),
   }),
-  computeTerraChainKey: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
-  computeEvmChainKey: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
+  computeTerraChainBytes4: vi.fn(() => '0x00000002'),
+  computeEvmChainBytes4: vi.fn(() => '0x00007a69'),
+  computeTerraChainKey: vi.fn(() => '0x00000002'),
+  computeEvmChainKey: vi.fn(() => '0x00007a69'),
   encodeTerraAddress: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
   encodeEvmAddress: vi.fn(() => '0x0000000000000000000000000000000000000000000000000000000000000000'),
 }))
@@ -72,6 +80,7 @@ vi.mock('../../stores/transfer', () => ({
 
 vi.mock('../../utils/bridgeChains', () => ({
   getChainsForTransfer: () => mockChainsForTransfer,
+  BRIDGE_CHAINS: { local: {}, testnet: {}, mainnet: {} },
 }))
 
 describe('TransferForm', () => {
@@ -81,24 +90,24 @@ describe('TransferForm', () => {
 
   describe('Rendering', () => {
     it('should render the form', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(document.querySelector('form')).toBeInTheDocument()
     })
 
     it('should render source chain selector', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('From')).toBeInTheDocument()
       const selects = screen.getAllByRole('combobox')
       expect(selects.length).toBeGreaterThanOrEqual(2)
     })
 
     it('should render destination chain selector', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('To')).toBeInTheDocument()
     })
 
     it('should render amount input', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('Amount')).toBeInTheDocument()
       const amountInput = screen.getByPlaceholderText('0.0')
       expect(amountInput).toBeInTheDocument()
@@ -106,33 +115,33 @@ describe('TransferForm', () => {
     })
 
     it('should render recipient address input', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText(/Recipient Address/i)).toBeInTheDocument()
     })
 
     it('should render swap direction button', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const buttons = screen.getAllByRole('button')
       const swapButton = buttons.find((btn) => btn.querySelector('svg') && !btn.textContent?.includes('Bridge'))
       expect(swapButton).toBeInTheDocument()
     })
 
     it('should render fee information panel', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('Bridge Fee')).toBeInTheDocument()
       expect(screen.getByText('Estimated Time')).toBeInTheDocument()
       expect(screen.getByText('You will receive')).toBeInTheDocument()
     })
 
     it('should render submit button', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const submitButton = document.querySelector('form button[type="submit"]')
       expect(submitButton).toBeInTheDocument()
     })
 
     it('should show all chain types in source selector', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
       const sourceSelect = selects[0]
       await user.click(sourceSelect)
@@ -146,13 +155,13 @@ describe('TransferForm', () => {
 
   describe('Submit Button States', () => {
     it('should show Connect Wallet when not connected', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const submitButton = document.querySelector('form button[type="submit"]')
       expect(submitButton).toHaveTextContent(/Connect (Terra|EVM) Wallet/)
     })
 
     it('should be disabled when wallet not connected', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const submitButton = document.querySelector('form button[type="submit"]')
       expect(submitButton).toBeDisabled()
     })
@@ -161,20 +170,20 @@ describe('TransferForm', () => {
   describe('Amount Input', () => {
     it('should accept numeric input', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
       expect(amountInput).toHaveValue(100)
     })
 
     it('should show LUNC label', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('LUNC')).toBeInTheDocument()
     })
 
     it('should update receive amount after fees', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
       expect(screen.getByText(/99\.5.*LUNC/)).toBeInTheDocument()
@@ -184,7 +193,7 @@ describe('TransferForm', () => {
   describe('Direction Swap', () => {
     it('should swap source and destination on button click', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
       const sourceSelect = selects[0]
       const destSelect = selects[1]
@@ -200,7 +209,7 @@ describe('TransferForm', () => {
 
     it('should support selecting EVM source for evm-to-evm transfer', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
       const sourceSelect = selects[0]
       const destSelect = selects[1]
@@ -220,7 +229,7 @@ describe('TransferForm', () => {
 
     it('should filter out cosmos dest when source is cosmos', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
       const destSelect = selects[1]
 
@@ -239,26 +248,26 @@ describe('TransferForm', () => {
   describe('Recipient Input', () => {
     it('should accept text input for recipient address', async () => {
       const user = userEvent.setup()
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       const recipientInput = screen.getByPlaceholderText(/terra1|0x/i)
       await user.type(recipientInput, '0x1234567890abcdef')
       expect(recipientInput).toHaveValue('0x1234567890abcdef')
     })
 
     it('should show autofill button for recipient', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('Autofill with connected wallet')).toBeInTheDocument()
     })
   })
 
   describe('Fee Display', () => {
     it('should show 0.5% fee', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText('0.5%')).toBeInTheDocument()
     })
 
     it('should show estimated time', () => {
-      render(<TransferForm />)
+      renderWithRouter(<TransferForm />)
       expect(screen.getByText(/~\d+ minutes/)).toBeInTheDocument()
     })
   })

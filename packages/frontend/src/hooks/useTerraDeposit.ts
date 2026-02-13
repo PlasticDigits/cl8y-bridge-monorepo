@@ -1,14 +1,23 @@
 /**
- * useTerraDeposit - Terra → EVM lock flow
+ * useTerraDeposit - Terra → EVM deposit flow (V2)
  *
- * Extracts Terra lock logic from BridgeForm. Executes lock on Terra bridge
- * with native uluna coins.
+ * Executes deposit_native on the Terra bridge contract.
+ * V2 message format:
+ *   { deposit_native: { dest_chain: Binary(4 bytes), dest_account: Binary(32 bytes) } }
+ *
+ * Changes from V1:
+ * - Replaces `lock` message with `deposit_native`
+ * - dest_chain is bytes4 big-endian, base64-encoded (not a numeric chain ID)
+ * - dest_account is 32-byte left-padded address, base64-encoded (not raw string)
+ * - Removed duplicate recordTransfer (TransferForm handles record creation)
  */
 
 import { useState, useCallback } from 'react'
 import { executeContractWithCoins } from '../services/terra'
 import { CONTRACTS, DEFAULT_NETWORK } from '../utils/constants'
 import { useTransferStore } from '../stores/transfer'
+import { terraAddressToBytes32 } from '../services/hashVerification'
+
 export type TerraDepositStatus = 'idle' | 'locking' | 'success' | 'error'
 
 export interface UseTerraDepositReturn {
@@ -19,25 +28,76 @@ export interface UseTerraDepositReturn {
     amountMicro: string
     destChainId: number
     recipientEvm: string
+    recipientTerra?: string
   }) => Promise<string | null>
   reset: () => void
+}
+
+// ---------------------------------------------------------------------------
+// Encoding helpers for Terra Binary fields
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode a numeric chain ID as 4-byte big-endian, then base64.
+ * E.g., 31337 -> [0x00, 0x00, 0x7a, 0x69] -> "AAB6aQ=="
+ */
+export function encodeDestChainBase64(chainId: number): string {
+  const bytes = new Uint8Array(4)
+  bytes[0] = (chainId >> 24) & 0xff
+  bytes[1] = (chainId >> 16) & 0xff
+  bytes[2] = (chainId >> 8) & 0xff
+  bytes[3] = chainId & 0xff
+  return btoa(String.fromCharCode(...bytes))
+}
+
+/**
+ * Encode a destination account as 32-byte left-padded, then base64.
+ * For EVM addresses: left-pad 20-byte address to 32 bytes.
+ * For Terra addresses: bech32-decode to 20-byte pubkey hash, left-pad to 32 bytes.
+ */
+export function encodeDestAccountBase64(address: string): string {
+  let rawBytes: Uint8Array
+
+  if (address.startsWith('0x')) {
+    // EVM address: parse 20-byte hex, left-pad to 32 bytes
+    const clean = address.slice(2)
+    if (clean.length !== 40) throw new Error('Invalid EVM address length')
+    rawBytes = new Uint8Array(32)
+    for (let i = 0; i < 20; i++) {
+      rawBytes[12 + i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+    }
+  } else if (address.startsWith('terra1')) {
+    // Terra address: bech32 decode to 20-byte pubkey hash, left-pad to 32 bytes
+    const bytes32Hex = terraAddressToBytes32(address) // returns "0x0000...{20-byte hex}"
+    const clean = bytes32Hex.slice(2) // remove "0x"
+    rawBytes = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) {
+      rawBytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+    }
+  } else {
+    throw new Error(`Unsupported address format: ${address}`)
+  }
+
+  return btoa(String.fromCharCode(...rawBytes))
 }
 
 export function useTerraDeposit(): UseTerraDepositReturn {
   const [status, setStatus] = useState<TerraDepositStatus>('idle')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const { setActiveTransfer, updateActiveTransfer, recordTransfer } = useTransferStore()
+  const { setActiveTransfer, updateActiveTransfer } = useTransferStore()
 
   const lock = useCallback(
     async ({
       amountMicro,
       destChainId,
       recipientEvm,
+      recipientTerra,
     }: {
       amountMicro: string
       destChainId: number
       recipientEvm: string
+      recipientTerra?: string
     }): Promise<string | null> => {
       const bridgeAddress = CONTRACTS[DEFAULT_NETWORK].terraBridge
       if (!bridgeAddress) {
@@ -51,47 +111,55 @@ export function useTerraDeposit(): UseTerraDepositReturn {
       setError(null)
       setTxHash(null)
 
-      const transferId = `terra-lock-${Date.now()}`
+      const transferId = `terra-deposit-${Date.now()}`
       setActiveTransfer({
         id: transferId,
         direction: 'terra-to-evm',
         sourceChain: 'terra',
-        destChain: destChainId === 31337 ? 'anvil' : destChainId === 56 ? 'bsc' : destChainId === 204 ? 'opbnb' : 'ethereum',
+        destChain:
+          destChainId === 31337
+            ? 'anvil'
+            : destChainId === 31338
+              ? 'anvil1'
+              : destChainId === 56
+                ? 'bsc'
+                : destChainId === 204
+                  ? 'opbnb'
+                  : 'ethereum',
         amount: amountMicro,
         status: 'pending',
         txHash: null,
-        recipient: recipientEvm,
+        recipient: recipientEvm || recipientTerra || '',
         startedAt: Date.now(),
       })
 
       try {
-        const lockMsg = {
-          lock: {
-            dest_chain_id: destChainId,
-            recipient: recipientEvm,
+        // V2 deposit_native message format
+        // dest_chain: base64 of bytes4 chain ID
+        // dest_account: base64 of bytes32 left-padded address
+        const destChainB64 = encodeDestChainBase64(destChainId)
+        const destRecipient = recipientEvm || recipientTerra || ''
+        const destAccountB64 = encodeDestAccountBase64(destRecipient)
+
+        const depositMsg = {
+          deposit_native: {
+            dest_chain: destChainB64,
+            dest_account: destAccountB64,
           },
         }
 
-        const result = await executeContractWithCoins(bridgeAddress, lockMsg, [
+        const result = await executeContractWithCoins(bridgeAddress, depositMsg, [
           { denom: 'uluna', amount: amountMicro },
         ])
 
         setTxHash(result.txHash)
         setStatus('success')
         updateActiveTransfer({ txHash: result.txHash, status: 'confirmed' })
-        recordTransfer({
-          type: 'withdrawal',
-          direction: 'terra-to-evm',
-          sourceChain: 'terra',
-          destChain: String(destChainId),
-          amount: amountMicro,
-          status: 'confirmed',
-          txHash: result.txHash,
-        })
+        // Note: TransferForm handles recordTransfer -- no duplicate call here
         setActiveTransfer(null)
         return result.txHash
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Lock failed'
+        const msg = err instanceof Error ? err.message : 'Deposit failed'
         setError(msg)
         setStatus('error')
         updateActiveTransfer({ status: 'failed' })
@@ -99,7 +167,7 @@ export function useTerraDeposit(): UseTerraDepositReturn {
         return null
       }
     },
-    [setActiveTransfer, updateActiveTransfer, recordTransfer]
+    [setActiveTransfer, updateActiveTransfer]
   )
 
   const reset = useCallback(() => {

@@ -11,3 +11,10 @@ export {
   connectDevWallet,
 } from './connect'
 export { executeContractWithCoins, executeCw20Send } from './transaction'
+export {
+  submitWithdrawOnTerra,
+  hexToUint8Array,
+  chainIdToBytes4,
+  evmAddressToBytes32Array,
+  type WithdrawSubmitTerraParams,
+} from './withdrawSubmit'

@@ -24,7 +24,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       name: 'Anvil',
       rpcUrl: 'http://localhost:8545',
       bridgeAddress: import.meta.env.VITE_EVM_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x00007a69', // 31337 = 0x7a69
+      bytes4ChainId: '0x00000001', // V2 chain ID 1 (set via THIS_V2_CHAIN_ID in DeployLocal.s.sol)
     },
     anvil1: {
       chainId: 31338,
@@ -32,7 +32,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       name: 'Anvil1',
       rpcUrl: 'http://localhost:8546',
       bridgeAddress: import.meta.env.VITE_EVM1_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x00007a6a', // 31338 = 0x7a6a
+      bytes4ChainId: '0x00000003', // V2 chain ID 3 (set via THIS_V2_CHAIN_ID in DeployLocal.s.sol)
     },
     localterra: {
       chainId: 'localterra',

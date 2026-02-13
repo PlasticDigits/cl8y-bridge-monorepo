@@ -15,14 +15,17 @@
  */
 
 import { execSync } from 'child_process'
-import { writeFileSync } from 'fs'
-import { resolve } from 'path'
+import { writeFileSync, existsSync, readFileSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 import { waitForAllChains, areAllChainsHealthy } from './health'
 import { deployEvmContracts } from './deploy-evm'
 import { deployTerraBridge } from './deploy-terra'
 import { deployAllTokens } from './deploy-tokens'
 import { registerAllTokens } from './register-tokens'
+import { startOperator } from './operator'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
@@ -31,8 +34,18 @@ export default async function setup(): Promise<void> {
   const start = Date.now()
 
   try {
-    // 1. Start Docker containers (skip if already healthy)
+    // Skip full re-deployment if .env.e2e.local already exists and chains are healthy
     const alreadyRunning = await areAllChainsHealthy()
+    if (alreadyRunning && existsSync(ENV_FILE)) {
+      console.log('[setup] All chains already running and .env.e2e.local exists, skipping deployment')
+      console.log('[setup] Ensuring operator is running...')
+      await startOperator(ENV_FILE)
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+      console.log(`\n=== E2E Setup Complete (reused, ${elapsed}s) ===\n`)
+      return
+    }
+
+    // 1. Start Docker containers (skip if already healthy)
     if (alreadyRunning) {
       console.log('[setup] All chains already running, skipping docker compose up')
     } else {
@@ -47,9 +60,10 @@ export default async function setup(): Promise<void> {
     await waitForAllChains(90_000) // 90s timeout for cold start
 
     // 3. Deploy EVM contracts to both Anvil chains
+    //    V2 chain IDs are globally unique: anvil=1, terra=2, anvil1=3
     console.log('\n[setup] Deploying EVM contracts...')
-    const anvilContracts = deployEvmContracts('http://localhost:8545')
-    const anvil1Contracts = deployEvmContracts('http://localhost:8546')
+    const anvilContracts = deployEvmContracts('http://localhost:8545', 1, 'evm_31337')
+    const anvil1Contracts = deployEvmContracts('http://localhost:8546', 3, 'evm_31338')
 
     // 4. Deploy Terra bridge contract
     console.log('\n[setup] Deploying Terra bridge...')
@@ -128,6 +142,10 @@ export default async function setup(): Promise<void> {
     writeFileSync(ENV_FILE, envContent, 'utf8')
     console.log(`\n[setup] Environment written to ${ENV_FILE}`)
 
+    // 9. Start operator (force restart to pick up new contract addresses)
+    console.log('\n[setup] Starting operator...')
+    await startOperator(ENV_FILE, true)
+
     const elapsed = ((Date.now() - start) / 1000).toFixed(1)
     console.log(`\n=== E2E Setup Complete (${elapsed}s) ===\n`)
   } catch (error) {
@@ -137,7 +155,9 @@ export default async function setup(): Promise<void> {
 }
 
 // Allow running directly: npx tsx src/test/e2e-infra/setup.ts
-if (require.main === module) {
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^\//, ''))
+  || process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain) {
   setup().catch((err) => {
     console.error(err)
     process.exit(1)

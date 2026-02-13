@@ -1,31 +1,59 @@
-import { useAccount, useDisconnect } from 'wagmi'
+import { formatAddress } from '../utils/format'
+import { useAccount, useBalance, useDisconnect } from 'wagmi'
 import { useUIStore } from '../stores/ui'
 import { EvmWalletModal } from './wallet'
+
+function getGasSymbol(chainId?: number): 'ETH' | 'BNB' {
+  if (chainId === 56 || chainId === 97 || chainId === 204 || chainId === 5611) {
+    return 'BNB'
+  }
+  return 'ETH'
+}
+
+function formatGasBalance(formattedBalance?: string): string {
+  const parsed = Number.parseFloat(formattedBalance ?? '0')
+  if (!Number.isFinite(parsed)) return '0.00'
+  return parsed.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })
+}
 
 export function ConnectWallet() {
   const { address, isConnected, chain } = useAccount()
   const { disconnect } = useDisconnect()
   const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
+  const gasSymbol = getGasSymbol(chain?.id)
+  const { data: gasBalance, isLoading: isGasBalanceLoading } = useBalance({
+    address,
+    chainId: chain?.id,
+    query: {
+      enabled: isConnected && !!address && !!chain?.id,
+      refetchInterval: 30000,
+    },
+  })
 
   if (isConnected && address) {
     return (
-      <div className="flex items-center gap-2 sm:gap-3">
-        <div className="flex items-center gap-2 rounded-lg px-3 py-2 border border-emerald-400/30 bg-emerald-950/35">
-          <div className="w-2 h-2 bg-emerald-400 rounded-full" />
-          <span className="text-emerald-100 text-xs sm:text-sm">{chain?.name || 'Unknown'}</span>
+      <button
+        onClick={() => disconnect()}
+        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
+      >
+        <div className="text-right hidden sm:block">
+          <p className="text-sm font-mono font-medium text-white">
+            {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
+            <span className="text-emerald-300">{gasSymbol}</span>
+          </p>
+          <p className="text-xs text-gray-500">{formatAddress(address, 6)}</p>
         </div>
-        <button
-          onClick={() => disconnect()}
-          className="btn-muted"
-        >
-          <span className="text-white text-xs sm:text-sm font-medium">
-            {address.slice(0, 6)}...{address.slice(-4)}
-          </span>
-          <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-        </button>
-      </div>
+        <div className="sm:hidden text-xs font-mono font-medium text-white">
+          {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
+          <span className="text-emerald-300">{gasSymbol}</span>
+        </div>
+        <div className="w-8 h-8 border-2 border-black bg-[#b8ff3d] shadow-[2px_2px_0_#000] transition-shadow flex items-center justify-center">
+          <span className="text-[9px] font-black text-black leading-none tracking-tight">{gasSymbol}</span>
+        </div>
+      </button>
     )
   }
 

@@ -2,9 +2,30 @@
  * E2E Tests: Form Validation
  *
  * Tests validation behavior for invalid inputs, missing wallet, etc.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │  REQUIRES: Vite dev server at localhost:3000                       │
+ * │  Infrastructure (Anvil, LocalTerra) must be running for full E2E.  │
+ * │                                                                    │
+ * │  Run:  npx playwright test validation.spec.ts                      │
+ * │  Or:   npx playwright test --project=chromium                      │
+ * └─────────────────────────────────────────────────────────────────────┘
  */
 
 import { test, expect } from '@playwright/test'
+
+/**
+ * Helper to connect both wallets via the UI.
+ */
+async function connectBothWallets(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'CONNECT EVM' }).click()
+  await page.locator('button', { hasText: 'Simulated EVM Wallet' }).last().click()
+  await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
+
+  await page.getByRole('button', { name: 'CONNECT TC' }).click()
+  await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
+  await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
+}
 
 test.describe('Form Validation', () => {
   test.beforeEach(async ({ page }) => {
@@ -14,9 +35,7 @@ test.describe('Form Validation', () => {
 
   test('should show connect wallet message when no wallet connected', async ({ page }) => {
     // Without any wallet connected, submit button should indicate connection needed
-    const submitBtn = page.locator('button[type="submit"]')
-      .or(page.locator('button').filter({ hasText: /connect|wallet/i }))
-      .first()
+    const submitBtn = page.locator('[data-testid="submit-transfer"]')
     await expect(submitBtn).toBeVisible()
 
     // The button text should mention connecting a wallet
@@ -25,68 +44,42 @@ test.describe('Form Validation', () => {
   })
 
   test('should disable submit when amount is empty', async ({ page }) => {
-    // Connect EVM wallet first
-    await page.click('text=CONNECT EVM')
-    await page.click('text=Mock')
-    await expect(page.locator('text=0xf39F').first()).toBeVisible({ timeout: 10_000 })
+    await connectBothWallets(page)
 
-    // Connect Terra wallet
-    await page.click('text=CONNECT TC')
-    await page.click('text=Simulated Terra Wallet')
-    await expect(page.locator('text=terra1x46').first()).toBeVisible({ timeout: 10_000 })
-
-    // Submit button should be disabled or show validation message when amount is empty
-    const submitBtn = page.locator('button[type="submit"]')
-      .or(page.locator('button').filter({ hasText: /transfer|bridge|send/i }))
-      .first()
-    if (await submitBtn.isVisible()) {
-      const isDisabled = await submitBtn.isDisabled()
-      // Button should be disabled or have a "enter amount" type text
-      expect(isDisabled || (await submitBtn.textContent())?.toLowerCase().includes('amount')).toBeTruthy()
-    }
+    // Submit button should be disabled when amount is empty
+    const submitBtn = page.locator('[data-testid="submit-transfer"]')
+    await expect(submitBtn).toBeVisible()
+    const isDisabled = await submitBtn.isDisabled()
+    // Button should be disabled or have a "enter amount" type text
+    expect(isDisabled || (await submitBtn.textContent())?.toLowerCase().includes('amount')).toBeTruthy()
   })
 
   test('should reject invalid EVM address in recipient', async ({ page }) => {
-    // Connect wallets
-    await page.click('text=CONNECT EVM')
-    await page.click('text=Mock')
-    await expect(page.locator('text=0xf39F').first()).toBeVisible({ timeout: 10_000 })
+    await connectBothWallets(page)
 
-    // Try to enter an invalid address in recipient
-    const recipientInput = page.locator('input[placeholder*="0x"]')
-      .or(page.locator('input[placeholder*="recipient"]'))
-      .first()
+    // The recipient input should be visible
+    const recipientInput = page.locator('[data-testid="recipient-input"]')
     if (await recipientInput.isVisible()) {
       await recipientInput.fill('0xinvalid')
       await page.waitForTimeout(300)
 
       // Should show validation error
-      const error = page.locator('text=invalid').or(page.locator('text=Invalid')).first()
-      // Error may or may not be shown depending on implementation
-      // Just verify the input accepts the value
-      const value = await recipientInput.inputValue()
-      expect(value).toBe('0xinvalid')
+      const error = page.locator('text=Invalid address').first()
+      await expect(error).toBeVisible({ timeout: 3_000 })
     }
   })
 
   test('should reject invalid Terra address in recipient', async ({ page }) => {
-    // Connect wallets
-    await page.click('text=CONNECT EVM')
-    await page.click('text=Mock')
-    await expect(page.locator('text=0xf39F').first()).toBeVisible({ timeout: 10_000 })
+    await connectBothWallets(page)
 
-    // Switch to EVM source so Terra is the destination
+    // Switch direction so Terra is the destination
     const swapBtn = page.locator('[data-testid="swap-direction"]')
-      .or(page.locator('button').filter({ hasText: /swap|switch/i }))
-      .first()
     if (await swapBtn.isVisible()) {
       await swapBtn.click()
       await page.waitForTimeout(500)
     }
 
-    const recipientInput = page.locator('input[placeholder*="terra"]')
-      .or(page.locator('input[placeholder*="recipient"]'))
-      .first()
+    const recipientInput = page.locator('[data-testid="recipient-input"]')
     if (await recipientInput.isVisible()) {
       await recipientInput.fill('terra1invalid')
       await page.waitForTimeout(300)
