@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { formatAddress } from '../utils/format'
 import { useAccount, useBalance, useDisconnect } from 'wagmi'
 import { useUIStore } from '../stores/ui'
@@ -8,6 +9,15 @@ function getGasSymbol(chainId?: number): 'ETH' | 'BNB' {
     return 'BNB'
   }
   return 'ETH'
+}
+
+function getChainLogoPath(chainId?: number): string | undefined {
+  if (chainId === 56 || chainId === 97) return '/chains/binancesmartchain-icon.png'
+  if (chainId === 204 || chainId === 5611) return '/chains/opbnb-icon.png'
+  if (chainId === 31337) return '/chains/anvil-icon.png'
+  if (chainId === 31338) return '/chains/anvil2-icon.png'
+  if (chainId === 1) return '/chains/ethereum-icon.png'
+  return undefined
 }
 
 function formatGasBalance(formattedBalance?: string): string {
@@ -24,6 +34,8 @@ export function ConnectWallet() {
   const { disconnect } = useDisconnect()
   const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
   const gasSymbol = getGasSymbol(chain?.id)
+  const chainLogoPath = getChainLogoPath(chain?.id)
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false)
   const { data: gasBalance, isLoading: isGasBalanceLoading } = useBalance({
     address,
     chainId: chain?.id,
@@ -32,6 +44,10 @@ export function ConnectWallet() {
       refetchInterval: 30000,
     },
   })
+
+  useEffect(() => {
+    setLogoLoadFailed(false)
+  }, [chainLogoPath])
 
   if (isConnected && address) {
     return (
@@ -50,8 +66,17 @@ export function ConnectWallet() {
           {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
           <span className="text-emerald-300">{gasSymbol}</span>
         </div>
-        <div className="w-8 h-8 border-2 border-black bg-[#b8ff3d] shadow-[2px_2px_0_#000] transition-shadow flex items-center justify-center">
-          <span className="text-[9px] font-black text-black leading-none tracking-tight">{gasSymbol}</span>
+        <div className="w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden rounded-sm bg-black/90 p-1 border-2 border-black shadow-[2px_2px_0_#000]">
+          {chainLogoPath && !logoLoadFailed ? (
+            <img
+              src={chainLogoPath}
+              alt={chain?.name ?? 'Chain'}
+              className="h-full w-full object-contain"
+              onError={() => setLogoLoadFailed(true)}
+            />
+          ) : (
+            <span className="text-[9px] font-black text-white leading-none tracking-tight">{gasSymbol}</span>
+          )}
         </div>
       </button>
     )

@@ -4,11 +4,18 @@ import { formatAddress, formatAmount } from '../utils/format'
 import { DECIMALS } from '../utils/constants'
 import { TerraWalletModal } from './wallet/TerraWalletModal'
 
+function getTerraChainLogoPath(chainId: string | null): string {
+  if (chainId === 'localterra') return '/chains/localterra-icon.png'
+  if (chainId === 'localterra1' || chainId === 'localterra2') return '/chains/localterra2-icon.png'
+  return '/chains/terraclassic-icon.png'
+}
+
 export function WalletButton() {
   const {
     connected,
     connecting,
     address,
+    chainId,
     luncBalance,
     showWalletModal,
     disconnect,
@@ -16,6 +23,7 @@ export function WalletButton() {
   } = useWallet()
 
   const [showDropdown, setShowDropdown] = useState(false)
+  const chainLogoPath = getTerraChainLogoPath(chainId)
 
   if (connected && address) {
     return (
@@ -30,7 +38,13 @@ export function WalletButton() {
             </p>
             <p className="text-xs text-gray-500">{formatAddress(address, 6)}</p>
           </div>
-          <div className="w-8 h-8 border-2 border-black bg-[#b8ff3d] shadow-[2px_2px_0_#000] transition-shadow" />
+          <div className="w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden rounded-sm bg-black/90 p-1 border-2 border-black shadow-[2px_2px_0_#000]">
+            <img
+              src={chainLogoPath}
+              alt={chainId ?? 'Terra'}
+              className="h-full w-full object-contain"
+            />
+          </div>
         </button>
 
         {showDropdown && (
