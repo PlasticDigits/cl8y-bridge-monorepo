@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { sounds } from '../../lib/sounds'
 
 export interface CopyButtonProps {
   text: string
@@ -10,6 +11,7 @@ export function CopyButton({ text, className = '', label = 'Copy' }: CopyButtonP
   const [copied, setCopied] = useState(false)
 
   const handleClick = useCallback(async () => {
+    sounds.playButtonPress()
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)

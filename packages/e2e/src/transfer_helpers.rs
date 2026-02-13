@@ -281,6 +281,86 @@ pub async fn poll_for_approval(
     ))
 }
 
+/// Poll for approval on a specific EVM chain (not necessarily the primary one).
+///
+/// Used for EVM→EVM transfers where the approval happens on the destination chain,
+/// which may be different from the primary EVM chain in `config.evm`.
+///
+/// # Arguments
+/// * `rpc_url` - RPC URL of the chain to poll
+/// * `bridge_address` - Bridge contract address on that chain
+/// * `deposit_nonce` - The deposit nonce to look for
+/// * `timeout` - Maximum time to wait for approval
+pub async fn poll_for_approval_on_chain(
+    rpc_url: &str,
+    bridge_address: Address,
+    deposit_nonce: u64,
+    timeout: Duration,
+) -> Result<ApprovalInfo> {
+    info!(
+        nonce = deposit_nonce,
+        timeout_secs = timeout.as_secs(),
+        bridge = %bridge_address,
+        rpc = rpc_url,
+        "Polling for EVM approval on specific chain"
+    );
+
+    let start = Instant::now();
+    let mut interval = DEFAULT_POLL_INTERVAL;
+    let mut attempt = 0;
+    let mut last_progress_log = Instant::now();
+
+    while start.elapsed() < timeout {
+        attempt += 1;
+
+        match query_approval_by_nonce_on_chain(rpc_url, bridge_address, deposit_nonce).await {
+            Ok(Some(approval)) => {
+                info!(
+                    nonce = deposit_nonce,
+                    attempt = attempt,
+                    elapsed_secs = start.elapsed().as_secs(),
+                    hash = hex::encode(&approval.withdraw_hash.as_slice()[..8]),
+                    bridge = %bridge_address,
+                    "Found EVM approval on chain"
+                );
+                return Ok(approval);
+            }
+            Ok(None) => {
+                if last_progress_log.elapsed() >= Duration::from_secs(15) {
+                    info!(
+                        nonce = deposit_nonce,
+                        attempt = attempt,
+                        elapsed_secs = start.elapsed().as_secs(),
+                        remaining_secs = timeout.saturating_sub(start.elapsed()).as_secs(),
+                        bridge = %bridge_address,
+                        "Still waiting for WithdrawApprove event on dest chain"
+                    );
+                    last_progress_log = Instant::now();
+                }
+            }
+            Err(e) => {
+                warn!(
+                    nonce = deposit_nonce,
+                    attempt = attempt,
+                    error = %e,
+                    "Error querying approval on chain (will retry)"
+                );
+            }
+        }
+
+        tokio::time::sleep(interval).await;
+        interval = std::cmp::min(interval * 2, MAX_POLL_INTERVAL);
+    }
+
+    Err(eyre!(
+        "Timeout waiting for approval of nonce {} on bridge {} after {:?} ({} attempts)",
+        deposit_nonce,
+        bridge_address,
+        timeout,
+        attempt
+    ))
+}
+
 /// Poll for withdrawal to be ready (delay period passed)
 ///
 /// After an approval is created, there's a withdrawal delay before funds
@@ -533,6 +613,108 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                 bridge = %config.evm.contracts.bridge,
                 "WithdrawApprove events on EVM bridge (target nonce not found)"
             );
+        }
+    }
+
+    Ok(None)
+}
+
+/// Query approval by nonce on a specific chain (explicit RPC URL and bridge address).
+///
+/// Same logic as `query_approval_by_nonce` but doesn't use the primary config.
+async fn query_approval_by_nonce_on_chain(
+    rpc_url: &str,
+    bridge_address: Address,
+    nonce: u64,
+) -> Result<Option<ApprovalInfo>> {
+    let client = reqwest::Client::new();
+
+    let approval_topic =
+        "0x".to_string() + &hex::encode(alloy::primitives::keccak256(b"WithdrawApprove(bytes32)"));
+
+    let response = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getLogs",
+            "params": [{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "address": format!("{}", bridge_address),
+                "topics": [approval_topic]
+            }],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+
+    if let Some(logs) = body["result"].as_array() {
+        for log in logs {
+            let empty_vec = vec![];
+            let topics = log["topics"].as_array().unwrap_or(&empty_vec);
+            if topics.len() < 2 {
+                continue;
+            }
+
+            let hash_hex = topics[1].as_str().unwrap_or("").trim_start_matches("0x");
+            let hash_bytes = hex::decode(hash_hex).unwrap_or_default();
+            if hash_bytes.len() != 32 {
+                continue;
+            }
+
+            let withdraw_hash = B256::from_slice(&hash_bytes);
+
+            // Query getPendingWithdraw on this chain's bridge
+            let sel = selector("getPendingWithdraw(bytes32)");
+            let call_data = format!("0x{}{}", sel, hex::encode(withdraw_hash.as_slice()));
+
+            let pw_response = client
+                .post(rpc_url)
+                .json(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "eth_call",
+                    "params": [{
+                        "to": format!("{}", bridge_address),
+                        "data": call_data
+                    }, "latest"],
+                    "id": 2
+                }))
+                .send()
+                .await?;
+
+            let pw_body: serde_json::Value = pw_response.json().await?;
+            let hex_result = pw_body["result"].as_str().unwrap_or("");
+            let result_bytes = hex::decode(hex_result.trim_start_matches("0x")).unwrap_or_default();
+
+            if result_bytes.len() >= 480 {
+                let pw_nonce =
+                    u64::from_be_bytes(result_bytes[216..224].try_into().unwrap_or([0u8; 8]));
+
+                if pw_nonce == nonce {
+                    let src_chain_key = B256::from_slice(&result_bytes[0..32]);
+                    let token = Address::from_slice(&result_bytes[108..128]);
+                    let recipient = Address::from_slice(&result_bytes[140..160]);
+                    let amount = U256::from_be_slice(&result_bytes[160..192]);
+                    let approved_at =
+                        u64::from_be_bytes(result_bytes[376..384].try_into().unwrap_or([0u8; 8]));
+                    let cancelled = result_bytes[447] != 0;
+                    let executed = result_bytes[479] != 0;
+
+                    return Ok(Some(ApprovalInfo {
+                        withdraw_hash,
+                        src_chain_key,
+                        token,
+                        recipient,
+                        amount,
+                        nonce,
+                        approved_at,
+                        cancelled,
+                        executed,
+                    }));
+                }
+            }
         }
     }
 

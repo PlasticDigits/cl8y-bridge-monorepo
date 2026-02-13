@@ -16,6 +16,7 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
+  useSwitchChain,
 } from 'wagmi'
 import { parseUnits, pad, type Address, type Hex } from 'viem'
 import { CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
@@ -91,6 +92,17 @@ export interface DepositState {
 export interface UseDepositParams {
   tokenAddress: Address
   lockUnlockAddress: Address
+  /**
+   * Override the bridge contract address. Required for multi-chain support:
+   * when the source chain is Anvil1, this should be the Anvil1 bridge address.
+   * Falls back to CONTRACTS[DEFAULT_NETWORK].evmBridge if not provided.
+   */
+  bridgeAddress?: Address
+  /**
+   * Native chain ID of the source EVM chain (e.g. 31337 for Anvil, 31338 for Anvil1).
+   * If the wallet is on a different chain, the hook will auto-switch before transacting.
+   */
+  sourceNativeChainId?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -146,11 +158,14 @@ export const computeTerraChainKey = computeTerraChainBytes4
 export const computeEvmChainKey = computeEvmChainBytes4
 
 export function useBridgeDeposit(params?: UseDepositParams) {
-  const { address: userAddress, isConnected } = useAccount()
+  const { address: userAddress, isConnected, chainId: walletChainId } = useAccount()
   const [state, setState] = useState<DepositState>({ status: 'idle' })
+  const { switchChainAsync } = useSwitchChain()
 
-  // V2: deposit directly on the Bridge contract, not the Router
-  const bridgeAddress = CONTRACTS[DEFAULT_NETWORK].evmBridge as Address
+  // V2: deposit directly on the Bridge contract.
+  // If the caller provides a per-source-chain bridge address, use it;
+  // otherwise fall back to the default from CONTRACTS (primary EVM bridge).
+  const bridgeAddress = (params?.bridgeAddress || CONTRACTS[DEFAULT_NETWORK].evmBridge) as Address
 
   // Contract write hooks
   const { writeContractAsync: writeApprove } = useWriteContract()
@@ -224,7 +239,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     }
   }, [state.status, isDepositSuccess, isDepositError, depositReceiptError])
 
-  // Read current allowance (tokens must approve the Bridge contract in V2)
+  // Read current allowance for Bridge (V2: Bridge takes fee via transferFrom)
   const { data: currentAllowance, refetch: refetchAllowance } = useReadContract({
     address: params?.tokenAddress,
     abi: ERC20_ABI,
@@ -236,6 +251,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       enabled: !!userAddress && !!params?.tokenAddress && !!bridgeAddress,
     },
   })
+
+  // Single approval: Bridge does both fee transferFrom and net transferFrom to LockUnlock
 
   // Read token balance
   const { data: tokenBalance } = useReadContract({
@@ -289,14 +306,31 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     setIsTimedOut(false)
 
     try {
+      // Auto-switch to the source chain if the wallet is on a different chain.
+      // This is essential for multi-EVM: if the user selects Anvil1 as source
+      // but the wallet is on Anvil, we need to switch before sending any txns.
+      if (params?.sourceNativeChainId && walletChainId !== params.sourceNativeChainId) {
+        setState({ status: 'checking-allowance' }) // show some progress
+        try {
+          await switchChainAsync({ chainId: params.sourceNativeChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
+        } catch (switchError) {
+          const msg = switchError instanceof Error ? switchError.message : 'Failed to switch chain'
+          if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
+            setState({ status: 'error', error: 'Chain switch rejected by user' })
+          } else {
+            setState({ status: 'error', error: `Failed to switch to source chain: ${msg}` })
+          }
+          return
+        }
+      }
       const amountWei = parseUnits(amount, tokenDecimals)
 
-      // Step 1: Check allowance (V2: approve the Bridge contract directly)
+      // Step 1: Check allowance (single Bridge approval for fee + net transfer to LockUnlock)
       setState({ status: 'checking-allowance' })
       const { data: freshAllowance } = await refetchAllowance()
       const allowance = freshAllowance ?? currentAllowance ?? 0n
 
-      // Step 2: Approve if needed
+      // Step 2: Approve Bridge if needed
       if (allowance < amountWei) {
         setState({ status: 'approving' })
 
@@ -352,6 +386,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
 
         clearTimeout(timeoutRef.current!)
       }
+
 
       // Step 3: Execute deposit on V2 Bridge
       setState(prev => ({ ...prev, status: 'depositing' }))
@@ -410,6 +445,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     userAddress,
     params,
     bridgeAddress,
+    walletChainId,
+    switchChainAsync,
     currentAllowance,
     refetchAllowance,
     writeApprove,

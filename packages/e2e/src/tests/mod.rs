@@ -119,10 +119,10 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(watchtower::test_withdraw_delay_enforcement(config).await);
     results.push(watchtower::test_approval_cancellation_blocks_withdraw(config).await);
 
-    // Database & Hash Parity (5) - IMPLEMENTED in database.rs
+    // Database & Hash Parity (4) - IMPLEMENTED in database.rs
+    // Note: test_database_migrations removed — always skipped (no _sqlx_migrations table)
     results.push(database::test_nonce_replay_prevention(config).await);
     results.push(database::test_database_tables(config).await);
-    results.push(database::test_database_migrations(config).await);
     results.push(database::test_database_connection_pool(config).await);
     results.push(database::test_hash_parity(config).await);
 
@@ -148,10 +148,16 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(edge_cases::test_metrics_endpoint(config).await);
     results.push(edge_cases::test_structured_logging(config).await);
 
-    // EVM-to-EVM Transfer Tests (3) - IMPLEMENTED in evm_to_evm.rs
+    // EVM-to-EVM Transfer Tests - IMPLEMENTED in evm_to_evm.rs
     results.push(evm_to_evm::test_evm_chain_key_computation(config).await);
     results.push(evm_to_evm::test_mock_chain_registration(config).await);
-    // Note: test_evm_to_evm_deposit and test_evm_to_evm_full_cycle require token address
+    // Real multi-EVM transfer tests (require evm2 to be configured)
+    {
+        let evm_token = config.evm.contracts.test_token;
+        let evm_token_opt = if evm_token != Address::ZERO { Some(evm_token) } else { None };
+        results.push(evm_to_evm::test_real_evm1_to_evm2_transfer(config, evm_token_opt).await);
+        results.push(evm_to_evm::test_real_evm2_to_evm1_return_trip(config, evm_token_opt).await);
+    }
 
     // CW20 Cross-Chain Transfer Tests (4) - IMPLEMENTED in cw20.rs
     // These tests use the CW20 address from config (set during setup)

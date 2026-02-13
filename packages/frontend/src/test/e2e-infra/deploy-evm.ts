@@ -127,6 +127,52 @@ export function registerChainOnEvm(
 }
 
 /**
+ * Set the cancel window on a Bridge contract.
+ * For E2E tests, we use the minimum (15 seconds) so the operator can auto-execute
+ * withdrawals quickly without waiting the default 5 minutes.
+ *
+ * @param rpcUrl - RPC URL of the chain
+ * @param bridgeAddress - Address of the Bridge contract
+ * @param seconds - Cancel window in seconds (min 15, max 86400)
+ */
+export function setCancelWindow(
+  rpcUrl: string,
+  bridgeAddress: string,
+  seconds: number = 15
+): void {
+  console.log(`[deploy-evm] Setting cancel window to ${seconds}s on ${bridgeAddress} (${rpcUrl})...`)
+  execSync(
+    `cast send ${bridgeAddress} "setCancelWindow(uint256)" ${seconds} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  console.log(`[deploy-evm] Cancel window set to ${seconds}s`)
+}
+
+/**
+ * Fund LockUnlock with test tokens so it can unlock tokens on the destination chain.
+ * In a cross-chain bridge, the destination chain's LockUnlock must hold tokens
+ * in order to unlock them when a withdrawal is executed.
+ *
+ * @param rpcUrl - RPC URL of the chain
+ * @param lockUnlockAddress - Address of LockUnlock on this chain
+ * @param tokenAddress - Address of the ERC20 token
+ * @param amount - Amount to transfer (in base units, e.g. 500000 * 10^18)
+ */
+export function fundLockUnlock(
+  rpcUrl: string,
+  lockUnlockAddress: string,
+  tokenAddress: string,
+  amount: string = '500000000000000000000000' // 500k tokens (18 decimals)
+): void {
+  console.log(`[deploy-evm] Funding LockUnlock ${lockUnlockAddress} with ${amount} of token ${tokenAddress} on ${rpcUrl}...`)
+  execSync(
+    `cast send ${tokenAddress} "transfer(address,uint256)" ${lockUnlockAddress} ${amount} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  console.log(`[deploy-evm] LockUnlock funded successfully`)
+}
+
+/**
  * Register a token on the EVM TokenRegistry using cast.
  * TokenType enum: LockUnlock = 0, MintBurn = 1
  * setTokenDestinationWithDecimals(address, bytes4, bytes32, uint8)

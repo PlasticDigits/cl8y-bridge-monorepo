@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom'
 import { ConnectWallet } from './ConnectWallet'
 import { WalletButton } from './WalletButton'
+import { sounds } from '../lib/sounds'
 
 export function NavBar() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between min-h-14 py-2 gap-2">
         <div className="flex items-center shrink-0">
-          <NavLink to="/" className="flex items-center group -my-1">
+          <NavLink to="/" className="flex items-center group -my-1" onClick={() => sounds.playButtonPress()}>
             <img
               src="/logo-header.png"
               alt="CL8Y Bridge"
@@ -30,6 +31,7 @@ export function NavBar() {
           <NavLink
               to="/"
               end
+              onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
                 `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
@@ -43,6 +45,7 @@ export function NavBar() {
             </NavLink>
             <NavLink
               to="/history"
+              onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
                 `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
@@ -56,6 +59,7 @@ export function NavBar() {
             </NavLink>
             <NavLink
               to="/verify"
+              onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
                 `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
@@ -69,6 +73,7 @@ export function NavBar() {
             </NavLink>
             <NavLink
               to="/settings"
+              onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
                 `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive

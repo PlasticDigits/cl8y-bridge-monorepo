@@ -84,18 +84,19 @@ pub enum VerificationResult {
     Pending,
 }
 
-/// Known EVM chain IDs and their RPC URLs (for multi-chain support)
-#[allow(dead_code)]
+/// Known EVM chain endpoint for multi-chain verification routing
 #[derive(Debug, Clone)]
-pub struct EvmChainConfig {
-    pub chain_id: u64,
-    /// 4-byte chain ID (V2)
-    pub this_chain_id: [u8; 4],
+pub struct KnownEvmChain {
+    pub v2_chain_id: [u8; 4],
     pub rpc_url: String,
     pub bridge_address: String,
 }
 
 /// Verifier for checking approvals against source chain (V2)
+///
+/// Supports multi-EVM: when additional EVM chains are registered, the verifier
+/// routes deposit verification to the correct source chain's RPC/bridge based
+/// on the V2 chain ID in the approval.
 pub struct ApprovalVerifier {
     client: Client,
     /// Primary EVM RPC URL (for the main monitored chain)
@@ -106,10 +107,13 @@ pub struct ApprovalVerifier {
     terra_lcd_url: String,
     /// Terra bridge contract address
     terra_bridge_address: String,
-    /// This EVM chain's 4-byte chain ID
+    /// Primary EVM chain's 4-byte V2 chain ID
     evm_chain_id: [u8; 4],
-    /// Terra's 4-byte chain ID
+    /// Terra's 4-byte V2 chain ID
     terra_chain_id: [u8; 4],
+    /// All known EVM chains (including primary), keyed by V2 chain ID bytes.
+    /// Used for multi-chain deposit verification routing.
+    known_evm_chains: std::collections::HashMap<[u8; 4], KnownEvmChain>,
     /// C6: Counter for unknown source chain events (aids alerting)
     unknown_source_chain_count: AtomicU64,
 }
@@ -166,6 +170,17 @@ impl ApprovalVerifier {
             "ApprovalVerifier initialized with V2 chain IDs"
         );
 
+        // Initialize known EVM chains with the primary chain
+        let mut known_evm_chains = std::collections::HashMap::new();
+        known_evm_chains.insert(
+            evm_v2_chain_id,
+            KnownEvmChain {
+                v2_chain_id: evm_v2_chain_id,
+                rpc_url: evm_rpc_url.to_string(),
+                bridge_address: evm_bridge_address.to_string(),
+            },
+        );
+
         Self {
             client,
             evm_rpc_url: evm_rpc_url.to_string(),
@@ -174,6 +189,7 @@ impl ApprovalVerifier {
             terra_bridge_address: terra_bridge_address.to_string(),
             evm_chain_id: evm_v2_chain_id,
             terra_chain_id: terra_v2_chain_id,
+            known_evm_chains,
             unknown_source_chain_count: AtomicU64::new(0),
         }
     }
@@ -254,28 +270,42 @@ impl ApprovalVerifier {
     }
 
     /// Verify a deposit exists on EVM source chain (V2)
+    ///
+    /// Routes to the correct EVM chain based on the approval's `src_chain_id`.
+    /// Falls back to the primary chain if the source chain is unknown (backward compat).
     async fn verify_evm_deposit(&self, approval: &PendingApproval) -> Result<VerificationResult> {
+        // Look up the source chain's RPC and bridge from known_evm_chains
+        let (rpc_url, bridge_addr_str) =
+            if let Some(chain) = self.known_evm_chains.get(&approval.src_chain_id) {
+                (chain.rpc_url.as_str(), chain.bridge_address.as_str())
+            } else {
+                // Fallback to primary chain (backward compatibility)
+                (self.evm_rpc_url.as_str(), self.evm_bridge_address.as_str())
+            };
+
         debug!(
             hash = %bytes32_to_hex(&approval.withdraw_hash),
             nonce = approval.nonce,
             amount = approval.amount,
+            src_chain = %hex::encode(approval.src_chain_id),
+            rpc = rpc_url,
             "Querying EVM source chain for deposit"
         );
 
         // Parse bridge address
-        let bridge_address = match Address::from_str(&self.evm_bridge_address) {
+        let bridge_address = match Address::from_str(bridge_addr_str) {
             Ok(addr) => addr,
             Err(e) => {
-                warn!(error = %e, "Invalid EVM bridge address");
+                warn!(error = %e, bridge = bridge_addr_str, "Invalid EVM bridge address");
                 return Ok(VerificationResult::Pending);
             }
         };
 
         // Create provider
-        let provider = match self.evm_rpc_url.parse() {
+        let provider = match rpc_url.parse() {
             Ok(url) => ProviderBuilder::new().on_http(url),
             Err(e) => {
-                warn!(error = %e, "Invalid EVM RPC URL");
+                warn!(error = %e, rpc = rpc_url, "Invalid EVM RPC URL");
                 return Ok(VerificationResult::Pending);
             }
         };
@@ -490,9 +520,30 @@ impl ApprovalVerifier {
         }
     }
 
-    /// Check if chain ID matches the known EVM chain
+    /// Register additional EVM chains for multi-chain verification routing.
+    ///
+    /// Call this after construction with chains from `MultiEvmConfig`.
+    pub fn register_evm_chains(&mut self, chains: Vec<KnownEvmChain>) {
+        for chain in chains {
+            if chain.v2_chain_id != self.evm_chain_id {
+                info!(
+                    v2_chain_id = %hex::encode(chain.v2_chain_id),
+                    rpc = %chain.rpc_url,
+                    "Registered additional EVM chain for verification"
+                );
+            }
+            self.known_evm_chains
+                .insert(chain.v2_chain_id, chain);
+        }
+        info!(
+            total_evm_chains = self.known_evm_chains.len(),
+            "Multi-EVM verification routing configured"
+        );
+    }
+
+    /// Check if chain ID matches any known EVM chain (primary or multi-EVM)
     fn is_evm_chain(&self, id: &[u8; 4]) -> bool {
-        *id == self.evm_chain_id
+        self.known_evm_chains.contains_key(id)
     }
 
     /// Check if chain ID matches the known Terra chain

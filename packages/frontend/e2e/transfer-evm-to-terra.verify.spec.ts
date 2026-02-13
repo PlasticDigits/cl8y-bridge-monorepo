@@ -9,7 +9,7 @@
  * 5. Expect redirect to /transfer/:hash status page
  * 6. Wait for status page to show auto-submit progress
  * 7. Wait for operator processing
- * 8. Assert recipient balance changed on Terra
+ * 8. Assert recipient balance INCREASED on Terra (strict greater-than)
  *
  * ┌─────────────────────────────────────────────────────────────────────┐
  * │  REQUIRES FULL LOCAL INFRASTRUCTURE RUNNING.                       │
@@ -20,32 +20,16 @@
 
 import { test, expect } from './fixtures/dev-wallet'
 import { getTerraBalance } from './fixtures/chain-helpers'
-import { readFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
-
-const ROOT_DIR = resolve(__dirname, '../../../..')
-const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
-const TERRA_LCD = 'http://localhost:1317'
-
-function loadEnv(): Record<string, string> {
-  const vars: Record<string, string> = {}
-  if (!existsSync(ENV_FILE)) return vars
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-  }
-  return vars
-}
+import { loadEnv, getTerraLcdUrl } from './fixtures/env-helpers'
 
 test.describe('EVM -> Terra Transfer Verification', () => {
   test('should complete full EVM to Terra transfer lifecycle', async ({ connectedPage: page }) => {
     const env = loadEnv()
+    const TERRA_LCD = getTerraLcdUrl(env)
     const terraRecipient = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v' // dev wallet Terra address
 
-    // 1. Record initial Terra balance
+    // 1. Record initial Terra balance (native LUNC/uluna).
+    // Current setup: EVM tokens map to uluna on Terra. For CW20 flows, use getCw20Balance from chain-helpers.
     let initialBalance = 0n
     try {
       initialBalance = await getTerraBalance(TERRA_LCD, terraRecipient, 'uluna')
@@ -53,9 +37,8 @@ test.describe('EVM -> Terra Transfer Verification', () => {
       console.warn('[verify] Could not read initial Terra balance')
     }
 
-    // 2. Navigate to bridge page
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
+    // 2. Already on bridge page from connectedPage fixture (wallets connected).
+    // Do NOT re-navigate or wallets will disconnect.
 
     // 3. Switch source to Anvil (EVM)
     const sourceSelect = page.locator('[data-testid="source-chain"] select, #source-chain-select')
@@ -97,45 +80,44 @@ test.describe('EVM -> Terra Transfer Verification', () => {
 
     // 7. Submit the transfer
     const submitBtn = page.locator('[data-testid="submit-transfer"]')
+    await expect(submitBtn).toBeEnabled({ timeout: 15_000 })
+    await submitBtn.click()
 
-    if (await submitBtn.isEnabled()) {
-      await submitBtn.click()
+    // 8. Expect redirect to /transfer/:hash status page
+    await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
+    await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
 
-      // 8. Expect redirect to /transfer/:hash status page
-      await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
-      await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
+    // 9. Wait for auto-submit progress or manual-required indicator
+    await expect(
+      page.locator('text=Waiting for Operator Approval')
+        .or(page.locator('text=Submitting Hash'))
+        .or(page.locator('text=Waiting for Hash Submission'))
+        .or(page.locator('text=Transfer Complete'))
+        .or(page.locator('text=Auto-Submit Failed'))
+    ).toBeVisible({ timeout: 60_000 })
 
-      // 9. Wait for auto-submit progress or manual-required indicator
-      await expect(
-        page.locator('text=Waiting for Operator Approval')
-          .or(page.locator('text=Submitting Hash'))
-          .or(page.locator('text=Waiting for Hash Submission'))
-          .or(page.locator('text=Transfer Complete'))
-          .or(page.locator('text=Auto-Submit Failed'))
-      ).toBeVisible({ timeout: 60_000 })
+    // 10. Wait for operator processing (EVM->Terra is processed by operator)
+    // The operator handles withdrawApprove and withdrawExecute on Terra
+    await page.waitForTimeout(30_000)
 
-      // 10. Wait for operator processing (EVM->Terra is processed by operator)
-      // The operator handles withdrawApprove and withdrawExecute on Terra
-      await page.waitForTimeout(30_000)
+    // 11. Check if transfer completed
+    const isComplete = await page.locator('text=Transfer Complete').isVisible({ timeout: 30_000 }).catch(() => false)
 
-      // 11. Check if transfer completed
-      const isComplete = await page.locator('text=Transfer Complete').isVisible({ timeout: 30_000 }).catch(() => false)
-
-      if (isComplete) {
-        // 12. Verify balance on Terra changed
-        try {
-          const finalBalance = await getTerraBalance(TERRA_LCD, terraRecipient, 'uluna')
-          console.log(`[verify] Terra balance: ${initialBalance} -> ${finalBalance}`)
-          // Balance should be >= initial (may have received tokens)
-          expect(finalBalance).toBeGreaterThanOrEqual(initialBalance)
-        } catch {
-          console.warn('[verify] Could not verify Terra balance')
-        }
-      } else {
-        console.warn('[verify] Transfer did not complete within timeout - this may be expected if operator is not running')
+    if (isComplete) {
+      // 12. Verify token receipt on Terra: balance must INCREASE (strict greater-than).
+      // This ensures we actually received tokens; "not less than" would pass even when
+      // withdraw_submit gas decreased native balance without any token receipt.
+      try {
+        const finalBalance = await getTerraBalance(TERRA_LCD, terraRecipient, 'uluna')
+        console.log(`[verify] Terra uluna balance: ${initialBalance} -> ${finalBalance}`)
+        const received = finalBalance - initialBalance
+        expect(received).toBeGreaterThan(0n)
+        expect(finalBalance).toBeGreaterThan(initialBalance)
+      } catch {
+        console.warn('[verify] Could not verify Terra balance')
       }
     } else {
-      console.warn('[verify] Submit button disabled, skipping transfer verification')
+      console.warn('[verify] Transfer did not complete within timeout - this may be expected if operator is not running')
     }
   })
 })

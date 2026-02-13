@@ -265,9 +265,7 @@ contract BridgeTest is Test {
 
     function test_DepositERC20() public {
         vm.startPrank(user);
-        // Approve bridge for fee transfer and lockUnlock for net amount
-        token.approve(address(bridge), 100 ether); // For fee
-        token.approve(address(lockUnlock), 100 ether); // For lock
+        token.approve(address(bridge), 100 ether); // Single approval: Bridge does fee + net transfer to LockUnlock
 
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
@@ -296,7 +294,7 @@ contract BridgeTest is Test {
         bytes4 invalidChain = bytes4(uint32(99));
 
         vm.startPrank(user);
-        token.approve(address(lockUnlock), 100 ether);
+        token.approve(address(bridge), 100 ether);
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.ChainNotRegistered.selector, invalidChain));
         bridge.depositERC20(address(token), 100 ether, invalidChain, destAccount);
@@ -436,7 +434,6 @@ contract BridgeTest is Test {
 
         vm.startPrank(user);
         noDestToken.approve(address(bridge), 100 ether);
-        noDestToken.approve(address(lockUnlock), 100 ether);
 
         vm.expectRevert(
             abi.encodeWithSelector(IBridge.DestTokenMappingNotSet.selector, address(noDestToken), destChainId)
@@ -582,7 +579,6 @@ contract BridgeTest is Test {
         // First lock some tokens
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether); // For fee
-        token.approve(address(lockUnlock), 100 ether); // For lock
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
 
@@ -718,7 +714,6 @@ contract BridgeTest is Test {
         // Step 2: Execute a deposit
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
 
@@ -782,7 +777,6 @@ contract BridgeTest is Test {
         // Deposit 1: uses nonce 1
         vm.startPrank(user);
         token.approve(address(bridge), 300 ether);
-        token.approve(address(lockUnlock), 300 ether);
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
 
@@ -822,7 +816,6 @@ contract BridgeTest is Test {
         // Execute batch of 3 deposits
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
         for (uint256 i = 0; i < batchSize; i++) {
             bridge.depositERC20(address(token), 10 ether, destChainId, destAccount);
         }
@@ -885,12 +878,11 @@ contract BridgeTest is Test {
         vm.prank(admin);
         bridge.pause();
 
-        vm.prank(user);
-        token.approve(address(lockUnlock), 100 ether);
-
-        vm.prank(user);
+        vm.startPrank(user);
+        token.approve(address(bridge), 100 ether);
         vm.expectRevert();
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
+        vm.stopPrank();
     }
 
     function test_Unpause() public {
@@ -902,7 +894,6 @@ contract BridgeTest is Test {
 
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether); // For fee
-        token.approve(address(lockUnlock), 100 ether); // For lock
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
     }
@@ -972,7 +963,6 @@ contract BridgeTest is Test {
 
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
 
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
@@ -1005,7 +995,6 @@ contract BridgeTest is Test {
 
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
 
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
@@ -1080,7 +1069,6 @@ contract BridgeTest is Test {
     function test_DepositERC20_RevertsIfDestAccountZero() public {
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
 
         vm.expectRevert(IBridge.InvalidDestAccount.selector);
         bridge.depositERC20(address(token), 100 ether, destChainId, bytes32(0));
@@ -1161,7 +1149,6 @@ contract BridgeTest is Test {
         // Same decimals (18->18) - amount stays the same
         vm.startPrank(user);
         token.approve(address(bridge), 100 ether);
-        token.approve(address(lockUnlock), 100 ether);
         bridge.depositERC20(address(token), 100 ether, destChainId, destAccount);
         vm.stopPrank();
 
@@ -1190,7 +1177,6 @@ contract BridgeTest is Test {
         // Source has more decimals (24->18), amount should be divided by 10^6
         vm.startPrank(user);
         token.approve(address(bridge), 200 ether);
-        token.approve(address(lockUnlock), 200 ether);
         bridge.depositERC20(address(token), 200 ether, destChainId, destAccount);
         vm.stopPrank();
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { isValidTransferHash, normalizeTransferHash } from '../../utils/validation'
+import { sounds } from '../../lib/sounds'
 
 export interface HashSearchBarProps {
   onSearch: (hash: string) => void
@@ -43,6 +44,7 @@ export function HashSearchBar({ onSearch, disabled, placeholder }: HashSearchBar
         <button
           type="submit"
           disabled={disabled || !value.trim()}
+          onClick={() => sounds.playButtonPress()}
           className="btn-primary btn-cta px-4 py-2 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
         >
           Verify

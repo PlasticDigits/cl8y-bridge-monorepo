@@ -6,6 +6,19 @@ export default {
   ],
   theme: {
     extend: {
+      cursor: {
+        default: 'var(--cursor-default)',
+        pointer: 'var(--cursor-pointer)',
+        wait: 'var(--cursor-wait)',
+        text: 'var(--cursor-text)',
+        'not-allowed': 'var(--cursor-not-allowed)',
+        grab: 'var(--cursor-grab)',
+        grabbing: 'var(--cursor-grabbing)',
+        move: 'var(--cursor-move)',
+        /* Map progress to wait (no separate progress cursor asset) */
+        progress: 'var(--cursor-wait)',
+        auto: 'var(--cursor-default)',
+      },
       colors: {
         primary: {
           50: '#eff6ff',

@@ -67,6 +67,12 @@ pub struct Config {
     pub evm_precheck_max_retries: u32,
     /// Consecutive pre-check failures before circuit breaker opens (default 10)
     pub evm_precheck_circuit_breaker_threshold: u32,
+
+    /// Optional multi-EVM chain configuration for cross-EVM fraud detection.
+    /// When set, the canceler monitors all configured EVM chains for approvals
+    /// and can verify deposits on any known source chain.
+    /// Loaded from EVM_CHAINS_COUNT / EVM_CHAIN_{N}_* env vars.
+    pub multi_evm: Option<multichain_rs::MultiEvmConfig>,
 }
 
 /// Custom Debug impl that redacts sensitive fields (evm_private_key, terra_mnemonic)
@@ -99,6 +105,7 @@ impl fmt::Debug for Config {
                 "evm_precheck_circuit_breaker_threshold",
                 &self.evm_precheck_circuit_breaker_threshold,
             )
+            .field("multi_evm", &self.multi_evm)
             .finish()
     }
 }
@@ -189,6 +196,9 @@ impl Config {
             );
         }
 
+        // Load optional multi-EVM configuration (for cross-EVM fraud detection)
+        let multi_evm = multichain_rs::multi_evm::load_from_env()?;
+
         Ok(Self {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
@@ -257,6 +267,8 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(10),
+
+            multi_evm,
         })
     }
 }
@@ -335,5 +347,84 @@ mod tests {
     fn test_validate_rpc_url_rejects_invalid_url() {
         let err = validate_rpc_url("not-a-url", "TEST").unwrap_err();
         assert!(err.to_string().contains("valid URL"));
+    }
+
+    #[test]
+    fn test_multi_evm_config_loaded_when_set() {
+        // Set required base vars
+        let required = [
+            ("EVM_RPC_URL", "http://localhost:8545"),
+            ("EVM_CHAIN_ID", "31337"),
+            ("EVM_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001"),
+            ("EVM_PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            ("TERRA_LCD_URL", "http://localhost:1317"),
+            ("TERRA_RPC_URL", "http://localhost:26657"),
+            ("TERRA_CHAIN_ID", "localterra"),
+            ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+            ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
+        ];
+        for (k, v) in &required {
+            std::env::set_var(k, v);
+        }
+
+        // Set multi-EVM vars
+        std::env::set_var("EVM_CHAINS_COUNT", "2");
+        std::env::set_var("EVM_CHAIN_1_NAME", "anvil");
+        std::env::set_var("EVM_CHAIN_1_CHAIN_ID", "31337");
+        std::env::set_var("EVM_CHAIN_1_THIS_CHAIN_ID", "1");
+        std::env::set_var("EVM_CHAIN_1_RPC_URL", "http://localhost:8545");
+        std::env::set_var("EVM_CHAIN_1_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001");
+        std::env::set_var("EVM_CHAIN_2_NAME", "anvil1");
+        std::env::set_var("EVM_CHAIN_2_CHAIN_ID", "31338");
+        std::env::set_var("EVM_CHAIN_2_THIS_CHAIN_ID", "3");
+        std::env::set_var("EVM_CHAIN_2_RPC_URL", "http://localhost:8546");
+        std::env::set_var("EVM_CHAIN_2_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000002");
+
+        let config = Config::load().expect("Config should load");
+        assert!(config.multi_evm.is_some());
+        let multi = config.multi_evm.as_ref().unwrap();
+        assert_eq!(multi.enabled_count(), 2);
+
+        // Cleanup
+        for (k, _) in &required {
+            std::env::remove_var(k);
+        }
+        for k in [
+            "EVM_CHAINS_COUNT",
+            "EVM_CHAIN_1_NAME", "EVM_CHAIN_1_CHAIN_ID", "EVM_CHAIN_1_THIS_CHAIN_ID",
+            "EVM_CHAIN_1_RPC_URL", "EVM_CHAIN_1_BRIDGE_ADDRESS",
+            "EVM_CHAIN_2_NAME", "EVM_CHAIN_2_CHAIN_ID", "EVM_CHAIN_2_THIS_CHAIN_ID",
+            "EVM_CHAIN_2_RPC_URL", "EVM_CHAIN_2_BRIDGE_ADDRESS",
+        ] {
+            std::env::remove_var(k);
+        }
+    }
+
+    #[test]
+    fn test_multi_evm_config_none_when_not_set() {
+        // Set required base vars only (no multi-EVM)
+        let required = [
+            ("EVM_RPC_URL", "http://localhost:8545"),
+            ("EVM_CHAIN_ID", "31337"),
+            ("EVM_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001"),
+            ("EVM_PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            ("TERRA_LCD_URL", "http://localhost:1317"),
+            ("TERRA_RPC_URL", "http://localhost:26657"),
+            ("TERRA_CHAIN_ID", "localterra"),
+            ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+            ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
+        ];
+        // Make sure multi-EVM is NOT set
+        std::env::remove_var("EVM_CHAINS_COUNT");
+        for (k, v) in &required {
+            std::env::set_var(k, v);
+        }
+
+        let config = Config::load().expect("Config should load");
+        assert!(config.multi_evm.is_none());
+
+        for (k, _) in &required {
+            std::env::remove_var(k);
+        }
     }
 }

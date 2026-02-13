@@ -95,7 +95,8 @@ export function useWallet() {
     }
   }, [storeConnect, refreshBalances]);
 
-  // Connect simulated wallet (dev mode - no extensions, cannot sign)
+  // Connect simulated wallet (dev mode - uses MnemonicWallet which CAN sign
+  // real transactions on LocalTerra; no browser extension needed)
   const connectSimulated = useCallback(() => {
     storeConnectSimulated();
   }, [storeConnectSimulated]);

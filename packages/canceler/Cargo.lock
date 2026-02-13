@@ -2763,6 +2763,7 @@ dependencies = [
  "tiny-keccak",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

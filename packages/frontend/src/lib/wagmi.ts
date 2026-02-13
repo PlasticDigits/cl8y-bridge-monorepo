@@ -49,6 +49,9 @@ const connectors = [
         mock({
           accounts: SIMULATED_EVM_ACCOUNTS,
           features: { defaultConnected: false },
+          // In dev mode, the mock connector can sign real transactions on Anvil
+          // because Anvil keeps test accounts unlocked. eth_sendTransaction is
+          // forwarded to the Anvil RPC which signs on behalf of the test account.
         }),
       ]
     : []),
@@ -56,8 +59,15 @@ const connectors = [
   coinbaseWallet(),
 ]
 
+// In dev mode, Anvil chains are listed first so the mock connector defaults
+// to Anvil (the first chain) instead of mainnet. This ensures dev wallet
+// transactions target the local devnet rather than a production chain.
+const chains = DEV_MODE
+  ? ([anvil, anvil1, mainnet, bsc, opBNB] as const)
+  : ([mainnet, bsc, opBNB, anvil, anvil1] as const)
+
 export const config = createConfig({
-  chains: [mainnet, bsc, opBNB, anvil, anvil1],
+  chains,
   connectors,
   multiInjectedProviderDiscovery: true,
   transports: {

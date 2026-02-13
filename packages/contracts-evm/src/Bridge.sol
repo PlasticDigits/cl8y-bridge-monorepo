@@ -457,14 +457,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Guard check
         _checkDepositGuard(token, netAmount, msg.sender);
 
-        // Transfer fee directly from user to fee recipient
+        // Transfer fee directly from user to fee recipient (single Bridge approval covers both)
         if (fee > 0) {
             IERC20(token).safeTransferFrom(msg.sender, feeConfig.feeRecipient, fee);
             emit FeeCollected(token, fee, feeConfig.feeRecipient);
         }
 
-        // Lock only the net amount
-        lockUnlock.lock(msg.sender, token, netAmount);
+        // Transfer net amount directly from user to LockUnlock (no separate LockUnlock approval needed)
+        IERC20(token).safeTransferFrom(msg.sender, address(lockUnlock), netAmount);
 
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;

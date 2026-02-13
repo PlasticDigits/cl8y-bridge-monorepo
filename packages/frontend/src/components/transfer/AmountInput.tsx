@@ -1,5 +1,6 @@
 import { TokenLogo } from '../ui'
 import type { TokenOption } from './TokenSelect'
+import { sounds } from '../../lib/sounds'
 import { TokenSelect } from './TokenSelect'
 
 export interface AmountInputProps {
@@ -47,7 +48,10 @@ export function AmountInput({
           {onMax && (
             <button
               type="button"
-              onClick={onMax}
+              onClick={() => {
+                sounds.playButtonPress()
+                onMax()
+              }}
               className="border border-cyan-400 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300 hover:bg-cyan-400/10"
             >
               MAX

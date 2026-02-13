@@ -27,8 +27,10 @@
 pub mod address_codec;
 pub mod discovery;
 pub mod hash;
+pub mod multi_evm;
 pub mod redact;
 pub mod types;
+pub mod verification;
 
 // Chain-specific modules (feature-gated)
 #[cfg(feature = "evm")]
@@ -53,7 +55,12 @@ pub use hash::{
 };
 
 pub use discovery::{additional_chains, discover_chains, DiscoveredChain, KnownChain};
+pub use multi_evm::{validate_rpc_url, EvmChainConfig, MultiEvmConfig};
 pub use types::{
     ChainId, ChainRegistration, EvmAddress, FeeCalculator, FeeParams, OperatorGasConfig, Status,
     TokenDestination, TokenRegistration, TokenType, WithdrawHash,
+};
+pub use verification::{
+    build_source_endpoints, route_verification, verify_evm_deposit, verify_terra_deposit,
+    SourceChainEndpoint,
 };

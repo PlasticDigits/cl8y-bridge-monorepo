@@ -20,29 +20,12 @@
 
 import { test, expect } from './fixtures/dev-wallet'
 import { getErc20Balance, skipAnvilTime } from './fixtures/chain-helpers'
-import { readFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
-
-const ROOT_DIR = resolve(__dirname, '../../../..')
-const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
-const ANVIL_RPC = 'http://localhost:8545'
-
-function loadEnv(): Record<string, string> {
-  const vars: Record<string, string> = {}
-  if (!existsSync(ENV_FILE)) return vars
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-  }
-  return vars
-}
+import { loadEnv, getAnvilRpcUrl } from './fixtures/env-helpers'
 
 test.describe('Terra -> EVM Transfer Verification', () => {
   test('should complete full transfer lifecycle with auto-submit', async ({ connectedPage: page }) => {
     const env = loadEnv()
+    const ANVIL_RPC = getAnvilRpcUrl(env)
     const tokenA = env['ANVIL_TOKEN_A'] || ''
     const recipientAddress = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' // dev wallet EVM address
 
@@ -52,9 +35,8 @@ test.describe('Terra -> EVM Transfer Verification', () => {
       initialBalance = await getErc20Balance(ANVIL_RPC, tokenA, recipientAddress)
     }
 
-    // 2. Ensure we're on the bridge page
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
+    // 2. Already on bridge page from connectedPage fixture (wallets connected).
+    // Do NOT re-navigate or wallets will disconnect.
 
     // 3. Source should default to Terra (verified by source-chain testid)
     await expect(page.locator('[data-testid="source-chain"]')).toBeVisible()
@@ -70,37 +52,38 @@ test.describe('Terra -> EVM Transfer Verification', () => {
 
     // 6. Submit the transfer
     const submitBtn = page.locator('[data-testid="submit-transfer"]')
+    await expect(submitBtn).toBeEnabled({ timeout: 15_000 })
+    await submitBtn.click()
 
-    if (await submitBtn.isEnabled()) {
-      await submitBtn.click()
+    // 7. Expect redirect to /transfer/:hash status page
+    await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
+    await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
 
-      // 7. Expect redirect to /transfer/:hash status page
-      await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
-      await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
+    // 8. Wait for hash submission (auto-submit hook) or approval status
+    await expect(
+      page.locator('text=Waiting for Operator Approval')
+        .or(page.locator('text=Submitting Hash'))
+        .or(page.locator('text=Transfer Complete'))
+    ).toBeVisible({ timeout: 60_000 })
 
-      // 8. Wait for hash submission (auto-submit hook) or approval status
-      await expect(
-        page.locator('text=Waiting for Operator Approval')
-          .or(page.locator('text=Submitting Hash'))
-          .or(page.locator('text=Transfer Complete'))
-      ).toBeVisible({ timeout: 60_000 })
+    // 9. Skip anvil time to accelerate cancel window
+    await skipAnvilTime(ANVIL_RPC, 600)
 
-      // 9. Skip anvil time to accelerate cancel window
-      await skipAnvilTime(ANVIL_RPC, 600)
+    // 10. Wait for completion.
+    // Terra→EVM takes longer due to: nonce resolution from LCD (~3-5s),
+    // withdrawSubmit tx, operator verification of Terra deposit (~5-10s),
+    // cancel window (15s wall-clock), and auto-execution.
+    await expect(
+      page.locator('text=Transfer Complete')
+    ).toBeVisible({ timeout: 120_000 })
 
-      // 10. Wait for completion
-      await expect(
-        page.locator('text=Transfer Complete')
-      ).toBeVisible({ timeout: 60_000 })
-
-      // 11. Verify balance increased
-      if (tokenA) {
-        const finalBalance = await getErc20Balance(ANVIL_RPC, tokenA, recipientAddress)
-        expect(finalBalance).toBeGreaterThan(initialBalance)
-      }
-    } else {
-      // Button disabled -- form may be incomplete in test env
-      console.warn('[verify] Submit button disabled, skipping transfer verification')
+    // 11. Verify token receipt on EVM: balance must INCREASE (strict greater-than).
+    // Ensures we actually received tokens; not just "not less than" which could mask failures.
+    if (tokenA) {
+      const finalBalance = await getErc20Balance(ANVIL_RPC, tokenA, recipientAddress)
+      const received = finalBalance - initialBalance
+      expect(received).toBeGreaterThan(0n)
+      expect(finalBalance).toBeGreaterThan(initialBalance)
     }
   })
 })

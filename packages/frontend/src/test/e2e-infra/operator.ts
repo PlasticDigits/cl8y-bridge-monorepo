@@ -282,8 +282,8 @@ export async function stopOperator(): Promise<void> {
     // No process found
   }
 
-  // Cleanup files
-  for (const file of [START_SCRIPT, LOG_FILE]) {
+  // Cleanup start script (preserve log for post-mortem debugging)
+  for (const file of [START_SCRIPT]) {
     try {
       if (existsSync(file)) unlinkSync(file)
     } catch { /* ignore */ }

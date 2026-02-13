@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { TokenLogo } from '../ui'
+import { sounds } from '../../lib/sounds'
 
 export interface TokenOption {
   id: string
@@ -34,14 +35,10 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
   }, [open])
 
   if (tokens.length === 0) return null
-  if (tokens.length === 1 && !disabled) {
-    return (
-      <div className="flex items-center gap-2">
-        <TokenLogo symbol={selected?.symbol} tokenId={selected?.tokenId} size={18} />
-        <span className="text-xs uppercase tracking-wide text-gray-400">{selected?.symbol}</span>
-      </div>
-    )
-  }
+
+  // Always render the dropdown-style button so the token selector is visible.
+  // When there's only 1 token, the button is non-interactive (no chevron, no popup).
+  const canOpen = tokens.length > 1
 
   return (
     <div ref={containerRef} className="relative">
@@ -54,21 +51,30 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
         aria-haspopup="listbox"
         aria-controls={`${id}-listbox`}
         aria-label="Select token"
-        onClick={() => !disabled && setOpen((o) => !o)}
+        onClick={() => {
+          if (canOpen && !disabled) {
+            sounds.playButtonPress()
+            setOpen((o) => !o)
+          }
+        }}
         disabled={disabled}
-        className="flex cursor-pointer items-center gap-2 rounded border border-white/20 bg-white/5 px-2 py-1 text-xs uppercase tracking-wide text-gray-400 hover:bg-white/10 hover:text-gray-300 focus:border-cyan-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        className={`flex items-center gap-2 rounded border border-white/20 bg-white/5 px-2 py-1 text-xs uppercase tracking-wide text-gray-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+          canOpen ? 'cursor-pointer hover:bg-white/10 hover:text-gray-300 focus:border-cyan-300' : 'cursor-default'
+        }`}
       >
         <TokenLogo symbol={selected?.symbol} tokenId={selected?.tokenId} size={18} />
         <span>{selected?.symbol}</span>
-        <svg
-          className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-        >
-          <path d="M6 9l6 6 6-6" strokeLinecap="square" strokeLinejoin="miter" />
-        </svg>
+        {canOpen && (
+          <svg
+            className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2.5}
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="square" strokeLinejoin="miter" />
+          </svg>
+        )}
       </button>
 
       {open && (
@@ -87,6 +93,7 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
                 aria-selected={isSelected}
                 data-tokenid={token.id}
                 onClick={() => {
+                  sounds.playButtonPress()
                   onChange(token.id)
                   setOpen(false)
                 }}

@@ -1,4 +1,5 @@
 import type { Connector } from 'wagmi'
+import { sounds } from '../../lib/sounds'
 
 export interface EvmWalletOptionProps {
   connector: Connector
@@ -63,7 +64,10 @@ export function EvmWalletOption({ connector, onClick, isLoading, disabled }: Evm
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => {
+        sounds.playButtonPress()
+        onClick()
+      }}
       disabled={disabled}
       className="w-full flex items-center gap-4 p-4 rounded-xl border border-white/5 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-white/5 disabled:hover:bg-transparent"
     >

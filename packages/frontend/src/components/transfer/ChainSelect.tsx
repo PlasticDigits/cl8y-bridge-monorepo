@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import type { ChainInfo } from '../../lib/chains'
+import { sounds } from '../../lib/sounds'
 import { isIconImagePath } from '../../utils/chainlist'
 
 export interface ChainSelectProps {
@@ -51,7 +52,10 @@ export function ChainSelect({
         aria-haspopup="listbox"
         aria-controls={`${id}-listbox`}
         aria-labelledby={label ? `${id}-label` : undefined}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          sounds.playButtonPress()
+          setOpen((o) => !o)
+        }}
         className="flex w-full cursor-pointer items-center gap-2 border-2 border-white/20 bg-[#161616] px-3 py-2 text-left text-sm text-white focus:border-cyan-300 focus:outline-none"
       >
         {isIconImagePath(selected.icon) ? (
@@ -91,6 +95,7 @@ export function ChainSelect({
                 aria-selected={isSelected}
                 data-chainid={chain.id}
                 onClick={() => {
+                  sounds.playButtonPress()
                   onChange(chain.id)
                   setOpen(false)
                 }}

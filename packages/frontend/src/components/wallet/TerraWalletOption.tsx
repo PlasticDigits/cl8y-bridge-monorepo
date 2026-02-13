@@ -1,4 +1,5 @@
 import { WalletName } from '@goblinhunt/cosmes/wallet'
+import { sounds } from '../../lib/sounds'
 import {
   StationIcon,
   KeplrIcon,
@@ -52,7 +53,10 @@ export function TerraWalletOption({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => {
+        if (available && !disabled) sounds.playButtonPress()
+        onClick()
+      }}
       disabled={disabled || !available}
       className={`
         w-full flex items-center gap-4 p-4 rounded-xl border transition-all duration-200

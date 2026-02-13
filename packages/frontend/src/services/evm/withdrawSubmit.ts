@@ -30,7 +30,8 @@ export const WITHDRAW_SUBMIT_ABI = [
   },
 ] as const
 
-// ABI for reading pending withdraw and bridge state
+// ABI for reading pending withdraw and bridge state.
+// Must match IBridge.PendingWithdraw struct exactly.
 export const BRIDGE_WITHDRAW_VIEW_ABI = [
   {
     name: 'getPendingWithdraw',
@@ -46,11 +47,17 @@ export const BRIDGE_WITHDRAW_VIEW_ABI = [
           { name: 'srcAccount', type: 'bytes32' },
           { name: 'destAccount', type: 'bytes32' },
           { name: 'token', type: 'address' },
+          { name: 'recipient', type: 'address' },
           { name: 'amount', type: 'uint256' },
           { name: 'nonce', type: 'uint64' },
+          { name: 'srcDecimals', type: 'uint8' },
+          { name: 'destDecimals', type: 'uint8' },
+          { name: 'operatorGas', type: 'uint256' },
           { name: 'submittedAt', type: 'uint256' },
           { name: 'approvedAt', type: 'uint256' },
-          { name: 'operatorGas', type: 'uint256' },
+          { name: 'approved', type: 'bool' },
+          { name: 'cancelled', type: 'bool' },
+          { name: 'executed', type: 'bool' },
         ],
       },
     ],

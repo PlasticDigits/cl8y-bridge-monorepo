@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useWallet } from '../hooks/useWallet'
+import { sounds } from '../lib/sounds'
 import { formatAddress, formatAmount } from '../utils/format'
 import { DECIMALS } from '../utils/constants'
-import { TerraWalletModal } from './wallet/TerraWalletModal'
 
 function getTerraChainLogoPath(chainId: string | null): string {
   if (chainId === 'localterra') return '/chains/localterra-icon.png'
@@ -17,7 +17,6 @@ export function WalletButton() {
     address,
     chainId,
     luncBalance,
-    showWalletModal,
     disconnect,
     setShowWalletModal,
   } = useWallet()
@@ -29,7 +28,10 @@ export function WalletButton() {
     return (
       <div className="relative">
         <button
-          onClick={() => setShowDropdown(!showDropdown)}
+          onClick={() => {
+            sounds.playButtonPress()
+            setShowDropdown(!showDropdown)
+          }}
           className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
         >
           <div className="text-right hidden sm:block">
@@ -58,6 +60,7 @@ export function WalletButton() {
                 </div>
                 <button
                   onClick={() => {
+                    sounds.playButtonPress()
                     disconnect()
                     setShowDropdown(false)
                   }}
@@ -77,34 +80,33 @@ export function WalletButton() {
   }
 
   return (
-    <>
-      <button
-        onClick={() => setShowWalletModal(true)}
-        disabled={connecting}
-        className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        <span className="flex items-center gap-2">
-          {connecting ? (
-            <>
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span className="hidden sm:inline">Connecting...</span>
-            </>
-          ) : (
-            <>
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
-                <img src="/chains/terraclassic-icon.png" alt="" className="h-full w-full object-contain" />
-              </span>
-              <span className="hidden sm:inline">CONNECT TC</span>
-              <span className="sm:hidden">TC</span>
-            </>
-          )}
-        </span>
-      </button>
-
-      <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
-    </>
+    <button
+      onClick={() => {
+        sounds.playButtonPress()
+        setShowWalletModal(true)
+      }}
+      disabled={connecting}
+      className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      <span className="flex items-center gap-2">
+        {connecting ? (
+          <>
+            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <span className="hidden sm:inline">Connecting...</span>
+          </>
+        ) : (
+          <>
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
+              <img src="/chains/terraclassic-icon.png" alt="" className="h-full w-full object-contain" />
+            </span>
+            <span className="hidden sm:inline">CONNECT TC</span>
+            <span className="sm:hidden">TC</span>
+          </>
+        )}
+      </span>
+    </button>
   )
 }

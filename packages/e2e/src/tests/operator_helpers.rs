@@ -325,9 +325,8 @@ pub async fn execute_deposit(
     dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<B256> {
-    // Approve both Bridge (for fee transferFrom) and LockUnlock (for lock transferFrom)
+    // Single approval: Bridge does fee + net transfer to LockUnlock
     approve_erc20(config, token, config.evm.contracts.bridge, amount).await?;
-    approve_erc20(config, token, config.evm.contracts.lock_unlock, amount).await?;
 
     let client = reqwest::Client::new();
 
@@ -1037,6 +1036,113 @@ pub async fn submit_withdraw_on_evm(
         nonce = nonce,
         tx_hash = %hex::encode(tx_hash),
         "WithdrawSubmit transaction submitted on EVM"
+    );
+
+    // Wait for confirmation
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok(tx_hash)
+}
+
+/// Submit `withdrawSubmit` on a SPECIFIC EVM chain's bridge contract (V2 user step for EVM→EVM).
+///
+/// Unlike `submit_withdraw_on_evm()` which always targets `config.evm`, this function
+/// takes an explicit RPC URL and bridge address, allowing it to target any EVM chain
+/// (e.g., the secondary chain for EVM1→EVM2 transfers).
+///
+/// In V2, the user (or test) must call `withdrawSubmit` on the destination chain
+/// before the operator can approve it. This creates the PendingWithdraw entry.
+///
+/// # Arguments
+/// * `rpc_url` - RPC URL of the destination chain
+/// * `bridge_address` - Bridge contract address on the destination chain
+/// * `from_address` - The sender address (test account)
+/// * `src_chain_id` - 4-byte source chain ID (from ChainRegistry)
+/// * `src_account` - Source account as bytes32 (depositor on source chain)
+/// * `dest_account` - Destination account as bytes32 (recipient)
+/// * `token` - Token address on destination chain
+/// * `amount` - Post-fee amount
+/// * `nonce` - Deposit nonce
+/// * `src_decimals` - Token decimals on the source chain (default 18 for ERC20)
+pub async fn submit_withdraw_on_chain(
+    rpc_url: &str,
+    bridge_address: Address,
+    from_address: Address,
+    src_chain_id: [u8; 4],
+    src_account: [u8; 32],
+    dest_account: [u8; 32],
+    token: Address,
+    amount: u128,
+    nonce: u64,
+    src_decimals: u8,
+) -> Result<B256> {
+    let client = reqwest::Client::new();
+
+    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals)
+    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_id));
+    let src_account_hex = hex::encode(src_account);
+    let dest_account_hex = hex::encode(dest_account);
+    let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
+    let amount_padded = format!("{:064x}", amount);
+    let nonce_padded = format!("{:064x}", nonce);
+    let src_decimals_padded = format!("{:064x}", src_decimals);
+
+    let call_data = format!(
+        "0x{}{}{}{}{}{}{}{}",
+        sel,
+        src_chain_padded,
+        src_account_hex,
+        dest_account_hex,
+        token_padded,
+        amount_padded,
+        nonce_padded,
+        src_decimals_padded
+    );
+
+    info!(
+        nonce = nonce,
+        token = %token,
+        amount = amount,
+        src_chain = hex::encode(src_chain_id),
+        bridge = %bridge_address,
+        rpc = rpc_url,
+        "Submitting WithdrawSubmit on specific EVM chain (V2 user step)"
+    );
+
+    let response = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_sendTransaction",
+            "params": [{
+                "from": format!("{}", from_address),
+                "to": format!("{}", bridge_address),
+                "data": call_data,
+                "gas": "0x200000"
+            }],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    let body: serde_json::Value = response.json().await?;
+
+    if let Some(error) = body.get("error") {
+        return Err(eyre::eyre!("withdrawSubmit on chain failed: {}", error));
+    }
+
+    let tx_hex = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No tx hash in withdrawSubmit response"))?;
+
+    let tx_hash = B256::from_slice(&hex::decode(tx_hex.trim_start_matches("0x"))?);
+
+    info!(
+        nonce = nonce,
+        tx_hash = %hex::encode(tx_hash),
+        bridge = %bridge_address,
+        "WithdrawSubmit transaction submitted on destination chain"
     );
 
     // Wait for confirmation

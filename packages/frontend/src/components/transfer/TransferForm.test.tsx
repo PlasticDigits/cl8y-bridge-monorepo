@@ -194,9 +194,9 @@ describe('TransferForm', () => {
     it('should swap source and destination on button click', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      const selects = screen.getAllByRole('combobox')
-      const sourceSelect = selects[0]
-      const destSelect = selects[1]
+      // Use specific IDs to locate chain selectors (TokenSelect also has role=combobox)
+      const sourceSelect = document.getElementById('source-chain-select')!
+      const destSelect = document.getElementById('dest-chain-select')!
       const initialSourceText = sourceSelect.textContent
       const initialDestText = destSelect.textContent
       const swapButton = screen.getAllByRole('button').find((btn) => btn.querySelector('svg') && !btn.textContent?.includes('Bridge'))
@@ -210,9 +210,9 @@ describe('TransferForm', () => {
     it('should support selecting EVM source for evm-to-evm transfer', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      const selects = screen.getAllByRole('combobox')
-      const sourceSelect = selects[0]
-      const destSelect = selects[1]
+      // Use specific IDs to locate chain selectors (TokenSelect also has role=combobox)
+      const sourceSelect = document.getElementById('source-chain-select')!
+      const destSelect = document.getElementById('dest-chain-select')!
 
       // Select BSC as source via custom dropdown
       await user.click(sourceSelect)
@@ -230,8 +230,8 @@ describe('TransferForm', () => {
     it('should filter out cosmos dest when source is cosmos', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      const selects = screen.getAllByRole('combobox')
-      const destSelect = selects[1]
+      // Use specific ID to locate dest chain selector (TokenSelect also has role=combobox)
+      const destSelect = document.getElementById('dest-chain-select')!
 
       // Source defaults to terra (cosmos), open dest dropdown and check only EVM chains
       await user.click(destSelect)

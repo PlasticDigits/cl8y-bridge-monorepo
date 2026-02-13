@@ -27,12 +27,6 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
     // Errors
     // ============================================================================
 
-    /// @notice Thrown when lock balance check fails
-    error InvalidLockThis();
-
-    /// @notice Thrown when lock source balance check fails
-    error InvalidLockFrom();
-
     /// @notice Thrown when unlock balance check fails
     error InvalidUnlockThis();
 
@@ -45,9 +39,6 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
     // ============================================================================
     // Events
     // ============================================================================
-
-    /// @notice Emitted when tokens are locked
-    event TokensLocked(address indexed token, address indexed from, uint256 amount);
 
     /// @notice Emitted when tokens are unlocked
     event TokensUnlocked(address indexed token, address indexed to, uint256 amount);
@@ -119,27 +110,8 @@ contract LockUnlock is Initializable, UUPSUpgradeable, OwnableUpgradeable, Reent
     // ============================================================================
     // Lock/Unlock Functions
     // ============================================================================
-
-    /// @notice Lock tokens from an account
-    /// @dev Includes a check to prevent balance modifying tokens from being locked
-    /// @dev WARNING: Rebasing tokens are not supported
-    /// @param from The account to lock tokens from
-    /// @param token The token to lock
-    /// @param amount The amount of tokens to lock
-    function lock(address from, address token, uint256 amount) external onlyAuthorized nonReentrant {
-        uint256 initialBalanceThis = IERC20(token).balanceOf(address(this));
-        uint256 initialBalanceFrom = IERC20(token).balanceOf(from);
-
-        IERC20(token).safeTransferFrom(from, address(this), amount);
-
-        uint256 finalBalanceThis = IERC20(token).balanceOf(address(this));
-        uint256 finalBalanceFrom = IERC20(token).balanceOf(from);
-
-        if (finalBalanceThis != initialBalanceThis + amount) revert InvalidLockThis();
-        if (finalBalanceFrom != initialBalanceFrom - amount) revert InvalidLockFrom();
-
-        emit TokensLocked(token, from, amount);
-    }
+    // Lock: Bridge now does IERC20(token).safeTransferFrom(user, address(lockUnlock), netAmount)
+    // directly. Tokens are received via transfer; no lock() call needed.
 
     /// @notice Unlock tokens to an account
     /// @dev Includes a check to prevent balance modifying tokens from being unlocked

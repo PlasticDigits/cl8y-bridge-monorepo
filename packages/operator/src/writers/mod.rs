@@ -109,7 +109,8 @@ impl WriterManager {
         let mut evm_chain_writers = HashMap::new();
         if let Some(ref multi) = config.multi_evm {
             for chain in multi.enabled_chains() {
-                let chain_evm_config = chain.to_evm_config(multi.private_key());
+                use crate::multi_evm::EvmChainConfigExt;
+                let chain_evm_config = chain.to_operator_evm_config(multi.private_key());
                 match EvmWriter::new(
                     &chain_evm_config,
                     Some(&config.terra),

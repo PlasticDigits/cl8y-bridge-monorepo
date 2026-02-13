@@ -1,15 +1,21 @@
+import { sounds } from '../../lib/sounds'
+
 export interface SwapDirectionButtonProps {
   onClick: () => void
   disabled?: boolean
 }
 
 export function SwapDirectionButton({ onClick, disabled }: SwapDirectionButtonProps) {
+  const handleClick = () => {
+    sounds.playButtonPress()
+    onClick()
+  }
   return (
     <div className="flex justify-center -mb-3">
       <button
         type="button"
         data-testid="swap-direction"
-        onClick={onClick}
+        onClick={handleClick}
         disabled={disabled}
         className="border-2 border-white/20 bg-[#161616] p-2 hover:border-cyan-300 hover:text-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed"
       >

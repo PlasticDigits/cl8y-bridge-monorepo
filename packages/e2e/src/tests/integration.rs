@@ -338,18 +338,7 @@ pub async fn test_full_transfer_cycle(
     // Step 4: Prepare destination account
     let dest_account = encode_terra_address(&config.test_accounts.terra_address);
 
-    // Step 5: Approve tokens for LockUnlock
-    let lock_unlock = config.evm.contracts.lock_unlock;
-    if let Err(e) = approve_erc20(config, token, lock_unlock, amount).await {
-        return TestResult::fail(
-            name,
-            format!("Token approval failed: {}", e),
-            start.elapsed(),
-        );
-    }
-    info!("Token approval successful");
-
-    // Step 6: Execute EVM deposit
+    // Step 5: Execute EVM deposit (execute_deposit approves Bridge - single approval for fee + net)
     let _deposit_tx =
         match execute_deposit(config, token, amount, terra_chain_key, dest_account).await {
             Ok(tx) => {
@@ -361,7 +350,7 @@ pub async fn test_full_transfer_cycle(
             }
         };
 
-    // Step 7: Verify nonce incremented
+    // Step 6: Verify nonce incremented
     tokio::time::sleep(Duration::from_secs(2)).await;
     let nonce_after = match query_deposit_nonce(config).await {
         Ok(n) => n,

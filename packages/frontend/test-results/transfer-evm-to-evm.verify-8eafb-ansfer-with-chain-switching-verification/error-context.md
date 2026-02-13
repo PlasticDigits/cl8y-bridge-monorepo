@@ -1,0 +1,95 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "CL8Y Bridge" [ref=e8]:
+        - /url: /
+        - img "CL8Y Bridge" [ref=e9]
+      - navigation [ref=e10]:
+        - link "Bridge" [ref=e11]:
+          - /url: /
+        - link "History" [ref=e12]:
+          - /url: /history
+        - link "Verify" [ref=e13]:
+          - /url: /verify
+        - link "Settings" [ref=e14]:
+          - /url: /settings
+      - generic [ref=e15]:
+        - button "999,451.72475 LUNC terra1...20k38v localterra" [ref=e17]:
+          - generic [ref=e18]:
+            - paragraph [ref=e19]: 999,451.72475 LUNC
+            - paragraph [ref=e20]: terra1...20k38v
+          - img "localterra" [ref=e22]
+        - button "9,999.9952 ETH 0xf39F...b92266 Anvil1" [ref=e23]:
+          - generic [ref=e24]:
+            - paragraph [ref=e25]: 9,999.9952 ETH
+            - paragraph [ref=e26]: 0xf39F...b92266
+          - img "Anvil1" [ref=e28]
+  - main [ref=e29]:
+    - generic [ref=e31]:
+      - generic [ref=e32]:
+        - heading "Transfer Status" [level=2] [ref=e33]
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e37]: ✓
+            - generic [ref=e39]:
+              - paragraph [ref=e40]: Deposit
+              - paragraph [ref=e41]: Tokens locked on source chain
+          - generic [ref=e42]:
+            - generic [ref=e44]: "2"
+            - generic [ref=e46]:
+              - paragraph [ref=e47]: Submit Hash
+              - paragraph [ref=e48]: Withdrawal submitted to destination
+          - generic [ref=e49]:
+            - generic [ref=e51]: "3"
+            - generic [ref=e53]:
+              - paragraph [ref=e54]: Approval
+              - paragraph [ref=e55]: Operator verified deposit
+          - generic [ref=e56]:
+            - generic [ref=e58]: "4"
+            - generic [ref=e59]:
+              - paragraph [ref=e60]: Complete
+              - paragraph [ref=e61]: Tokens delivered to recipient
+        - generic [ref=e62]:
+          - paragraph [ref=e63]: Waiting for Operator Approval
+          - paragraph [ref=e64]: The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
+      - generic [ref=e65]:
+        - heading "Details" [level=3] [ref=e66]
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - paragraph [ref=e69]: Transfer Hash
+            - generic [ref=e70]:
+              - code [ref=e71]: "0xe878f271161508a5b7dd0c830f42c987ced37dbfdd1705fc573f8005d6261953"
+              - button "Copy" [ref=e72]
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - paragraph [ref=e75]: From
+              - paragraph [ref=e76]: anvil
+            - generic [ref=e77]: →
+            - generic [ref=e78]:
+              - paragraph [ref=e79]: To
+              - paragraph [ref=e80]: anvil1
+          - generic [ref=e81]:
+            - paragraph [ref=e82]: Amount
+            - paragraph [ref=e83]: "995000000000000000"
+          - generic [ref=e84]:
+            - paragraph [ref=e85]: Source TX
+            - code [ref=e86]: "0xdd3f1230a86b6f5578af3fdff6375e67947af3a23d6e17d82898d547c94f630e"
+          - generic [ref=e87]:
+            - paragraph [ref=e88]: Destination TX
+            - code [ref=e89]: "0xefccd95884492676f80fd52940382b0a32f07b24310e1b02ced2a4c62e26739b"
+          - generic [ref=e90]:
+            - paragraph [ref=e91]: Recipient
+            - code [ref=e92]: "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+      - generic [ref=e93]:
+        - link "Back to Bridge" [ref=e94]:
+          - /url: /
+        - link "View History" [ref=e95]:
+          - /url: /history
+        - link "Verify Hash" [ref=e96]:
+          - /url: /verify
+  - contentinfo [ref=e97]:
+    - paragraph [ref=e98]: CL8Y Bridge · Cross-chain transfers between any supported chains
+```

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { formatAddress } from '../utils/format'
+import { sounds } from '../lib/sounds'
 import { useAccount, useBalance, useDisconnect } from 'wagmi'
 import { useUIStore } from '../stores/ui'
-import { EvmWalletModal } from './wallet'
 
 function getGasSymbol(chainId?: number): 'ETH' | 'BNB' {
   if (chainId === 56 || chainId === 97 || chainId === 204 || chainId === 5611) {
@@ -32,7 +32,7 @@ function formatGasBalance(formattedBalance?: string): string {
 export function ConnectWallet() {
   const { address, isConnected, chain } = useAccount()
   const { disconnect } = useDisconnect()
-  const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
+  const { setShowEvmWalletModal } = useUIStore()
   const gasSymbol = getGasSymbol(chain?.id)
   const chainLogoPath = getChainLogoPath(chain?.id)
   const [logoLoadFailed, setLogoLoadFailed] = useState(false)
@@ -52,7 +52,10 @@ export function ConnectWallet() {
   if (isConnected && address) {
     return (
       <button
-        onClick={() => disconnect()}
+        onClick={() => {
+          sounds.playButtonPress()
+          disconnect()
+        }}
         className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
       >
         <div className="text-right hidden sm:block">
@@ -83,18 +86,18 @@ export function ConnectWallet() {
   }
 
   return (
-    <>
-      <button
-        onClick={() => setShowEvmWalletModal(true)}
-        className="btn-primary"
-      >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
-          <img src="/chains/ethereum-icon.png" alt="" className="h-full w-full object-contain" />
-        </span>
-        <span className="text-slate-950 text-sm font-semibold whitespace-nowrap hidden min-[470px]:inline">CONNECT EVM</span>
-        <span className="text-slate-950 text-sm font-semibold whitespace-nowrap min-[470px]:hidden">EVM</span>
-      </button>
-      <EvmWalletModal isOpen={showEvmWalletModal} onClose={() => setShowEvmWalletModal(false)} />
-    </>
+    <button
+      onClick={() => {
+        sounds.playButtonPress()
+        setShowEvmWalletModal(true)
+      }}
+      className="btn-primary"
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
+        <img src="/chains/ethereum-icon.png" alt="" className="h-full w-full object-contain" />
+      </span>
+      <span className="text-slate-950 text-sm font-semibold whitespace-nowrap hidden min-[470px]:inline">CONNECT EVM</span>
+      <span className="text-slate-950 text-sm font-semibold whitespace-nowrap min-[470px]:hidden">EVM</span>
+    </button>
   )
 }

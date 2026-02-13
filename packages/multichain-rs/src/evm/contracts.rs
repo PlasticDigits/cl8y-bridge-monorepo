@@ -430,12 +430,9 @@ sol! {
     // LockUnlock Contract
     // ========================================================================
 
-    /// LockUnlock contract - handles locking/unlocking of ERC20 tokens
+    /// LockUnlock contract - receives tokens via Bridge transfer, unlocks on request
     #[sol(rpc)]
     contract LockUnlock {
-        /// Lock tokens (authorized caller only)
-        function lock(address from, address token, uint256 amount) external;
-
         /// Unlock tokens (authorized caller only)
         function unlock(address to, address token, uint256 amount) external;
 

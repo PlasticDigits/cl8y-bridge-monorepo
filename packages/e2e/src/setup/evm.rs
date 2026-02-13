@@ -352,6 +352,267 @@ impl E2eSetup {
         Ok(())
     }
 
+    /// Deploy contracts to the secondary EVM chain (anvil1)
+    ///
+    /// Uses THIS_V2_CHAIN_ID=3 and THIS_CHAIN_LABEL="anvil1" to ensure
+    /// a globally unique V2 chain ID separate from the primary chain.
+    pub async fn deploy_evm2_contracts(&self) -> Result<DeployedContracts> {
+        let evm2 = self
+            .config
+            .evm2
+            .as_ref()
+            .ok_or_else(|| eyre!("evm2 config not set"))?;
+
+        info!(
+            "Deploying EVM contracts to secondary chain (anvil1) at {}",
+            evm2.rpc_url
+        );
+
+        let contracts_dir = self.project_root.join("packages").join("contracts-evm");
+        let rpc_url = evm2.rpc_url.to_string();
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+
+        let output = std::process::Command::new("forge")
+            .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+            .env("THIS_V2_CHAIN_ID", evm2.v2_chain_id.to_string())
+            .env("THIS_CHAIN_LABEL", "anvil1")
+            .args([
+                "script",
+                "script/DeployLocal.s.sol:DeployLocal",
+                "--rpc-url",
+                &rpc_url,
+                "--private-key",
+                &private_key,
+                "--broadcast",
+                "--slow",
+            ])
+            .current_dir(&contracts_dir)
+            .output()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if !output.status.success() {
+            return Err(eyre!(
+                "Forge script failed for anvil1:\nstderr: {}\nstdout: {}",
+                stderr,
+                stdout
+            ));
+        }
+
+        let combined_output = format!("{}\n{}", stdout, stderr);
+
+        let parse_address = |key: &str| -> Result<Address> {
+            let prefix = format!("DEPLOYED_{}", key);
+            combined_output
+                .lines()
+                .find_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with(&prefix) {
+                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            parts[1].parse::<Address>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| eyre!("Contract {} not found in anvil1 forge output", key))
+        };
+
+        Ok(DeployedContracts {
+            access_manager: parse_address("ACCESS_MANAGER")?,
+            chain_registry: parse_address("CHAIN_REGISTRY")?,
+            token_registry: parse_address("TOKEN_REGISTRY")?,
+            mint_burn: parse_address("MINT_BURN")?,
+            lock_unlock: parse_address("LOCK_UNLOCK")?,
+            bridge: parse_address("BRIDGE")?,
+            terra_bridge: None,
+            cw20_token: None,
+            test_token: None,
+            terra_chain_key: None,
+        })
+    }
+
+    /// Grant roles on the secondary EVM chain (anvil1)
+    pub async fn grant_roles_evm2(&self, deployed: &DeployedContracts) -> Result<()> {
+        let evm2 = self
+            .config
+            .evm2
+            .as_ref()
+            .ok_or_else(|| eyre!("evm2 config not set"))?;
+
+        info!("Granting roles on secondary chain (anvil1)");
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+        let test_address = self.config.test_accounts.evm_address;
+        let rpc_url = evm2.rpc_url.as_str();
+
+        let _ = chain_config::grant_operator_role(
+            deployed.access_manager,
+            test_address,
+            rpc_url,
+            &private_key,
+        )
+        .await;
+
+        let _ = chain_config::grant_canceler_role(
+            deployed.access_manager,
+            test_address,
+            rpc_url,
+            &private_key,
+        )
+        .await;
+
+        info!("Roles granted on secondary chain");
+        Ok(())
+    }
+
+    /// Register cross-chain mappings between primary and secondary EVM chains.
+    ///
+    /// On chain1's ChainRegistry: register chain2
+    /// On chain2's ChainRegistry: register chain1 and Terra
+    pub async fn register_cross_chain(
+        &self,
+        deployed1: &DeployedContracts,
+        deployed2: &DeployedContracts,
+    ) -> Result<()> {
+        let evm2 = self
+            .config
+            .evm2
+            .as_ref()
+            .ok_or_else(|| eyre!("evm2 config not set"))?;
+
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+        let rpc1 = self.config.evm.rpc_url.as_str();
+        let rpc2 = evm2.rpc_url.as_str();
+
+        // Register chain2 (anvil1, V2=3) on chain1's ChainRegistry
+        let chain2_id = ChainId4::from_slice(&evm2.v2_chain_id.to_be_bytes());
+        info!("Registering anvil1 on primary chain's ChainRegistry");
+        let _ = chain_config::register_evm_chain_key(
+            deployed1.chain_registry,
+            evm2.chain_id,
+            chain2_id,
+            rpc1,
+            &private_key,
+        )
+        .await;
+
+        // Register chain1 (anvil, V2=1) on chain2's ChainRegistry
+        let chain1_id = ChainId4::from_slice(&self.config.evm.v2_chain_id.to_be_bytes());
+        info!("Registering anvil on secondary chain's ChainRegistry");
+        let _ = chain_config::register_evm_chain_key(
+            deployed2.chain_registry,
+            self.config.evm.chain_id,
+            chain1_id,
+            rpc2,
+            &private_key,
+        )
+        .await;
+
+        // Register Terra on chain2's ChainRegistry
+        info!("Registering Terra on secondary chain's ChainRegistry");
+        let terra_id = ChainId4::from_slice(&2u32.to_be_bytes());
+        let _ = chain_config::register_cosmw_chain_key(
+            deployed2.chain_registry,
+            &self.config.terra.chain_id,
+            terra_id,
+            rpc2,
+            &private_key,
+        )
+        .await;
+
+        info!("Cross-chain registrations complete");
+        Ok(())
+    }
+
+    /// Deploy and register a test token on the secondary EVM chain (anvil1)
+    /// and set up cross-chain destination mappings between the two chains.
+    pub async fn deploy_and_register_test_token_evm2(
+        &self,
+        deployed2: &DeployedContracts,
+        primary_test_token: Address,
+    ) -> Result<Option<Address>> {
+        let evm2 = self
+            .config
+            .evm2
+            .as_ref()
+            .ok_or_else(|| eyre!("evm2 config not set"))?;
+
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+        let rpc2 = evm2.rpc_url.as_str();
+
+        // Deploy test token on anvil1
+        info!("Deploying test token on secondary chain (anvil1)");
+        let token2 = match deploy::deploy_test_token_simple(
+            &self.project_root,
+            rpc2,
+            &private_key,
+            "Test Bridge Token",
+            "TBT",
+            1_000_000_000_000_000_000_000_000,
+        )
+        .await
+        {
+            Ok(addr) => {
+                info!("Test token deployed on anvil1 at: {}", addr);
+                addr
+            }
+            Err(e) => {
+                warn!("Failed to deploy test token on anvil1: {}", e);
+                return Ok(None);
+            }
+        };
+
+        // Register token on chain2's TokenRegistry
+        chain_config::register_token(
+            deployed2.token_registry,
+            token2,
+            chain_config::BridgeType::LockUnlock,
+            rpc2,
+            &private_key,
+        )
+        .await?;
+
+        // Add destination for chain1 (token maps to primary_test_token on chain1)
+        let chain1_id = ChainId4::from_slice(&self.config.evm.v2_chain_id.to_be_bytes());
+        let mut dest_token = [0u8; 32];
+        dest_token[12..32].copy_from_slice(primary_test_token.as_slice());
+
+        chain_config::add_token_dest_chain_key(
+            deployed2.token_registry,
+            token2,
+            chain1_id,
+            B256::from_slice(&dest_token),
+            18,
+            rpc2,
+            &private_key,
+        )
+        .await?;
+
+        // Also register the primary token -> chain2 mapping on chain1's TokenRegistry
+        let rpc1 = self.config.evm.rpc_url.as_str();
+        let chain2_id = ChainId4::from_slice(&evm2.v2_chain_id.to_be_bytes());
+        let mut dest_token2 = [0u8; 32];
+        dest_token2[12..32].copy_from_slice(token2.as_slice());
+
+        chain_config::add_token_dest_chain_key(
+            self.config.evm.contracts.token_registry,
+            primary_test_token,
+            chain2_id,
+            B256::from_slice(&dest_token2),
+            18,
+            rpc1,
+            &private_key,
+        )
+        .await?;
+
+        info!("Cross-chain token mappings registered between chain1 and chain2");
+        Ok(Some(token2))
+    }
+
     /// Check if EVM bridge is deployed and accessible
     pub(crate) async fn check_evm_bridge(&self) -> bool {
         let response = tokio::time::timeout(Duration::from_secs(5), async {

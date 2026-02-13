@@ -217,17 +217,35 @@ export default function TransferStatusPage() {
           const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
           const destChainB32 = chainIdToBytes32(destChainIdNum)
 
-          // Encode accounts
-          const srcAccB32 = transfer.srcAccount?.startsWith('terra')
-            ? terraAddressToBytes32(transfer.srcAccount)
-            : '0x' + '0'.repeat(64)
-          const destAccB32 = transfer.destAccount?.startsWith('0x')
-            ? evmAddressToBytes32(transfer.destAccount as `0x${string}`)
-            : '0x' + '0'.repeat(64)
+          // Encode accounts — they may already be bytes32 (66 chars) or raw addresses
+          let srcAccB32: string
+          if (transfer.srcAccount?.startsWith('terra')) {
+            srcAccB32 = terraAddressToBytes32(transfer.srcAccount)
+          } else if (transfer.srcAccount?.startsWith('0x') && transfer.srcAccount.length === 66) {
+            srcAccB32 = transfer.srcAccount // Already bytes32
+          } else {
+            srcAccB32 = '0x' + '0'.repeat(64)
+          }
 
-          const tokenB32 = transfer.destToken?.startsWith('0x')
-            ? evmAddressToBytes32(transfer.destToken as `0x${string}`)
-            : '0x' + '0'.repeat(64)
+          let destAccB32: string
+          if (transfer.destAccount?.startsWith('0x') && transfer.destAccount.length === 66) {
+            destAccB32 = transfer.destAccount // Already bytes32
+          } else if (transfer.destAccount?.startsWith('0x') && transfer.destAccount.length === 42) {
+            destAccB32 = evmAddressToBytes32(transfer.destAccount as `0x${string}`)
+          } else {
+            destAccB32 = '0x' + '0'.repeat(64)
+          }
+
+          // Token bytes32: destToken may be bytes32 (66 chars) or address (42 chars)
+          let tokenB32: string
+          if (transfer.destToken?.startsWith('0x') && transfer.destToken.length === 66) {
+            // Already bytes32 (from Terra registry evm_token_address)
+            tokenB32 = transfer.destToken
+          } else if (transfer.destToken?.startsWith('0x') && transfer.destToken.length === 42) {
+            tokenB32 = evmAddressToBytes32(transfer.destToken as `0x${string}`)
+          } else {
+            tokenB32 = '0x' + '0'.repeat(64)
+          }
 
           computedHash = computeTransferHash(
             srcChainB32 as `0x${string}`,
@@ -243,8 +261,13 @@ export default function TransferStatusPage() {
         console.warn('[TransferStatusPage] Failed to compute transfer hash:', err)
       }
 
+      // Update transfer record with resolved nonce and net amount.
+      // CRITICAL: The Terra bridge deducts a fee and uses the NET amount in the deposit hash.
+      // We must update transfer.amount to the net amount so that withdrawSubmit on the EVM
+      // side uses the same amount, producing a matching hash for operator verification.
       updateTransferRecord(transfer.id, {
         depositNonce: parsed.nonce,
+        ...(parsed.amount ? { amount: parsed.amount } : {}),
         ...(computedHash ? { transferHash: computedHash } : {}),
       })
     }).catch((err) => {

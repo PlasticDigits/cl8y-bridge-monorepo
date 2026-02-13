@@ -22,29 +22,12 @@
 
 import { test, expect } from './fixtures/dev-wallet'
 import { getErc20Balance, skipAnvilTime } from './fixtures/chain-helpers'
-import { readFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
-
-const ROOT_DIR = resolve(__dirname, '../../../..')
-const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
-const ANVIL1_RPC = 'http://localhost:8546'
-
-function loadEnv(): Record<string, string> {
-  const vars: Record<string, string> = {}
-  if (!existsSync(ENV_FILE)) return vars
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-  }
-  return vars
-}
+import { loadEnv, getAnvil1RpcUrl } from './fixtures/env-helpers'
 
 test.describe('EVM -> EVM Transfer Verification (anvil -> anvil1)', () => {
   test('should complete transfer with chain switching', async ({ connectedPage: page }) => {
     const env = loadEnv()
+    const ANVIL1_RPC = getAnvil1RpcUrl(env)
     const token1A = env['ANVIL1_TOKEN_A'] || ''
     const recipientAddress = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' // dev wallet
 
@@ -54,9 +37,8 @@ test.describe('EVM -> EVM Transfer Verification (anvil -> anvil1)', () => {
       initialBalance = await getErc20Balance(ANVIL1_RPC, token1A, recipientAddress)
     }
 
-    // 2. Navigate to bridge page
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
+    // 2. Already on bridge page from connectedPage fixture (wallets connected).
+    // Do NOT re-navigate or wallets will disconnect.
 
     // 3. Switch source to Anvil (EVM) via the source chain dropdown
     const sourceBtn = page.locator('#source-chain-select')
@@ -91,39 +73,37 @@ test.describe('EVM -> EVM Transfer Verification (anvil -> anvil1)', () => {
 
     // 7. Submit the transfer
     const submitBtn = page.locator('[data-testid="submit-transfer"]')
+    await expect(submitBtn).toBeEnabled({ timeout: 15_000 })
+    await submitBtn.click()
 
-    if (await submitBtn.isEnabled()) {
-      await submitBtn.click()
+    // 8. Expect redirect to status page
+    await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
+    await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
 
-      // 8. Expect redirect to status page
-      await page.waitForURL(/\/transfer\//, { timeout: 30_000 })
-      await expect(page.locator('text=Transfer Status')).toBeVisible({ timeout: 10_000 })
+    // 9. For EVM->EVM, the auto-submit hook handles chain switching.
+    // Wait for any status indicator.
+    await expect(
+      page.locator('text=Waiting for Operator Approval')
+        .or(page.locator('text=Switching Chain'))
+        .or(page.locator('text=Submitting Hash'))
+        .or(page.locator('text=Waiting for Hash Submission'))
+        .or(page.locator('text=Transfer Complete'))
+    ).toBeVisible({ timeout: 60_000 })
 
-      // 9. For EVM->EVM, the auto-submit hook handles chain switching.
-      // Wait for any status indicator.
-      await expect(
-        page.locator('text=Waiting for Operator Approval')
-          .or(page.locator('text=Switching Chain'))
-          .or(page.locator('text=Submitting Hash'))
-          .or(page.locator('text=Waiting for Hash Submission'))
-          .or(page.locator('text=Transfer Complete'))
-      ).toBeVisible({ timeout: 60_000 })
+    // 10. Skip cancel window on anvil1
+    await skipAnvilTime(ANVIL1_RPC, 600)
 
-      // 10. Skip cancel window on anvil1
-      await skipAnvilTime(ANVIL1_RPC, 600)
+    // 11. Wait for completion
+    await expect(
+      page.locator('text=Transfer Complete')
+    ).toBeVisible({ timeout: 60_000 })
 
-      // 11. Wait for completion
-      await expect(
-        page.locator('text=Transfer Complete')
-      ).toBeVisible({ timeout: 60_000 })
-
-      // 12. Verify balance on anvil1
-      if (token1A) {
-        const finalBalance = await getErc20Balance(ANVIL1_RPC, token1A, recipientAddress)
-        expect(finalBalance).toBeGreaterThan(initialBalance)
-      }
-    } else {
-      console.warn('[verify] Submit button disabled, skipping transfer verification')
+    // 12. Verify token receipt on anvil1: balance must INCREASE (strict greater-than).
+    if (token1A) {
+      const finalBalance = await getErc20Balance(ANVIL1_RPC, token1A, recipientAddress)
+      const received = finalBalance - initialBalance
+      expect(received).toBeGreaterThan(0n)
+      expect(finalBalance).toBeGreaterThan(initialBalance)
     }
   })
 })

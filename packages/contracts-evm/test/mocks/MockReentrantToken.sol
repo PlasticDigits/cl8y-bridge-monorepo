@@ -30,12 +30,8 @@ contract MockReentrantToken is ERC20 {
     }
 
     function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
-        // Attempt reentrancy during lock operation
-        if (reentrancyEnabled && reentrancyAttempts == 0 && to == address(lockUnlock)) {
-            reentrancyAttempts++;
-            // Try to reenter lock function
-            lockUnlock.lock(from, address(this), REENTRANCY_AMOUNT);
-        }
+        // Lock was removed: Bridge now does transferFrom(user, lockUnlock, amount) directly.
+        // Reentrancy via lock() no longer applies. Unlock reentrancy (in transfer) still tested.
         return super.transferFrom(from, to, amount);
     }
 

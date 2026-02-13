@@ -45,12 +45,10 @@ contract LockUnlockTest is Test {
         assertEq(lockUnlock.VERSION(), 1);
     }
 
-    function test_Lock() public {
+    function test_ReceiveTokens() public {
+        // Bridge transfers directly to LockUnlock (no lock() - user approves Bridge, Bridge does transferFrom)
         vm.prank(user);
-        token.approve(address(lockUnlock), 100 ether);
-
-        vm.prank(bridge);
-        lockUnlock.lock(user, address(token), 100 ether);
+        require(token.transfer(address(lockUnlock), 100 ether), "transfer failed");
 
         assertEq(token.balanceOf(user), 900 ether);
         assertEq(token.balanceOf(address(lockUnlock)), 100 ether);
@@ -58,12 +56,9 @@ contract LockUnlockTest is Test {
     }
 
     function test_Unlock() public {
-        // First lock some tokens
+        // First fund LockUnlock (Bridge does transferFrom(user, lockUnlock, amount) - simulate with transfer)
         vm.prank(user);
-        token.approve(address(lockUnlock), 100 ether);
-
-        vm.prank(bridge);
-        lockUnlock.lock(user, address(token), 100 ether);
+        require(token.transfer(address(lockUnlock), 100 ether), "transfer failed");
 
         // Then unlock
         vm.prank(bridge);
@@ -73,16 +68,11 @@ contract LockUnlockTest is Test {
         assertEq(token.balanceOf(address(lockUnlock)), 50 ether);
     }
 
-    function test_Lock_RevertsIfNotAuthorized() public {
-        vm.prank(user);
-        token.approve(address(lockUnlock), 100 ether);
-
-        vm.prank(user);
-        vm.expectRevert(LockUnlock.Unauthorized.selector);
-        lockUnlock.lock(user, address(token), 100 ether);
-    }
-
     function test_Unlock_RevertsIfNotAuthorized() public {
+        // Fund LockUnlock first
+        vm.prank(user);
+        require(token.transfer(address(lockUnlock), 100 ether), "transfer failed");
+
         vm.prank(user);
         vm.expectRevert(LockUnlock.Unauthorized.selector);
         lockUnlock.unlock(user, address(token), 100 ether);
@@ -105,12 +95,9 @@ contract LockUnlockTest is Test {
     }
 
     function test_Upgrade() public {
-        // Lock some tokens
+        // Fund LockUnlock (simulate Bridge transfer)
         vm.prank(user);
-        token.approve(address(lockUnlock), 100 ether);
-
-        vm.prank(bridge);
-        lockUnlock.lock(user, address(token), 100 ether);
+        require(token.transfer(address(lockUnlock), 100 ether), "transfer failed");
 
         // Upgrade
         LockUnlock newImplementation = new LockUnlock();

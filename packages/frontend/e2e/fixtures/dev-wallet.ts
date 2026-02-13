@@ -9,7 +9,8 @@
  *
  * Note: The NavBar renders wallet buttons 3 times for responsive breakpoints
  * (mobile/tablet/desktop). At 1280px viewport, only the desktop instance
- * (.last()) is visible. Modals also render 3x via React portals.
+ * is visible. We use .last() to target the visible desktop instance.
+ * Wallet modals are rendered once at the Layout root (not per NavBar instance).
  */
 
 import { test as base, expect, type Page } from '@playwright/test'
@@ -21,17 +22,20 @@ export const test = base.extend<{ connectedPage: Page }>({
     await page.waitForLoadState('networkidle')
 
     // Connect EVM dev wallet (Simulated EVM Wallet connector)
-    await page.getByRole('button', { name: 'CONNECT EVM' }).click()
-    // Click the topmost modal instance (.last() because of 3x rendered React portals)
+    // NavBar renders CONNECT EVM button 3x for responsive breakpoints;
+    // use .last() to target the visible desktop instance (1280px viewport).
+    await page.getByRole('button', { name: 'CONNECT EVM' }).last().click()
+    // Wait for modal to appear, then click the simulated wallet option.
+    // Use .last() for safety in case any extra instances exist.
     await page.locator('button', { hasText: 'Simulated EVM Wallet' }).last().click()
-    // Wait for the address to appear - use .last() for the desktop navbar instance
+    // Wait for the EVM address to appear (desktop navbar instance)
     await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
 
     // Connect Terra dev wallet (MnemonicWallet)
-    await page.getByRole('button', { name: 'CONNECT TC' }).click()
-    // Click the topmost modal instance
+    await page.getByRole('button', { name: 'CONNECT TC' }).last().click()
+    // Wait for modal to appear, then click the simulated wallet option.
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
-    // Wait for the Terra address to appear - use .last() for desktop instance
+    // Wait for the Terra address to appear (desktop navbar instance)
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
 
     await use(page)

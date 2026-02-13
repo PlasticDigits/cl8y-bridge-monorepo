@@ -1,15 +1,34 @@
 /**
  * Terra contract deployment helpers for E2E test setup.
  * Wraps terrad commands executed inside the localterra Docker container.
+ *
+ * CW20 deployment mirrors the Rust E2E flow in packages/e2e/src/cw20_deploy.rs:
+ * 1. Copy WASM from packages/contracts-terraclassic/artifacts/ to container
+ * 2. Store code, wait, query list-code for code_id
+ * 3. Instantiate (3x for TokenA/B/C), query list-contract-by-code for addresses
  */
 
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
+import { existsSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const SCRIPTS_DIR = resolve(__dirname, '../../../../../scripts')
+const ROOT_DIR = resolve(__dirname, '../../../../..')
+const SCRIPTS_DIR = resolve(ROOT_DIR, 'scripts')
+const CW20_WASM_PATH = resolve(ROOT_DIR, 'packages/contracts-terraclassic/artifacts/cw20_mintable.wasm')
 const TERRA_LCD = 'http://localhost:1317'
+
+const CONTAINER_NAME = 'cl8y-bridge-monorepo-localterra-1'
+const TEST_ADDRESS = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
+const KEY_NAME = 'test1'
+
+/** Sentinel for tokens that could not be deployed (skip from registration and env). */
+export const PLACEHOLDER_PREFIX = 'terra1placeholder_'
+
+export function isPlaceholderAddress(addr: string): boolean {
+  return addr.startsWith(PLACEHOLDER_PREFIX)
+}
 
 /**
  * Deploy the Terra bridge contract to LocalTerra.
@@ -26,7 +45,7 @@ export function deployTerraBridge(): string {
   if (!match) {
     // Try to get it from .env.e2e
     const envOutput = execSync('cat .env.e2e 2>/dev/null || true', {
-      cwd: resolve(__dirname, '../../../../..'),
+      cwd: ROOT_DIR,
       encoding: 'utf8',
     })
     const envMatch = envOutput.match(/TERRA_BRIDGE_ADDRESS=(terra1[a-z0-9]+)/)
@@ -43,74 +62,179 @@ interface Cw20DeployResult {
   symbol: string
 }
 
+function dockerExec(args: string[]): string {
+  const out = execFileSync('docker', ['exec', CONTAINER_NAME, ...args], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  return typeof out === 'string' ? out.trim() : String(out).trim()
+}
+
+function terradQuery(...args: string[]): string {
+  return dockerExec(['terrad', 'query', ...args])
+}
+
+function terradTx(...args: string[]): void {
+  dockerExec(['terrad', 'tx', ...args, '--keyring-backend', 'test'])
+}
+
+function ensureCw20Wasm(): boolean {
+  if (existsSync(CW20_WASM_PATH)) return true
+  console.log('[deploy-terra] CW20 WASM not found, running download script...')
+  try {
+    execSync(`bash ${SCRIPTS_DIR}/download-cw20-wasm.sh`, {
+      cwd: ROOT_DIR,
+      encoding: 'utf8',
+      stdio: 'inherit',
+    })
+    return existsSync(CW20_WASM_PATH)
+  } catch {
+    console.warn('[deploy-terra] CW20 download failed; Terra CW20 tokens will be skipped')
+    return false
+  }
+}
+
+function getLatestCodeId(): number {
+  const output = terradQuery('wasm', 'list-code', '-o', 'json')
+  const json = JSON.parse(output)
+  const infos = json.code_infos
+  if (!Array.isArray(infos) || infos.length === 0) return 0
+  const last = infos[infos.length - 1]
+  const id = last.code_id
+  return typeof id === 'string' ? parseInt(id, 10) : (id ?? 0)
+}
+
+function getContractByCodeId(codeId: number): string | null {
+  const output = terradQuery('wasm', 'list-contract-by-code', String(codeId), '-o', 'json')
+  const json = JSON.parse(output)
+  const contracts = json.contracts
+  if (!Array.isArray(contracts) || contracts.length === 0) return null
+  const addr = contracts[contracts.length - 1]
+  return typeof addr === 'string' ? addr : null
+}
+
 /**
- * Deploy a CW20 token to LocalTerra via terrad in the Docker container.
+ * Deploy a single CW20 token (requires codeId from prior store).
  */
-export function deployCw20Token(
-  _bridgeAddress: string,
+function instantiateCw20Token(
+  codeId: number,
   name: string,
   symbol: string,
-  decimals: number = 6,
-  initialBalance: string = '1000000000000'
-): Cw20DeployResult {
-  console.log(`[deploy-terra] Deploying CW20 token "${name}" (${symbol})...`)
-
-  // We use the deploy-terra-local.sh with --cw20 flag, or execute terrad directly
-  const containerName = 'cl8y-bridge-monorepo-localterra-1'
-  const testAddress = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
-  const keyName = 'test1'
-
-  // Store CW20 code
-  const storeOutput = execSync(
-    `docker exec ${containerName} terrad tx wasm store /terra/contracts/cw20_base.wasm ` +
-      `--from ${keyName} --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-      `--fees 1000000uluna -y --output json 2>/dev/null || echo '{}'`,
-    { encoding: 'utf8' }
-  )
-
-  // Parse code ID from store output
-  const codeIdMatch = storeOutput.match(/"code_id":"(\d+)"/)
-  if (!codeIdMatch) {
-    console.warn(`[deploy-terra] Could not parse code_id for ${symbol}, using placeholder`)
-    return { tokenAddress: `terra1placeholder_${symbol.toLowerCase()}`, name, symbol }
-  }
-  const codeId = codeIdMatch[1]
-
-  // Instantiate CW20
+  decimals: number,
+  initialBalance: string
+): string | null {
   const initMsg = JSON.stringify({
     name,
     symbol,
     decimals,
-    initial_balances: [{ address: testAddress, amount: initialBalance }],
-    mint: { minter: testAddress },
+    initial_balances: [{ address: TEST_ADDRESS, amount: initialBalance }],
+    mint: { minter: TEST_ADDRESS },
   })
 
-  const instantiateOutput = execSync(
-    `docker exec ${containerName} terrad tx wasm instantiate ${codeId} '${initMsg}' ` +
-      `--label "${symbol}-token" --admin ${testAddress} --from ${keyName} ` +
-      `--chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-      `--fees 1000000uluna -y --output json 2>/dev/null || echo '{}'`,
-    { encoding: 'utf8' }
-  )
+  try {
+    terradTx(
+      'wasm', 'instantiate', String(codeId), initMsg,
+      '--label', `${symbol.toLowerCase()}-e2e`,
+      '--admin', TEST_ADDRESS,
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '10000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (err) {
+    console.warn(`[deploy-terra] Instantiate failed for ${symbol}:`, (err as Error).message?.slice(0, 80))
+    return null
+  }
 
-  const addrMatch = instantiateOutput.match(/"contract_address":"(terra1[a-z0-9]+)"/)
-  const tokenAddress = addrMatch ? addrMatch[1] : `terra1placeholder_${symbol.toLowerCase()}`
+  // Wait for block inclusion (~6s on LocalTerra)
+  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
 
-  console.log(`[deploy-terra] CW20 ${symbol} deployed at: ${tokenAddress}`)
-  return { tokenAddress, name, symbol }
+  return getContractByCodeId(codeId)
 }
 
 /**
  * Deploy 3 CW20 tokens to LocalTerra.
+ * Uses cw20_mintable.wasm from packages/contracts-terraclassic/artifacts/ (or download script).
+ * Returns placeholder addresses when WASM is unavailable; callers must skip those from registration.
  */
-export function deployThreeCw20Tokens(bridgeAddress: string): {
+export function deployThreeCw20Tokens(_bridgeAddress: string): {
   tokenA: Cw20DeployResult
   tokenB: Cw20DeployResult
   tokenC: Cw20DeployResult
 } {
+  const placeholder = (symbol: string): Cw20DeployResult => ({
+    tokenAddress: `${PLACEHOLDER_PREFIX}${symbol.toLowerCase()}`,
+    name: `Token ${symbol.charAt(0)}`,
+    symbol,
+  })
+
+  if (!ensureCw20Wasm()) {
+    console.warn('[deploy-terra] CW20 WASM unavailable; returning placeholders (skip from registration)')
+    return {
+      tokenA: placeholder('tkna'),
+      tokenB: placeholder('tknb'),
+      tokenC: placeholder('tknc'),
+    }
+  }
+
   console.log('[deploy-terra] Deploying 3 CW20 tokens...')
-  const tokenA = deployCw20Token(bridgeAddress, 'Token A', 'TKNA')
-  const tokenB = deployCw20Token(bridgeAddress, 'Token B', 'TKNB')
-  const tokenC = deployCw20Token(bridgeAddress, 'Token C', 'TKNC')
-  return { tokenA, tokenB, tokenC }
+
+  // Copy WASM to container (mirrors Rust cw20_deploy)
+  execSync(`docker exec ${CONTAINER_NAME} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+  execSync(`docker cp ${CW20_WASM_PATH} ${CONTAINER_NAME}:/tmp/wasm/cw20_mintable.wasm`, {
+    encoding: 'utf8',
+    cwd: ROOT_DIR,
+  })
+
+  const prevCodeId = getLatestCodeId()
+
+  try {
+    terradTx(
+      'wasm', 'store', '/tmp/wasm/cw20_mintable.wasm',
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '150000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (err) {
+    console.warn('[deploy-terra] Store CW20 failed:', (err as Error).message?.slice(0, 80))
+    return {
+      tokenA: placeholder('tkna'),
+      tokenB: placeholder('tknb'),
+      tokenC: placeholder('tknc'),
+    }
+  }
+
+  // Wait for code_id to appear (up to 30s)
+  let codeId = 0
+  for (let i = 0; i < 10; i++) {
+    try { execSync('sleep 3', { encoding: 'utf8' }) } catch { /* ignore */ }
+    const current = getLatestCodeId()
+    if (current > prevCodeId) {
+      codeId = current
+      break
+    }
+  }
+
+  if (!codeId) {
+    console.warn('[deploy-terra] Could not get CW20 code_id after store')
+    return { tokenA: placeholder('tkna'), tokenB: placeholder('tknb'), tokenC: placeholder('tknc') }
+  }
+
+  const tokens: Cw20DeployResult[] = []
+  for (const [name, symbol] of [['Token A', 'TKNA'], ['Token B', 'TKNB'], ['Token C', 'TKNC']]) {
+    const addr = instantiateCw20Token(codeId, name, symbol, 6, '1000000000000')
+    tokens.push({
+      tokenAddress: addr ?? `${PLACEHOLDER_PREFIX}${symbol.toLowerCase()}`,
+      name,
+      symbol,
+    })
+    if (addr) console.log(`[deploy-terra] CW20 ${symbol} deployed at: ${addr}`)
+  }
+
+  return { tokenA: tokens[0], tokenB: tokens[1], tokenC: tokens[2] }
 }

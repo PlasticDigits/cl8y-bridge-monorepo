@@ -1,4 +1,5 @@
 import { isValidEvmAddress, isValidTerraAddress } from '../../utils/validation'
+import { sounds } from '../../lib/sounds'
 import type { TransferDirection } from '../../types/transfer'
 
 export interface RecipientInputProps {
@@ -52,7 +53,10 @@ export function RecipientInput({
         <button
           type="button"
           data-testid="autofill-recipient"
-          onClick={onAutofill}
+          onClick={() => {
+            sounds.playButtonPress()
+            onAutofill?.()
+          }}
           disabled={disabled}
           className="mt-1 text-xs font-medium text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-cyan-400"
         >

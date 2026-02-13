@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { sounds } from '../../lib/sounds'
 
 export interface ModalProps {
   isOpen: boolean
@@ -79,7 +80,10 @@ export function Modal({ isOpen, onClose, children, title }: ModalProps) {
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-gradient-to-br from-black/75 via-black/70 to-amber-950/30 backdrop-blur-md"
-        onClick={onClose}
+        onClick={() => {
+          sounds.playButtonPress()
+          onClose()
+        }}
         role="presentation"
         aria-hidden="true"
       />
@@ -96,7 +100,10 @@ export function Modal({ isOpen, onClose, children, title }: ModalProps) {
               {title}
             </h2>
             <button
-              onClick={onClose}
+              onClick={() => {
+                sounds.playButtonPress()
+                onClose()
+              }}
               className="p-1 text-gray-400 hover:text-white transition-colors"
               aria-label="Close modal"
             >

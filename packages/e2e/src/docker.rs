@@ -106,17 +106,18 @@ impl DockerCompose {
 
         while start.elapsed() < timeout {
             let anvil_ok = self.check_anvil("http://localhost:8545").await?;
+            let anvil1_ok = self.check_anvil("http://localhost:8546").await?;
             let postgres_ok = self.check_postgres("e2e-postgres-1").await?;
             let terra_ok = self.check_terra("http://localhost:26657").await?;
 
-            if anvil_ok && postgres_ok && terra_ok {
-                info!("All services are healthy");
+            if anvil_ok && anvil1_ok && postgres_ok && terra_ok {
+                info!("All services are healthy (including anvil1)");
                 return Ok(());
             }
 
             warn!(
-                "Services not yet healthy, waiting {:?} (anvil: {}, postgres: {}, terra: {})",
-                interval, anvil_ok, postgres_ok, terra_ok
+                "Services not yet healthy, waiting {:?} (anvil: {}, anvil1: {}, postgres: {}, terra: {})",
+                interval, anvil_ok, anvil1_ok, postgres_ok, terra_ok
             );
             tokio::time::sleep(interval).await;
         }

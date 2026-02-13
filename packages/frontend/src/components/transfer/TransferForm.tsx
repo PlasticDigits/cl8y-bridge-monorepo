@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { Address } from 'viem'
+import { Address, getAddress } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
 import { useTokenRegistry } from '../../hooks/useTokenRegistry'
 import {
@@ -26,6 +26,7 @@ import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
 import { parseAmount, formatAmount } from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
+import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
 import { DestChainSelector } from './DestChainSelector'
 import { AmountInput } from './AmountInput'
@@ -95,9 +96,11 @@ function buildTransferTokens(
   fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined
 ): TokenOption[] {
   if (isSourceTerra) {
-    // Terra source: show enabled native tokens (useTerraDeposit only supports uluna for now)
+    // Terra source: show all enabled tokens (native + CW20).
+    // Native tokens use deposit_native, CW20 tokens use deposit (send CW20 to bridge).
+    // Both are registered in the Terra bridge token registry.
     const fromRegistry = (registryTokens ?? [])
-      .filter((t) => t.enabled && t.is_native)
+      .filter((t) => t.enabled)
       .map((t) => ({
         id: t.token,
         symbol: getTokenDisplaySymbol(t.token),
@@ -121,6 +124,19 @@ function buildTransferTokens(
   return []
 }
 
+/**
+ * Convert a bytes32 hex string (64 chars) to a checksummed 20-byte EVM address.
+ * The Terra bridge stores EVM addresses left-padded to 32 bytes.
+ * e.g. "0000000000000000000000000b306bf915c4d645ff596e518faf3f9669b97016"
+ * → "0x0b306BF915C4d645ff596E518fAf3F9669b97016"
+ */
+function bytes32ToAddress(hex: string): Address {
+  // Strip 0x prefix if present, take last 40 chars (20 bytes)
+  const clean = hex.replace(/^0x/, '')
+  const addr = clean.length > 40 ? clean.slice(-40) : clean
+  return getAddress(`0x${addr}`)
+}
+
 /** Get EVM token config for deposit/balance from selected token id */
 function getEvmTokenConfig(
   selectedTokenId: string,
@@ -130,7 +146,7 @@ function getEvmTokenConfig(
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
   if (fromRegistry?.evm_token_address) {
     return {
-      address: fromRegistry.evm_token_address as Address,
+      address: bytes32ToAddress(fromRegistry.evm_token_address),
       lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
       symbol: getTokenDisplaySymbol(fromRegistry.token),
       decimals: fromRegistry.evm_decimals,
@@ -228,6 +244,19 @@ export function TransferForm() {
     }
   }, [transferTokens, selectedTokenId])
 
+  // Derive source chain bridge address and native chain ID for multi-EVM support.
+  // When the source is an EVM chain (e.g. anvil1), we must deposit on THAT chain's bridge,
+  // not the primary bridge. We also need the native chain ID for auto-switching.
+  const sourceBridgeConfig = useMemo(() => {
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const config = BRIDGE_CHAINS[tier][sourceChain]
+    if (!config || config.type !== 'evm') return undefined
+    return {
+      bridgeAddress: config.bridgeAddress as Address,
+      nativeChainId: typeof config.chainId === 'number' ? config.chainId : undefined,
+    }
+  }, [sourceChain])
+
   const {
     deposit: evmDeposit,
     status: evmStatus,
@@ -236,7 +265,14 @@ export function TransferForm() {
     reset: resetEvm,
     tokenBalance,
   } = useBridgeDeposit(
-    tokenConfig ? { tokenAddress: tokenConfig.address, lockUnlockAddress: tokenConfig.lockUnlockAddress } : undefined
+    tokenConfig
+      ? {
+          tokenAddress: tokenConfig.address,
+          lockUnlockAddress: tokenConfig.lockUnlockAddress,
+          bridgeAddress: sourceBridgeConfig?.bridgeAddress,
+          sourceNativeChainId: sourceBridgeConfig?.nativeChainId,
+        }
+      : undefined
   )
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
@@ -416,11 +452,16 @@ export function TransferForm() {
         ? evmAddressToBytes32(recipientAddr as `0x${string}`)
         : recipientAddr
 
-      // V2 fix: query destToken from the dest chain's TokenRegistry
-      // For terra->evm, we query the source EVM bridge (the token will be deposited as native)
-      // but we actually need the dest chain's token mapping.
-      // Since we don't have a public client for the dest EVM chain here,
-      // store what we can and let the auto-submit resolve it.
+      // Resolve the destination EVM token address from the Terra bridge's token registry.
+      // Each Terra token has an evm_token_address (bytes32) that maps to the ERC20 on the
+      // destination EVM chain. The auto-submit hook needs this to call withdrawSubmit.
+      const selectedRegistryToken = registryTokens?.find((t) => t.token === (selectedTokenId || 'uluna'))
+      let destTokenB32: string | undefined
+      if (selectedRegistryToken?.evm_token_address) {
+        const raw = selectedRegistryToken.evm_token_address
+        destTokenB32 = raw.startsWith('0x') ? raw : '0x' + raw
+      }
+
       const id = recordTransfer({
         type: 'withdrawal',
         direction: 'terra-to-evm',
@@ -433,6 +474,7 @@ export function TransferForm() {
         srcAccount: srcAccountHex,
         destAccount: destAccountHex,
         token: selectedTokenId || 'uluna',
+        destToken: destTokenB32,
         srcDecimals: terraDecimals,
         destBridgeAddress: destChainConfig?.bridgeAddress,
         sourceChainIdBytes4: '0x00000002', // Terra chain ID in bridge
@@ -444,7 +486,7 @@ export function TransferForm() {
       setError(terraError)
       resetTerra()
     }
-  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId])
+  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens])
 
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
@@ -477,13 +519,21 @@ export function TransferForm() {
 
     if (!isWalletConnected || !amount || !isValidAmount(amount)) return
 
+    // Look up destination chain's V2 bytes4 chain ID from BRIDGE_CHAINS config.
+    // The V2 protocol uses predetermined chain IDs (e.g. anvil=1, terra=2, anvil1=3),
+    // NOT native chain IDs (e.g. 31337, 31338).
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const destConfig = BRIDGE_CHAINS[tier][destChain]
+
     if (direction === 'terra-to-evm') {
       // Terra → EVM: deposit_native on Terra bridge (V2)
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
         return
       }
-      const destChainId = getChainIdNumeric(destChain, allChains)
+      // Use V2 chain ID from config (e.g. 1 for anvil, 3 for anvil1), NOT native chain ID
+      const v2Bytes4 = destConfig?.bytes4ChainId
+      const destChainId = v2Bytes4 ? parseInt(v2Bytes4, 16) : getChainIdNumeric(destChain, allChains)
       const amountMicro = parseAmount(amount, terraDecimals)
       await terraLock({ amountMicro, destChainId, recipientEvm: recipientAddr })
     } else if (direction === 'evm-to-terra') {
@@ -509,8 +559,8 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      const destChainId = getChainIdNumeric(destChain, allChains)
-      const destChainBytes4 = computeEvmChainBytes4(destChainId)
+      // Use V2 bytes4 chain ID from config, NOT native chain ID
+      const destChainBytes4 = (destConfig?.bytes4ChainId as Hex) || computeEvmChainBytes4(getChainIdNumeric(destChain, allChains))
       const destAccount = encodeEvmAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     }
@@ -598,6 +648,7 @@ export function TransferForm() {
         type="submit"
         data-testid="submit-transfer"
         disabled={!isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting}
+        onClick={() => sounds.playButtonPress()}
         className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
       >
         {buttonText}

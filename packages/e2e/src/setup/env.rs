@@ -80,6 +80,17 @@ impl E2eSetup {
         content.push_str(&format!("EVM_CHAIN_ID={}\n", self.config.evm.chain_id));
         content.push_str(&format!("TERRA_CHAIN_ID={}\n", self.config.terra.chain_id));
 
+        // Add secondary EVM chain (anvil1) if configured
+        if let Some(ref evm2) = self.config.evm2 {
+            content.push_str(&format!("EVM2_RPC_URL={}\n", evm2.rpc_url));
+            content.push_str(&format!("EVM2_CHAIN_ID={}\n", evm2.chain_id));
+            content.push_str(&format!("EVM2_V2_CHAIN_ID={}\n", evm2.v2_chain_id));
+            content.push_str(&format!("EVM2_BRIDGE_ADDRESS={}\n", evm2.contracts.bridge));
+            if evm2.contracts.test_token != alloy::primitives::Address::ZERO {
+                content.push_str(&format!("EVM2_TEST_TOKEN_ADDRESS={}\n", evm2.contracts.test_token));
+            }
+        }
+
         // Write to file
         std::fs::write(&env_path, content)?;
 

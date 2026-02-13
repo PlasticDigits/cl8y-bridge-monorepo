@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { HashStatus } from '../../types/transfer'
+import { sounds } from '../../lib/sounds'
 import {
   getVerificationRecords,
   type VerificationRecord,
@@ -120,7 +121,12 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
                   className={`border-b border-white/10 transition-colors hover:bg-[#1c1c1c] ${
                     onSelectHash ? 'cursor-pointer' : ''
                   }`}
-                  onClick={() => onSelectHash?.(r.hash)}
+                  onClick={() => {
+                    if (onSelectHash) {
+                      sounds.playButtonPress()
+                      onSelectHash(r.hash)
+                    }
+                  }}
                 >
                   <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs text-gray-300">
                     {r.hash.startsWith('0x') ? r.hash.slice(0, 18) + '…' + r.hash.slice(-10) : r.hash.slice(0, 16) + '…'}

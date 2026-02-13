@@ -608,6 +608,77 @@ impl E2eSetup {
         }
         on_step(SetupStep::RegisterTokens, true);
 
+        // Deploy to secondary EVM chain (anvil1) if configured
+        if self.config.evm2.is_some() {
+            info!("=== Deploying to secondary EVM chain (anvil1) ===");
+            match self.deploy_evm2_contracts().await {
+                Ok(deployed2) => {
+                    // Update evm2 config with deployed addresses
+                    if let Some(ref mut evm2) = self.config.evm2 {
+                        evm2.contracts.access_manager = deployed2.access_manager;
+                        evm2.contracts.chain_registry = deployed2.chain_registry;
+                        evm2.contracts.token_registry = deployed2.token_registry;
+                        evm2.contracts.mint_burn = deployed2.mint_burn;
+                        evm2.contracts.lock_unlock = deployed2.lock_unlock;
+                        evm2.contracts.bridge = deployed2.bridge;
+                    }
+
+                    // Set cancel window on anvil1 too
+                    {
+                        let private_key =
+                            format!("0x{:x}", self.config.test_accounts.evm_private_key);
+                        let rpc2 = self
+                            .config
+                            .evm2
+                            .as_ref()
+                            .unwrap()
+                            .rpc_url
+                            .to_string();
+                        let _ = chain_config::set_cancel_window(
+                            deployed2.bridge,
+                            15,
+                            &rpc2,
+                            &private_key,
+                        )
+                        .await;
+                    }
+
+                    // Grant roles on anvil1
+                    let _ = self.grant_roles_evm2(&deployed2).await;
+
+                    // Cross-chain registration
+                    let _ = self
+                        .register_cross_chain(&deployed, &deployed2)
+                        .await;
+
+                    // Deploy and register test token on anvil1 with cross-chain mappings
+                    if let Some(primary_token) = deployed.test_token {
+                        match self
+                            .deploy_and_register_test_token_evm2(&deployed2, primary_token)
+                            .await
+                        {
+                            Ok(Some(token2)) => {
+                                if let Some(ref mut evm2) = self.config.evm2 {
+                                    evm2.contracts.test_token = token2;
+                                }
+                                info!(
+                                    "Secondary chain test token deployed and registered: {}",
+                                    token2
+                                );
+                            }
+                            Ok(None) => warn!("Secondary chain test token deployment skipped"),
+                            Err(e) => warn!("Secondary chain test token failed: {}", e),
+                        }
+                    }
+
+                    info!("=== Secondary EVM chain setup complete ===");
+                }
+                Err(e) => {
+                    warn!("Failed to deploy to secondary EVM chain: {}", e);
+                }
+            }
+        }
+
         // Start Canceler Service (for fraud detection)
         on_step(SetupStep::StartCanceler, true);
         match self.services.start_canceler(&self.config).await {

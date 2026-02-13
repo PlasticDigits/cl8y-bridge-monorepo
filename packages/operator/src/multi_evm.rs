@@ -1,54 +1,24 @@
 //! Multi-EVM Chain Configuration
 //!
-//! Supports multiple EVM chain configurations for EVM-to-EVM bridging.
+//! Re-exports shared multi-EVM types from `multichain_rs::multi_evm` and adds
+//! operator-specific extensions (e.g., converting to operator `EvmConfig`).
 
 #![allow(dead_code)]
 
-use eyre::{eyre, Result};
-use std::collections::HashMap;
-use std::fmt;
+// Re-export shared types
+pub use multichain_rs::multi_evm::{load_from_env, EvmChainConfig, MultiEvmConfig};
 
-use crate::types::ChainId;
-
-/// Configuration for a single EVM chain
-#[derive(Debug, Clone)]
-pub struct EvmChainConfig {
-    /// Human-readable name (e.g., "ethereum", "bsc")
-    pub name: String,
-    /// Chain ID (native EVM chain ID)
-    pub chain_id: u64,
-    /// 4-byte chain ID (V2 format)
-    pub this_chain_id: ChainId,
-    /// RPC endpoint
-    pub rpc_url: String,
-    /// Bridge contract address
-    pub bridge_address: String,
-    /// Required confirmations (default 12)
-    pub finality_blocks: u64,
-    /// Whether this chain is active
-    pub enabled: bool,
-}
-
-impl Default for EvmChainConfig {
-    fn default() -> Self {
-        Self {
-            name: "unknown".to_string(),
-            chain_id: 0,
-            this_chain_id: ChainId::from_u32(0),
-            rpc_url: String::new(),
-            bridge_address: String::new(),
-            finality_blocks: 12,
-            enabled: true,
-        }
-    }
-}
-
-impl EvmChainConfig {
-    /// Convert to the standard EvmConfig format.
+/// Extension trait for operator-specific functionality on `EvmChainConfig`.
+pub trait EvmChainConfigExt {
+    /// Convert to the operator's `EvmConfig` format.
     ///
-    /// Requires the shared private key from MultiEvmConfig since
+    /// Requires the shared private key from `MultiEvmConfig` since
     /// individual chain configs don't store it.
-    pub fn to_evm_config(&self, private_key: &str) -> crate::config::EvmConfig {
+    fn to_operator_evm_config(&self, private_key: &str) -> crate::config::EvmConfig;
+}
+
+impl EvmChainConfigExt for EvmChainConfig {
+    fn to_operator_evm_config(&self, private_key: &str) -> crate::config::EvmConfig {
         crate::config::EvmConfig {
             rpc_url: self.rpc_url.clone(),
             chain_id: self.chain_id,
@@ -61,175 +31,56 @@ impl EvmChainConfig {
     }
 }
 
-/// Multi-EVM configuration manager
-#[derive(Clone)]
-pub struct MultiEvmConfig {
-    chains: Vec<EvmChainConfig>,
-    chain_id_map: HashMap<[u8; 4], usize>,
-    private_key: String,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use multichain_rs::types::ChainId;
 
-/// Custom Debug that redacts private_key to prevent accidental log leakage.
-impl fmt::Debug for MultiEvmConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MultiEvmConfig")
-            .field("chains", &self.chains)
-            .field("chain_id_map", &self.chain_id_map)
-            .field("private_key", &"<redacted>")
-            .finish()
-    }
-}
-
-impl MultiEvmConfig {
-    /// Create a new multi-EVM config
-    pub fn new(chains: Vec<EvmChainConfig>, private_key: String) -> Result<Self> {
-        let mut chain_id_map = HashMap::new();
-
-        for (idx, chain) in chains.iter().enumerate() {
-            chain_id_map.insert(chain.this_chain_id.0, idx);
-        }
-
-        let config = Self {
-            chains,
-            chain_id_map,
-            private_key,
+    #[test]
+    fn test_to_operator_evm_config() {
+        let chain = EvmChainConfig {
+            name: "anvil".to_string(),
+            chain_id: 31337,
+            this_chain_id: ChainId::from_u32(1),
+            rpc_url: "http://localhost:8545".to_string(),
+            bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+            finality_blocks: 0,
+            enabled: true,
         };
-
-        config.validate()?;
-        Ok(config)
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let config = chain.to_operator_evm_config(pk);
+        assert_eq!(config.chain_id, 31337);
+        assert_eq!(config.this_chain_id, Some(1));
+        assert_eq!(config.use_v2_events, Some(true));
     }
 
-    /// Get chain config by native EVM chain ID
-    pub fn get_chain(&self, chain_id: u64) -> Option<&EvmChainConfig> {
-        self.chains.iter().find(|c| c.chain_id == chain_id)
+    #[test]
+    fn test_multi_evm_config_creation() {
+        let chains = vec![
+            EvmChainConfig {
+                name: "anvil".to_string(),
+                chain_id: 31337,
+                this_chain_id: ChainId::from_u32(1),
+                rpc_url: "http://localhost:8545".to_string(),
+                bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+                finality_blocks: 0,
+                enabled: true,
+            },
+            EvmChainConfig {
+                name: "anvil1".to_string(),
+                chain_id: 31338,
+                this_chain_id: ChainId::from_u32(3),
+                rpc_url: "http://localhost:8546".to_string(),
+                bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+                finality_blocks: 0,
+                enabled: true,
+            },
+        ];
+
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let config = MultiEvmConfig::new(chains, pk.to_string()).unwrap();
+        assert_eq!(config.enabled_count(), 2);
+        assert!(config.get_chain(31337).is_some());
+        assert!(config.get_chain(31338).is_some());
     }
-
-    /// Get chain config by name
-    pub fn get_chain_by_name(&self, name: &str) -> Option<&EvmChainConfig> {
-        self.chains.iter().find(|c| c.name == name)
-    }
-
-    /// Get chain config by 4-byte chain ID (V2)
-    pub fn get_chain_by_id(&self, id: &ChainId) -> Option<&EvmChainConfig> {
-        self.chain_id_map.get(&id.0).map(|&idx| &self.chains[idx])
-    }
-
-    /// Get all enabled chains
-    pub fn enabled_chains(&self) -> impl Iterator<Item = &EvmChainConfig> {
-        self.chains.iter().filter(|c| c.enabled)
-    }
-
-    /// Get all chain IDs
-    pub fn chain_ids(&self) -> Vec<u64> {
-        self.chains.iter().map(|c| c.chain_id).collect()
-    }
-
-    /// Get the shared private key
-    pub fn private_key(&self) -> &str {
-        &self.private_key
-    }
-
-    /// Validate the configuration
-    fn validate(&self) -> Result<()> {
-        if self.chains.is_empty() {
-            return Err(eyre!("At least one EVM chain must be configured"));
-        }
-
-        // Check for duplicate chain IDs
-        let mut seen_ids = std::collections::HashSet::new();
-        for chain in &self.chains {
-            if !seen_ids.insert(chain.chain_id) {
-                return Err(eyre!("Duplicate chain ID: {}", chain.chain_id));
-            }
-
-            // Validate bridge address format
-            if chain.bridge_address.len() != 42 || !chain.bridge_address.starts_with("0x") {
-                return Err(eyre!(
-                    "Invalid bridge address for chain {}: {}",
-                    chain.name,
-                    chain.bridge_address
-                ));
-            }
-        }
-
-        // Validate private key
-        if self.private_key.len() != 66 || !self.private_key.starts_with("0x") {
-            return Err(eyre!("Invalid private key format"));
-        }
-
-        Ok(())
-    }
-}
-
-/// Load multi-EVM config from environment variables
-pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
-    let count_str = std::env::var("EVM_CHAINS_COUNT").ok();
-
-    let count: usize = match count_str {
-        Some(s) => s.parse().unwrap_or(0),
-        None => return Ok(None), // Multi-EVM not configured
-    };
-
-    if count == 0 {
-        return Ok(None);
-    }
-
-    let mut chains = Vec::with_capacity(count);
-
-    for i in 1..=count {
-        let prefix = format!("EVM_CHAIN_{}", i);
-
-        let name =
-            std::env::var(format!("{}_NAME", prefix)).unwrap_or_else(|_| format!("chain_{}", i));
-
-        let chain_id: u64 = std::env::var(format!("{}_CHAIN_ID", prefix))
-            .map_err(|_| eyre!("Missing {}_CHAIN_ID", prefix))?
-            .parse()
-            .map_err(|_| eyre!("Invalid {}_CHAIN_ID", prefix))?;
-
-        // 4-byte chain ID (V2) — from ChainRegistry, NOT the native chain ID.
-        // Required: native chain IDs (e.g., 31337) differ from V2 registry IDs
-        // (e.g., 0x00000001), and using the wrong one causes hash mismatches.
-        let this_chain_id: u32 = std::env::var(format!("{}_THIS_CHAIN_ID", prefix))
-            .map_err(|_| {
-                eyre!(
-                    "{prefix}_THIS_CHAIN_ID is required. Set it to the 4-byte V2 chain ID \
-                     from ChainRegistry (e.g., {prefix}_THIS_CHAIN_ID=1). Do NOT use the \
-                     native chain ID ({chain_id}) — V2 registry IDs are different."
-                )
-            })?
-            .parse()
-            .map_err(|_| eyre!("Invalid {}_THIS_CHAIN_ID — must be a u32", prefix))?;
-
-        let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
-            .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;
-
-        let bridge_address = std::env::var(format!("{}_BRIDGE_ADDRESS", prefix))
-            .map_err(|_| eyre!("Missing {}_BRIDGE_ADDRESS", prefix))?;
-
-        let finality_blocks: u64 = std::env::var(format!("{}_FINALITY_BLOCKS", prefix))
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(12);
-
-        let enabled: bool = std::env::var(format!("{}_ENABLED", prefix))
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(true);
-
-        chains.push(EvmChainConfig {
-            name,
-            chain_id,
-            this_chain_id: ChainId::from_u32(this_chain_id),
-            rpc_url,
-            bridge_address,
-            finality_blocks,
-            enabled,
-        });
-    }
-
-    let private_key = std::env::var("EVM_PRIVATE_KEY")
-        .map_err(|_| eyre!("Missing EVM_PRIVATE_KEY for multi-EVM config"))?;
-
-    Ok(Some(MultiEvmConfig::new(chains, private_key)?))
 }

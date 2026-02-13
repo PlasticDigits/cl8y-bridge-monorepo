@@ -5,6 +5,7 @@
 
 import { execSync } from 'child_process'
 import type { TokenAddresses } from './deploy-tokens'
+import { isPlaceholderAddress } from './deploy-terra'
 
 const DEPLOYER_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 
@@ -285,7 +286,7 @@ function registerTerraTokensForEvmChains(
 
   try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
 
-  // Step 3: For CW20 tokens, add them too
+  // Step 3: For CW20 tokens, add them too (skip placeholders - not actually deployed)
   const terraTokenPairs: Array<['tokenA' | 'tokenB' | 'tokenC', string]> = [
     ['tokenA', tokens.terra.tokenA],
     ['tokenB', tokens.terra.tokenB],
@@ -295,6 +296,11 @@ function registerTerraTokensForEvmChains(
   for (const [tokenKey, tokenAddr] of terraTokenPairs) {
     // Skip if this is uluna (already handled above)
     if (tokenAddr === 'uluna') continue
+    // Skip placeholder addresses (CW20 deployment failed)
+    if (isPlaceholderAddress(tokenAddr)) {
+      console.log(`[register-tokens] Skipping CW20 ${tokenKey} (placeholder, not deployed)`)
+      continue
+    }
 
     const evmToken = tokens.anvil[tokenKey].slice(2).toLowerCase().padStart(64, '0')
     const addTokenMsg = JSON.stringify({

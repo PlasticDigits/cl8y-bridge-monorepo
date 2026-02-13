@@ -121,7 +121,7 @@ export function computeWithdrawHashViaCast(params: {
 export function depositErc20ViaCast(params: {
   rpcUrl: string
   bridgeAddress: string
-  lockUnlockAddress?: string  // If provided, approve this too (LockUnlock does the actual transferFrom)
+  lockUnlockAddress?: string  // Unused: Bridge now does both transferFroms with single approval
   privateKey: string
   tokenAddress: string
   amount: string         // uint256
@@ -130,7 +130,7 @@ export function depositErc20ViaCast(params: {
 }): { txHash: string } {
   const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
 
-  // Approve bridge for fee transfer (wait for confirmation before next tx)
+  // Single approval: Bridge does fee + net transfer to LockUnlock
   execSync(
     [
       'cast send',
@@ -145,26 +145,7 @@ export function depositErc20ViaCast(params: {
     { encoding: 'utf8', timeout: 30_000, env: castEnv }
   )
 
-  // Approve LockUnlock handler for the actual lock transfer
-  // The Bridge.depositERC20 calls lockUnlock.lock(user, token, netAmount)
-  // which does safeTransferFrom(user, lockUnlock, netAmount)
-  if (params.lockUnlockAddress) {
-    execSync(
-      [
-        'cast send',
-        `--rpc-url ${params.rpcUrl}`,
-        `--private-key ${params.privateKey}`,
-        '--confirmations 1',
-        params.tokenAddress,
-        '"approve(address,uint256)"',
-        params.lockUnlockAddress,
-        params.amount,
-      ].join(' '),
-      { encoding: 'utf8', timeout: 30_000, env: castEnv }
-    )
-  }
-
-  // Then deposit (V2 Bridge: depositERC20(address token, uint256 amount, bytes4 destChain, bytes32 destAccount))
+  // Deposit (V2 Bridge: depositERC20 does 2 transferFroms - fee to recipient, net to LockUnlock)
   const result = execSync(
     [
       'cast send',
@@ -186,10 +167,20 @@ export function depositErc20ViaCast(params: {
 }
 
 /**
- * Get the deposit nonce from a deposit transaction receipt via `cast receipt`.
+ * Parse deposit event from a transaction receipt.
+ * Returns { nonce, netAmount } — the netAmount is the post-fee amount the Bridge emitted.
+ *
+ * Deposit event signature:
+ *   Deposit(bytes4 indexed destChain, bytes32 indexed destAccount, bytes32 srcAccount,
+ *           address token, uint256 amount, uint64 nonce, uint256 fee)
+ * Non-indexed data layout (each 32 bytes):
+ *   [0] srcAccount (bytes32)
+ *   [1] token (address padded to 32 bytes)
+ *   [2] amount (uint256) — this is netAmount (post-fee)
+ *   [3] nonce (uint64 padded to 32 bytes)
+ *   [4] fee (uint256)
  */
-export function getDepositNonceFromReceipt(rpcUrl: string, txHash: string): number {
-  // Get logs from receipt and parse the Deposit event
+export function parseDepositEvent(rpcUrl: string, txHash: string): { nonce: number; netAmount: string } {
   const result = execSync(
     `cast receipt --rpc-url ${rpcUrl} ${txHash} --json`,
     { encoding: 'utf8', timeout: 15_000 }
@@ -197,20 +188,27 @@ export function getDepositNonceFromReceipt(rpcUrl: string, txHash: string): numb
   const receipt = JSON.parse(result)
 
   for (const log of receipt.logs || []) {
-    // Deposit event has 3 topics (signature + 2 indexed)
-    // The nonce is in the data (non-indexed field)
     if (log.topics && log.topics.length >= 3) {
-      // Try to parse: data contains srcAccount(32) + token(32) + amount(32) + nonce(32) + fee(32)
-      // Actually: srcAccount bytes32, token address (padded to 32), amount uint256, nonce uint64, fee uint256
       const data = log.data.slice(2) // remove 0x
       if (data.length >= 320) { // 5 * 64 hex chars = 5 * 32 bytes
-        // nonce is the 4th 32-byte word
-        const nonceHex = data.slice(192, 256)
-        return parseInt(nonceHex, 16)
+        const amountHex = data.slice(128, 192) // word 2: netAmount
+        const nonceHex = data.slice(192, 256)   // word 3: nonce
+        return {
+          nonce: parseInt(nonceHex, 16),
+          netAmount: BigInt('0x' + amountHex).toString(),
+        }
       }
     }
   }
-  return 0
+  return { nonce: 0, netAmount: '0' }
+}
+
+/**
+ * Get the deposit nonce from a deposit transaction receipt via `cast receipt`.
+ * @deprecated Use parseDepositEvent() instead to also get the net amount.
+ */
+export function getDepositNonceFromReceipt(rpcUrl: string, txHash: string): number {
+  return parseDepositEvent(rpcUrl, txHash).nonce
 }
 
 /**
@@ -341,7 +339,8 @@ export function mintTestTokens(params: {
 }
 
 /**
- * Call withdrawExecute on the bridge after the cancel window has passed.
+ * Call withdrawExecuteUnlock on the bridge after the cancel window has passed.
+ * For lock/unlock mode tokens (most ERC20 tokens).
  */
 export function withdrawExecuteViaCast(params: {
   rpcUrl: string
@@ -357,7 +356,7 @@ export function withdrawExecuteViaCast(params: {
       `--private-key ${params.privateKey}`,
       '--confirmations 1',
       params.bridgeAddress,
-      '"withdrawExecute(bytes32)"',
+      '"withdrawExecuteUnlock(bytes32)"',
       params.withdrawHash,
     ].join(' '),
     { encoding: 'utf8', timeout: 30_000, env: castEnv }

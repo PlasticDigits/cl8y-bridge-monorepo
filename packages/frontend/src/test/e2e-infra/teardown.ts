@@ -15,7 +15,9 @@ import { stopOperator } from './operator'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
+const FRONTEND_DIR = resolve(__dirname, '../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
+const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 
 export default async function teardown(): Promise<void> {
   console.log('=== E2E Test Infrastructure Teardown ===\n')
@@ -40,10 +42,14 @@ export default async function teardown(): Promise<void> {
     console.warn('[teardown] docker compose down failed (may already be stopped):', (error as Error).message?.slice(0, 200))
   }
 
-  // 2. Delete environment file
+  // 2. Delete environment files
   if (existsSync(ENV_FILE)) {
     console.log('[teardown] Removing .env.e2e.local...')
     unlinkSync(ENV_FILE)
+  }
+  if (existsSync(VITE_ENV_FILE)) {
+    console.log('[teardown] Removing packages/frontend/.env.local...')
+    unlinkSync(VITE_ENV_FILE)
   }
 
   // 3. Kill any orphaned processes on test ports

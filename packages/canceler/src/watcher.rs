@@ -85,6 +85,20 @@ sol! {
 }
 
 /// Main watcher that monitors all chains for approvals (V2)
+/// Per-chain polling state for multi-EVM monitoring
+struct EvmChainPollState {
+    /// V2 chain ID (4 bytes)
+    v2_chain_id: [u8; 4],
+    /// Chain name for logging
+    name: String,
+    /// RPC URL
+    rpc_url: String,
+    /// Bridge contract address
+    bridge_address: String,
+    /// Last polled block number
+    last_block: u64,
+}
+
 pub struct CancelerWatcher {
     config: Config,
     verifier: ApprovalVerifier,
@@ -94,12 +108,14 @@ pub struct CancelerWatcher {
     verified_hashes: BoundedHashCache,
     /// Hashes we've cancelled (C3: bounded)
     cancelled_hashes: BoundedHashCache,
-    /// Last polled EVM block
+    /// Last polled EVM block (primary chain)
     last_evm_block: u64,
     /// Last polled Terra height
     last_terra_height: u64,
     /// This chain's 4-byte chain ID
     this_chain_id: [u8; 4],
+    /// Additional EVM chains to poll (multi-EVM support)
+    additional_evm_chains: Vec<EvmChainPollState>,
     /// Shared stats for health endpoint
     stats: SharedStats,
     /// Prometheus metrics
@@ -116,7 +132,7 @@ impl CancelerWatcher {
         // Tries config first, then queries bridge contract. Fails if neither works.
         let (evm_v2, terra_v2) = Self::resolve_v2_chain_ids_required(config).await?;
 
-        let verifier = ApprovalVerifier::new_v2(
+        let mut verifier = ApprovalVerifier::new_v2(
             &config.evm_rpc_url,
             &config.evm_bridge_address,
             &config.terra_lcd_url,
@@ -124,6 +140,19 @@ impl CancelerWatcher {
             evm_v2,
             terra_v2,
         );
+
+        // Register additional EVM chains from multi-EVM config for cross-chain verification
+        if let Some(ref multi) = config.multi_evm {
+            let additional_chains: Vec<crate::verifier::KnownEvmChain> = multi
+                .enabled_chains()
+                .map(|chain| crate::verifier::KnownEvmChain {
+                    v2_chain_id: chain.this_chain_id.0,
+                    rpc_url: chain.rpc_url.clone(),
+                    bridge_address: chain.bridge_address.clone(),
+                })
+                .collect();
+            verifier.register_evm_chains(additional_chains);
+        }
 
         // C6: Startup validation — cross-check resolved chain IDs against bridge contract.
         // If the configured V2 chain ID doesn't match what the bridge contract reports,
@@ -161,11 +190,32 @@ impl CancelerWatcher {
             s.canceler_id = config.canceler_id.clone();
         }
 
+        // Build additional chain poll states from multi-EVM config.
+        // The primary chain is polled via poll_evm_approvals(); additional chains
+        // are polled separately via poll_additional_evm_approvals().
+        let additional_evm_chains: Vec<EvmChainPollState> = if let Some(ref multi) = config.multi_evm
+        {
+            multi
+                .enabled_chains()
+                .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip primary chain
+                .map(|c| EvmChainPollState {
+                    v2_chain_id: c.this_chain_id.0,
+                    name: c.name.clone(),
+                    rpc_url: c.rpc_url.clone(),
+                    bridge_address: c.bridge_address.clone(),
+                    last_block: 0,
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
         info!(
             canceler_id = %config.canceler_id,
             evm_canceler = %evm_client.address(),
             terra_canceler = %terra_client.address,
             this_chain_id = %hex::encode(this_chain_id),
+            additional_evm_chains = additional_evm_chains.len(),
             "Canceler watcher initialized (V2)"
         );
 
@@ -185,6 +235,7 @@ impl CancelerWatcher {
             last_evm_block: 0,
             last_terra_height: 0,
             this_chain_id,
+            additional_evm_chains,
             stats,
             metrics,
             evm_precheck_consecutive_failures: AtomicU32::new(0),
@@ -338,8 +389,13 @@ impl CancelerWatcher {
     async fn poll_approvals(&mut self) -> Result<()> {
         debug!("Polling for new approvals...");
 
-        // Poll EVM bridge for approvals
+        // Poll primary EVM bridge for approvals
         self.poll_evm_approvals().await?;
+
+        // Poll additional EVM chains (multi-EVM support)
+        if !self.additional_evm_chains.is_empty() {
+            self.poll_additional_evm_approvals().await;
+        }
 
         // Poll Terra bridge for approvals
         self.poll_terra_approvals().await?;
@@ -573,6 +629,153 @@ impl CancelerWatcher {
         }
 
         Ok(())
+    }
+
+    /// Poll additional EVM chains for WithdrawApprove events (multi-EVM).
+    ///
+    /// Collects pending approvals from all additional chains first, then
+    /// processes them to avoid borrow-checker issues with `&mut self`.
+    async fn poll_additional_evm_approvals(&mut self) {
+        // Phase 1: Collect events from all additional chains
+        let mut collected_approvals: Vec<PendingApproval> = Vec::new();
+        let mut block_updates: Vec<(usize, u64)> = Vec::new();
+
+        for (idx, chain_state) in self.additional_evm_chains.iter().enumerate() {
+            let chain_name = &chain_state.name;
+            let rpc_url = &chain_state.rpc_url;
+            let bridge_addr_str = &chain_state.bridge_address;
+            let chain_v2_id = chain_state.v2_chain_id;
+
+            let provider = match rpc_url.parse() {
+                Ok(url) => ProviderBuilder::new().on_http(url),
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Invalid RPC URL for additional chain");
+                    continue;
+                }
+            };
+
+            let current_block = match provider.get_block_number().await {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Failed to get block number");
+                    continue;
+                }
+            };
+
+            if current_block <= chain_state.last_block {
+                continue;
+            }
+
+            let from_block = if chain_state.last_block == 0 || current_block < chain_state.last_block
+            {
+                0
+            } else {
+                chain_state.last_block + 1
+            };
+            let to_block = current_block;
+
+            let bridge_address = match Address::from_str(bridge_addr_str) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Invalid bridge address");
+                    continue;
+                }
+            };
+
+            let contract = Bridge::new(bridge_address, &provider);
+            let filter = contract
+                .WithdrawApprove_filter()
+                .address(bridge_address)
+                .from_block(from_block)
+                .to_block(to_block);
+
+            let logs = match filter.query().await {
+                Ok(l) => l,
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Failed to query events");
+                    continue;
+                }
+            };
+
+            if !logs.is_empty() {
+                info!(
+                    chain = %chain_name,
+                    v2_id = %hex::encode(chain_v2_id),
+                    event_count = logs.len(),
+                    from_block = from_block,
+                    to_block = to_block,
+                    "Found WithdrawApprove events on additional chain"
+                );
+            }
+
+            for (event, _log) in &logs {
+                let withdraw_hash: [u8; 32] = event.withdrawHash.0;
+
+                if self.verified_hashes.contains(&withdraw_hash)
+                    || self.cancelled_hashes.contains(&withdraw_hash)
+                {
+                    continue;
+                }
+
+                // Get withdrawal details
+                let info_result = contract
+                    .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+                    .call()
+                    .await;
+
+                match info_result {
+                    Ok(info) => {
+                        if info.cancelled || info.executed {
+                            continue;
+                        }
+
+                        let cancel_window: u64 = contract
+                            .getCancelWindow()
+                            .call()
+                            .await
+                            .map(|w| w._0.try_into().unwrap_or(300))
+                            .unwrap_or(300);
+
+                        let mut token_bytes32 = [0u8; 32];
+                        token_bytes32[12..32].copy_from_slice(info.token.as_slice());
+
+                        collected_approvals.push(PendingApproval {
+                            withdraw_hash,
+                            src_chain_id: info.srcChain.0,
+                            dest_chain_id: chain_v2_id,
+                            src_account: info.srcAccount.0,
+                            dest_token: token_bytes32,
+                            dest_account: info.destAccount.0,
+                            amount: info.amount.try_into().unwrap_or(u128::MAX),
+                            nonce: info.nonce,
+                            approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
+                            cancel_window,
+                        });
+                    }
+                    Err(e) => {
+                        warn!(chain = %chain_name, error = %e, "Failed to get withdrawal info");
+                    }
+                }
+            }
+
+            block_updates.push((idx, to_block));
+        }
+
+        // Phase 2: Update block heights
+        for (idx, block) in block_updates {
+            self.additional_evm_chains[idx].last_block = block;
+        }
+
+        // Phase 3: Verify and cancel collected approvals
+        for approval in collected_approvals {
+            if let Err(e) = self.verify_and_cancel(&approval).await {
+                error!(
+                    error = %e,
+                    withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    "Failed to verify approval on additional chain"
+                );
+            }
+        }
     }
 
     /// Poll Terra bridge for pending approvals (V2)

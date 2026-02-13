@@ -300,10 +300,21 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           abi: BRIDGE_WITHDRAW_VIEW_ABI,
           functionName: 'getPendingWithdraw',
           args: [transfer.transferHash as Hex],
-        }) as { submittedAt: bigint; approvedAt: bigint }
+        }) as { submittedAt: bigint; approvedAt: bigint; approved: boolean; executed: boolean }
 
-        if (result.approvedAt > 0n) {
-          // Approved!
+        if (result.executed) {
+          // Execution complete! Tokens have been delivered.
+          if (transfer.lifecycle !== 'executed') {
+            updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+            setPhase('complete')
+            // Stop polling — transfer is done
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current)
+              pollingRef.current = null
+            }
+          }
+        } else if (result.approved || result.approvedAt > 0n) {
+          // Approved but not yet executed
           if (transfer.lifecycle === 'hash-submitted') {
             updateTransferRecord(transfer.id, { lifecycle: 'approved' })
             setPhase('waiting-execution')

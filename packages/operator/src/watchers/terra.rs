@@ -122,10 +122,31 @@ impl TerraWatcher {
                     "Processing Terra block"
                 );
 
-                self.process_block(height).await?;
-
-                // Update last processed height
-                update_last_terra_block(&self.db, &self.chain_id, height as i64).await?;
+                match self.process_block(height).await {
+                    Ok(()) => {
+                        // Update last processed height
+                        update_last_terra_block(&self.db, &self.chain_id, height as i64).await?;
+                    }
+                    Err(e) => {
+                        // Transient errors (e.g. "could not find results for height")
+                        // should not crash the watcher. Log and retry on next cycle.
+                        let err_str = format!("{}", e);
+                        if err_str.contains("could not find results for height")
+                            || err_str.contains("block results")
+                        {
+                            tracing::warn!(
+                                chain_id = %self.chain_id,
+                                height,
+                                error = %e,
+                                "Transient error processing Terra block, will retry next cycle"
+                            );
+                            // Break the inner loop so we re-query current_height next cycle
+                            break;
+                        }
+                        // Non-transient errors still propagate
+                        return Err(e);
+                    }
+                }
             }
 
             tokio::time::sleep(poll_interval).await;

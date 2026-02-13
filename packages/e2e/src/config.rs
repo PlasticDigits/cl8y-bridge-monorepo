@@ -13,6 +13,8 @@ use url::Url;
 #[derive(Debug, Clone, Default)]
 pub struct E2eConfig {
     pub evm: EvmConfig,
+    /// Secondary EVM chain (anvil1, V2 chain ID = 3)
+    pub evm2: Option<EvmConfig>,
     pub terra: TerraConfig,
     pub docker: DockerConfig,
     pub operator: OperatorConfig,
@@ -21,9 +23,42 @@ pub struct E2eConfig {
 
 impl E2eConfig {
     /// Load configuration from environment variables
+    ///
+    /// The secondary EVM chain (`evm2`) is auto-configured by default because
+    /// `anvil1` is always started by docker-compose. Contract addresses start
+    /// as `Address::ZERO` and are populated during setup after forge deploys.
+    ///
+    /// To disable evm2, set `EVM2_DISABLED=1`.
     pub fn from_env() -> Result<Self> {
+        // Load secondary EVM config:
+        // - If EVM2_RPC_URL is explicitly set, use that
+        // - If EVM2_DISABLED is set, skip evm2
+        // - Otherwise, auto-detect with defaults (anvil1 on port 8546)
+        let evm2_disabled = std::env::var("EVM2_DISABLED")
+            .ok()
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+
+        let evm2 = if evm2_disabled {
+            None
+        } else if std::env::var("EVM2_RPC_URL").is_ok() {
+            Some(EvmConfig::from_env_with_prefix("EVM2")?)
+        } else {
+            // Auto-detect: anvil1 is always in docker-compose on port 8546.
+            // Contract addresses start as ZERO and get populated during setup
+            // after forge script deploys to the secondary chain.
+            Some(EvmConfig {
+                rpc_url: Url::parse("http://localhost:8546")?,
+                chain_id: 31338,
+                v2_chain_id: 3,
+                private_key: B256::ZERO,
+                contracts: EvmContracts::default(),
+            })
+        };
+
         Ok(Self {
             evm: EvmConfig::from_env()?,
+            evm2,
             terra: TerraConfig::from_env()?,
             docker: DockerConfig::from_env()?,
             operator: OperatorConfig::from_env()?,
@@ -53,6 +88,8 @@ impl E2eConfig {
 pub struct EvmConfig {
     pub rpc_url: Url,
     pub chain_id: u64,
+    /// V2 4-byte chain ID from ChainRegistry (NOT the native chain ID)
+    pub v2_chain_id: u32,
     pub private_key: B256,
     pub contracts: EvmContracts,
 }
@@ -62,6 +99,7 @@ impl Default for EvmConfig {
         Self {
             rpc_url: Url::parse("http://localhost:8545").expect("valid default URL"),
             chain_id: 31337,
+            v2_chain_id: 1,
             private_key: B256::ZERO,
             contracts: EvmContracts::default(),
         }
@@ -84,8 +122,35 @@ impl EvmConfig {
         Ok(Self {
             rpc_url: Url::parse(&rpc_url)?,
             chain_id,
+            v2_chain_id: 1, // Default: primary chain is V2 ID 1
             private_key,
             contracts: EvmContracts::from_env()?,
+        })
+    }
+
+    /// Load from environment with a prefix (e.g., "EVM2" for the secondary chain)
+    pub fn from_env_with_prefix(prefix: &str) -> Result<Self> {
+        let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
+            .unwrap_or_else(|_| "http://localhost:8546".to_string());
+        let chain_id: u64 = std::env::var(format!("{}_CHAIN_ID", prefix))
+            .unwrap_or_else(|_| "31338".to_string())
+            .parse()
+            .unwrap_or(31338);
+        let v2_chain_id: u32 = std::env::var(format!("{}_V2_CHAIN_ID", prefix))
+            .unwrap_or_else(|_| "3".to_string())
+            .parse()
+            .unwrap_or(3);
+        let private_key = std::env::var("EVM_PRIVATE_KEY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(B256::ZERO);
+
+        Ok(Self {
+            rpc_url: Url::parse(&rpc_url)?,
+            chain_id,
+            v2_chain_id,
+            private_key,
+            contracts: EvmContracts::from_env_with_prefix(prefix)?,
         })
     }
 }
@@ -113,6 +178,20 @@ impl EvmContracts {
             lock_unlock: parse_address_env("EVM_LOCK_UNLOCK_ADDRESS")?,
             bridge: parse_address_env("EVM_BRIDGE_ADDRESS")?,
             test_token: parse_address_env("TEST_TOKEN_ADDRESS").unwrap_or(Address::ZERO),
+        })
+    }
+
+    /// Load from environment with a prefix (e.g., "EVM2")
+    pub fn from_env_with_prefix(prefix: &str) -> Result<Self> {
+        Ok(Self {
+            access_manager: parse_address_env(&format!("{}_ACCESS_MANAGER_ADDRESS", prefix))?,
+            chain_registry: parse_address_env(&format!("{}_CHAIN_REGISTRY_ADDRESS", prefix))?,
+            token_registry: parse_address_env(&format!("{}_TOKEN_REGISTRY_ADDRESS", prefix))?,
+            mint_burn: parse_address_env(&format!("{}_MINT_BURN_ADDRESS", prefix))?,
+            lock_unlock: parse_address_env(&format!("{}_LOCK_UNLOCK_ADDRESS", prefix))?,
+            bridge: parse_address_env(&format!("{}_BRIDGE_ADDRESS", prefix))?,
+            test_token: parse_address_env(&format!("{}_TEST_TOKEN_ADDRESS", prefix))
+                .unwrap_or(Address::ZERO),
         })
     }
 

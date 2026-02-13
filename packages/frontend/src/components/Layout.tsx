@@ -1,7 +1,13 @@
 import { Outlet } from 'react-router-dom'
 import { NavBar } from './NavBar'
+import { EvmWalletModal, TerraWalletModal } from './wallet'
+import { useUIStore } from '../stores/ui'
+import { useWalletStore } from '../stores/wallet'
 
 export function Layout() {
+  const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
+  const { showWalletModal, setShowWalletModal } = useWalletStore()
+
   return (
     <div className="min-h-screen overflow-x-hidden">
       <header className="sticky top-0 z-30 border-b-2 border-white/40 bg-black/90 overflow-x-clip">
@@ -21,6 +27,9 @@ export function Layout() {
       <footer className="border-t-2 border-white/25 py-6 text-center text-slate-300 text-xs md:text-sm uppercase tracking-wider">
         <p className="px-4">CL8Y Bridge · Cross-chain transfers between any supported chains</p>
       </footer>
+
+      <EvmWalletModal isOpen={showEvmWalletModal} onClose={() => setShowEvmWalletModal(false)} />
+      <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
     </div>
   )
 }

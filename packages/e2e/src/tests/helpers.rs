@@ -457,9 +457,8 @@ pub(crate) async fn execute_deposit(
     dest_chain_id: [u8; 4],
     dest_account: [u8; 32],
 ) -> Result<B256> {
-    // Approve both Bridge (for fee transferFrom) and LockUnlock (for lock transferFrom)
+    // Single approval: Bridge does fee + net transfer to LockUnlock
     approve_erc20(config, token, config.evm.contracts.bridge, amount).await?;
-    approve_erc20(config, token, config.evm.contracts.lock_unlock, amount).await?;
 
     let client = reqwest::Client::new();
 
