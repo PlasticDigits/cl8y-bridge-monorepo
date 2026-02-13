@@ -14,6 +14,7 @@ import {
   isKeplrInstalled,
   isLeapInstalled,
   isCosmostationInstalled,
+  connectDevWallet,
   WalletName,
   WalletType,
   TerraWalletType,
@@ -81,16 +82,18 @@ export const useWalletStore = create<WalletState>()(
       connectingWallet: null,
       showWalletModal: false,
 
-      // Connect to simulated wallet (dev mode only - no real extension, cannot sign)
+      // Connect dev wallet (DEV_MODE only) using cosmes MnemonicWallet
+      // Creates a real ConnectedWallet that can sign and broadcast transactions
       connectSimulated: () => {
+        const result = connectDevWallet()
         const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
         set({
           connected: true,
           connecting: false,
           connectingWallet: null,
-          address: 'terra1development0mode0simulated0wallet00addr0',
-          walletType: 'station' as TerraWalletType,
-          connectionType: WalletType.EXTENSION,
+          address: result.address,
+          walletType: result.walletType as TerraWalletType,
+          connectionType: result.connectionType,
           chainId,
           luncBalance: '0',
         })

@@ -1,10 +1,16 @@
 import { TokenLogo } from '../ui'
+import type { TokenOption } from './TokenSelect'
+import { TokenSelect } from './TokenSelect'
 
 export interface AmountInputProps {
   value: string
   onChange: (value: string) => void
   onMax?: () => void
   symbol?: string
+  /** When provided, shows a token dropdown instead of a static symbol */
+  tokens?: TokenOption[]
+  selectedTokenId?: string
+  onTokenChange?: (tokenId: string) => void
   placeholder?: string
   disabled?: boolean
 }
@@ -14,9 +20,14 @@ export function AmountInput({
   onChange,
   onMax,
   symbol = 'LUNC',
+  tokens,
+  selectedTokenId,
+  onTokenChange,
   placeholder = '0.0',
   disabled,
 }: AmountInputProps) {
+  const hasTokenSelector = tokens && tokens.length > 0 && onTokenChange
+
   return (
     <div>
       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-300">Amount</label>
@@ -41,8 +52,19 @@ export function AmountInput({
               MAX
             </button>
           )}
-          <TokenLogo symbol={symbol} size={18} />
-          <span className="text-xs uppercase tracking-wide text-gray-400">{symbol}</span>
+          {hasTokenSelector ? (
+            <TokenSelect
+              tokens={tokens}
+              value={selectedTokenId ?? tokens[0]?.id ?? ''}
+              onChange={onTokenChange}
+              disabled={disabled}
+            />
+          ) : (
+            <>
+              <TokenLogo symbol={symbol} size={18} />
+              <span className="text-xs uppercase tracking-wide text-gray-400">{symbol}</span>
+            </>
+          )}
         </div>
       </div>
     </div>

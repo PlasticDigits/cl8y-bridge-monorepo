@@ -154,5 +154,6 @@ export const TOAST_DURATION = 5000; // 5 seconds
 // WalletConnect Project ID (get from cloud.walletconnect.com)
 export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || '2ce7811b869be33ffad28cff05c93c15';
 
-// Dev mode: when true, allows connecting simulated EVM and Terra wallets (for local dev without extensions)
-export const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
+// Dev mode: allows connecting simulated EVM and Terra wallets (for local dev without extensions)
+// On by default in non-production; opt-out with VITE_DEV_MODE=false; always off in production builds
+export const DEV_MODE = import.meta.env.VITE_DEV_MODE !== 'false' && import.meta.env.MODE !== 'production';

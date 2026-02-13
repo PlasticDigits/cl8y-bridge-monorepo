@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getTokenLogoUrl, getTokenLogoUrlFromId } from './tokenLogos'
+import { getTokenLogoUrl, getTokenLogoUrlFromId, getTokenDisplaySymbol } from './tokenLogos'
 
 describe('tokenLogos', () => {
   describe('getTokenLogoUrl', () => {
@@ -35,6 +35,22 @@ describe('tokenLogos', () => {
 
     it('returns null for unknown cw20 identifiers', () => {
       expect(getTokenLogoUrlFromId('cw20:terra1abc...')).toBeNull()
+    })
+  })
+
+  describe('getTokenDisplaySymbol', () => {
+    it('maps known Terra denoms to display symbols', () => {
+      expect(getTokenDisplaySymbol('uluna')).toBe('LUNC')
+      expect(getTokenDisplaySymbol('uusd')).toBe('USTC')
+    })
+
+    it('returns tokenId for unknown identifiers', () => {
+      expect(getTokenDisplaySymbol('terra1abc...')).toBe('terra1abc...')
+    })
+
+    it('returns empty string for empty input', () => {
+      expect(getTokenDisplaySymbol('')).toBe('')
+      expect(getTokenDisplaySymbol('   ')).toBe('')
     })
   })
 })

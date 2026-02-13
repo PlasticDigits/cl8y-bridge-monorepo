@@ -3,7 +3,7 @@ import { mainnet, bsc, opBNB } from 'wagmi/chains'
 import { walletConnect, coinbaseWallet, mock } from 'wagmi/connectors'
 import { WC_PROJECT_ID, DEV_MODE } from '../utils/constants'
 
-// Custom Anvil chain for local development
+// Custom Anvil chains for local development
 const anvil = {
   id: 31337,
   name: 'Anvil',
@@ -15,6 +15,22 @@ const anvil = {
   rpcUrls: {
     default: {
       http: ['http://localhost:8545'],
+    },
+  },
+  testnet: true,
+} as const
+
+const anvil1 = {
+  id: 31338,
+  name: 'Anvil1',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: {
+      http: ['http://localhost:8546'],
     },
   },
   testnet: true,
@@ -41,7 +57,7 @@ const connectors = [
 ]
 
 export const config = createConfig({
-  chains: [mainnet, bsc, opBNB, anvil],
+  chains: [mainnet, bsc, opBNB, anvil, anvil1],
   connectors,
   multiInjectedProviderDiscovery: true,
   transports: {
@@ -49,6 +65,7 @@ export const config = createConfig({
     [bsc.id]: http(),
     [opBNB.id]: http(),
     [anvil.id]: http('http://localhost:8545'),
+    [anvil1.id]: http('http://localhost:8546'),
   },
 })
 

@@ -1,0 +1,60 @@
+/**
+ * E2E Test Infrastructure Teardown
+ *
+ * Cleans up all test infrastructure:
+ * 1. Stop and remove Docker containers and volumes
+ * 2. Delete .env.e2e.local
+ * 3. Kill any orphaned processes
+ */
+
+import { execSync } from 'child_process'
+import { unlinkSync, existsSync } from 'fs'
+import { resolve } from 'path'
+
+const ROOT_DIR = resolve(__dirname, '../../../../..')
+const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
+
+export default async function teardown(): Promise<void> {
+  console.log('=== E2E Test Infrastructure Teardown ===\n')
+
+  // 1. Stop Docker containers and remove volumes
+  console.log('[teardown] Stopping Docker containers...')
+  try {
+    execSync('docker compose down -v', {
+      cwd: ROOT_DIR,
+      stdio: 'inherit',
+      timeout: 30_000,
+    })
+  } catch (error) {
+    console.warn('[teardown] docker compose down failed (may already be stopped):', (error as Error).message?.slice(0, 200))
+  }
+
+  // 2. Delete environment file
+  if (existsSync(ENV_FILE)) {
+    console.log('[teardown] Removing .env.e2e.local...')
+    unlinkSync(ENV_FILE)
+  }
+
+  // 3. Kill any orphaned processes on test ports
+  const ports = [8545, 8546, 26657, 1317, 9090, 9091]
+  for (const port of ports) {
+    try {
+      execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null || true`, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch {
+      // Ignore - port may not be in use
+    }
+  }
+
+  console.log('\n=== E2E Teardown Complete ===\n')
+}
+
+// Allow running directly: npx tsx src/test/e2e-infra/teardown.ts
+if (require.main === module) {
+  teardown().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}

@@ -33,6 +33,12 @@ vi.mock('../../hooks/useWallet', () => ({
   }),
 }))
 
+vi.mock('../../hooks/useTokenRegistry', () => ({
+  useTokenRegistry: () => ({
+    data: [{ token: 'uluna', is_native: true, evm_token_address: '0x1234', terra_decimals: 6, evm_decimals: 18, enabled: true }],
+  }),
+}))
+
 vi.mock('../../hooks/useBridgeDeposit', () => ({
   useBridgeDeposit: () => ({
     status: 'idle',

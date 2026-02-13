@@ -14,6 +14,19 @@ services:
       timeout: 5s
       retries: 5
 
+  # Second local EVM chain for cross-EVM testing
+  anvil1:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--block-time", "1", "--accounts", "10", "--balance", "10000", "--chain-id", "31338"]
+    ports:
+      - "8546:8545"
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # Local Terra Classic chain
   # Image: ghcr.io/plasticdigits/localterra-cl8y (pre-configured LocalTerra)
   # Source: https://github.com/PlasticDigits/localterra-cl8y

@@ -4,6 +4,7 @@
  * These tests require real infrastructure:
  * - LocalTerra running on localhost:1317
  * - Anvil running on localhost:8545
+ * - Anvil1 running on localhost:8546
  * 
  * Run with: npm run test:integration
  * Skip with: SKIP_INTEGRATION=true npm run test
@@ -14,6 +15,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 // Infrastructure endpoints
 const TERRA_LCD = 'http://localhost:1317'
 const EVM_RPC = 'http://localhost:8545'
+const EVM1_RPC = 'http://localhost:8546'
 
 // Test configuration
 const INTEGRATION_TIMEOUT = 30000 // 30 seconds for network calls
@@ -58,11 +60,34 @@ async function isAnvilRunning(): Promise<boolean> {
   }
 }
 
+/**
+ * Check if Anvil1 (second EVM chain) is running
+ */
+async function isAnvil1Running(): Promise<boolean> {
+  try {
+    const response = await fetch(EVM1_RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_blockNumber',
+        params: [],
+        id: 1,
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    const data = await response.json()
+    return data.result !== undefined
+  } catch {
+    return false
+  }
+}
+
 describe.skipIf(skipIntegration)('Infrastructure Connectivity', () => {
   it('LocalTerra is running', async () => {
     const running = await isLocalTerraRunning()
     if (!running) {
-      console.warn('LocalTerra not running - start with: cd ../LocalTerra && docker compose up -d')
+      console.warn('LocalTerra not running - start with: docker compose up -d localterra')
     }
     expect(running).toBe(true)
   }, INTEGRATION_TIMEOUT)
@@ -71,6 +96,14 @@ describe.skipIf(skipIntegration)('Infrastructure Connectivity', () => {
     const running = await isAnvilRunning()
     if (!running) {
       console.warn('Anvil not running - start with: docker compose up -d anvil')
+    }
+    expect(running).toBe(true)
+  }, INTEGRATION_TIMEOUT)
+
+  it('Anvil1 is running', async () => {
+    const running = await isAnvil1Running()
+    if (!running) {
+      console.warn('Anvil1 not running - start with: docker compose up -d anvil1')
     }
     expect(running).toBe(true)
   }, INTEGRATION_TIMEOUT)
@@ -164,6 +197,49 @@ describe.skipIf(skipIntegration)('EVM RPC Queries', () => {
     expect(data.result).toBeDefined()
     const gasPrice = BigInt(data.result)
     expect(gasPrice).toBeGreaterThan(0n)
+  }, INTEGRATION_TIMEOUT)
+})
+
+describe.skipIf(skipIntegration)('Anvil1 RPC Queries', () => {
+  let anvil1Running = false
+
+  beforeAll(async () => {
+    anvil1Running = await isAnvil1Running()
+  })
+
+  async function rpcCall1(method: string, params: unknown[] = []) {
+    const response = await fetch(EVM1_RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params,
+        id: 1,
+      }),
+    })
+    return response.json()
+  }
+
+  it.skipIf(!anvil1Running)('can get block number from Anvil1', async () => {
+    const data = await rpcCall1('eth_blockNumber')
+    expect(data.result).toBeDefined()
+    expect(data.result).toMatch(/^0x[0-9a-f]+$/i)
+  }, INTEGRATION_TIMEOUT)
+
+  it.skipIf(!anvil1Running)('can get chain ID from Anvil1', async () => {
+    const data = await rpcCall1('eth_chainId')
+    expect(data.result).toBeDefined()
+    // Anvil1 chain ID is 31338 (0x7a6a)
+    expect(data.result).toBe('0x7a6a')
+  }, INTEGRATION_TIMEOUT)
+
+  it.skipIf(!anvil1Running)('can get test account balance from Anvil1', async () => {
+    const testAddress = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+    const data = await rpcCall1('eth_getBalance', [testAddress, 'latest'])
+    expect(data.result).toBeDefined()
+    const balance = BigInt(data.result)
+    expect(balance).toBeGreaterThan(0n)
   }, INTEGRATION_TIMEOUT)
 })
 

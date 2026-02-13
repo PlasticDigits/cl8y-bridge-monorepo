@@ -1,6 +1,7 @@
 import { ConnectedWallet, WalletName, WalletType } from '@goblinhunt/cosmes/wallet'
 import type { TerraWalletType } from './types'
 import { CONTROLLERS, TERRA_CLASSIC_CHAIN_ID, getChainInfo } from './controllers'
+import { createDevTerraWallet } from './devWallet'
 
 const connectedWallets: Map<string, ConnectedWallet> = new Map()
 
@@ -104,6 +105,20 @@ export function getCurrentTerraAddress(): string | null {
 
 export function isTerraWalletConnected(): boolean {
   return connectedWallets.has(TERRA_CLASSIC_CHAIN_ID)
+}
+
+/**
+ * Connect the dev wallet (MnemonicWallet) for local development and E2E testing.
+ * Creates a real ConnectedWallet that can sign and broadcast transactions.
+ */
+export function connectDevWallet(): { address: string; walletType: TerraWalletType; connectionType: WalletType } {
+  const wallet = createDevTerraWallet()
+  connectedWallets.set(TERRA_CLASSIC_CHAIN_ID, wallet)
+  return {
+    address: wallet.address,
+    walletType: 'station',
+    connectionType: WalletType.EXTENSION,
+  }
 }
 
 export async function reconnectWalletForRefresh(): Promise<void> {

@@ -5,7 +5,7 @@ help:
 	@echo "CL8Y Bridge Development Commands"
 	@echo ""
 	@echo "Infrastructure:"
-	@echo "  make start          - Start all services (Anvil, LocalTerra, PostgreSQL)"
+	@echo "  make start          - Start all services (Anvil, Anvil1, LocalTerra, PostgreSQL)"
 	@echo "  make stop           - Stop all services"
 	@echo "  make reset          - Stop and remove all volumes"
 	@echo "  make status         - Check status of all services"
@@ -35,6 +35,14 @@ help:
 	@echo "  make test-operator  - Run operator tests"
 	@echo "  make test-frontend  - Run frontend unit tests"
 	@echo "  make test           - Run all unit tests"
+	@echo ""
+	@echo "Frontend E2E Testing:"
+	@echo "  make test-frontend-e2e              - Run Playwright E2E tests"
+	@echo "  make test-frontend-e2e-ui           - Open Playwright UI mode"
+	@echo "  make test-frontend-e2e-headed       - Run E2E tests with visible browser"
+	@echo "  make test-frontend-e2e-setup        - Setup E2E infrastructure only"
+	@echo "  make test-frontend-e2e-teardown     - Teardown E2E infrastructure"
+	@echo "  make test-frontend-integration-chains - Run vitest integration tests with real chains"
 	@echo ""
 	@echo "E2E Testing (Bash - Legacy):"
 	@echo "  make e2e-test           - MASTER TEST: Run ALL E2E tests (bash)"
@@ -401,6 +409,26 @@ test-frontend-all:
 
 test-frontend-coverage:
 	cd packages/frontend && npm run test:coverage
+
+# Frontend E2E tests (requires Anvil, Anvil1, LocalTerra)
+test-frontend-e2e:
+	cd packages/frontend && npx playwright test
+
+test-frontend-e2e-ui:
+	cd packages/frontend && npx playwright test --ui
+
+test-frontend-e2e-headed:
+	cd packages/frontend && npx playwright test --headed
+
+test-frontend-e2e-setup:
+	cd packages/frontend && npx tsx src/test/e2e-infra/setup.ts
+
+test-frontend-e2e-teardown:
+	cd packages/frontend && npx tsx src/test/e2e-infra/teardown.ts
+
+# Frontend integration tests with real chains (vitest + globalSetup)
+test-frontend-integration-chains:
+	cd packages/frontend && npx vitest run --config vitest.config.integration.ts
 
 # Bundle analysis
 analyze-bundle:

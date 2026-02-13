@@ -12,6 +12,12 @@
     "test:run": "vitest run",
     "test:unit": "SKIP_INTEGRATION=true vitest run",
     "test:integration": "vitest run src/test/integration.test.ts",
+    "test:integration:chains": "vitest run --config vitest.config.integration.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:setup": "tsx src/test/e2e-infra/setup.ts",
+    "test:e2e:teardown": "tsx src/test/e2e-infra/teardown.ts",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
   },
@@ -26,6 +32,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

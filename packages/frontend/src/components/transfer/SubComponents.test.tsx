@@ -91,6 +91,29 @@ describe('AmountInput', () => {
     render(<AmountInput value="" onChange={() => {}} symbol="LUNC" />)
     expect(screen.getByText('LUNC')).toBeInTheDocument()
   })
+
+  it('should show token dropdown when multiple tokens provided', async () => {
+    const user = userEvent.setup()
+    const tokens = [
+      { id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' },
+      { id: 'uusd', symbol: 'USTC', tokenId: 'uusd' },
+    ]
+    const onTokenChange = vi.fn()
+    render(
+      <AmountInput
+        value=""
+        onChange={() => {}}
+        tokens={tokens}
+        selectedTokenId="uluna"
+        onTokenChange={onTokenChange}
+      />
+    )
+    expect(screen.getByText('LUNC')).toBeInTheDocument()
+    const tokenButton = screen.getByRole('combobox', { name: 'Select token' })
+    await user.click(tokenButton)
+    expect(screen.getByRole('option', { name: /LUNC/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /USTC/ })).toBeInTheDocument()
+  })
 })
 
 describe('RecipientInput', () => {

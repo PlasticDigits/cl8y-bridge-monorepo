@@ -26,6 +26,14 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       bridgeAddress: import.meta.env.VITE_EVM_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00007a69', // 31337 = 0x7a69
     },
+    anvil1: {
+      chainId: 31338,
+      type: 'evm',
+      name: 'Anvil1',
+      rpcUrl: 'http://localhost:8546',
+      bridgeAddress: import.meta.env.VITE_EVM1_BRIDGE_ADDRESS || '',
+      bytes4ChainId: '0x00007a6a', // 31338 = 0x7a6a
+    },
     localterra: {
       chainId: 'localterra',
       type: 'cosmos',
@@ -122,6 +130,7 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
   opbnb: { icon: '⬡', explorerUrl: 'https://opbnb.bscscan.com', nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 } },
   terra: { icon: '🌙', explorerUrl: 'https://finder.terraclassic.community/mainnet', nativeCurrency: { name: 'Luna Classic', symbol: 'LUNC', decimals: 6 } },
   anvil: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
+  anvil1: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
   localterra: { icon: '🌙', explorerUrl: '', nativeCurrency: { name: 'Luna', symbol: 'LUNA', decimals: 6 } },
 }
 

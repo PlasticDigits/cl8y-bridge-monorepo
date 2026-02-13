@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { Address } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
+import { useTokenRegistry } from '../../hooks/useTokenRegistry'
 import {
   useBridgeDeposit,
   computeTerraChainKey,
@@ -14,8 +15,10 @@ import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer } from '../../utils/bridgeChains'
+import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
+import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS, NETWORKS } from '../../utils/constants'
 import { parseAmount, formatAmount } from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
@@ -79,9 +82,75 @@ function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): Chai
   })
 }
 
+const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address
+
+/** Build selectable token options from registry for the given direction */
+function buildTransferTokens(
+  registryTokens: { token: string; is_native: boolean; evm_token_address: string; terra_decimals: number; evm_decimals: number; enabled: boolean }[] | undefined,
+  isSourceTerra: boolean,
+  fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined
+): TokenOption[] {
+  if (isSourceTerra) {
+    // Terra source: show enabled native tokens (useTerraDeposit only supports uluna for now)
+    const fromRegistry = (registryTokens ?? [])
+      .filter((t) => t.enabled && t.is_native)
+      .map((t) => ({
+        id: t.token,
+        symbol: getTokenDisplaySymbol(t.token),
+        tokenId: t.token,
+      }))
+    if (fromRegistry.length > 0) return fromRegistry
+    return [{ id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' }]
+  }
+  // EVM source: show enabled tokens with evm_token_address
+  const fromRegistry = (registryTokens ?? [])
+    .filter((t) => t.enabled && t.evm_token_address)
+    .map((t) => ({
+      id: t.token,
+      symbol: getTokenDisplaySymbol(t.token),
+      tokenId: t.token,
+    }))
+  if (fromRegistry.length > 0) return fromRegistry
+  if (fallbackConfig) {
+    return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
+  }
+  return []
+}
+
+/** Get EVM token config for deposit/balance from selected token id */
+function getEvmTokenConfig(
+  selectedTokenId: string,
+  registryTokens: { token: string; evm_token_address: string; evm_decimals: number }[] | undefined,
+  fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined
+): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
+  const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
+  if (fromRegistry?.evm_token_address) {
+    return {
+      address: fromRegistry.evm_token_address as Address,
+      lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
+      symbol: getTokenDisplaySymbol(fromRegistry.token),
+      decimals: fromRegistry.evm_decimals,
+    }
+  }
+  if (fallbackConfig && (selectedTokenId === fallbackConfig.address || selectedTokenId === 'uluna')) {
+    return fallbackConfig
+  }
+  return undefined
+}
+
+/** Get Terra token decimals for selected token */
+function getTerraTokenDecimals(
+  selectedTokenId: string,
+  registryTokens: { token: string; terra_decimals: number }[] | undefined
+): number {
+  const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
+  return fromRegistry?.terra_decimals ?? DECIMALS.LUNC
+}
+
 export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
+  const { data: registryTokens } = useTokenRegistry()
   const { setShowEvmWalletModal } = useUIStore()
   const { recordTransfer } = useTransferStore()
 
@@ -100,6 +169,7 @@ export function TransferForm() {
   })
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
+  const [selectedTokenId, setSelectedTokenId] = useState<string>('')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -127,7 +197,31 @@ export function TransferForm() {
   const isSourceTerra = direction === 'terra-to-evm'
   const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm'
 
-  const tokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+  const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+  const transferTokens = useMemo(
+    () => buildTransferTokens(registryTokens, isSourceTerra, fallbackTokenConfig),
+    [registryTokens, isSourceTerra, fallbackTokenConfig]
+  )
+
+  const evmTokenConfig = useMemo(
+    () => getEvmTokenConfig(selectedTokenId, registryTokens, fallbackTokenConfig),
+    [selectedTokenId, registryTokens, fallbackTokenConfig]
+  )
+  const tokenConfig = isSourceTerra ? undefined : evmTokenConfig
+  const terraDecimals = useMemo(
+    () => getTerraTokenDecimals(selectedTokenId, registryTokens),
+    [selectedTokenId, registryTokens]
+  )
+
+  useEffect(() => {
+    if (transferTokens.length === 0) return
+    const validIds = transferTokens.map((t) => t.id)
+    const currentValid = validIds.includes(selectedTokenId)
+    if (!currentValid || !selectedTokenId) {
+      setSelectedTokenId(transferTokens[0].id)
+    }
+  }, [transferTokens, selectedTokenId])
+
   const {
     deposit: evmDeposit,
     status: evmStatus,
@@ -164,6 +258,8 @@ export function TransferForm() {
     evmStatus === 'waiting-deposit' ||
     terraStatus === 'locking'
 
+  const amountDecimals = isSourceTerra ? terraDecimals : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+
   useEffect(() => {
     if (evmStatus === 'success' && depositTxHash) {
       setTxHash(depositTxHash)
@@ -172,7 +268,7 @@ export function TransferForm() {
         direction,
         sourceChain,
         destChain,
-        amount: parseAmount(amount, tokenConfig?.decimals ?? DECIMALS.LUNC),
+        amount: parseAmount(amount, amountDecimals),
         status: 'confirmed',
         txHash: depositTxHash,
       })
@@ -181,7 +277,7 @@ export function TransferForm() {
       setError(evmError)
       resetEvm()
     }
-  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, tokenConfig, recordTransfer, direction])
+  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction])
 
   useEffect(() => {
     if (terraStatus === 'success' && terraTxHash) {
@@ -231,7 +327,7 @@ export function TransferForm() {
         return
       }
       const destChainId = getChainIdNumeric(destChain, allChains)
-      const amountMicro = parseAmount(amount, DECIMALS.LUNC)
+      const amountMicro = parseAmount(amount, terraDecimals)
       await terraLock({ amountMicro, destChainId, recipientEvm: recipientAddr })
     } else if (direction === 'evm-to-terra') {
       // EVM → Terra: deposit on EVM router
@@ -264,12 +360,13 @@ export function TransferForm() {
   }
 
   const balanceDisplay = isSourceTerra
-    ? formatAmount(luncBalance, DECIMALS.LUNC)
+    ? formatAmount(luncBalance, terraDecimals)
     : tokenBalance !== undefined && tokenConfig
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
 
-  const sourceLabel = isSourceTerra ? 'LUNC' : tokenConfig?.symbol
+  const selectedSymbol =
+    transferTokens.find((t) => t.id === selectedTokenId)?.symbol ?? (isSourceTerra ? 'LUNC' : tokenConfig?.symbol ?? 'LUNC')
   const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
 
   const buttonText = !isWalletConnected
@@ -304,19 +401,22 @@ export function TransferForm() {
         value={sourceChain}
         onChange={handleSourceChange}
         balance={balanceDisplay}
-        balanceLabel={sourceLabel}
+        balanceLabel={selectedSymbol}
       />
       <AmountInput
         value={amount}
         onChange={setAmount}
         onMax={
           isSourceTerra
-            ? () => setAmount(formatAmount(luncBalance, DECIMALS.LUNC))
+            ? () => setAmount(formatAmount(luncBalance, terraDecimals))
             : tokenBalance !== undefined && tokenConfig
             ? () => setAmount(formatAmount(tokenBalance.toString(), tokenConfig.decimals))
             : undefined
         }
-        symbol="LUNC"
+        tokens={transferTokens}
+        selectedTokenId={selectedTokenId}
+        onTokenChange={setSelectedTokenId}
+        symbol={selectedSymbol}
       />
       <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled} />
       <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} />
@@ -334,7 +434,7 @@ export function TransferForm() {
           }
         }}
       />
-      <FeeBreakdown receiveAmount={receiveAmount} />
+      <FeeBreakdown receiveAmount={receiveAmount} symbol={selectedSymbol} />
 
       <button
         type="submit"

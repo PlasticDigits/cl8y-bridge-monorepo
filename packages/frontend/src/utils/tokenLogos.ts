@@ -17,6 +17,16 @@ const DENOM_TO_SYMBOL: Record<string, string> = {
 }
 
 /**
+ * Returns display symbol for a token identifier (denom or cw20 address).
+ * Maps known Terra denoms to friendly symbols (uluna -> LUNC, uusd -> USTC).
+ */
+export function getTokenDisplaySymbol(tokenId: string): string {
+  if (!tokenId?.trim()) return ''
+  const lower = tokenId.toLowerCase()
+  return DENOM_TO_SYMBOL[lower] ?? tokenId
+}
+
+/**
  * Returns the logo URL for a symbol when we have a matching asset.
  * Match is case-insensitive (e.g. "lunc" or "SpaceUSD" -> SPACEUSD.png).
  */
