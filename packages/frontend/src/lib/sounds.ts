@@ -33,7 +33,7 @@ function play(key: keyof typeof SOUNDS): void {
   if (!audio) return
   try {
     audio.currentTime = 0
-    audio.volume = 0.4
+    audio.volume = key === 'buttonPress' ? 0.2 : 0.4
     audio.play().catch(() => {})
   } catch {
     // ignore
