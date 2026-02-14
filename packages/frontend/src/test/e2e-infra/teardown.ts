@@ -22,12 +22,23 @@ const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 export default async function teardown(): Promise<void> {
   console.log('=== E2E Test Infrastructure Teardown ===\n')
 
-  // 0. Stop operator first (before docker compose down)
+  // 0. Stop operator and canceler first (before docker compose down)
   console.log('[teardown] Stopping operator...')
   try {
     await stopOperator()
   } catch (error) {
     console.warn('[teardown] Operator stop failed:', (error as Error).message?.slice(0, 200))
+  }
+
+  console.log('[teardown] Stopping canceler(s)...')
+  try {
+    execSync('./scripts/canceler-ctl.sh stop-all', {
+      cwd: ROOT_DIR,
+      stdio: 'pipe',
+      timeout: 5_000,
+    })
+  } catch {
+    // Ignore - canceler may not be running
   }
 
   // 1. Stop Docker containers and remove volumes
@@ -52,8 +63,8 @@ export default async function teardown(): Promise<void> {
     unlinkSync(VITE_ENV_FILE)
   }
 
-  // 3. Kill any orphaned processes on test ports
-  const ports = [8545, 8546, 26657, 1317, 9090, 9091, 9092, 5433]
+  // 3. Kill any orphaned processes on test ports (incl. Vite dapp on 5173)
+  const ports = [5173, 8545, 8546, 26657, 1317, 9090, 9091, 9092, 9099, 5433]
   for (const port of ports) {
     try {
       execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null || true`, {

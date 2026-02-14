@@ -40,6 +40,51 @@ export function formatAmount(
 }
 
 /**
+ * Format a number in compact human-readable form: configurable sigfigs, k/m/b suffixes, or scientific for small values.
+ * Examples: 1234 -> "1.23k", 1234567 -> "1.23m", 0.0000123 -> "1.23e-5"
+ */
+export function formatCompact(
+  value: string | number | bigint,
+  decimals: number = 6,
+  sigfigs: number = 4
+): string {
+  let num: number
+  if (typeof value === 'bigint') {
+    num = Number(value) / Math.pow(10, decimals)
+  } else if (typeof value === 'string') {
+    num = parseFloat(value) / Math.pow(10, decimals)
+  } else {
+    num = value / Math.pow(10, decimals)
+  }
+  if (!Number.isFinite(num) || num === 0) return '0'
+  const abs = Math.abs(num)
+  if (abs >= 1e9) {
+    const scaled = num / 1e9
+    return numToSigFig(scaled, sigfigs) + 'b'
+  }
+  if (abs >= 1e6) {
+    const scaled = num / 1e6
+    return numToSigFig(scaled, sigfigs) + 'm'
+  }
+  if (abs >= 1e3) {
+    const scaled = num / 1e3
+    return numToSigFig(scaled, sigfigs) + 'k'
+  }
+  if (abs < 0.0001) {
+    const exp = Math.floor(Math.log10(abs))
+    const mantissa = num / Math.pow(10, exp)
+    return `${numToSigFig(mantissa, sigfigs)}e${exp}`
+  }
+  return numToSigFig(num, sigfigs)
+}
+
+function numToSigFig(n: number, sigfigs: number): string {
+  if (n === 0) return '0'
+  const s = n.toPrecision(sigfigs)
+  return parseFloat(s).toString()
+}
+
+/**
  * Parse a human-readable amount to micro-denominated
  */
 export function parseAmount(
@@ -64,22 +109,27 @@ export function formatRate(rate: string | number, decimals: number = 4): string 
 }
 
 /**
- * Format a duration in seconds to human-readable
+ * Format a duration in seconds to human-readable.
+ * Shows seconds when under 1 minute (e.g. "45s") for countdown timers.
  */
 export function formatDuration(seconds: number): string {
   if (seconds < 0) return 'Ended';
-  
+
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  
+  const secs = Math.floor(seconds % 60);
+
   if (days > 0) {
     return `${days}d ${hours}h ${minutes}m`;
   }
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }
-  return `${minutes}m`;
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${secs}s`;
 }
 
 /**
@@ -147,5 +197,22 @@ export function getEvmAddressUrl(address: string): string {
  */
 export function getEvmTxUrl(txHash: string): string {
   return `${getEvmScannerUrl()}/tx/${txHash}`;
+}
+
+/**
+ * Get the explorer URL for a token on a specific chain.
+ * @param explorerBaseUrl - Base URL (e.g. https://bscscan.com)
+ * @param tokenAddress - Token contract address (ERC20 or CW20)
+ * @param chainType - 'evm' uses /token/, 'cosmos' uses /address/
+ */
+export function getTokenExplorerUrl(
+  explorerBaseUrl: string,
+  tokenAddress: string,
+  chainType: 'evm' | 'cosmos'
+): string {
+  if (!explorerBaseUrl?.trim() || !tokenAddress?.trim()) return ''
+  const base = explorerBaseUrl.replace(/\/$/, '')
+  if (chainType === 'evm') return `${base}/token/${tokenAddress}`
+  return `${base}/address/${tokenAddress}`
 }
 

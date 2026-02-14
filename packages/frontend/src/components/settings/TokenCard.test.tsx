@@ -1,7 +1,35 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { TokenCard } from './TokenCard'
 import type { TokenEntry } from '../../hooks/useTokenRegistry'
+
+vi.mock('../../hooks/useTokenDisplayInfo', () => ({
+  useTerraTokenDisplayInfo: (tokenId: string) => ({
+    displayLabel: tokenId === 'uluna' ? 'LUNC' : tokenId === 'cw20:addr' ? 'cw20...addr' : tokenId,
+    symbol: tokenId === 'uluna' ? 'LUNC' : tokenId,
+    addressForBlockie: tokenId?.startsWith('terra1') ? tokenId : undefined,
+  }),
+  useEvmTokensDisplayInfo: () => ({}),
+}))
+
+vi.mock('../../hooks/useTokenChains', () => ({
+  useTokenChains: (terraToken: string, evmAddr: string) => {
+    const chains: Array<{ chainId: string; chainName: string; type: string; address: string }> = [
+      { chainId: 'localterra', chainName: 'LocalTerra', type: 'cosmos', address: terraToken },
+    ]
+    if (evmAddr) {
+      chains.push({
+        chainId: 'anvil',
+        chainName: 'Anvil',
+        type: 'evm',
+        address: evmAddr,
+      })
+    }
+    return chains
+  },
+}))
+
+vi.mock('react-blockies', () => ({ default: () => null }))
 
 const mockToken: TokenEntry = {
   token: 'uluna',
@@ -13,9 +41,9 @@ const mockToken: TokenEntry = {
 }
 
 describe('TokenCard', () => {
-  it('renders token symbol and bridge mode LockUnlock for native', () => {
+  it('renders friendly symbol and bridge mode LockUnlock for native', () => {
     render(<TokenCard token={mockToken} />)
-    expect(screen.getByText('uluna')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /LUNC/ })).toBeInTheDocument()
     expect(screen.getByText(/LockUnlock/)).toBeInTheDocument()
   })
 
@@ -35,23 +63,25 @@ describe('TokenCard', () => {
     expect(screen.getByText('(disabled)')).toBeInTheDocument()
   })
 
-  it('renders copy button for EVM address when present', () => {
+  it('renders copy button for EVM chain when present', () => {
     render(<TokenCard token={mockToken} />)
-    expect(screen.getByRole('button', { name: 'Copy EVM address' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy Anvil address' })).toBeInTheDocument()
   })
 
-  it('does not render EVM address row when evm_token_address is empty', () => {
+  it('renders copy button for LocalTerra address when only Terra chain', () => {
     render(<TokenCard token={{ ...mockToken, evm_token_address: '' }} />)
-    expect(screen.queryByRole('button', { name: 'Copy EVM address' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy LocalTerra address' })).toBeInTheDocument()
   })
 
-  it('shows registered chains including EVM when evm_token_address present', () => {
+  it('shows chain names when evm_token_address present', () => {
     render(<TokenCard token={mockToken} />)
-    expect(screen.getByText(/Chains: Terra, EVM/)).toBeInTheDocument()
+    expect(screen.getByText(/LocalTerra:/)).toBeInTheDocument()
+    expect(screen.getByText(/Anvil:/)).toBeInTheDocument()
   })
 
   it('shows only Terra chain when no evm_token_address', () => {
     render(<TokenCard token={{ ...mockToken, evm_token_address: '' }} />)
-    expect(screen.getByText('Chains: Terra')).toBeInTheDocument()
+    expect(screen.getByText(/LocalTerra:/)).toBeInTheDocument()
+    expect(screen.queryByText(/Anvil:/)).not.toBeInTheDocument()
   })
 })

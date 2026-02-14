@@ -33,16 +33,12 @@ interface TerraPendingWithdrawQuery {
 // Terra contract response types (from LCD JSON)
 interface TerraDepositInfoResponse {
   deposit_hash: string // base64 Binary
-  dest_chain_key: string // base64 Binary (bytes4 in V2, but named "key" for legacy)
   src_account: string // base64 Binary (32 bytes)
   dest_token_address: string // base64 Binary (32 bytes)
   dest_account: string // base64 Binary (32 bytes)
   amount: string // Uint128 as string
   nonce: number // u64
-  deposited_at: {
-    seconds: string // Timestamp
-    nanos?: number
-  }
+  deposited_at: string // CosmWasm Timestamp: nanoseconds as string
 }
 
 interface TerraPendingWithdrawResponse {
@@ -94,21 +90,25 @@ export async function queryTerraDeposit(
     }
 
     // Decode base64 Binary fields to hex
-    const destChainHex = base64ToHex(response.dest_chain_key)
     const srcAccountHex = base64ToHex(response.src_account)
     const destAccountHex = base64ToHex(response.dest_account)
     const tokenHex = base64ToHex(response.dest_token_address)
 
-    // For Terra deposits, srcChain is Terra's bytes4 chain ID
-    // We need to get this from the chain config or query it
-    // For now, use a placeholder - will be resolved properly in Phase 2 integration
+    // srcChain is Terra's bytes4 chain ID from config
     const srcChainHex = terraChainConfig.bytes4ChainId
       ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
       : ('0x' + '0'.repeat(64)) as Hex
 
+    // destChain is not stored in the deposit record; derive from the deposit hash fields
+    // The deposit was found by hash, so we know it's valid. destChain will be filled
+    // from the pending withdraw record when both sides are available.
+    const destChainHex = ('0x' + '0'.repeat(64)) as Hex
+
     const amount = BigInt(response.amount)
     const nonce = BigInt(response.nonce)
-    const timestamp = BigInt(response.deposited_at.seconds)
+    // CosmWasm Timestamp serializes as nanoseconds string
+    const timestampNanos = BigInt(response.deposited_at)
+    const timestamp = timestampNanos / 1_000_000_000n
 
     return {
       chainId: typeof terraChainConfig.chainId === 'number' ? terraChainConfig.chainId : 0,
@@ -201,6 +201,7 @@ export async function queryTerraPendingWithdraw(
       approved: response.approved,
       cancelled: response.cancelled,
       executed: response.executed,
+      cancelWindowRemaining: response.cancel_window_remaining,
     }
   } catch (err) {
     // Contract query failed (e.g., withdraw not found, LCD error)

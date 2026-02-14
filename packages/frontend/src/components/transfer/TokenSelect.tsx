@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect } from 'react'
 import { TokenLogo } from '../ui'
 import { sounds } from '../../lib/sounds'
+import { useTokenList } from '../../hooks/useTokenList'
+import { useTokenOptionsDisplayMap } from '../../hooks/useTokenDisplayInfo'
+import { getTokenFromList } from '../../services/tokenlist'
+import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 
 export interface TokenOption {
   id: string
   symbol: string
   tokenId: string
+  /** EVM token address when source is EVM - used for onchain symbol lookup */
+  evmTokenAddress?: string
 }
 
 export interface TokenSelectProps {
@@ -14,11 +20,35 @@ export interface TokenSelectProps {
   onChange: (tokenId: string) => void
   id?: string
   disabled?: boolean
+  /** Source chain RPC URL when source is EVM - enables onchain symbol lookup for dropdown */
+  sourceChainRpcUrl?: string
 }
 
-export function TokenSelect({ tokens, value, onChange, id = 'token-select', disabled }: TokenSelectProps) {
+function getDisplayLabel(
+  token: TokenOption,
+  tokenlist: { symbol: string; name?: string } | null,
+  displayMap?: Record<string, string>
+): string {
+  const fromMap = displayMap?.[token.id]
+  if (fromMap) return fromMap
+  const fromList = tokenlist?.symbol
+  const fallback = token.symbol
+  const label = fromList ?? fallback
+  return isAddressLike(label) ? shortenAddress(label) : label
+}
+
+function getAddressForBlockie(token: TokenOption): string | undefined {
+  if (token.evmTokenAddress && token.evmTokenAddress.startsWith('0x')) {
+    return token.evmTokenAddress
+  }
+  return isAddressLike(token.tokenId) ? token.tokenId : undefined
+}
+
+export function TokenSelect({ tokens, value, onChange, id = 'token-select', disabled, sourceChainRpcUrl }: TokenSelectProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const { data: tokenlist } = useTokenList()
+  const displayMap = useTokenOptionsDisplayMap(tokens, sourceChainRpcUrl)
 
   const selected = tokens.find((t) => t.id === value) ?? tokens[0]
 
@@ -36,12 +66,10 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
 
   if (tokens.length === 0) return null
 
-  // Always render the dropdown-style button so the token selector is visible.
-  // When there's only 1 token, the button is non-interactive (no chevron, no popup).
   const canOpen = tokens.length > 1
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="relative z-30">
       <button
         id={id}
         type="button"
@@ -62,8 +90,13 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
           canOpen ? 'cursor-pointer hover:bg-white/10 hover:text-gray-300 focus:border-cyan-300' : 'cursor-default'
         }`}
       >
-        <TokenLogo symbol={selected?.symbol} tokenId={selected?.tokenId} size={18} />
-        <span>{selected?.symbol}</span>
+        <TokenLogo
+          symbol={selected?.symbol}
+          tokenId={selected?.tokenId}
+          addressForBlockie={getAddressForBlockie(selected)}
+          size={18}
+        />
+        <span>{getDisplayLabel(selected, tokenlist ? getTokenFromList(tokenlist, selected.id) : null, displayMap)}</span>
         {canOpen && (
           <svg
             className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -82,10 +115,13 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
           id={`${id}-listbox`}
           role="listbox"
           aria-labelledby={id}
-          className="absolute right-0 top-full z-50 mt-1 max-h-48 min-w-[120px] overflow-auto border-2 border-white/20 bg-[#161616] shadow-lg"
+          className="absolute right-0 top-full z-[9999] mt-1 max-h-72 min-w-[180px] overflow-y-auto overflow-x-hidden border-2 border-gray-700 bg-[#161616] shadow-xl"
         >
           {tokens.map((token) => {
             const isSelected = token.id === value
+            const listMatch = tokenlist ? getTokenFromList(tokenlist, token.id) : null
+            const displayLabel = getDisplayLabel(token, listMatch, displayMap)
+            const addressForBlockie = getAddressForBlockie(token)
             return (
               <li
                 key={token.id}
@@ -109,8 +145,13 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
                   isSelected ? 'bg-cyan-900/30' : ''
                 }`}
               >
-                <TokenLogo symbol={token.symbol} tokenId={token.tokenId} size={18} />
-                <span className="truncate">{token.symbol}</span>
+                <TokenLogo
+                  symbol={token.symbol}
+                  tokenId={token.tokenId}
+                  addressForBlockie={addressForBlockie}
+                  size={18}
+                />
+                <span className="truncate">{displayLabel}</span>
               </li>
             )
           })}

@@ -241,3 +241,68 @@ export function terraAddressToBytes32(bech32Address: string): Hex {
   const hex = rawBytes.map((b) => b.toString(16).padStart(2, '0')).join('')
   return `0x${hex.padStart(64, '0')}` as Hex
 }
+
+// ─── Bech32 Encoding (for bytes32 → terra1... reverse conversion) ───
+
+const BECH32_GENERATORS = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+
+function bech32Polymod(values: number[]): number {
+  let chk = 1
+  for (const v of values) {
+    const b = chk >> 25
+    chk = ((chk & 0x1ffffff) << 5) ^ v
+    for (let i = 0; i < 5; i++) {
+      if ((b >> i) & 1) chk ^= BECH32_GENERATORS[i]
+    }
+  }
+  return chk
+}
+
+function bech32HrpExpand(hrp: string): number[] {
+  const result: number[] = []
+  for (const ch of hrp) result.push(ch.charCodeAt(0) >> 5)
+  result.push(0)
+  for (const ch of hrp) result.push(ch.charCodeAt(0) & 31)
+  return result
+}
+
+function bech32CreateChecksum(hrp: string, data5bit: number[]): number[] {
+  const values = [...bech32HrpExpand(hrp), ...data5bit, 0, 0, 0, 0, 0, 0]
+  const polymod = bech32Polymod(values) ^ 1
+  return Array.from({ length: 6 }, (_, i) => (polymod >> (5 * (5 - i))) & 31)
+}
+
+function bech32Encode(hrp: string, data5bit: number[]): string {
+  const checksum = bech32CreateChecksum(hrp, data5bit)
+  return hrp + '1' + [...data5bit, ...checksum].map((v) => BECH32_CHARSET[v]).join('')
+}
+
+/**
+ * Convert bytes32 hex back to a Terra bech32 address.
+ * Reverses terraAddressToBytes32: extracts the last 20 bytes, bech32-encodes with "terra" HRP.
+ */
+export function bytes32ToTerraAddress(bytes32Hex: string): string {
+  const clean = bytes32Hex.startsWith('0x') ? bytes32Hex.slice(2) : bytes32Hex
+  if (clean.length !== 64) {
+    throw new Error(`Expected 64-char hex (bytes32), got ${clean.length}`)
+  }
+
+  // Extract last 20 bytes (40 hex chars) — the canonical address
+  const addrHex = clean.slice(-40)
+  const padding = clean.slice(0, clean.length - 40)
+  if (padding && !/^0+$/.test(padding)) {
+    throw new Error('Invalid bytes32 for Terra address: non-zero padding in first 12 bytes')
+  }
+
+  // Convert hex to bytes
+  const rawBytes: number[] = []
+  for (let i = 0; i < 40; i += 2) {
+    rawBytes.push(parseInt(addrHex.slice(i, i + 2), 16))
+  }
+
+  // Convert 8-bit bytes to 5-bit groups
+  const data5bit = convertBits(rawBytes, 8, 5, true)
+
+  // Bech32-encode with "terra" HRP
+  return bech32Encode('terra', data5bit)
+}

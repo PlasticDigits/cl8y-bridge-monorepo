@@ -17,8 +17,8 @@
  * - Falls back to querying TokenRegistry if destToken is missing
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react'
-import { useAccount, usePublicClient, useSwitchChain } from 'wagmi'
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
+import { useAccount, useSwitchChain } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { useWallet } from './useWallet'
 import { useWithdrawSubmit } from './useWithdrawSubmit'
@@ -31,10 +31,13 @@ import {
   evmAddressToBytes32Array,
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
-import { terraAddressToBytes32 } from '../services/hashVerification'
+import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
+import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
+
+const LOG = '[autoWithdraw]'
 
 export type AutoSubmitPhase =
   | 'idle'
@@ -47,11 +50,16 @@ export type AutoSubmitPhase =
   | 'error'
   | 'manual-required'      // Wallets not connected or auto-submit failed
 
+export type AutoSubmitBlockReason =
+  | 'missing-nonce'
+  | 'wallet-disconnected'
+  | 'wrong-lifecycle'
+  | null
+
 export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { connected: isTerraConnected } = useWallet()
   const { switchChainAsync } = useSwitchChain()
-  const publicClient = usePublicClient()
   const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
 
@@ -67,21 +75,24 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
     }
   }, [])
 
-  // Determine if auto-submit is possible
-  const canAutoSubmit = useCallback((): boolean => {
-    if (!transfer || transfer.lifecycle !== 'deposited') return false
-    if (!transfer.depositNonce && transfer.depositNonce !== 0) return false
-
+  // Derive blockReason from transfer + wallet state (no side effects)
+  const blockReason = useMemo((): AutoSubmitBlockReason => {
+    if (!transfer) return null
+    if (transfer.lifecycle !== 'deposited') return 'wrong-lifecycle'
+    if (!transfer.depositNonce && transfer.depositNonce !== 0) return 'missing-nonce'
     if (transfer.direction === 'terra-to-evm' || transfer.direction === 'evm-to-evm') {
-      // Destination is EVM - need EVM wallet
-      return !!evmAddress
+      if (!evmAddress) return 'wallet-disconnected'
     }
     if (transfer.direction === 'evm-to-terra') {
-      // Destination is Terra - need Terra wallet
-      return isTerraConnected
+      if (!isTerraConnected) return 'wallet-disconnected'
     }
-    return false
+    return null
   }, [transfer, evmAddress, isTerraConnected])
+
+  // Determine if auto-submit is possible (pure function, no state updates)
+  const canAutoSubmit = useCallback((): boolean => {
+    return blockReason === null && !!transfer && transfer.lifecycle === 'deposited'
+  }, [blockReason, transfer])
 
   // Get destination chain config
   const getDestChainConfig = useCallback(() => {
@@ -98,16 +109,27 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
     }
 
     if (!canAutoSubmit()) {
+      console.info(
+        `${LOG} canAutoSubmit=false, reason=${blockReason}, ` +
+        `transfer=${transfer.id}, nonce=${transfer.depositNonce}, ` +
+        `lifecycle=${transfer.lifecycle}`
+      )
       setPhase('manual-required')
       return
     }
 
+    console.info(`${LOG} Auto-submit ready for transfer ${transfer.id}`)
     setPhase('ready')
-  }, [transfer, canAutoSubmit])
+  }, [transfer, canAutoSubmit, blockReason])
 
   /**
    * Resolve the destination token address for EVM withdrawSubmit.
    * Uses transfer.destToken if available, otherwise queries TokenRegistry.
+   *
+   * IMPORTANT: For Terra->EVM transfers, the destToken MUST come from the
+   * TransferRecord (set from Terra's deposit event). The TokenRegistry
+   * fallback only works for EVM->EVM transfers where the source chain
+   * has a valid EVM bridge address and the token is an EVM address.
    */
   const resolveDestToken = useCallback(async (): Promise<Address> => {
     // If destToken is already set and looks like an address (not bytes32), use it directly
@@ -121,30 +143,50 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
       return dt as Address
     }
 
-    // Fallback: query the destination chain's TokenRegistry
-    // We need a public client for the source chain to query token mappings
-    if (publicClient && transfer?.token) {
+    // Fallback: query the source chain's TokenRegistry for the dest token mapping.
+    // This only works for EVM source chains where the bridge address and token
+    // are valid EVM addresses. For Terra->EVM, the token is a denom like "uluna"
+    // which is NOT a valid EVM address -- skip the query entirely.
+    if (transfer?.token && transfer.direction !== 'terra-to-evm') {
       const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
       const chains = BRIDGE_CHAINS[tier]
       const srcChainConfig = chains[transfer.sourceChain]
       const destChainConfig = chains[transfer.destChain]
 
-      if (srcChainConfig?.bridgeAddress && destChainConfig?.bytes4ChainId) {
-        const destTokenB32 = await getDestToken(
-          publicClient,
-          srcChainConfig.bridgeAddress as Address,
-          transfer.token as Address,
-          destChainConfig.bytes4ChainId as Hex
-        )
-        if (destTokenB32) {
-          return bytes32ToAddress(destTokenB32)
+      if (srcChainConfig?.type === 'evm' && srcChainConfig.bridgeAddress && destChainConfig?.bytes4ChainId) {
+        try {
+          // Use a source-chain-specific client (not wagmi's wallet-bound publicClient)
+          const srcClient = getEvmClient(srcChainConfig)
+          const destTokenB32 = await getDestToken(
+            srcClient,
+            srcChainConfig.bridgeAddress as Address,
+            transfer.token as Address,
+            destChainConfig.bytes4ChainId as Hex
+          )
+          if (destTokenB32) {
+            return bytes32ToAddress(destTokenB32)
+          }
+        } catch (err) {
+          console.warn(`${LOG} TokenRegistry query failed:`, err)
         }
       }
     }
 
+    // For Terra->EVM: if we reach here, the TransferRecord was created without
+    // destToken. This should not happen with the fixed TransferForm, but log
+    // a warning so we can diagnose if it recurs.
+    if (transfer?.direction === 'terra-to-evm') {
+      console.error(
+        `${LOG} Terra->EVM transfer has no destToken!`,
+        'This indicates the deposit receipt did not include dest_token_address.',
+        'The withdrawSubmit will fail with a hash mismatch.',
+        { transferId: transfer.id, token: transfer.token }
+      )
+    }
+
     // Last resort: zero address (will likely fail, but lets the tx attempt proceed)
     return '0x0000000000000000000000000000000000000000' as Address
-  }, [transfer, publicClient])
+  }, [transfer])
 
   /**
    * Trigger the withdrawSubmit call.
@@ -153,6 +195,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
   const triggerSubmit = useCallback(async () => {
     if (!transfer || submittedRef.current) return
     submittedRef.current = true
+
+    console.info(
+      `${LOG} triggerSubmit starting for transfer ${transfer.id}, ` +
+      `direction=${transfer.direction}, nonce=${transfer.depositNonce}, ` +
+      `amount=${transfer.amount}, destToken=${transfer.destToken?.slice(0, 18)}...`
+    )
 
     try {
       const destChainConfig = getDestChainConfig()
@@ -169,8 +217,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           try {
             await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
           } catch (err) {
+            const msg = `Failed to switch to destination chain: ${err instanceof Error ? err.message : String(err)}`
+            console.warn(`${LOG} Chain switch failed:`, msg)
             setPhase('error')
-            setError(`Failed to switch to destination chain: ${err instanceof Error ? err.message : String(err)}`)
+            setError(msg)
             submittedRef.current = false
             return
           }
@@ -194,6 +244,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         // V2 fix: resolve the correct destination token
         const destTokenAddress = await resolveDestToken()
 
+        console.info(
+          `${LOG} Submitting EVM withdrawSubmit: bridge=${bridgeAddress}, ` +
+          `srcChain=${srcChainBytes4}, srcAccount=${srcAccountHex.slice(0, 18)}..., ` +
+          `destToken=${destTokenAddress}, amount=${transfer.amount}, nonce=${transfer.depositNonce}`
+        )
+
         const txHash = await submitOnEvm({
           bridgeAddress,
           srcChain: srcChainBytes4,
@@ -206,6 +262,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         })
 
         if (txHash) {
+          console.info(`${LOG} submitOnEvm success: txHash=${txHash}`)
           updateTransferRecord(transfer.id, {
             lifecycle: 'hash-submitted',
             withdrawSubmitTxHash: txHash,
@@ -213,6 +270,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           setPhase('waiting-approval')
           startPolling()
         } else {
+          console.warn(`${LOG} submitOnEvm returned null (tx rejected or failed)`)
           setPhase('error')
           setError('WithdrawSubmit transaction failed')
           submittedRef.current = false
@@ -246,17 +304,39 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           ? hexToUint8Array(transfer.srcAccount)
           : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
 
+        // Resolve the Terra denom for the token parameter.
+        // The Terra contract expects a native denom (e.g. "uluna") or CW20 address (terra1...),
+        // NOT the EVM source token address. Use destTokenId if stored, otherwise fallback.
+        const terraToken = transfer.destTokenId || 'uluna'
+
+        // Resolve the recipient as a terra1... bech32 address.
+        // transfer.destAccount may be bytes32 hex from the EVM deposit event.
+        let terraRecipient = transfer.destAccount || ''
+        if (terraRecipient.startsWith('0x') && terraRecipient.length === 66) {
+          try {
+            terraRecipient = bytes32ToTerraAddress(terraRecipient)
+          } catch (err) {
+            console.warn(`${LOG} Failed to convert destAccount bytes32 to terra address:`, err)
+          }
+        }
+
+        console.info(
+          `${LOG} Submitting Terra withdrawSubmit: bridge=${bridgeAddress}, ` +
+          `token=${terraToken}, recipient=${terraRecipient}, amount=${transfer.amount}, nonce=${transfer.depositNonce}`
+        )
+
         const terraTxHash = await submitOnTerra({
           bridgeAddress,
           srcChainBytes4: srcChainBytes4Data,
           srcAccountBytes32,
-          token: transfer.token || 'uluna',
-          recipient: transfer.destAccount || '',
+          token: terraToken,
+          recipient: terraRecipient,
           amount: transfer.amount || '0',
           nonce: transfer.depositNonce || 0,
         })
 
         if (terraTxHash) {
+          console.info(`${LOG} submitOnTerra success: txHash=${terraTxHash}`)
           updateTransferRecord(transfer.id, {
             lifecycle: 'hash-submitted',
             withdrawSubmitTxHash: terraTxHash,
@@ -264,14 +344,17 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           setPhase('waiting-approval')
           startPolling()
         } else {
+          console.warn(`${LOG} submitOnTerra returned null (tx rejected or failed)`)
           setPhase('error')
           setError('WithdrawSubmit transaction failed')
           submittedRef.current = false
         }
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Auto-submit failed'
+      console.error(`${LOG} triggerSubmit error for transfer ${transfer.id}:`, msg, err)
       setPhase('error')
-      setError(err instanceof Error ? err.message : 'Auto-submit failed')
+      setError(msg)
       submittedRef.current = false
     }
   }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, updateTransferRecord, getDestChainConfig, resolveDestToken])
@@ -291,11 +374,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
       try {
         if (destChainConfig.type === 'evm') {
-          // EVM destination: query via RPC
-          if (!publicClient) return
+          // EVM destination: query via chain-specific RPC client
+          // (NOT wagmi's usePublicClient which is tied to the wallet's current chain)
+          const destClient = getEvmClient(destChainConfig)
 
           const bridgeAddress = destChainConfig.bridgeAddress as Address
-          const result = await publicClient.readContract({
+          const result = await destClient.readContract({
             address: bridgeAddress,
             abi: BRIDGE_WITHDRAW_VIEW_ABI,
             functionName: 'getPendingWithdraw',
@@ -349,7 +433,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         // Polling error, continue on next interval
       }
     }, POLLING_INTERVAL)
-  }, [transfer, publicClient, updateTransferRecord, getDestChainConfig])
+  }, [transfer, updateTransferRecord, getDestChainConfig])
 
   // Auto-trigger submit when ready
   useEffect(() => {
@@ -371,6 +455,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
   return {
     phase,
     error,
+    blockReason,
     canAutoSubmit: canAutoSubmit(),
     triggerSubmit,
   }

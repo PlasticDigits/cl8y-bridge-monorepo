@@ -6,36 +6,47 @@ export interface StatusBadgeProps {
 
 const statusConfig: Record<
   HashStatus,
-  { bg: string; border: string; text: string; iconSrc: string | null }
+  {
+    text: string
+    border: string
+    iconBorder: string
+    iconBg: string
+    iconSrc: string | null
+  }
 > = {
   verified: {
-    bg: 'bg-green-900/30',
-    border: 'border-green-700',
-    text: 'text-green-400',
+    text: 'text-[#b8ff3d]',
+    border: 'border-[#b8ff3d]/65',
+    iconBorder: 'border-[#b8ff3d]/70',
+    iconBg: 'bg-[#2a3518]',
     iconSrc: '/assets/status-success.png',
   },
   pending: {
-    bg: 'bg-yellow-900/30',
-    border: 'border-yellow-700',
-    text: 'text-yellow-400',
+    text: 'text-yellow-300',
+    border: 'border-yellow-600/70',
+    iconBorder: 'border-yellow-600/80',
+    iconBg: 'bg-yellow-950/70',
     iconSrc: '/assets/status-pending.png',
   },
   canceled: {
-    bg: 'bg-gray-700/30',
-    border: 'border-gray-500',
-    text: 'text-gray-400',
+    text: 'text-gray-300',
+    border: 'border-gray-500/70',
+    iconBorder: 'border-gray-500/70',
+    iconBg: 'bg-[#222222]',
     iconSrc: '/assets/status-canceled.png',
   },
   fraudulent: {
-    bg: 'bg-red-900/40',
-    border: 'border-red-600',
-    text: 'text-red-400',
+    text: 'text-red-300',
+    border: 'border-red-600/75',
+    iconBorder: 'border-red-600/80',
+    iconBg: 'bg-red-950/70',
     iconSrc: '/assets/verify-fraud.png',
   },
   unknown: {
-    bg: 'bg-gray-800',
-    border: 'border-gray-600',
-    text: 'text-gray-500',
+    text: 'text-gray-400',
+    border: 'border-white/30',
+    iconBorder: 'border-white/35',
+    iconBg: 'bg-[#1e1e1e]',
     iconSrc: null,
   },
 }
@@ -45,16 +56,26 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   const label = status.charAt(0).toUpperCase() + status.slice(1)
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-sm font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}
+      className={`inline-flex items-center gap-1.5 border-2 bg-[#161616] px-2.5 py-1 shadow-[1px_1px_0_#000] ${cfg.border} ${cfg.text}`}
       role="status"
       aria-label={`Status: ${label}`}
     >
       {cfg.iconSrc ? (
-        <img src={cfg.iconSrc} alt="" className="h-4 w-4 shrink-0 object-contain" aria-hidden />
+        <span
+          className={`inline-flex h-4.5 w-4.5 items-center justify-center border ${cfg.iconBorder} ${cfg.iconBg}`}
+          aria-hidden
+        >
+          <img src={cfg.iconSrc} alt="" className="h-3.5 w-3.5 shrink-0 object-contain" />
+        </span>
       ) : (
-        <span aria-hidden="true">?</span>
+        <span
+          className={`inline-flex h-4.5 w-4.5 items-center justify-center border ${cfg.iconBorder} ${cfg.iconBg} text-[10px] font-bold text-gray-300`}
+          aria-hidden
+        >
+          ?
+        </span>
       )}
-      {label}
+      <span className="text-xs font-semibold uppercase tracking-wide">{label}</span>
     </span>
   )
 }

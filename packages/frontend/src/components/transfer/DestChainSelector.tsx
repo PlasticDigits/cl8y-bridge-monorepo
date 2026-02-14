@@ -5,9 +5,10 @@ export interface DestChainSelectorProps {
   chains: ChainInfo[]
   value: string
   onChange: (chainId: string) => void
+  disabled?: boolean
 }
 
-export function DestChainSelector({ chains, value, onChange }: DestChainSelectorProps) {
+export function DestChainSelector({ chains, value, onChange, disabled }: DestChainSelectorProps) {
   return (
     <div data-testid="dest-chain">
       <ChainSelect
@@ -16,6 +17,7 @@ export function DestChainSelector({ chains, value, onChange }: DestChainSelector
         onChange={onChange}
         label="To"
         id="dest-chain-select"
+        disabled={disabled}
       />
     </div>
   )

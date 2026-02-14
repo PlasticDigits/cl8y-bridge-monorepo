@@ -9,6 +9,15 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SourceChainSelector } from './SourceChainSelector'
+
+vi.mock('../../hooks/useTokenList', () => ({
+  useTokenList: () => ({ data: null }),
+}))
+
+vi.mock('../../hooks/useTokenDisplayInfo', () => ({
+  useTokenOptionsDisplayMap: () => ({}),
+}))
+
 import { DestChainSelector } from './DestChainSelector'
 import { AmountInput } from './AmountInput'
 import { RecipientInput } from './RecipientInput'
@@ -89,7 +98,7 @@ describe('AmountInput', () => {
 
   it('should show token symbol', () => {
     render(<AmountInput value="" onChange={() => {}} symbol="LUNC" />)
-    expect(screen.getByText('LUNC')).toBeInTheDocument()
+    expect(screen.getAllByText('LUNC').length).toBeGreaterThan(0)
   })
 
   it('should show token dropdown when multiple tokens provided', async () => {
@@ -108,7 +117,7 @@ describe('AmountInput', () => {
         onTokenChange={onTokenChange}
       />
     )
-    expect(screen.getByText('LUNC')).toBeInTheDocument()
+    expect(screen.getAllByText('LUNC').length).toBeGreaterThan(0)
     const tokenButton = screen.getByRole('combobox', { name: 'Select token' })
     await user.click(tokenButton)
     expect(screen.getByRole('option', { name: /LUNC/ })).toBeInTheDocument()

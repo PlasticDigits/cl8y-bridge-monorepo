@@ -1,0 +1,28 @@
+:root[data-theme='retro'] {
+  --bg-0: #120f05;
+  --bg-1: #1f1a08;
+  --bg-2: #2f280f;
+  --surface-0: #1d1607;
+  --surface-1: #2a220d;
+  --surface-2: #3a2f14;
+  --surface-raised: #4f3f1d;
+  --ink: #fff7c2;
+  --ink-dim: #e8dc9f;
+  --ink-subtle: #cbbd79;
+  --line: rgba(255, 230, 127, 0.45);
+  --line-strong: rgba(255, 236, 156, 0.8);
+  --cyan: #ffd447;
+  --violet: #ff8f3f;
+  --mint: #b8ff3d;
+  --mint-soft: #d7ff85;
+  --accent-surface: #4a521b;
+  --panel-bg: rgba(45, 36, 14, 0.94);
+  --panel-bg-strong: rgba(57, 46, 18, 0.96);
+  --grid-line: rgba(255, 240, 175, 0.06);
+  --hero-glow: rgba(255, 212, 71, 0.2);
+  --scroll-track: #1c1708;
+  --scroll-thumb-a: #806526;
+  --scroll-thumb-b: #5f4b1d;
+  --scroll-thumb-hover-a: #a07f31;
+  --scroll-thumb-hover-b: #775f28;
+}

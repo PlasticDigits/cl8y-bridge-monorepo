@@ -23,11 +23,43 @@ const CONTAINER_NAME = 'cl8y-bridge-monorepo-localterra-1'
 const TEST_ADDRESS = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
 const KEY_NAME = 'test1'
 
+/** Canceler Terra address (same as test1 - matches canceler .env.example TERRA_MNEMONIC) */
+export const CANCELER_TERRA_ADDRESS = TEST_ADDRESS
+
 /** Sentinel for tokens that could not be deployed (skip from registration and env). */
 export const PLACEHOLDER_PREFIX = 'terra1placeholder_'
 
 export function isPlaceholderAddress(addr: string): boolean {
   return addr.startsWith(PLACEHOLDER_PREFIX)
+}
+
+/**
+ * Add a canceler to the Terra bridge contract.
+ * Uses the canceler's Terra address (from canceler .env TERRA_MNEMONIC).
+ *
+ * @param bridgeAddress - Address of the bridge contract
+ * @param cancelerAddress - Address to register as canceler (default: CANCELER_TERRA_ADDRESS)
+ */
+export function addCancelerTerra(
+  bridgeAddress: string,
+  cancelerAddress: string = CANCELER_TERRA_ADDRESS
+): void {
+  console.log(`[deploy-terra] Adding canceler ${cancelerAddress} on ${bridgeAddress}...`)
+  const msg = JSON.stringify({ add_canceler: { address: cancelerAddress } })
+  try {
+    terradTx(
+      'wasm', 'execute', bridgeAddress, msg,
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '10000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+    console.log('[deploy-terra] Canceler added')
+  } catch (err) {
+    console.warn('[deploy-terra] Failed to add canceler:', (err as Error).message?.slice(0, 100))
+  }
 }
 
 /**

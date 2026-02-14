@@ -1,4 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+@import './theme-sunset.css';
+@import './theme-ocean.css';
+@import './theme-retro.css';
+@import './theme-frost.css';
+@import './theme-skyblue.css';
 
 @tailwind base;
 @tailwind components;
@@ -8,13 +13,29 @@
   --bg-0: #0a0a0a;
   --bg-1: #131313;
   --bg-2: #1a1a1a;
+  --surface-0: #111111;
+  --surface-1: #161616;
+  --surface-2: #1c1c1c;
+  --surface-raised: #222222;
   --ink: #f4f4f4;
   --ink-dim: #d4d4d4;
+  --ink-subtle: #a9a9a9;
   --line: rgba(255, 255, 255, 0.35);
   --line-strong: rgba(255, 255, 255, 0.7);
   --cyan: #00f5d4;
   --violet: #7f5af0;
   --mint: #b8ff3d;
+  --mint-soft: #d5ff7f;
+  --accent-surface: #2a3518;
+  --panel-bg: rgba(24, 24, 24, 0.94);
+  --panel-bg-strong: rgba(26, 26, 26, 0.95);
+  --grid-line: rgba(255, 255, 255, 0.02);
+  --hero-glow: rgba(255, 255, 255, 0.12);
+  --scroll-track: #0a101d;
+  --scroll-thumb-a: #2f4473;
+  --scroll-thumb-b: #1e2b4a;
+  --scroll-thumb-hover-a: #3f5da0;
+  --scroll-thumb-hover-b: #29406f;
   --glow: 4px 4px 0 #000;
   /* Custom cursors - CL8Y BRIDGE. Hotspots for 3x scaled images. */
   --cursor-default: url('/assets/cursor-default.png') 0 0, default; /* 19x21 */
@@ -47,8 +68,8 @@
     color: var(--ink);
     font-family: 'IBM Plex Sans', sans-serif;
     background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) 0 0 / 32px 32px,
-      linear-gradient(0deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(0deg, var(--grid-line) 1px, transparent 1px) 0 0 / 32px 32px,
       linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 38%, var(--bg-0) 100%);
     background-attachment: fixed;
   }
@@ -67,8 +88,8 @@
 @layer components {
   .glass {
     @apply border;
-    background: rgba(24, 24, 24, 0.94);
-    border-color: rgba(255, 255, 255, 0.62);
+    background: var(--panel-bg);
+    border-color: var(--line-strong);
     box-shadow: 0 22px 40px rgba(0, 0, 0, 0.5), var(--glow);
   }
 
@@ -78,15 +99,15 @@
 
   .shell-panel-strong {
     @apply p-4 md:p-5 border rounded-none;
-    border-color: rgba(255, 255, 255, 0.72);
-    background: rgba(26, 26, 26, 0.95);
+    border-color: var(--line-strong);
+    background: var(--panel-bg-strong);
     box-shadow: 0 28px 52px rgba(0, 0, 0, 0.56), 4px 4px 0 #000;
     backdrop-filter: blur(2px);
   }
 
   .btn-primary {
     @apply inline-flex items-center gap-2 rounded-none px-4 py-2 text-sm font-semibold transition-all duration-150 border-2;
-    color: #050505;
+    color: #000;
     background: var(--mint);
     border-color: #000;
     box-shadow: 3px 3px 0 #000;
@@ -103,7 +124,7 @@
     @apply inline-flex items-center gap-2 rounded-none px-4 py-2 text-sm font-medium transition-all duration-150 border-2;
     border-color: #000;
     color: var(--ink);
-    background: #2b2b2b;
+    background: var(--surface-raised);
     box-shadow: 3px 3px 0 #000;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -112,15 +133,21 @@
   .btn-muted:hover {
     transform: translate(1px, 1px);
     box-shadow: 2px 2px 0 #000;
-    background: #3a3a3a;
+    background: var(--surface-2);
   }
 
   .btn-cta {
-    box-shadow: 0 0 0 1px rgba(184, 255, 61, 0.45), 0 0 24px rgba(184, 255, 61, 0.28), 3px 3px 0 #000;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--mint) 45%, transparent),
+      0 0 24px color-mix(in srgb, var(--mint) 28%, transparent),
+      3px 3px 0 #000;
   }
 
   .btn-cta:hover {
-    box-shadow: 0 0 0 1px rgba(184, 255, 61, 0.55), 0 0 30px rgba(184, 255, 61, 0.36), 2px 2px 0 #000;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--mint) 55%, transparent),
+      0 0 30px color-mix(in srgb, var(--mint) 36%, transparent),
+      2px 2px 0 #000;
   }
 }
 
@@ -137,16 +164,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a101d;
+  background: var(--scroll-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #2f4473, #1e2b4a);
+  background: linear-gradient(180deg, var(--scroll-thumb-a), var(--scroll-thumb-b));
   border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #3f5da0, #29406f);
+  background: linear-gradient(180deg, var(--scroll-thumb-hover-a), var(--scroll-thumb-hover-b));
 }
 
 /* Override all cursor states - native elements use CL8Y custom cursors */
@@ -200,4 +227,84 @@ input[type='number'] {
 
 .animate-spin-slow {
   animation: spin 3s linear infinite;
+}
+
+/* Theme-aware utility overrides for existing Tailwind classes used across app */
+@layer utilities {
+  .theme-hero-glow {
+    background: radial-gradient(circle, var(--hero-glow) 0%, rgba(0, 0, 0, 0) 72%);
+  }
+
+  .text-slate-200,
+  .text-slate-300,
+  [class*='text-gray-'],
+  [class*='text-zinc-'],
+  [class*='text-neutral-'] {
+    color: var(--ink-dim) !important;
+  }
+
+  [class~='text-white'],
+  [class*='text-white/'] {
+    color: var(--ink) !important;
+  }
+
+  [class*='bg-black'],
+  [class*='bg-slate-'],
+  [class*='bg-gray-'],
+  [class*='bg-zinc-'],
+  [class*='bg-neutral-'],
+  .bg-\[\#111111\],
+  .bg-\[\#161616\],
+  .bg-\[\#1a1a1a\],
+  .bg-\[\#1c1c1c\],
+  .bg-\[\#1e1e1e\],
+  .bg-\[\#222222\] {
+    background-color: var(--surface-1) !important;
+  }
+
+  [class*='border-white/'],
+  [class~='border-white'],
+  [class*='border-gray-'],
+  [class*='border-zinc-'],
+  [class*='border-neutral-'] {
+    border-color: var(--line) !important;
+  }
+
+  .text-\[\#b8ff3d\],
+  .text-\[\#d5ff7f\] {
+    color: var(--mint) !important;
+  }
+
+  .text-cyan-300,
+  .text-cyan-400 {
+    color: var(--cyan) !important;
+  }
+
+  .hover\:text-cyan-300:hover {
+    color: color-mix(in srgb, var(--cyan) 88%, white 12%) !important;
+  }
+
+  .bg-\[\#2a3518\],
+  .bg-\[\#202614\] {
+    background-color: var(--accent-surface) !important;
+  }
+
+  .border-\[\#b8ff3d\]\/60,
+  .border-\[\#b8ff3d\]\/65,
+  .border-\[\#b8ff3d\]\/70,
+  .border-\[\#b8ff3d\]\/50 {
+    border-color: color-mix(in srgb, var(--mint) 65%, transparent) !important;
+  }
+
+  .border-cyan-400 {
+    border-color: color-mix(in srgb, var(--cyan) 72%, transparent) !important;
+  }
+
+  .hover\:bg-cyan-400\/10:hover {
+    background-color: color-mix(in srgb, var(--cyan) 10%, transparent) !important;
+  }
+
+  .text-amber-400\/90 {
+    color: color-mix(in srgb, var(--mint) 86%, var(--ink) 14%) !important;
+  }
 }

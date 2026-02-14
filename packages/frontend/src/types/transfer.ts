@@ -38,7 +38,8 @@ export interface TransferRecord {
   destAccount?: string        // recipient address on destination chain
   token?: string              // token identifier (denom or address)
   srcDecimals?: number        // token decimals on source chain
-  destToken?: string          // token address on destination chain
+  destToken?: string          // token address on destination chain (bytes32 or hex)
+  destTokenId?: string        // raw destination token identifier (e.g. "uluna" for Terra, EVM address for EVM)
   destBridgeAddress?: string  // bridge contract address on destination chain
   sourceChainIdBytes4?: string // bytes4 hex of source chain (e.g. "0x00007a69")
 }

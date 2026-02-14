@@ -39,6 +39,8 @@ export interface PendingWithdrawData {
   approved: boolean
   cancelled: boolean
   executed: boolean
+  /** Seconds remaining in cancel window (0 if expired). From chain or computed. */
+  cancelWindowRemaining?: number
 }
 
 export interface TransferLookupResult {

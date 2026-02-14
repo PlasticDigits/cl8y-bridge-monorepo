@@ -1,0 +1,28 @@
+:root[data-theme='frost'] {
+  --bg-0: #edf3fb;
+  --bg-1: #f4f8fd;
+  --bg-2: #f9fbff;
+  --surface-0: #f6f9ff;
+  --surface-1: #fcfdff;
+  --surface-2: #eef4ff;
+  --surface-raised: #e6efff;
+  --ink: #1a2a3d;
+  --ink-dim: #3f5874;
+  --ink-subtle: #617895;
+  --line: rgba(64, 114, 173, 0.22);
+  --line-strong: rgba(64, 114, 173, 0.4);
+  --cyan: #5da4e4;
+  --violet: #8ba6de;
+  --mint: #8fb6e8;
+  --mint-soft: #bbd4f2;
+  --accent-surface: #deebfb;
+  --panel-bg: rgba(249, 252, 255, 0.95);
+  --panel-bg-strong: rgba(243, 248, 255, 0.97);
+  --grid-line: rgba(64, 114, 173, 0.08);
+  --hero-glow: rgba(107, 161, 224, 0.16);
+  --scroll-track: #e8f0fc;
+  --scroll-thumb-a: #9bb8de;
+  --scroll-thumb-b: #84a3cc;
+  --scroll-thumb-hover-a: #88acd7;
+  --scroll-thumb-hover-b: #7296c3;
+}

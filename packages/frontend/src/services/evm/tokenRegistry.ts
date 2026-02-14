@@ -166,3 +166,15 @@ export function addressToBytes32(address: Address): Hex {
   const clean = address.slice(2).toLowerCase()
   return `0x${clean.padStart(64, '0')}` as Hex
 }
+
+/**
+ * Normalize registry evm_token_address to 20-byte address.
+ * Handles both 0x + 40 chars (standard) and 0x + 64 chars (bytes32).
+ */
+export function normalizeToEvmAddress(value: string): Address {
+  if (!value) throw new Error('Empty evm_token_address')
+  const clean = value.replace(/^0x/i, '')
+  if (clean.length === 40) return `0x${clean}` as Address
+  if (clean.length === 64) return bytes32ToAddress(`0x${clean}` as Hex)
+  throw new Error(`Invalid evm address format: expected 40 or 64 hex chars, got ${clean.length}`)
+}

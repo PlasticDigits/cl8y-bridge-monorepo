@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { isValidTransferHash, normalizeTransferHash } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 
@@ -6,11 +6,20 @@ export interface HashSearchBarProps {
   onSearch: (hash: string) => void
   disabled?: boolean
   placeholder?: string
+  /** Pre-fill from URL; does not auto-submit */
+  initialValue?: string
 }
 
-export function HashSearchBar({ onSearch, disabled, placeholder }: HashSearchBarProps) {
-  const [value, setValue] = useState('')
+export function HashSearchBar({ onSearch, disabled, placeholder, initialValue }: HashSearchBarProps) {
+  const [value, setValue] = useState(initialValue ?? '')
   const [invalid, setInvalid] = useState(false)
+
+  useEffect(() => {
+    if (initialValue !== undefined) {
+      setValue(initialValue)
+      setInvalid(false)
+    }
+  }, [initialValue])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import SettingsPage from './SettingsPage'
 import * as useChainStatusModule from '../hooks/useChainStatus'
 import * as useTokenRegistryModule from '../hooks/useTokenRegistry'
-import * as useBridgeSettingsModule from '../hooks/useBridgeSettings'
+import * as useBridgeConfigModule from '../hooks/useBridgeConfig'
 
 vi.mock('../hooks/useChainStatus', () => ({
   useChainStatus: vi.fn(),
@@ -15,8 +15,12 @@ vi.mock('../hooks/useTokenRegistry', () => ({
   useTokenRegistry: vi.fn(),
 }))
 
-vi.mock('../hooks/useBridgeSettings', () => ({
-  useBridgeSettings: vi.fn(),
+vi.mock('../hooks/useBridgeConfig', () => ({
+  useBridgeConfig: vi.fn(),
+  useChainOperators: vi.fn(() => ({ data: null, isLoading: false, error: null })),
+  useChainCancelers: vi.fn(() => ({ data: null, isLoading: false, error: null })),
+  useChainTokens: vi.fn(() => ({ data: [], isLoading: false, error: null })),
+  useTokenDetails: vi.fn(() => ({ data: null, isLoading: false, error: null })),
 }))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -39,14 +43,11 @@ describe('SettingsPage', () => {
       error: null,
     } as ReturnType<typeof useTokenRegistryModule.useTokenRegistry>)
 
-    vi.mocked(useBridgeSettingsModule.useBridgeSettings).mockReturnValue({
-      data: {
-        terra: { config: null, withdrawDelay: null, operators: null, cancelers: null, loaded: false },
-        evm: { cancelWindowSeconds: null, loaded: false },
-      },
+    vi.mocked(useBridgeConfigModule.useBridgeConfig).mockReturnValue({
+      data: [],
       isLoading: false,
       error: null,
-    } as ReturnType<typeof useBridgeSettingsModule.useBridgeSettings>)
+    })
   })
 
   it('renders page title and description', () => {

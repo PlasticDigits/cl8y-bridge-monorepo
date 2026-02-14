@@ -22,7 +22,6 @@ export interface TransferState {
   recordTransfer: (record: Omit<TransferRecord, 'id' | 'timestamp'>) => string
   updateTransferRecord: (id: string, updates: Partial<TransferRecord>) => void
   getTransferByHash: (transferHash: string) => TransferRecord | null
-  getTransferById: (id: string) => TransferRecord | null
   getAllTransfers: () => TransferRecord[]
 }
 
@@ -80,11 +79,6 @@ export const useTransferStore = create<TransferState>((set) => ({
   getTransferByHash: (transferHash) => {
     const list = readTransfers()
     return list.find((t) => t.transferHash === transferHash) || null
-  },
-
-  getTransferById: (id) => {
-    const list = readTransfers()
-    return list.find((t) => t.id === id) || null
   },
 
   getAllTransfers: () => {

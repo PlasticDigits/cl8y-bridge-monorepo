@@ -1,9 +1,14 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { Address, getAddress } from 'viem'
+import { Address, getAddress, type Hex } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
 import { useTokenRegistry } from '../../hooks/useTokenRegistry'
+import { useTokenList } from '../../hooks/useTokenList'
+import { useTokenDestMapping } from '../../hooks/useTokenDestMapping'
+import { useSourceChainTokenMappings } from '../../hooks/useSourceChainTokenMappings'
+import { useBridgeConfig, useTokenDetails } from '../../hooks/useBridgeConfig'
+import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from '../../hooks/useTokenDisplayInfo'
 import {
   useBridgeDeposit,
   computeTerraChainBytes4,
@@ -17,14 +22,18 @@ import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
+import { getTokenFromList, type TokenlistData } from '../../services/tokenlist'
+import { shortenAddress } from '../../utils/shortenAddress'
+import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
+import { parseTerraLockReceipt } from '../../services/terra/depositReceipt'
 import { getDestToken } from '../../services/evm/tokenRegistry'
 import { computeTransferHash, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../../services/hashVerification'
 import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
 import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
-import { parseAmount, formatAmount } from '../../utils/format'
+import { parseAmount, formatAmount, formatCompact } from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -93,32 +102,36 @@ const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000
 function buildTransferTokens(
   registryTokens: { token: string; is_native: boolean; evm_token_address: string; terra_decimals: number; evm_decimals: number; enabled: boolean }[] | undefined,
   isSourceTerra: boolean,
-  fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined
+  fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined,
+  tokenlist: TokenlistData | null,
+  /** When source is EVM: per-chain token address from Terra token_dest_mapping; falls back to registry evm_token_address when missing */
+  sourceChainMappings?: Record<string, string>
 ): TokenOption[] {
+  const symbolFromList = (token: string) =>
+    tokenlist ? getTokenFromList(tokenlist, token)?.symbol : null
   if (isSourceTerra) {
-    // Terra source: show all enabled tokens (native + CW20).
-    // Native tokens use deposit_native, CW20 tokens use deposit (send CW20 to bridge).
-    // Both are registered in the Terra bridge token registry.
     const fromRegistry = (registryTokens ?? [])
       .filter((t) => t.enabled)
       .map((t) => ({
         id: t.token,
-        symbol: getTokenDisplaySymbol(t.token),
+        symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
         tokenId: t.token,
       }))
     if (fromRegistry.length > 0) return fromRegistry
     return [{ id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' }]
   }
-  // EVM source: show enabled tokens with evm_token_address
-  const fromRegistry = (registryTokens ?? [])
-    .filter((t) => t.enabled && t.evm_token_address)
-    .map((t) => ({
-      id: t.token,
-      symbol: getTokenDisplaySymbol(t.token),
-      tokenId: t.token,
-    }))
+  // EVM source: show all enabled tokens with evm_token_address.
+  // Use per-chain token_dest_mapping when available, else fall back to registry evm_token_address.
+  const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
+  const fromRegistry = baseRegistry.map((t) => ({
+    id: t.token,
+    symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
+    tokenId: t.token,
+    evmTokenAddress:
+      sourceChainMappings?.[t.token] ?? bytes32ToAddress(t.evm_token_address),
+  }))
   if (fromRegistry.length > 0) return fromRegistry
-  if (fallbackConfig) {
+  if (fallbackConfig && !sourceChainMappings) {
     return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
   }
   return []
@@ -146,15 +159,19 @@ function bytes32ToAddress(hex: string): Address {
 function getEvmTokenConfig(
   selectedTokenId: string,
   registryTokens: { token: string; evm_token_address: string; evm_decimals: number }[] | undefined,
-  fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined
+  fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined,
+  /** When source is EVM: use per-chain address from token_dest_mapping */
+  sourceChainMappings?: Record<string, string>
 ): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
-  if (fromRegistry?.evm_token_address) {
+  const mappedAddr = sourceChainMappings?.[selectedTokenId]
+  const evmAddr = mappedAddr ?? fromRegistry?.evm_token_address
+  if (evmAddr) {
     return {
-      address: bytes32ToAddress(fromRegistry.evm_token_address),
+      address: (mappedAddr ?? bytes32ToAddress(evmAddr)) as Address,
       lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
-      symbol: getTokenDisplaySymbol(fromRegistry.token),
-      decimals: fromRegistry.evm_decimals,
+      symbol: getTokenDisplaySymbol(fromRegistry?.token ?? selectedTokenId),
+      decimals: fromRegistry?.evm_decimals ?? 18,
     }
   }
   if (fallbackConfig && (selectedTokenId === fallbackConfig.address || selectedTokenId === 'uluna')) {
@@ -176,6 +193,7 @@ export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
   const { data: registryTokens } = useTokenRegistry()
+  const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
   const { recordTransfer } = useTransferStore()
   const navigate = useNavigate()
@@ -210,6 +228,19 @@ export function TransferForm() {
   )
   const direction = useMemo(() => deriveDirection(sourceChainInfo, destChainInfo), [sourceChainInfo, destChainInfo])
 
+  // --- Frozen chain state for deposit recording ---
+  // When a deposit is initiated, we freeze the source/dest chain values so that
+  // if the user changes the chain selectors (e.g. via the swap button) while the
+  // deposit tx is in flight, the TransferRecord still captures the correct chains.
+  // Without this, swapping chains during a pending deposit causes the record to be
+  // stored with swapped source/dest, leading to withdrawSubmit on the wrong chain.
+  const frozenChainsRef = useRef<{
+    sourceChain: string
+    destChain: string
+    direction: TransferDirection
+    sourceChainIdBytes4: string | undefined
+  } | null>(null)
+
   // Compute valid destination chains based on source selection
   const destChains = useMemo(() => getValidDestChains(allChains, sourceChain), [allChains, sourceChain])
 
@@ -224,15 +255,41 @@ export function TransferForm() {
   const isSourceTerra = direction === 'terra-to-evm'
   const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm'
 
+  const sourceChainConfig = useMemo(
+    () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[sourceChain],
+    [sourceChain]
+  )
+  const { data: bridgeConfigData } = useBridgeConfig()
+  const isSourceEvm = sourceChainConfig?.type === 'evm'
+  const sourceChainBytes4 = sourceChainConfig?.bytes4ChainId
+  const { mappings: sourceChainMappings } = useSourceChainTokenMappings(
+    registryTokens,
+    sourceChainBytes4,
+    !!isSourceEvm && !!sourceChainBytes4
+  )
+
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
   const transferTokens = useMemo(
-    () => buildTransferTokens(registryTokens, isSourceTerra, fallbackTokenConfig),
-    [registryTokens, isSourceTerra, fallbackTokenConfig]
+    () =>
+      buildTransferTokens(
+        registryTokens,
+        isSourceTerra,
+        fallbackTokenConfig,
+        tokenlist ?? null,
+        isSourceEvm ? sourceChainMappings : undefined
+      ),
+    [registryTokens, isSourceTerra, fallbackTokenConfig, tokenlist, isSourceEvm, sourceChainMappings]
   )
 
   const evmTokenConfig = useMemo(
-    () => getEvmTokenConfig(selectedTokenId, registryTokens, fallbackTokenConfig),
-    [selectedTokenId, registryTokens, fallbackTokenConfig]
+    () =>
+      getEvmTokenConfig(
+        selectedTokenId,
+        registryTokens,
+        fallbackTokenConfig,
+        isSourceEvm ? sourceChainMappings : undefined
+      ),
+    [selectedTokenId, registryTokens, fallbackTokenConfig, isSourceEvm, sourceChainMappings]
   )
   const tokenConfig = isSourceTerra ? undefined : evmTokenConfig
   const terraDecimals = useMemo(
@@ -248,6 +305,50 @@ export function TransferForm() {
       setSelectedTokenId(transferTokens[0].id)
     }
   }, [transferTokens, selectedTokenId])
+
+  const destChainConfig = useMemo(
+    () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[destChain],
+    [destChain]
+  )
+  const destChainBytes4 = destChainConfig?.bytes4ChainId
+  const isDestEvmChain = destChainConfig?.type === 'evm'
+  const { data: tokenDestMappingAddr } = useTokenDestMapping(
+    selectedTokenId || undefined,
+    destChainBytes4,
+    !!destChainBytes4 && !!isDestEvmChain
+  )
+
+  const destTokenAddr = useMemo(() => {
+    if (destChainConfig?.type !== 'evm') return ''
+    if (tokenDestMappingAddr) return tokenDestMappingAddr
+    const reg = registryTokens?.find((t) => t.token === selectedTokenId)
+    return reg?.evm_token_address ? bytes32ToAddress(reg.evm_token_address) : ''
+  }, [destChainConfig?.type, tokenDestMappingAddr, registryTokens, selectedTokenId])
+
+  // Destination chain limits (max transfer, withdraw rate limit) cap the MAX amount
+  const destChainUnifiedConfig = useMemo(
+    () => bridgeConfigData?.find((c) => c.chainId === destChain) ?? null,
+    [bridgeConfigData, destChain]
+  )
+  const destTokenIdForDetails =
+    destChainConfig?.type === 'cosmos' ? selectedTokenId : destTokenAddr || null
+  const { data: destTokenDetails } = useTokenDetails(
+    destChainUnifiedConfig,
+    destTokenIdForDetails,
+    !!destChainUnifiedConfig && !!destTokenIdForDetails
+  )
+
+  const terraDisplay = useTerraTokenDisplayInfo(selectedTokenId || undefined)
+  const evmSourceDisplay = useEvmTokenDisplayInfo(
+    tokenConfig?.address,
+    sourceChainConfig?.type === 'evm' ? sourceChainConfig.rpcUrl : undefined,
+    !isSourceTerra && !!tokenConfig
+  )
+  const evmDestDisplay = useEvmTokenDisplayInfo(
+    destTokenAddr,
+    destChainConfig?.type === 'evm' ? destChainConfig.rpcUrl : undefined,
+    !!isDestEvmChain && !!destTokenAddr
+  )
 
   // Derive source chain bridge address and native chain ID for multi-EVM support.
   // When the source is an EVM chain (e.g. anvil1), we must deposit on THAT chain's bridge,
@@ -306,11 +407,129 @@ export function TransferForm() {
     terraStatus === 'locking'
 
   const amountDecimals = isSourceTerra ? terraDecimals : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+  const destDecimals = isDestEvmChain
+    ? (registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals ?? 18)
+    : terraDecimals
 
-  // EVM deposit success: parse receipt, compute transfer hash, store record, redirect
+  const toSourceUnits = useCallback(
+    (destBaseUnits: bigint) => {
+      if (amountDecimals >= destDecimals) {
+        const exp = amountDecimals - destDecimals
+        return destBaseUnits * BigInt(10 ** exp)
+      }
+      const exp = destDecimals - amountDecimals
+      return destBaseUnits / BigInt(10 ** exp)
+    },
+    [amountDecimals, destDecimals]
+  )
+
+  const { displayMaxLabel, displayMinLabel } = useMemo(() => {
+    const srcDecimals = amountDecimals
+    let balanceStr: string | undefined
+    if (isSourceTerra) {
+      balanceStr = luncBalance
+    } else if (tokenBalance !== undefined && tokenConfig) {
+      balanceStr = tokenBalance.toString()
+    }
+    const balance = balanceStr ? BigInt(balanceStr) : 0n
+
+    let maxTransferInSrc: bigint | null = null
+    if (destTokenDetails?.maxTransfer) {
+      const raw = BigInt(destTokenDetails.maxTransfer)
+      if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
+    }
+    let bridgeRemainingInSrc: bigint | null = null
+    if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
+      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
+    }
+
+    let effectiveMax = balance
+    if (maxTransferInSrc != null && maxTransferInSrc > 0n)
+      effectiveMax = effectiveMax < maxTransferInSrc ? effectiveMax : maxTransferInSrc
+    if (bridgeRemainingInSrc != null && bridgeRemainingInSrc > 0n)
+      effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
+
+    let effectiveMin: bigint | null = null
+    if (destTokenDetails?.minTransfer) {
+      const raw = BigInt(destTokenDetails.minTransfer)
+      if (raw > 0n) effectiveMin = toSourceUnits(raw)
+    }
+
+    return {
+      displayMaxLabel:
+        effectiveMax > 0n ? formatCompact(effectiveMax.toString(), srcDecimals) : undefined,
+      displayMinLabel:
+        effectiveMin != null && effectiveMin > 0n
+          ? formatCompact(effectiveMin.toString(), srcDecimals)
+          : undefined,
+    }
+  }, [
+    isSourceTerra,
+    luncBalance,
+    tokenBalance,
+    tokenConfig,
+    destTokenDetails?.maxTransfer,
+    destTokenDetails?.minTransfer,
+    destTokenDetails?.withdrawRateLimit?.remainingAmount,
+    amountDecimals,
+    toSourceUnits,
+  ])
+
+  const handleMax = useCallback(() => {
+    const srcDecimals = amountDecimals
+    let balanceStr: string
+    if (isSourceTerra) {
+      balanceStr = luncBalance
+    } else if (tokenBalance !== undefined && tokenConfig) {
+      balanceStr = tokenBalance.toString()
+    } else {
+      return
+    }
+    const balance = BigInt(balanceStr)
+
+    let maxTransferInSrc: bigint | null = null
+    if (destTokenDetails?.maxTransfer) {
+      const raw = BigInt(destTokenDetails.maxTransfer)
+      if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
+    }
+    let bridgeRemainingInSrc: bigint | null = null
+    if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
+      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
+    }
+
+    let effectiveMax = balance
+    if (maxTransferInSrc != null && maxTransferInSrc > 0n)
+      effectiveMax = effectiveMax < maxTransferInSrc ? effectiveMax : maxTransferInSrc
+    if (bridgeRemainingInSrc != null && bridgeRemainingInSrc > 0n)
+      effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
+    setAmount(formatAmount(effectiveMax.toString(), srcDecimals))
+  }, [
+    isSourceTerra,
+    luncBalance,
+    tokenBalance,
+    tokenConfig,
+    destTokenDetails?.maxTransfer,
+    destTokenDetails?.withdrawRateLimit?.remainingAmount,
+    amountDecimals,
+    toSourceUnits,
+  ])
+
+  // EVM deposit success: parse receipt, compute transfer hash, store record, redirect.
+  // IMPORTANT: Uses frozenChainsRef (captured at deposit time) to avoid reading stale/swapped
+  // sourceChain/destChain from React state — the user may have clicked the swap button
+  // while the deposit was in flight.
   useEffect(() => {
     if (evmStatus === 'success' && depositTxHash) {
       setTxHash(depositTxHash)
+
+      // Read frozen chains from ref — these were captured in handleSubmit before the deposit started
+      const frozen = frozenChainsRef.current
+      const frozenSource = frozen?.sourceChain ?? sourceChain
+      const frozenDest = frozen?.destChain ?? destChain
+      const frozenDirection = frozen?.direction ?? direction
+      const frozenSrcBytes4 = frozen?.sourceChainIdBytes4
 
       // Try to parse the deposit receipt for nonce and other fields
       const parseAndRecord = async () => {
@@ -343,8 +562,8 @@ export function TransferForm() {
           try {
             const tier = DEFAULT_NETWORK as NetworkTier
             const chains = BRIDGE_CHAINS[tier]
-            const srcChainConfig = chains[sourceChain]
-            const destChainConfig = chains[destChain]
+            const srcChainConfig = chains[frozenSource]
+            const destChainConfig = chains[frozenDest]
 
             if (srcChainConfig?.bytes4ChainId && destChainConfig?.bytes4ChainId) {
               // Convert bytes4 hex to chain ID number for chainIdToBytes32
@@ -375,8 +594,8 @@ export function TransferForm() {
         // Get source chain bytes4 for the record
         const tier = DEFAULT_NETWORK as NetworkTier
         const chains = BRIDGE_CHAINS[tier]
-        const srcChainConfig = chains[sourceChain]
-        const destChainConfig = chains[destChain]
+        const srcChainConfig = chains[frozenSource]
+        const destChainConfig = chains[frozenDest]
 
         // V2 fix: query the correct destination token from TokenRegistry
         let destTokenBytes32: string | undefined
@@ -394,11 +613,11 @@ export function TransferForm() {
           }
         }
 
-        const id = recordTransfer({
+        recordTransfer({
           type: 'deposit',
-          direction,
-          sourceChain,
-          destChain,
+          direction: frozenDirection,
+          sourceChain: frozenSource,
+          destChain: frozenDest,
           amount: depositAmount,
           status: 'confirmed',
           txHash: depositTxHash,
@@ -410,15 +629,21 @@ export function TransferForm() {
           token: tokenAddr || selectedTokenId,
           srcDecimals: amountDecimals,
           destToken: destTokenBytes32 || tokenAddr,
+          // For EVM->Terra: store the raw Terra denom so auto-submit can pass it to the Terra contract.
+          // For other directions: store the dest token address as-is.
+          destTokenId: frozenDirection === 'evm-to-terra'
+            ? (selectedTokenId || 'uluna')
+            : (destTokenBytes32 ? undefined : tokenAddr),
           destBridgeAddress: destChainConfig?.bridgeAddress,
-          sourceChainIdBytes4: srcChainConfig?.bytes4ChainId,
+          sourceChainIdBytes4: frozenSrcBytes4 ?? srcChainConfig?.bytes4ChainId,
         })
 
-        // Redirect to transfer status page
+        // Clear frozen state after recording
+        frozenChainsRef.current = null
+
+        // Redirect to transfer status page (hash only)
         if (transferHash) {
           navigate(`/transfer/${transferHash}`)
-        } else if (id) {
-          navigate(`/transfer/${id}`)
         }
       }
 
@@ -426,72 +651,170 @@ export function TransferForm() {
       resetEvm()
     } else if (evmStatus === 'error' && evmError) {
       setError(evmError)
+      frozenChainsRef.current = null
       resetEvm()
     }
   }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction, navigate, publicClient, evmAddress, tokenConfig, recipientAddr, selectedTokenId])
 
-  // Terra deposit success: store record and redirect
+  // Terra deposit success: parse receipt for nonce, use canonical deposit_hash + dest_token_address
+  // from the Terra contract's own event attributes (not recomputed by the frontend).
+  // Uses frozenChainsRef for the same reason as the EVM handler above.
   useEffect(() => {
     if (terraStatus === 'success' && terraTxHash) {
       setTxHash(terraTxHash)
 
-      // Get chain configs for the record
-      const tier = DEFAULT_NETWORK as NetworkTier
-      const chains = BRIDGE_CHAINS[tier]
-      const destChainConfig = chains[destChain]
+      // Read frozen chains — for Terra deposits, direction is always terra-to-evm
+      // but destChain could have been swapped.
+      const frozen = frozenChainsRef.current
+      const frozenDest = frozen?.destChain ?? destChain
+      const frozenSource = frozen?.sourceChain ?? sourceChain
 
-      // For Terra, nonce parsing is async via LCD and may not be immediate.
-      // Store the record now and parse nonce later on the status page.
-      // V2 fix: encode srcAccount as bech32-decoded bytes32
-      let srcAccountHex: string | undefined
-      if (terraAddress) {
-        try {
-          srcAccountHex = terraAddressToBytes32(terraAddress)
-        } catch {
-          srcAccountHex = terraAddress // fallback: store raw bech32
+      const run = async () => {
+        console.info(`[TransferForm:terra] Deposit success, txHash=${terraTxHash}`)
+
+        const tier = DEFAULT_NETWORK as NetworkTier
+        const chains = BRIDGE_CHAINS[tier]
+        const destChainConfig = chains[frozenDest]
+
+        let srcAccountHex: string | undefined
+        if (terraAddress) {
+          try {
+            srcAccountHex = terraAddressToBytes32(terraAddress)
+          } catch {
+            srcAccountHex = terraAddress
+          }
         }
+
+        const destAccountHex = recipientAddr.startsWith('0x')
+          ? evmAddressToBytes32(recipientAddr as `0x${string}`)
+          : recipientAddr
+
+        // Parse Terra receipt -- extract nonce, amount, and critically the canonical
+        // dest_token_address and deposit_hash that the Terra contract computed.
+        // This eliminates the race condition where registryTokens/destTokenAddr
+        // might not be loaded yet, and the wrong EVM token would be used.
+        const parsed = await parseTerraLockReceipt(terraTxHash)
+        const netAmount = parsed?.amount ?? parseAmount(amount, terraDecimals)
+        const depositNonce = parsed?.nonce
+
+        if (!parsed) {
+          console.warn(
+            `[TransferForm:terra] WARNING: Receipt parsing returned null for tx ${terraTxHash}. ` +
+            `Using fallback gross amount=${parseAmount(amount, terraDecimals)}. ` +
+            'This may cause a hash mismatch if the Terra contract used a net amount.'
+          )
+        } else {
+          console.info(
+            `[TransferForm:terra] parseTerraLockReceipt result: ` +
+            `nonce=${depositNonce}, amount=${netAmount}, ` +
+            `depositHash=${parsed.depositHash?.slice(0, 18) ?? 'none'}..., ` +
+            `destToken=${parsed.destTokenAddress?.slice(0, 18) ?? 'none'}...`
+          )
+        }
+
+        // Use the canonical dest_token_address from the Terra contract's event.
+        // This is the exact bytes32 EVM token address that Terra used to compute
+        // the deposit hash. Using this guarantees hash consistency.
+        let destTokenB32: string | undefined = parsed?.destTokenAddress
+        if (!destTokenB32) {
+          // Fallback for older contracts that don't emit dest_token_address:
+          // try destTokenAddr from useTokenDestMapping, then registry
+          if (destTokenAddr) {
+            destTokenB32 =
+              destTokenAddr.length === 66
+                ? destTokenAddr
+                : evmAddressToBytes32(destTokenAddr as `0x${string}`)
+          } else {
+            const selectedRegistryToken = registryTokens?.find((t) => t.token === (selectedTokenId || 'uluna'))
+            if (selectedRegistryToken?.evm_token_address) {
+              const raw = selectedRegistryToken.evm_token_address
+              destTokenB32 = raw.startsWith('0x') ? raw : '0x' + raw
+            }
+          }
+        }
+
+        // Use the canonical deposit_hash from the Terra contract's event.
+        // Only recompute as fallback for older contracts.
+        let transferHash: string | undefined = parsed?.depositHash
+        if (!transferHash && depositNonce !== undefined && destChainConfig?.bytes4ChainId) {
+          try {
+            const srcChainB32 = chainIdToBytes32(2)
+            const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
+            const destChainB32 = chainIdToBytes32(destChainIdNum)
+            const srcAccB32 = (srcAccountHex?.startsWith('0x') && srcAccountHex.length === 66)
+              ? srcAccountHex
+              : (terraAddress ? terraAddressToBytes32(terraAddress) : '0x' + '0'.repeat(64))
+            const destAccB32 = destAccountHex.startsWith('0x') && destAccountHex.length === 66
+              ? destAccountHex
+              : evmAddressToBytes32(recipientAddr as `0x${string}`)
+            const tokenB32 = destTokenB32 && destTokenB32.length === 66
+              ? destTokenB32
+              : (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : '0x' + '0'.repeat(64))
+            transferHash = computeTransferHash(
+              srcChainB32 as `0x${string}`,
+              destChainB32 as `0x${string}`,
+              srcAccB32 as `0x${string}`,
+              destAccB32 as `0x${string}`,
+              tokenB32 as `0x${string}`,
+              BigInt(netAmount),
+              BigInt(depositNonce)
+            )
+          } catch (err) {
+            console.warn('[TransferForm:terra] Failed to compute Terra transfer hash:', err)
+          }
+        }
+
+        if (!transferHash) {
+          console.warn(
+            `[TransferForm:terra] WARNING: No transferHash computed. ` +
+            `nonce=${depositNonce}, bytes4ChainId=${destChainConfig?.bytes4ChainId}, ` +
+            `depositHash=${parsed?.depositHash ?? 'none'}. ` +
+            'Transfer will be recorded without a hash and will need nonce resolution on the status page.'
+          )
+        }
+
+        console.info(
+          `[TransferForm:terra] Recording transfer: ` +
+          `hash=${transferHash?.slice(0, 18) ?? 'none'}..., nonce=${depositNonce}, ` +
+          `amount=${netAmount}, destToken=${destTokenB32?.slice(0, 18) ?? 'none'}...`
+        )
+
+        recordTransfer({
+          type: 'withdrawal',
+          direction: 'terra-to-evm',
+          sourceChain: frozenSource.includes('terra') || frozenSource.includes('local') ? frozenSource : 'localterra',
+          destChain: frozenDest,
+          amount: netAmount,
+          status: 'confirmed',
+          txHash: terraTxHash,
+          lifecycle: 'deposited',
+          transferHash,
+          depositNonce,
+          srcAccount: srcAccountHex,
+          destAccount: destAccountHex,
+          token: selectedTokenId || 'uluna',
+          destToken: destTokenB32,
+          srcDecimals: terraDecimals,
+          destBridgeAddress: destChainConfig?.bridgeAddress,
+          sourceChainIdBytes4: '0x00000002',
+        })
+
+        // Clear frozen state after recording
+        frozenChainsRef.current = null
+
+        if (transferHash) {
+          navigate(`/transfer/${transferHash}`)
+        }
+        resetTerra()
       }
 
-      // V2 fix: encode destAccount as bytes32 for EVM recipient
-      const destAccountHex = recipientAddr.startsWith('0x')
-        ? evmAddressToBytes32(recipientAddr as `0x${string}`)
-        : recipientAddr
-
-      // Resolve the destination EVM token address from the Terra bridge's token registry.
-      // Each Terra token has an evm_token_address (bytes32) that maps to the ERC20 on the
-      // destination EVM chain. The auto-submit hook needs this to call withdrawSubmit.
-      const selectedRegistryToken = registryTokens?.find((t) => t.token === (selectedTokenId || 'uluna'))
-      let destTokenB32: string | undefined
-      if (selectedRegistryToken?.evm_token_address) {
-        const raw = selectedRegistryToken.evm_token_address
-        destTokenB32 = raw.startsWith('0x') ? raw : '0x' + raw
-      }
-
-      const id = recordTransfer({
-        type: 'withdrawal',
-        direction: 'terra-to-evm',
-        sourceChain: sourceChain.includes('terra') || sourceChain.includes('local') ? sourceChain : 'localterra',
-        destChain,
-        amount: parseAmount(amount, terraDecimals),
-        status: 'confirmed',
-        txHash: terraTxHash,
-        lifecycle: 'deposited',
-        srcAccount: srcAccountHex,
-        destAccount: destAccountHex,
-        token: selectedTokenId || 'uluna',
-        destToken: destTokenB32,
-        srcDecimals: terraDecimals,
-        destBridgeAddress: destChainConfig?.bridgeAddress,
-        sourceChainIdBytes4: '0x00000002', // Terra chain ID in bridge
-      })
-
-      navigate(`/transfer/${id}`)
-      resetTerra()
+      run()
     } else if (terraStatus === 'error' && terraError) {
       setError(terraError)
+      frozenChainsRef.current = null
       resetTerra()
     }
-  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens])
+  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, sourceChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens, destTokenAddr])
 
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
@@ -523,6 +846,17 @@ export function TransferForm() {
     setTxHash(null)
 
     if (!isWalletConnected || !amount || !isValidAmount(amount)) return
+
+    // Freeze chain state at deposit time so that subsequent UI changes
+    // (e.g. swap button) don't corrupt the TransferRecord.
+    const tier0 = DEFAULT_NETWORK as NetworkTier
+    const srcConfig0 = BRIDGE_CHAINS[tier0][sourceChain]
+    frozenChainsRef.current = {
+      sourceChain,
+      destChain,
+      direction,
+      sourceChainIdBytes4: srcConfig0?.bytes4ChainId,
+    }
 
     // Look up destination chain's V2 bytes4 chain ID from BRIDGE_CHAINS config.
     // The V2 protocol uses predetermined chain IDs (e.g. anvil=1, terra=2, anvil1=3),
@@ -577,9 +911,54 @@ export function TransferForm() {
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
 
+  // Use onchain/tokenlist display hooks for symbol (not raw address)
   const selectedSymbol =
-    transferTokens.find((t) => t.id === selectedTokenId)?.symbol ?? (isSourceTerra ? 'LUNC' : tokenConfig?.symbol ?? 'LUNC')
+    isSourceTerra
+      ? terraDisplay.displayLabel || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC'
+      : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC')
   const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
+
+  // "You will receive" shows DESTINATION token - use display hooks for symbol, link to dest chain
+  const feeBreakdownProps = useMemo(() => {
+    const destChainInfo = allChains.find((c) => c.id === destChain)
+    const destType = destChainInfo?.type ?? 'evm'
+    const tokenAddr =
+      destType === 'cosmos' && selectedTokenId?.startsWith('terra1')
+        ? selectedTokenId
+        : destTokenAddr
+
+    const display =
+      destType === 'cosmos'
+        ? terraDisplay.displayLabel || (tokenlist ? getTokenFromList(tokenlist, selectedTokenId)?.symbol : null) || selectedSymbol
+        : evmDestDisplay.displayLabel || (tokenlist ? getTokenFromList(tokenlist, selectedTokenId)?.symbol : null) || shortenAddress(tokenAddr)
+
+    const url = destChainInfo?.explorerUrl && tokenAddr
+      ? getTokenExplorerUrl(destChainInfo.explorerUrl, tokenAddr, destType)
+      : ''
+
+    const addrForBlockie =
+      tokenAddr && (tokenAddr.startsWith('0x') || tokenAddr.startsWith('terra1'))
+        ? tokenAddr
+        : destType === 'evm' && tokenAddr
+          ? tokenAddr
+          : undefined
+
+    return {
+      destDisplaySymbol: display,
+      tokenId: destType === 'cosmos' ? selectedTokenId : undefined,
+      addressForBlockie: addrForBlockie,
+      tokenExplorerUrl: url,
+    }
+  }, [
+    tokenlist,
+    selectedTokenId,
+    selectedSymbol,
+    destChain,
+    allChains,
+    destTokenAddr,
+    terraDisplay.displayLabel,
+    evmDestDisplay.displayLabel,
+  ])
 
   const buttonText = !isWalletConnected
     ? `Connect ${walletLabel} Wallet`
@@ -615,24 +994,28 @@ export function TransferForm() {
         onChange={handleSourceChange}
         balance={balanceDisplay}
         balanceLabel={selectedSymbol}
+        disabled={isSubmitting}
       />
       <AmountInput
         value={amount}
         onChange={setAmount}
         onMax={
-          isSourceTerra
-            ? () => setAmount(formatAmount(luncBalance, terraDecimals))
+          isSourceTerra && luncBalance
+            ? handleMax
             : tokenBalance !== undefined && tokenConfig
-            ? () => setAmount(formatAmount(tokenBalance.toString(), tokenConfig.decimals))
+            ? handleMax
             : undefined
         }
         tokens={transferTokens}
         selectedTokenId={selectedTokenId}
         onTokenChange={setSelectedTokenId}
         symbol={selectedSymbol}
+        sourceChainRpcUrl={!isSourceTerra && sourceChainConfig?.type === 'evm' ? sourceChainConfig.rpcUrl : undefined}
+        maxLabel={displayMaxLabel}
+        minLabel={displayMinLabel}
       />
-      <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled} />
-      <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} />
+      <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled || isSubmitting} />
+      <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} disabled={isSubmitting} />
       <RecipientInput
         value={recipient}
         onChange={setRecipient}
@@ -647,7 +1030,13 @@ export function TransferForm() {
           }
         }}
       />
-      <FeeBreakdown receiveAmount={receiveAmount} symbol={selectedSymbol} />
+      <FeeBreakdown
+        receiveAmount={receiveAmount}
+        symbol={feeBreakdownProps.destDisplaySymbol}
+        tokenId={feeBreakdownProps.tokenId}
+        addressForBlockie={feeBreakdownProps.addressForBlockie}
+        tokenExplorerUrl={feeBreakdownProps.tokenExplorerUrl}
+      />
 
       <button
         type="submit"

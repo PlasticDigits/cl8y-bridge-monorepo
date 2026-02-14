@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChainsPanel, TokensPanel, BridgeConfigPanel } from '../components/settings'
+import { sounds } from '../lib/sounds'
 
 type TabId = 'chains' | 'tokens' | 'bridge'
 
@@ -17,7 +18,7 @@ export default function SettingsPage() {
       <div className="shell-panel-strong relative overflow-hidden">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] bg-[radial-gradient(circle,_rgba(255,255,255,0.14)_0%,_rgba(0,0,0,0)_72%)] blur-2xl"
+          className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] theme-hero-glow blur-2xl"
         />
         <div className="relative z-10">
         <h2 className="mb-2 text-xl font-semibold text-white">System Settings</h2>
@@ -34,7 +35,10 @@ export default function SettingsPage() {
               id={`tab-${tab.id}`}
               aria-selected={activeTab === tab.id}
               aria-controls={`tabpanel-${tab.id}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                sounds.playButtonPress()
+                setActiveTab(tab.id)
+              }}
               className={`px-4 py-2 text-sm font-medium uppercase tracking-wide border transition-colors ${
                 activeTab === tab.id
                   ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'

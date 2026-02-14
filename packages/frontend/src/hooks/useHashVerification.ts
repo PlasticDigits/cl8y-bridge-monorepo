@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useState } from 'react'
+import type { Hex } from 'viem'
 import {
   computeTransferHash,
   normalizeHash,
@@ -54,20 +55,13 @@ export function useHashVerification() {
     [lookup]
   )
 
-  // Compute hash directly from srcChain/destChain bytes32 already present on the data.
-  // This avoids re-deriving from numeric chainId, which is 0 for Terra chains.
+  const ZERO_BYTES32 = ('0x' + '0'.repeat(64)) as Hex
+
+  // Compute hash from the best available data.
+  // Prefer dest (always has correct chain IDs from the EVM/Terra contract).
+  // For Terra deposits, destChain is zero (not stored in deposit record);
+  // fill it from dest if available.
   const computedHash = (() => {
-    if (source) {
-      return computeTransferHash(
-        source.srcChain,
-        source.destChain,
-        source.srcAccount,
-        source.destAccount,
-        source.token,
-        source.amount,
-        BigInt(source.nonce)
-      )
-    }
     if (dest) {
       return computeTransferHash(
         dest.srcChain,
@@ -79,31 +73,33 @@ export function useHashVerification() {
         BigInt(dest.nonce)
       )
     }
+    if (source && source.destChain !== ZERO_BYTES32) {
+      return computeTransferHash(
+        source.srcChain,
+        source.destChain,
+        source.srcAccount,
+        source.destAccount,
+        source.token,
+        source.amount,
+        BigInt(source.nonce)
+      )
+    }
     return null
   })()
 
   const matches: boolean | null = (() => {
-    if (!computedHash || !source || !dest) return null
-    // Compare source and dest by recomputing from both and checking equality
-    const fromSource = computeTransferHash(
-      source.srcChain,
-      source.destChain,
-      source.srcAccount,
-      source.destAccount,
-      source.token,
-      source.amount,
-      BigInt(source.nonce)
-    )
-    const fromDest = computeTransferHash(
-      dest.srcChain,
-      dest.destChain,
-      dest.srcAccount,
-      dest.destAccount,
-      dest.token,
-      dest.amount,
-      BigInt(dest.nonce)
-    )
-    return fromSource === fromDest
+    if (!source || !dest) return null
+    // When both sides are found, compare field by field.
+    // Some fields may be zero on one side (e.g. Terra deposits don't store destChain),
+    // so skip zero fields in the comparison.
+    const srcChainOk = source.srcChain === ZERO_BYTES32 || dest.srcChain === ZERO_BYTES32 || source.srcChain === dest.srcChain
+    const destChainOk = source.destChain === ZERO_BYTES32 || dest.destChain === ZERO_BYTES32 || source.destChain === dest.destChain
+    const srcAccountMatch = source.srcAccount === dest.srcAccount
+    const destAccountMatch = source.destAccount === dest.destAccount
+    const tokenMatch = source.token === dest.token
+    const amountMatch = source.amount === dest.amount
+    const nonceMatch = source.nonce === dest.nonce
+    return srcChainOk && destChainOk && srcAccountMatch && destAccountMatch && tokenMatch && amountMatch && nonceMatch
   })()
 
   const status: HashStatus = (() => {

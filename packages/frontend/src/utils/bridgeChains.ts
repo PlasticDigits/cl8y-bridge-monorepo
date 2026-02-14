@@ -42,6 +42,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       lcdUrl: 'http://localhost:1317',
       lcdFallbacks: ['http://localhost:1317'],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
+      bytes4ChainId: '0x00000002', // V2 chain ID 2 (local Terra)
     },
   },
   testnet: {
@@ -80,6 +81,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
         'https://lcd.terra-classic.hexxagon.dev',
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
+      bytes4ChainId: '0x00000002',
     },
   },
   mainnet: {
@@ -119,6 +121,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
         'https://lcd.terra-classic.hexxagon.io',
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
+      bytes4ChainId: '0x00000002',
     },
   },
 }
@@ -187,6 +190,36 @@ export function getBridgeChainByBytes4(bytes4Hex: string): BridgeChainConfig | u
   const chains = BRIDGE_CHAINS[tier]
   const normalized = bytes4Hex.toLowerCase()
   return Object.values(chains).find((c) => c.bytes4ChainId?.toLowerCase() === normalized)
+}
+
+/**
+ * Get bridge chain key and config by bytes4 chain ID. Returns [chainKey, config] or undefined.
+ */
+export function getBridgeChainEntryByBytes4(
+  bytes4Hex: string
+): [string, BridgeChainConfig] | undefined {
+  const tier = DEFAULT_NETWORK as NetworkTier
+  const chains = BRIDGE_CHAINS[tier]
+  const normalized = bytes4Hex.toLowerCase()
+  const entry = Object.entries(chains).find(
+    ([_, c]) => (c as BridgeChainConfig & { bytes4ChainId?: string }).bytes4ChainId?.toLowerCase() === normalized
+  )
+  return entry ? [entry[0], entry[1]] : undefined
+}
+
+/**
+ * Get chain display info (name, icon) for a bridge chain key.
+ */
+export function getChainDisplayInfo(chainKey: string): { name: string; icon: string } {
+  const tier = DEFAULT_NETWORK as NetworkTier
+  const chainlist = getChainlist()
+  const config = BRIDGE_CHAINS[tier][chainKey]
+  const display = CHAIN_DISPLAY[chainKey] ?? { icon: '○', explorerUrl: '', nativeCurrency: { name: '', symbol: '', decimals: 18 } }
+  const chainlistEntry = config ? getChainlistEntry(chainlist, chainKey, config.chainId) : undefined
+  return {
+    name: chainlistEntry?.name ?? config?.name ?? chainKey,
+    icon: chainlistEntry?.icon ?? display.icon,
+  }
 }
 
 /**

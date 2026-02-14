@@ -58,7 +58,8 @@ export function registerAllTokens(
     [
       { chainKey: CHAIN_KEYS.terra, tokens: tokens.terra, decimals: 6 },
       { chainKey: CHAIN_KEYS.anvil1, tokens: tokens.anvil1, decimals: 18 },
-    ]
+    ],
+    tokens.terra
   )
 
   // Register tokens on Anvil1 for Terra (0x00000002) and Anvil (0x00000001) destinations
@@ -70,7 +71,8 @@ export function registerAllTokens(
     [
       { chainKey: CHAIN_KEYS.terra, tokens: tokens.terra, decimals: 6 },
       { chainKey: CHAIN_KEYS.anvil, tokens: tokens.anvil, decimals: 18 },
-    ]
+    ],
+    tokens.terra
   )
 
   // Register chains on Terra bridge first
@@ -112,22 +114,31 @@ function registerChainsOnEvm(bridges: BridgeAddresses): void {
   )
 }
 
-/** Cached keccak256("uluna") for Terra destination token - EVM tokens map to uluna on Terra */
-let cachedKeccakUluna: string | null = null
+/** Cache for keccak256 results */
+const keccakCache = new Map<string, string>()
 
-function getKeccak256Uluna(): string {
-  if (cachedKeccakUluna) return cachedKeccakUluna
+/** Compute keccak256 of an arbitrary string via cast. Results are cached. */
+function getKeccak256(input: string): string {
+  const cached = keccakCache.get(input)
+  if (cached) return cached
   try {
-    cachedKeccakUluna = execSync(`cast keccak "uluna"`, {
+    const result = execSync(`cast keccak "${input}"`, {
       encoding: 'utf8',
       env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' },
     }).trim()
-    return cachedKeccakUluna
+    keccakCache.set(input, result)
+    return result
   } catch {
-    console.warn('[register-tokens] Failed to compute keccak256("uluna"), using fallback')
-    cachedKeccakUluna = '0x' + '0'.repeat(64)
-    return cachedKeccakUluna
+    console.warn(`[register-tokens] Failed to compute keccak256("${input}"), using fallback`)
+    const fallback = '0x' + '0'.repeat(64)
+    keccakCache.set(input, fallback)
+    return fallback
   }
+}
+
+/** Convenience: keccak256("uluna") for LUNC → uluna mapping */
+function getKeccak256Uluna(): string {
+  return getKeccak256('uluna')
 }
 
 /**
@@ -144,16 +155,19 @@ function addressToBytes32(addr: string): string {
   return '0x' + '0'.repeat(64)
 }
 
+type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string }
+
 function registerEvmTokensForChain(
   rpcUrl: string,
   tokenRegistry: string,
   _lockUnlock: string,
-  sourceTokens: { tokenA: string; tokenB: string; tokenC: string },
+  sourceTokens: EvmChainTokens,
   destinations: Array<{
     chainKey: string
-    tokens: { tokenA: string; tokenB: string; tokenC: string }
+    tokens: EvmChainTokens | TokenAddresses['terra']
     decimals: number
-  }>
+  }>,
+  terraTokens: TokenAddresses['terra']
 ): void {
   const tokenPairs: Array<[string, 'tokenA' | 'tokenB' | 'tokenC']> = [
     [sourceTokens.tokenA, 'tokenA'],
@@ -163,18 +177,22 @@ function registerEvmTokensForChain(
 
   for (const [tokenAddr, tokenKey] of tokenPairs) {
     // Register token with LockUnlock type (enum value 0)
-    // TokenType: LockUnlock = 0, MintBurn = 1
     castSend(rpcUrl, tokenRegistry, '"registerToken(address,uint8)"', `${tokenAddr} 0`)
 
-    // Set destination mapping for each chain
     for (const dest of destinations) {
-      // For Terra (0x00000002): EVM tokens map to uluna (keccak256("uluna")), 6 decimals
-      // Terra token addresses are placeholders, so we use keccak256("uluna") instead
-      const destTokenBytes32 =
-        dest.chainKey === CHAIN_KEYS.terra
-          ? getKeccak256Uluna()
-          : addressToBytes32(dest.tokens[tokenKey])
-      const decimals = dest.chainKey === CHAIN_KEYS.terra ? 6 : dest.decimals
+      let destTokenBytes32: string
+      let decimals: number
+      if (dest.chainKey === CHAIN_KEYS.terra) {
+        // Map to the CW20 token address on Terra (keccak256 of CW20 addr).
+        // This ensures each EVM token gets its own incoming mapping on Terra
+        // with the correct src_decimals (18 for ERC20 tokens).
+        const terraAddr = terraTokens[tokenKey]
+        destTokenBytes32 = getKeccak256(terraAddr)
+        decimals = 6 // Terra CW20 tokens have 6 decimals
+      } else {
+        destTokenBytes32 = addressToBytes32(dest.tokens[tokenKey])
+        decimals = dest.decimals
+      }
       castSend(
         rpcUrl,
         tokenRegistry,
@@ -183,38 +201,55 @@ function registerEvmTokensForChain(
       )
     }
   }
+
+  // Register LUNC (uluna representation) - Terra maps to keccak uluna, EVM chains to lunc address
+  const luncAddr = sourceTokens.lunc
+  castSend(rpcUrl, tokenRegistry, '"registerToken(address,uint8)"', `${luncAddr} 0`)
+  for (const dest of destinations) {
+    const destTokenBytes32 =
+      dest.chainKey === CHAIN_KEYS.terra
+        ? getKeccak256Uluna()
+        : addressToBytes32((dest.tokens as EvmChainTokens).lunc)
+    const decimals = 6 // LUNC has 6 decimals on all chains
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
+      `${luncAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
+    )
+  }
 }
 
 function registerChainsOnTerra(terraBridgeAddress: string): void {
   const containerName = 'cl8y-bridge-monorepo-localterra-1'
   const keyName = 'test1'
 
-  // Register EVM chain on Terra bridge
-  // V2 chain ID for EVM = 0x00000001 (matches DeployLocal.s.sol)
-  // chain_id is Binary (base64 of 4 bytes)
-  const evmChainIdB64 = Buffer.from([0x00, 0x00, 0x00, 0x01]).toString('base64') // V2 ID 1
+  const chainsToRegister: Array<{ identifier: string; chainIdBytes: number[] }> = [
+    { identifier: 'evm_31337', chainIdBytes: [0x00, 0x00, 0x00, 0x01] }, // Anvil
+    { identifier: 'evm_31338', chainIdBytes: [0x00, 0x00, 0x00, 0x03] }, // Anvil1
+  ]
 
-  const registerEvm = JSON.stringify({
-    register_chain: {
-      identifier: 'evm_31337',
-      chain_id: evmChainIdB64,
-    },
-  })
-
-  try {
-    execSync(
-      `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${registerEvm}' ` +
-        `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-        `--fees 10000000uluna -y 2>/dev/null`,
-      { encoding: 'utf8', timeout: 30_000 }
-    )
-    console.log('[register-tokens] Registered chain "evm_31337" (V2 ID 0x00000001) on Terra bridge')
-  } catch (err) {
-    console.warn('[register-tokens] Failed to register EVM on Terra:', (err as Error).message?.slice(0, 100))
+  for (const { identifier, chainIdBytes } of chainsToRegister) {
+    const chainIdB64 = Buffer.from(chainIdBytes).toString('base64')
+    const registerEvm = JSON.stringify({
+      register_chain: {
+        identifier,
+        chain_id: chainIdB64,
+      },
+    })
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${registerEvm}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y 2>/dev/null`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log(`[register-tokens] Registered chain "${identifier}" (V2 ID 0x${chainIdBytes[3].toString(16).padStart(2, '0')}) on Terra bridge`)
+    } catch (err) {
+      console.warn(`[register-tokens] Failed to register ${identifier} on Terra:`, (err as Error).message?.slice(0, 100))
+    }
+    try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
   }
-
-  // Wait for tx inclusion
-  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
 }
 
 function registerTerraTokensForEvmChains(
@@ -224,17 +259,16 @@ function registerTerraTokensForEvmChains(
   const containerName = 'cl8y-bridge-monorepo-localterra-1'
   const keyName = 'test1'
 
-  // Following the Rust E2E pattern: use add_token + set_incoming_token_mapping
-  // Step 1: Add uluna (native) token with mapping to EVM test token
-  const evmTokenA = tokens.anvil.tokenA.slice(2).toLowerCase().padStart(64, '0')
+  // Step 1: Add uluna (native) token with EVM representation = LUNC on Anvil
+  const evmLuncAnvil = tokens.anvil.lunc.slice(2).toLowerCase().padStart(64, '0')
   const addUlunaMsg = JSON.stringify({
     add_token: {
       token: 'uluna',
       is_native: true,
       token_type: 'lock_unlock',
-      evm_token_address: evmTokenA,
+      evm_token_address: evmLuncAnvil,
       terra_decimals: 6,
-      evm_decimals: 18,
+      evm_decimals: 6,
     },
   })
 
@@ -252,45 +286,79 @@ function registerTerraTokensForEvmChains(
 
   try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
 
-  // Step 2: Set incoming token mapping (EVM → Terra)
-  // Maps the EVM representation of uluna (keccak256("uluna")) back to local "uluna"
-  // The src_token is keccak256 of "uluna" encoded as base64
-  const srcTokenHex = getKeccak256Uluna()
-  // Convert hex to base64
-  const srcTokenBytes = Buffer.from(srcTokenHex.replace('0x', ''), 'hex')
-  const srcTokenB64 = srcTokenBytes.toString('base64')
-
-  // EVM chain ID for incoming mapping = 0x00000001
-  const evmChainIdB64 = Buffer.from([0x00, 0x00, 0x00, 0x01]).toString('base64')
-
-  const setIncomingMsg = JSON.stringify({
-    set_incoming_token_mapping: {
-      src_chain: evmChainIdB64,
-      src_token: srcTokenB64,
-      local_token: 'uluna',
-      src_decimals: 18,
-    },
-  })
-
-  try {
-    execSync(
-      `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
-        `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-        `--fees 10000000uluna -y 2>/dev/null`,
-      { encoding: 'utf8', timeout: 30_000 }
-    )
-    console.log('[register-tokens] Set incoming token mapping for uluna on Terra bridge')
-  } catch (err) {
-    console.warn('[register-tokens] Failed to set incoming token mapping:', (err as Error).message?.slice(0, 100))
+  // Step 2: Set per-chain token destination (uluna → Anvil and Anvil1)
+  const destChains: Array<{ chainId: number[]; luncAddr: string }> = [
+    { chainId: [0x00, 0x00, 0x00, 0x01], luncAddr: tokens.anvil.lunc },
+    { chainId: [0x00, 0x00, 0x00, 0x03], luncAddr: tokens.anvil1.lunc },
+  ]
+  for (const { chainId, luncAddr } of destChains) {
+    const destChainB64 = Buffer.from(chainId).toString('base64')
+    const destTokenHex = '0x' + luncAddr.slice(2).toLowerCase().padStart(64, '0')
+    const setDestMsg = JSON.stringify({
+      set_token_destination: {
+        token: 'uluna',
+        dest_chain: destChainB64,
+        dest_token: destTokenHex,
+        dest_decimals: 6,
+      },
+    })
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y 2>/dev/null`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log(`[register-tokens] Set token_destination for uluna -> chain 0x${chainId[3].toString(16).padStart(2, '0')}`)
+    } catch (err) {
+      console.warn('[register-tokens] Failed to set_token_destination:', (err as Error).message?.slice(0, 100))
+    }
+    try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
   }
 
-  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+  // Step 3: Set incoming token mapping (EVM → Terra) for both Anvil and Anvil1
+  const srcTokenHex = getKeccak256Uluna()
+  const srcTokenB64 = Buffer.from(srcTokenHex.replace('0x', ''), 'hex').toString('base64')
 
-  // Step 3: For CW20 tokens, add them too (skip placeholders - not actually deployed)
+  for (const chainIdBytes of [[0x00, 0x00, 0x00, 0x01], [0x00, 0x00, 0x00, 0x03]]) {
+    const evmChainIdB64 = Buffer.from(chainIdBytes).toString('base64')
+    const setIncomingMsg = JSON.stringify({
+      set_incoming_token_mapping: {
+        src_chain: evmChainIdB64,
+        src_token: srcTokenB64,
+        local_token: 'uluna',
+        src_decimals: 6,
+      },
+    })
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y 2>/dev/null`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log(`[register-tokens] Set incoming token mapping for uluna (chain 0x${chainIdBytes[3].toString(16).padStart(2, '0')}) on Terra bridge`)
+    } catch (err) {
+      console.warn('[register-tokens] Failed to set incoming token mapping:', (err as Error).message?.slice(0, 100))
+    }
+    try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+  }
+
+  // Step 3: For CW20 tokens, add them and set per-chain destinations
   const terraTokenPairs: Array<['tokenA' | 'tokenB' | 'tokenC', string]> = [
     ['tokenA', tokens.terra.tokenA],
     ['tokenB', tokens.terra.tokenB],
     ['tokenC', tokens.terra.tokenC],
+  ]
+
+  // CW20 destination chains: Anvil and Anvil1
+  const cw20DestChains: Array<{
+    chainId: number[]
+    chainLabel: string
+    getEvmAddr: (key: 'tokenA' | 'tokenB' | 'tokenC') => string
+  }> = [
+    { chainId: [0x00, 0x00, 0x00, 0x01], chainLabel: 'Anvil', getEvmAddr: (k) => tokens.anvil[k] },
+    { chainId: [0x00, 0x00, 0x00, 0x03], chainLabel: 'Anvil1', getEvmAddr: (k) => tokens.anvil1[k] },
   ]
 
   for (const [tokenKey, tokenAddr] of terraTokenPairs) {
@@ -327,6 +395,63 @@ function registerTerraTokensForEvmChains(
     }
 
     try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+
+    // Set token_destination for this CW20 to each EVM chain
+    for (const dest of cw20DestChains) {
+      const destChainB64 = Buffer.from(dest.chainId).toString('base64')
+      const evmAddr = dest.getEvmAddr(tokenKey)
+      const destTokenHex = '0x' + evmAddr.slice(2).toLowerCase().padStart(64, '0')
+      const setDestMsg = JSON.stringify({
+        set_token_destination: {
+          token: tokenAddr,
+          dest_chain: destChainB64,
+          dest_token: destTokenHex,
+          dest_decimals: 18,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y 2>/dev/null`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set token_destination for CW20 ${tokenKey} -> ${dest.chainLabel}`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set CW20 dest:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+
+    // Set incoming token mapping (EVM → Terra) for this CW20 from each EVM chain.
+    // The src_token is keccak256(cw20_address) — matching what EVM stores as destToken.
+    // src_decimals=18 because the source ERC20 tokens on EVM have 18 decimals.
+    const cw20SrcTokenHex = getKeccak256(tokenAddr)
+    const cw20SrcTokenB64 = Buffer.from(cw20SrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+
+    for (const dest of cw20DestChains) {
+      const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
+      const setIncomingMsg = JSON.stringify({
+        set_incoming_token_mapping: {
+          src_chain: evmChainIdB64,
+          src_token: cw20SrcTokenB64,
+          local_token: tokenAddr,
+          src_decimals: 18,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y 2>/dev/null`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set incoming mapping for CW20 ${tokenKey} (chain ${dest.chainLabel}) with src_decimals=18`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set CW20 incoming mapping:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
   }
 }
 

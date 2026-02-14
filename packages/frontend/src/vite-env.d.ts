@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare module 'react-blockies'
+
 interface ImportMetaEnv {
   readonly VITE_EVM_RPC_URL: string
   readonly VITE_TERRA_LCD_URL: string

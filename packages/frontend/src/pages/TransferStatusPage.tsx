@@ -17,11 +17,19 @@ import { useParams, Link } from 'react-router-dom'
 import { useMemo, useEffect, useState, useCallback, useRef } from 'react'
 import { useTransferStore } from '../stores/transfer'
 import { useAutoWithdrawSubmit } from '../hooks/useAutoWithdrawSubmit'
+import { useMultiChainLookup } from '../hooks/useMultiChainLookup'
+import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
+import { formatDuration } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeTransferHash, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
+import { isValidTransferHash, normalizeTransferHash } from '../utils/validation'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
+
+const LOG = '[TransferStatus]'
+
+type NonceResolutionStatus = 'idle' | 'resolving' | 'resolved' | 'failed'
 
 // Lifecycle step definitions
 const STEPS: { key: TransferLifecycle; label: string; description: string }[] = [
@@ -39,38 +47,77 @@ function getStepIndex(lifecycle?: TransferLifecycle): number {
   return idx >= 0 ? idx : 0
 }
 
-function StepIndicator({ step, currentIdx, idx }: { step: typeof STEPS[number]; currentIdx: number; idx: number }) {
+function StepIndicator({
+  step,
+  currentIdx,
+  idx,
+  isFailed,
+}: {
+  step: typeof STEPS[number]
+  currentIdx: number
+  idx: number
+  isFailed: boolean
+}) {
   const isDone = idx < currentIdx
   const isActive = idx === currentIdx
-  const isFuture = idx > currentIdx
+  const isError = isFailed && isActive
+  const stateLabel = isDone ? 'DONE' : isError ? 'FAILED' : isActive ? 'ACTIVE' : 'UP NEXT'
+  const squareTone = isDone
+    ? 'border-[#b8ff3d] bg-[#2a3518]'
+    : isError
+    ? 'border-red-600 bg-red-950/70'
+    : isActive
+    ? 'border-yellow-500 bg-yellow-950/70'
+    : 'border-white/35 bg-[#111111]'
+  const statePillTone = isDone
+    ? 'border-[#b8ff3d]/70 bg-[#2a3518] text-[#d5ff7f]'
+    : isError
+    ? 'border-red-600/70 bg-red-900/40 text-red-300'
+    : isActive
+    ? 'border-yellow-600/80 bg-yellow-900/40 text-yellow-300'
+    : 'border-white/25 bg-[#1c1c1c] text-gray-400'
+  const connectorTone = isDone ? 'bg-[#b8ff3d]' : isError ? 'bg-red-500' : 'bg-gray-600'
+  const arrowTone = isDone ? 'border-t-[#b8ff3d]' : isError ? 'border-t-red-500' : 'border-t-gray-500'
+  const iconSrc = isDone
+    ? '/assets/status-success.png'
+    : isError
+    ? '/assets/status-failed.png'
+    : isActive
+    ? '/assets/status-pending.png'
+    : '/assets/status-canceled.png'
+  const cardTone = isActive || isError ? 'border-white/70' : 'border-white/35'
+  const textTone = isDone ? 'text-[#b8ff3d]' : isError ? 'text-red-300' : isActive ? 'text-white' : 'text-gray-400'
+  const descriptionTone = isDone || isActive || isError ? 'text-gray-300' : 'text-gray-500'
 
   return (
-    <div className="flex items-start gap-3">
-      {/* Circle */}
-      <div className="flex flex-col items-center">
+    <div className={`relative flex items-start gap-3 border-2 bg-[#161616] p-3 shadow-[3px_3px_0_#000] ${cardTone}`}>
+      {/* Status square + connector */}
+      <div className="flex self-stretch flex-col items-center">
         <div
-          className={`flex h-8 w-8 shrink-0 items-center justify-center border-2 font-mono text-xs font-bold
-            ${isDone ? 'border-[#b8ff3d] bg-[#b8ff3d]/20 text-[#b8ff3d]' : ''}
-            ${isActive ? 'border-[#b8ff3d] bg-[#b8ff3d] text-black animate-pulse' : ''}
-            ${isFuture ? 'border-gray-600 bg-transparent text-gray-600' : ''}
-          `}
+          className={`flex h-9 w-9 shrink-0 items-center justify-center border-2 shadow-[2px_2px_0_#000] ${squareTone}`}
         >
-          {isDone ? '\u2713' : idx + 1}
+          <img src={iconSrc} alt="" className="h-5 w-5 shrink-0 object-contain" aria-hidden />
         </div>
         {idx < STEPS.length - 1 && (
-          <div className={`h-8 w-0.5 ${isDone ? 'bg-[#b8ff3d]/40' : 'bg-gray-700'}`} />
+          <div className="mt-1 flex min-h-6 flex-1 flex-col items-center">
+            <div className={`w-1 flex-1 border-x border-black/50 ${connectorTone}`} />
+            <div
+              className={`mt-0.5 h-0 w-0 border-l-[5px] border-r-[5px] border-t-[7px] border-l-transparent border-r-transparent ${arrowTone}`}
+            />
+          </div>
         )}
       </div>
       {/* Text */}
-      <div className="pb-6">
+      <div className="flex-1 pb-1">
         <p
-          className={`text-sm font-semibold uppercase tracking-wide ${
-            isDone ? 'text-[#b8ff3d]' : isActive ? 'text-white' : 'text-gray-500'
-          }`}
+          className={`mb-1 inline-flex border-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide shadow-[1px_1px_0_#000] ${statePillTone}`}
         >
+          {stateLabel}
+        </p>
+        <p className={`text-sm font-semibold uppercase tracking-[0.08em] ${textTone}`}>
           {step.label}
         </p>
-        <p className={`text-xs ${isDone || isActive ? 'text-gray-300' : 'text-gray-600'}`}>
+        <p className={`text-xs ${descriptionTone}`}>
           {step.description}
         </p>
       </div>
@@ -158,27 +205,86 @@ function TransferDetails({ transfer }: { transfer: TransferRecord }) {
   )
 }
 
+function buildTransferFromLookup(
+  hash: string,
+  source: { amount: bigint; srcAccount: `0x${string}`; destAccount: `0x${string}`; token: `0x${string}` } | null,
+  sourceChain: { name: string; bridgeAddress?: string } | null,
+  dest: { amount: bigint; executed: boolean; approved: boolean } | null,
+  destChain: { name: string; bridgeAddress?: string } | null
+): TransferRecord {
+  const lifecycle: TransferRecord['lifecycle'] = dest?.executed
+    ? 'executed'
+    : dest?.approved
+    ? 'approved'
+    : dest
+    ? 'hash-submitted'
+    : 'deposited'
+  const amount = (source?.amount ?? dest?.amount ?? 0n).toString()
+  const srcIsTerra = (sourceChain?.name ?? '').includes('terra') || (sourceChain?.name ?? '').includes('localterra')
+  const destIsTerra = (destChain?.name ?? '').includes('terra') || (destChain?.name ?? '').includes('localterra')
+  const direction: TransferRecord['direction'] = srcIsTerra ? 'terra-to-evm' : destIsTerra ? 'evm-to-terra' : 'evm-to-evm'
+  return {
+    id: hash,
+    type: 'deposit',
+    direction,
+    sourceChain: sourceChain?.name ?? 'unknown',
+    destChain: destChain?.name ?? 'unknown',
+    amount,
+    status: 'confirmed',
+    txHash: '', // Not available from on-chain lookup
+    timestamp: Date.now(),
+    transferHash: hash,
+    lifecycle,
+    srcAccount: source?.srcAccount,
+    destAccount: source?.destAccount,
+    destToken: source?.token,
+    destBridgeAddress: destChain?.bridgeAddress,
+  }
+}
+
 export default function TransferStatusPage() {
   const { transferHash } = useParams<{ transferHash: string }>()
-  const { getTransferByHash, getTransferById, updateTransferRecord } = useTransferStore()
+  const { getTransferByHash, updateTransferRecord } = useTransferStore()
+  const { lookup, source, sourceChain, dest, destChain, loading: lookupLoading } = useMultiChainLookup()
 
-  // Try to find the transfer by hash or by ID
   const [transfer, setTransfer] = useState<TransferRecord | null>(null)
 
+  // Try to find the transfer by hash in store; otherwise reset for lookup
   useEffect(() => {
     if (!transferHash) return
-    let found = getTransferByHash(transferHash)
-    if (!found) found = getTransferById(transferHash)
-    setTransfer(found)
-  }, [transferHash, getTransferByHash, getTransferById])
+    const found = getTransferByHash(transferHash)
+    setTransfer(found || null)
+  }, [transferHash, getTransferByHash])
 
-  // Listen for updates
+  // If not in store but valid hash, lookup on chain
+  useEffect(() => {
+    if (!transferHash) return
+    if (getTransferByHash(transferHash)) return
+    if (!isValidTransferHash(transferHash)) return
+    lookup(normalizeTransferHash(transferHash) as `0x${string}`)
+  }, [transferHash, getTransferByHash, lookup])
+
+  // Build transfer from lookup when we have chain data and no store match
+  useEffect(() => {
+    if (!transferHash) return
+    if (getTransferByHash(transferHash)) return
+    if (lookupLoading || (!source && !dest)) return
+    const synthetic = buildTransferFromLookup(
+      normalizeTransferHash(transferHash),
+      source,
+      sourceChain,
+      dest,
+      destChain
+    )
+    setTransfer(synthetic)
+  }, [transferHash, source, sourceChain, dest, destChain, lookupLoading, getTransferByHash])
+
+  // Listen for store updates
   useEffect(() => {
     const handler = () => {
       if (!transferHash) return
-      let found = getTransferByHash(transferHash)
-      if (!found) found = getTransferById(transferHash)
-      setTransfer(found)
+      const found = getTransferByHash(transferHash)
+      if (found) setTransfer(found)
     }
     window.addEventListener('cl8y-transfer-updated', handler)
     window.addEventListener('cl8y-transfer-recorded', handler)
@@ -186,22 +292,38 @@ export default function TransferStatusPage() {
       window.removeEventListener('cl8y-transfer-updated', handler)
       window.removeEventListener('cl8y-transfer-recorded', handler)
     }
-  }, [transferHash, getTransferByHash, getTransferById])
+  }, [transferHash, getTransferByHash])
 
   // --- Terra nonce resolution ---
-  // For terra-to-evm transfers that lack a depositNonce, parse it from LCD
-  const terraNonceResolved = useRef(false)
+  // For terra-to-evm transfers that lack a depositNonce, parse it from LCD.
+  // Uses state (not ref) so the user can retry if the LCD was unreachable.
+  const [nonceStatus, setNonceStatus] = useState<NonceResolutionStatus>('idle')
+  const nonceResolving = useRef(false)
+
+  const retryNonceResolution = useCallback(() => {
+    nonceResolving.current = false
+    setNonceStatus('idle')
+  }, [])
+
   useEffect(() => {
     if (!transfer) return
     if (transfer.direction !== 'terra-to-evm') return
-    if (transfer.depositNonce !== undefined) return
-    if (terraNonceResolved.current) return
+    if (transfer.depositNonce !== undefined) {
+      if (nonceStatus !== 'resolved') setNonceStatus('resolved')
+      return
+    }
+    if (nonceStatus !== 'idle') return
+    if (nonceResolving.current) return
 
-    terraNonceResolved.current = true
+    nonceResolving.current = true
+    setNonceStatus('resolving')
+
+    console.info(`${LOG} Starting nonce resolution for tx ${transfer.txHash}`)
 
     parseTerraLockReceipt(transfer.txHash).then((parsed) => {
       if (!parsed || parsed.nonce === undefined) {
-        console.warn('[TransferStatusPage] Could not parse Terra lock nonce from tx:', transfer.txHash)
+        console.warn(`${LOG} Nonce resolution failed for tx ${transfer.txHash} (all retries exhausted)`)
+        setNonceStatus('failed')
         return
       }
 
@@ -217,29 +339,27 @@ export default function TransferStatusPage() {
           const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
           const destChainB32 = chainIdToBytes32(destChainIdNum)
 
-          // Encode accounts — they may already be bytes32 (66 chars) or raw addresses
+          // Encode accounts -- they may already be bytes32 (66 chars) or raw addresses
           let srcAccB32: string
           if (transfer.srcAccount?.startsWith('terra')) {
             srcAccB32 = terraAddressToBytes32(transfer.srcAccount)
           } else if (transfer.srcAccount?.startsWith('0x') && transfer.srcAccount.length === 66) {
-            srcAccB32 = transfer.srcAccount // Already bytes32
+            srcAccB32 = transfer.srcAccount
           } else {
             srcAccB32 = '0x' + '0'.repeat(64)
           }
 
           let destAccB32: string
           if (transfer.destAccount?.startsWith('0x') && transfer.destAccount.length === 66) {
-            destAccB32 = transfer.destAccount // Already bytes32
+            destAccB32 = transfer.destAccount
           } else if (transfer.destAccount?.startsWith('0x') && transfer.destAccount.length === 42) {
             destAccB32 = evmAddressToBytes32(transfer.destAccount as `0x${string}`)
           } else {
             destAccB32 = '0x' + '0'.repeat(64)
           }
 
-          // Token bytes32: destToken may be bytes32 (66 chars) or address (42 chars)
           let tokenB32: string
           if (transfer.destToken?.startsWith('0x') && transfer.destToken.length === 66) {
-            // Already bytes32 (from Terra registry evm_token_address)
             tokenB32 = transfer.destToken
           } else if (transfer.destToken?.startsWith('0x') && transfer.destToken.length === 42) {
             tokenB32 = evmAddressToBytes32(transfer.destToken as `0x${string}`)
@@ -258,27 +378,33 @@ export default function TransferStatusPage() {
           )
         }
       } catch (err) {
-        console.warn('[TransferStatusPage] Failed to compute transfer hash:', err)
+        console.warn(`${LOG} Failed to compute transfer hash:`, err)
       }
+
+      console.info(
+        `${LOG} Nonce resolved: nonce=${parsed.nonce}, netAmount=${parsed.amount}, ` +
+        `hash=${computedHash?.slice(0, 18) ?? 'none'}...`
+      )
 
       // Update transfer record with resolved nonce and net amount.
       // CRITICAL: The Terra bridge deducts a fee and uses the NET amount in the deposit hash.
-      // We must update transfer.amount to the net amount so that withdrawSubmit on the EVM
-      // side uses the same amount, producing a matching hash for operator verification.
       updateTransferRecord(transfer.id, {
         depositNonce: parsed.nonce,
         ...(parsed.amount ? { amount: parsed.amount } : {}),
         ...(computedHash ? { transferHash: computedHash } : {}),
       })
+      setNonceStatus('resolved')
     }).catch((err) => {
-      console.warn('[TransferStatusPage] Terra nonce parsing failed:', err)
+      console.warn(`${LOG} Terra nonce parsing failed:`, err)
+      setNonceStatus('failed')
     })
-  }, [transfer, updateTransferRecord])
+  }, [transfer, updateTransferRecord, nonceStatus])
 
   // --- Auto-submit orchestration ---
   const {
     phase: autoPhase,
     error: autoError,
+    blockReason: autoBlockReason,
     canAutoSubmit,
     triggerSubmit,
   } = useAutoWithdrawSubmit(transfer)
@@ -290,17 +416,38 @@ export default function TransferStatusPage() {
 
   const isFailed = transfer?.lifecycle === 'failed'
 
+  const cancelWindowRemaining = useApprovalCountdown(
+    transfer?.transferHash as `0x${string}` | undefined,
+    transfer?.destChain,
+    transfer?.lifecycle === 'approved'
+  )
+
   if (!transfer) {
+    const isValidHash = transferHash && isValidTransferHash(transferHash)
+    const isLookingUp = isValidHash && lookupLoading
+
     return (
       <div className="mx-auto max-w-xl">
         <div className="shell-panel-strong text-center py-12 space-y-4">
-          <h2 className="text-lg font-semibold text-white">Transfer Not Found</h2>
+          <h2 className="text-lg font-semibold text-white">
+            {isLookingUp ? 'Looking up transfer...' : 'Transfer Not Found'}
+          </h2>
           <p className="text-sm text-gray-400">
-            No transfer found with hash: <code className="text-xs break-all">{transferHash}</code>
+            {isLookingUp
+              ? 'Querying chains for this hash.'
+              : transferHash
+              ? (
+                <>
+                  No transfer found with hash: <code className="text-xs break-all">{transferHash}</code>
+                </>
+              )
+              : 'No hash provided.'}
           </p>
-          <Link to="/" className="btn-primary inline-flex">
-            Back to Bridge
-          </Link>
+          {!isLookingUp && (
+            <Link to="/" className="btn-primary inline-flex">
+              Back to Bridge
+            </Link>
+          )}
         </div>
       </div>
     )
@@ -309,101 +456,187 @@ export default function TransferStatusPage() {
   return (
     <div className="mx-auto max-w-xl space-y-4">
       {/* Stepper */}
-      <div className="shell-panel-strong">
-        <h2 className="mb-4 text-lg font-semibold text-white">Transfer Status</h2>
-
-        {isFailed && (
-          <div className="mb-4 bg-red-900/30 border-2 border-red-700 p-3">
-            <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
-              Transfer Failed
-            </p>
-            <p className="text-red-400/80 text-xs mt-1">
-              An error occurred during the transfer. You can retry from the step that failed.
-            </p>
+      <div className="shell-panel-strong relative overflow-hidden">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-8 top-2 h-24 rounded-[20px] theme-hero-glow blur-2xl"
+        />
+        <div className="relative z-10">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold uppercase tracking-[0.08em] text-white">Transfer Status</h2>
+            <span className="border-2 border-white/35 bg-[#111111] px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-gray-300 shadow-[2px_2px_0_#000]">
+              Step {Math.min(currentStepIdx + 1, STEPS.length)}/{STEPS.length}
+            </span>
           </div>
-        )}
 
-        <div className="pl-1">
-          {STEPS.map((step, idx) => (
-            <StepIndicator
-              key={step.key}
-              step={step}
-              currentIdx={currentStepIdx}
-              idx={idx}
-            />
-          ))}
+          {isFailed && (
+            <div className="mb-4 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+              <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
+                Transfer Failed
+              </p>
+              <p className="text-red-400/80 text-xs mt-1">
+                An error occurred during the transfer. You can retry from the step that failed.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {STEPS.map((step, idx) => (
+              <StepIndicator
+                key={step.key}
+                step={step}
+                currentIdx={currentStepIdx}
+                idx={idx}
+                isFailed={isFailed}
+              />
+            ))}
+          </div>
+
+          {/* Active step message */}
+          {!isFailed && transfer.lifecycle === 'deposited' && autoPhase === 'error' && (
+            <div className="mt-2 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+              <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
+                Hash Submission Failed
+              </p>
+              <p className="text-red-400/80 text-xs mt-1">
+                {autoError || 'The withdrawSubmit transaction was rejected.'}
+              </p>
+              <p className="text-red-400/60 text-xs mt-1">
+                This usually means the transfer hash is invalid or was computed with incorrect parameters.
+                The hash may need to be recomputed from the original deposit receipt.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {canAutoSubmit && (
+                  <button
+                    type="button"
+                    onClick={() => triggerSubmit()}
+                    className="btn-primary text-xs"
+                  >
+                    Retry Submit
+                  </button>
+                )}
+                <Link to="/" className="btn-muted text-xs px-3 py-1">
+                  New Transfer
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {!isFailed && transfer.lifecycle === 'deposited' && autoPhase !== 'error' && (
+            <>
+              {/* Nonce resolution failure banner */}
+              {nonceStatus === 'failed' && (
+                <div className="mt-2 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
+                    Nonce Resolution Failed
+                  </p>
+                  <p className="text-red-400/80 text-xs mt-1">
+                    Could not extract the deposit nonce from the Terra LCD.
+                    The LCD may be unreachable or the transaction is not yet indexed.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={retryNonceResolution}
+                    className="btn-primary mt-2 text-xs"
+                  >
+                    Retry Nonce Resolution
+                  </button>
+                </div>
+              )}
+
+              {/* Active step messages when nonce resolution hasn't failed */}
+              {nonceStatus !== 'failed' && (
+                <div className="mt-2 border-2 border-yellow-700 bg-[#222012] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-yellow-300 text-xs font-semibold uppercase tracking-wide">
+                    {nonceStatus === 'resolving'
+                      ? 'Resolving Deposit Nonce...'
+                      : autoPhase === 'switching-chain'
+                      ? 'Switching Chain...'
+                      : autoPhase === 'submitting-hash'
+                      ? 'Submitting Hash...'
+                      : autoBlockReason === 'missing-nonce'
+                      ? 'Waiting for Nonce Resolution'
+                      : autoBlockReason === 'wallet-disconnected'
+                      ? 'Wallet Not Connected'
+                      : 'Waiting for Hash Submission'}
+                  </p>
+                  <p className="text-yellow-400/70 text-xs mt-1">
+                    {nonceStatus === 'resolving'
+                      ? 'Querying the Terra LCD for deposit nonce and amount. This may take a few seconds...'
+                      : autoPhase === 'switching-chain'
+                      ? 'Please approve the chain switch in your wallet.'
+                      : autoPhase === 'submitting-hash'
+                      ? 'Sending withdrawSubmit transaction to the destination chain...'
+                      : autoBlockReason === 'missing-nonce'
+                      ? 'The deposit nonce has not been resolved yet. The Terra LCD may still be indexing this transaction.'
+                      : autoBlockReason === 'wallet-disconnected'
+                      ? (transfer.direction === 'evm-to-evm' || transfer.direction === 'terra-to-evm')
+                        ? 'Connect your EVM wallet to auto-submit the withdrawal hash.'
+                        : 'Connect your Terra wallet to auto-submit the withdrawal hash.'
+                      : canAutoSubmit
+                      ? 'Auto-submitting via your connected wallet...'
+                      : 'Connect your destination wallet to auto-submit, or use the manual flow below.'}
+                  </p>
+                  {/* Manual retry button when wallet connected but auto-submit didn't fire */}
+                  {autoPhase === 'manual-required' && canAutoSubmit && (
+                    <button
+                      type="button"
+                      onClick={() => triggerSubmit()}
+                      className="btn-primary mt-2 text-xs"
+                    >
+                      Retry Submit
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {!isFailed && transfer.lifecycle === 'hash-submitted' && (
+            <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
+              <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+                Waiting for Operator Approval
+              </p>
+              <p className="text-blue-400/70 text-xs mt-1">
+                The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
+              </p>
+            </div>
+          )}
+
+          {!isFailed && transfer.lifecycle === 'approved' && (
+            <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
+              <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+                Cancel Window Active
+              </p>
+              <p className="text-blue-400/70 text-xs mt-1">
+                Approved. Waiting for the cancel window to expire before tokens are released.
+                {cancelWindowRemaining != null && cancelWindowRemaining > 0 && (
+                  <span className="ml-1 font-mono font-semibold tabular-nums text-cyan-300">
+                    ({formatDuration(cancelWindowRemaining)} remaining)
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+
+          {transfer.lifecycle === 'executed' && (
+            <div className="mt-2 border-2 border-white/35 bg-[#161616] p-3 shadow-[3px_3px_0_#000]">
+              <div className="flex items-start gap-2">
+                <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-2 border-[#b8ff3d]/70 bg-[#2a3518] shadow-[1px_1px_0_#000]">
+                  <img src="/assets/status-success.png" alt="" className="h-4 w-4 object-contain" aria-hidden />
+                </span>
+                <div>
+                  <p className="text-[#b8ff3d] text-xs font-semibold uppercase tracking-wide">
+                    Transfer Complete
+                  </p>
+                  <p className="text-gray-300 text-xs mt-1">
+                    Tokens have been delivered to the recipient address.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* Active step message */}
-        {!isFailed && transfer.lifecycle === 'deposited' && (
-          <div className="mt-2 bg-yellow-900/20 border border-yellow-700/50 p-3">
-            <p className="text-yellow-300 text-xs font-semibold uppercase tracking-wide">
-              {autoPhase === 'switching-chain'
-                ? 'Switching Chain...'
-                : autoPhase === 'submitting-hash'
-                ? 'Submitting Hash...'
-                : autoPhase === 'error'
-                ? 'Auto-Submit Failed'
-                : 'Waiting for Hash Submission'}
-            </p>
-            <p className="text-yellow-400/70 text-xs mt-1">
-              {autoPhase === 'switching-chain'
-                ? 'Please approve the chain switch in your wallet.'
-                : autoPhase === 'submitting-hash'
-                ? 'Sending withdrawSubmit transaction to the destination chain...'
-                : autoPhase === 'error'
-                ? autoError || 'An error occurred. You can retry or use the manual flow.'
-                : canAutoSubmit
-                ? 'Auto-submitting via your connected wallet...'
-                : transfer.direction === 'evm-to-evm'
-                ? 'Switch to the destination chain and submit the withdrawal hash.'
-                : 'Connect your destination wallet to auto-submit, or use the manual flow below.'}
-            </p>
-            {/* Manual retry button when auto-submit fails or manual is required */}
-            {(autoPhase === 'error' || autoPhase === 'manual-required') && canAutoSubmit && (
-              <button
-                type="button"
-                onClick={() => triggerSubmit()}
-                className="btn-primary mt-2 text-xs"
-              >
-                Retry Submit
-              </button>
-            )}
-          </div>
-        )}
-
-        {!isFailed && transfer.lifecycle === 'hash-submitted' && (
-          <div className="mt-2 bg-blue-900/20 border border-blue-700/50 p-3">
-            <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
-              Waiting for Operator Approval
-            </p>
-            <p className="text-blue-400/70 text-xs mt-1">
-              The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
-            </p>
-          </div>
-        )}
-
-        {!isFailed && transfer.lifecycle === 'approved' && (
-          <div className="mt-2 bg-blue-900/20 border border-blue-700/50 p-3">
-            <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
-              Cancel Window Active
-            </p>
-            <p className="text-blue-400/70 text-xs mt-1">
-              Approved. Waiting for the cancel window to expire before tokens are released.
-            </p>
-          </div>
-        )}
-
-        {transfer.lifecycle === 'executed' && (
-          <div className="mt-2 bg-green-900/20 border border-green-700/50 p-3">
-            <p className="text-green-300 text-xs font-semibold uppercase tracking-wide">
-              Transfer Complete
-            </p>
-            <p className="text-green-400/70 text-xs mt-1">
-              Tokens have been delivered to the recipient address.
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Transfer details */}
@@ -420,8 +653,8 @@ export default function TransferStatusPage() {
           </h3>
           <p className="text-xs text-gray-400 mb-3">
             If auto-submit did not trigger, you can manually submit the hash on the destination
-            chain. Copy the transfer hash above and use the{' '}
-            <Link to="/verify" className="text-[#b8ff3d] hover:underline">
+            chain. Use the{' '}
+            <Link to={`/verify?hash=${encodeURIComponent(transfer.transferHash)}`} className="text-[#b8ff3d] hover:underline">
               Verify page
             </Link>{' '}
             to submit it.
@@ -439,7 +672,7 @@ export default function TransferStatusPage() {
         </Link>
         {transfer.transferHash && (
           <Link
-            to={`/verify`}
+            to={`/verify?hash=${encodeURIComponent(transfer.transferHash)}`}
             className="btn-muted flex-1 justify-center py-2"
           >
             Verify Hash

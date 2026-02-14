@@ -49,18 +49,15 @@ describe('terraBridgeQueries', () => {
     it('should return parsed deposit data for valid response', async () => {
       // 32 bytes of 0x01 repeated = base64 of that
       const bytes32Base64 = btoa(String.fromCharCode(...new Array(32).fill(1)))
-      // 4 bytes for chain id
-      const bytes4Base64 = btoa(String.fromCharCode(0, 0, 0, 56))
 
       vi.mocked(lcdClient.queryContract).mockResolvedValue({
         deposit_hash: bytes32Base64,
-        dest_chain_key: bytes4Base64,
         src_account: bytes32Base64,
         dest_token_address: bytes32Base64,
         dest_account: bytes32Base64,
         amount: '1000000',
         nonce: 1,
-        deposited_at: { seconds: '1700000000' },
+        deposited_at: '1700000000000000000', // CosmWasm Timestamp: nanoseconds as string
       })
 
       const result = await queryTerraDeposit(lcdUrls, 'terra1bridge', hash, terraConfig)

@@ -7,6 +7,7 @@ export interface SourceChainSelectorProps {
   onChange: (chainId: string) => void
   balance?: string
   balanceLabel?: string
+  disabled?: boolean
 }
 
 export function SourceChainSelector({
@@ -15,6 +16,7 @@ export function SourceChainSelector({
   onChange,
   balance,
   balanceLabel,
+  disabled,
 }: SourceChainSelectorProps) {
   return (
     <div data-testid="source-chain">
@@ -24,6 +26,7 @@ export function SourceChainSelector({
         onChange={onChange}
         label="From"
         id="source-chain-select"
+        disabled={disabled}
       />
       {balance !== undefined && (
         <p className="mt-1 text-[11px] uppercase tracking-wide text-gray-400">

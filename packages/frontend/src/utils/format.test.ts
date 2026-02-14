@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   formatAmount,
+  formatCompact,
   parseAmount,
   formatRate,
   formatDuration,
@@ -17,6 +18,7 @@ import {
   getTerraTxUrl,
   getEvmAddressUrl,
   getEvmTxUrl,
+  getTokenExplorerUrl,
 } from './format'
 
 describe('formatAmount', () => {
@@ -67,6 +69,50 @@ describe('formatAmount', () => {
   it('handles small amounts', () => {
     expect(formatAmount('1', 6)).toBe('0.000001')
     expect(formatAmount('100', 6)).toBe('0.0001')
+  })
+})
+
+describe('formatCompact', () => {
+  it('formats thousands with k suffix', () => {
+    // 1,234 human = 1234000000 base (6 decimals)
+    expect(formatCompact('1234000000', 6)).toBe('1.234k')
+    expect(formatCompact('1000000000', 6)).toBe('1k')
+    expect(formatCompact('500000000', 6)).toBe('500')
+  })
+
+  it('formats millions with m suffix', () => {
+    expect(formatCompact('1234567000000', 6)).toBe('1.235m')
+    expect(formatCompact('1000000000000', 6)).toBe('1m')
+  })
+
+  it('formats billions with b suffix', () => {
+    expect(formatCompact('1234567000000000', 6)).toBe('1.235b')
+  })
+
+  it('formats small numbers with scientific notation', () => {
+    // 0.000012 human = 12 base (6 decimals); abs < 0.0001
+    expect(formatCompact('12', 6)).toMatch(/e-\d+/)
+    expect(formatCompact('1', 6)).toMatch(/e-\d+/)
+  })
+
+  it('formats mid-range numbers with sigfigs', () => {
+    expect(formatCompact('123456', 6)).toBe('0.1235')
+    expect(formatCompact('100', 6)).toBe('0.0001')
+  })
+
+  it('handles zero', () => {
+    expect(formatCompact('0', 6)).toBe('0')
+    expect(formatCompact(0, 6)).toBe('0')
+  })
+
+  it('handles bigint', () => {
+    expect(formatCompact(BigInt('500000000000000000000'), 18)).toBe('500')
+    expect(formatCompact(BigInt('500000000000000000000000'), 18)).toBe('500k')
+  })
+
+  it('supports custom significant figures', () => {
+    expect(formatCompact('1234567000000', 6, 6)).toBe('1.23457m')
+    expect(formatCompact('1234567', 6, 6)).toBe('1.23457')
   })
 })
 
@@ -129,10 +175,15 @@ describe('formatDuration', () => {
     expect(formatDuration(-100)).toBe('Ended')
   })
 
-  it('formats minutes only', () => {
+  it('formats seconds when under 1 minute', () => {
+    expect(formatDuration(0)).toBe('0s')
+    expect(formatDuration(15)).toBe('15s')
+    expect(formatDuration(45)).toBe('45s')
+  })
+
+  it('formats minutes', () => {
     expect(formatDuration(60)).toBe('1m')
     expect(formatDuration(300)).toBe('5m')
-    expect(formatDuration(0)).toBe('0m')
   })
 
   it('formats hours and minutes', () => {
@@ -257,5 +308,20 @@ describe('Scanner URL functions', () => {
   it('getEvmTxUrl formats correctly', () => {
     const url = getEvmTxUrl('0xabc')
     expect(url).toContain('/tx/0xabc')
+  })
+
+  it('getTokenExplorerUrl builds EVM token URL', () => {
+    expect(getTokenExplorerUrl('https://bscscan.com', '0xabc123', 'evm')).toBe('https://bscscan.com/token/0xabc123')
+  })
+
+  it('getTokenExplorerUrl builds Cosmos token URL', () => {
+    expect(getTokenExplorerUrl('https://finder.terraclassic.community/mainnet', 'terra1abc', 'cosmos')).toBe(
+      'https://finder.terraclassic.community/mainnet/address/terra1abc'
+    )
+  })
+
+  it('getTokenExplorerUrl returns empty when base or address missing', () => {
+    expect(getTokenExplorerUrl('', '0xabc', 'evm')).toBe('')
+    expect(getTokenExplorerUrl('https://bscscan.com', '', 'evm')).toBe('')
   })
 })

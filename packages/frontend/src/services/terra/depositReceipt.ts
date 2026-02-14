@@ -4,9 +4,13 @@
  * Extracts deposit (lock) event data from a Terra transaction.
  * After a lock on the Terra bridge, the transaction events contain
  * the nonce, amount, and other transfer parameters.
+ *
+ * Includes retry with exponential backoff to handle LCD indexing delays.
  */
 
 import { NETWORKS, DEFAULT_NETWORK } from '../../utils/constants'
+
+const LOG_PREFIX = '[depositReceipt]'
 
 export interface ParsedTerraLockEvent {
   nonce: number
@@ -15,38 +19,101 @@ export interface ParsedTerraLockEvent {
   destChainId: number    // numeric destination chain ID
   recipient: string      // recipient address on destination chain
   sender: string         // sender's Terra address
+  /** The deposit hash computed and stored by the Terra contract (bytes32 hex) */
+  depositHash?: string
+  /** The destination token address the Terra contract used in the hash (bytes32 hex) */
+  destTokenAddress?: string
+}
+
+export interface ParseReceiptOptions {
+  /** Maximum number of attempts (default: 3) */
+  maxRetries?: number
+  /** Base delay between retries in ms; doubled each attempt (default: 1500) */
+  retryDelayMs?: number
 }
 
 /**
  * Parse a Terra lock transaction by querying the LCD for tx details.
  *
+ * Retries with exponential backoff when the LCD is unreachable or the
+ * transaction hasn't been indexed yet (missing nonce in events).
+ *
  * @param txHash - Terra transaction hash
  * @param lcdUrl - LCD endpoint URL (defaults to current network LCD)
- * @returns Parsed lock event data
+ * @param options - Retry configuration
+ * @returns Parsed lock event data, or null after all retries exhausted
  */
 export async function parseTerraLockReceipt(
   txHash: string,
-  lcdUrl?: string
+  lcdUrl?: string,
+  options?: ParseReceiptOptions,
 ): Promise<ParsedTerraLockEvent | null> {
   const lcd = lcdUrl || NETWORKS[DEFAULT_NETWORK].terra.lcd
+  const maxRetries = options?.maxRetries ?? 3
+  const baseDelay = options?.retryDelayMs ?? 1500
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const result = await attemptParse(txHash, lcd, attempt, maxRetries)
+
+    if (result) {
+      return result
+    }
+
+    // Don't sleep after the last attempt
+    if (attempt < maxRetries) {
+      const delay = baseDelay * Math.pow(2, attempt - 1)
+      console.info(`${LOG_PREFIX} Retry ${attempt}/${maxRetries} in ${delay}ms for tx ${txHash}`)
+      await sleep(delay)
+    }
+  }
+
+  console.warn(
+    `${LOG_PREFIX} All ${maxRetries} attempts exhausted for tx ${txHash}. ` +
+    'LCD may be down or transaction not yet indexed.'
+  )
+  return null
+}
+
+/**
+ * Single attempt to fetch and parse the transaction from LCD.
+ * Returns the parsed event, or null if it should be retried.
+ */
+async function attemptParse(
+  txHash: string,
+  lcd: string,
+  attempt: number,
+  maxRetries: number,
+): Promise<ParsedTerraLockEvent | null> {
+  const tag = `${LOG_PREFIX} [attempt ${attempt}/${maxRetries}]`
 
   try {
-    const response = await fetch(`${lcd}/cosmos/tx/v1beta1/txs/${txHash}`)
+    const url = `${lcd}/cosmos/tx/v1beta1/txs/${txHash}`
+    console.info(`${tag} Fetching tx ${txHash} from ${lcd}`)
+
+    const response = await fetch(url)
     if (!response.ok) {
-      console.warn(`[parseTerraLockReceipt] LCD returned ${response.status} for tx ${txHash}`)
+      console.warn(`${tag} LCD returned HTTP ${response.status} for tx ${txHash}`)
       return null
     }
 
     const data = await response.json()
     const txResponse = data.tx_response
 
-    if (!txResponse || txResponse.code !== 0) {
-      console.warn('[parseTerraLockReceipt] Transaction failed or not found')
+    if (!txResponse) {
+      console.warn(`${tag} No tx_response in LCD response for tx ${txHash}`)
+      return null
+    }
+
+    if (txResponse.code !== 0) {
+      // Transaction exists but failed on-chain -- no point retrying
+      console.warn(
+        `${tag} Transaction ${txHash} failed on-chain (code=${txResponse.code}, ` +
+        `codespace=${txResponse.codespace || 'unknown'})`
+      )
       return null
     }
 
     // Parse wasm events from the transaction logs
-    // The lock execute produces wasm events with key-value attributes
     const events: Array<{ type: string; attributes: Array<{ key: string; value: string }> }> =
       txResponse.events || txResponse.logs?.[0]?.events || []
 
@@ -56,6 +123,9 @@ export async function parseTerraLockReceipt(
     let destChainId: number | undefined
     let recipient: string | undefined
     let sender: string | undefined
+    let depositHash: string | undefined
+    let destTokenAddress: string | undefined
+    const foundKeys: string[] = []
 
     for (const event of events) {
       if (event.type === 'wasm' || event.type === 'wasm-lock') {
@@ -63,6 +133,7 @@ export async function parseTerraLockReceipt(
           // Attributes may be base64-encoded or plain text depending on LCD version
           const key = tryDecodeBase64(attr.key)
           const value = tryDecodeBase64(attr.value)
+          foundKeys.push(key)
 
           switch (key) {
             case 'nonce':
@@ -88,6 +159,12 @@ export async function parseTerraLockReceipt(
             case 'sender':
             case '_contract_address':
               if (key === 'sender') sender = value
+              break
+            case 'deposit_hash':
+              depositHash = value
+              break
+            case 'dest_token_address':
+              destTokenAddress = value
               break
           }
         }
@@ -131,22 +208,42 @@ export async function parseTerraLockReceipt(
     }
 
     if (nonce === undefined) {
-      console.warn('[parseTerraLockReceipt] Could not extract nonce from tx events')
+      console.warn(
+        `${tag} Missing nonce in events for tx ${txHash}. ` +
+        `Event keys found: [${foundKeys.join(', ')}]. ` +
+        `Event types: [${events.map((e) => e.type).join(', ')}]`
+      )
+      // Return null so the caller retries (LCD may not have indexed yet)
       return null
     }
 
-    return {
+    const parsed: ParsedTerraLockEvent = {
       nonce,
       amount: amount || '0',
       token: token || 'uluna',
       destChainId: destChainId || 0,
       recipient: recipient || '',
       sender: sender || '',
+      depositHash,
+      destTokenAddress,
     }
+
+    console.info(
+      `${tag} Parsed tx ${txHash}: nonce=${nonce}, amount=${amount}, ` +
+      `depositHash=${depositHash?.slice(0, 18) ?? 'none'}..., ` +
+      `destToken=${destTokenAddress?.slice(0, 18) ?? 'none'}..., ` +
+      `token=${token}, sender=${sender?.slice(0, 12)}...`
+    )
+
+    return parsed
   } catch (err) {
-    console.error('[parseTerraLockReceipt] Failed to parse tx:', err)
+    console.warn(`${tag} Fetch/parse error for tx ${txHash}:`, err)
     return null
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**

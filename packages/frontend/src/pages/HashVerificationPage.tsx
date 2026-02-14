@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useHashVerification } from '../hooks/useHashVerification'
 import { useTransferStore } from '../stores/transfer'
 import {
@@ -11,8 +11,11 @@ import {
   recordVerification,
   recordVerificationResult,
 } from '../components/verify'
+import { isValidTransferHash, normalizeTransferHash } from '../utils/validation'
 
 export default function HashVerificationPage() {
+  const [searchParams] = useSearchParams()
+  const hashFromUrl = searchParams.get('hash')?.trim() || null
   const {
     verify,
     inputHash,
@@ -53,6 +56,16 @@ export default function HashVerificationPage() {
     verify(hash)
   }
 
+  // Auto-verify when navigating with ?hash= in URL (e.g. from transfer status page)
+  useEffect(() => {
+    if (!hashFromUrl || loading) return
+    if (inputHash && inputHash.toLowerCase() === hashFromUrl.toLowerCase()) return // already verified
+    if (!isValidTransferHash(hashFromUrl)) return
+    const normalized = normalizeTransferHash(hashFromUrl)
+    recordVerification(normalized)
+    verify(normalized)
+  }, [hashFromUrl])
+
   // Check if this hash has a local transfer record that needs submission
   const localTransfer = inputHash ? getTransferByHash(inputHash) : null
   const needsSubmit = localTransfer?.lifecycle === 'deposited'
@@ -64,14 +77,18 @@ export default function HashVerificationPage() {
       <div className="shell-panel-strong relative overflow-hidden">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] bg-[radial-gradient(circle,_rgba(255,255,255,0.14)_0%,_rgba(0,0,0,0)_72%)] blur-2xl"
+          className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] theme-hero-glow blur-2xl"
         />
         <div className="relative z-10">
         <h2 className="mb-2 text-xl font-semibold text-white">Hash Verification</h2>
         <p className="mb-4 text-xs uppercase tracking-wide text-gray-300">
           Enter a transfer hash (64 hex chars) to verify and match source/destination data across chains.
         </p>
-        <HashSearchBar onSearch={handleSearch} disabled={loading} />
+        <HashSearchBar
+          onSearch={handleSearch}
+          disabled={loading}
+          initialValue={hashFromUrl ?? undefined}
+        />
         </div>
       </div>
 
@@ -105,28 +122,35 @@ export default function HashVerificationPage() {
 
         {/* WithdrawSubmit prompt when hash not submitted to destination */}
         {notSubmittedOnChain && (
-          <div className="mt-4 bg-yellow-900/20 border border-yellow-700/50 p-4">
-            <p className="text-yellow-300 text-xs font-semibold uppercase tracking-wide mb-2">
-              Hash Not Submitted to Destination
-            </p>
-            <p className="text-yellow-400/70 text-xs mb-3">
-              This transfer has been deposited on the source chain but{' '}
-              <code className="text-yellow-300">withdrawSubmit</code> has not been called on the
-              destination chain yet. The operator cannot approve until it is submitted.
-            </p>
-            {needsSubmit || localTransfer ? (
-              <Link
-                to={`/transfer/${inputHash}`}
-                className="btn-primary inline-flex text-xs"
-              >
-                Submit Hash Now
-              </Link>
-            ) : (
-              <p className="text-yellow-400/50 text-xs">
-                To submit, navigate to the transfer status page with this hash or connect your
-                wallet on the destination chain.
-              </p>
-            )}
+          <div className="mt-4 border-2 border-white/35 bg-[#161616] p-4 shadow-[3px_3px_0_#000]">
+            <div className="flex items-start gap-2.5">
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center border-2 border-yellow-600/80 bg-yellow-950/70 shadow-[1px_1px_0_#000]">
+                <img src="/assets/status-pending.png" alt="" className="h-4.5 w-4.5 object-contain" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-yellow-300">
+                  Hash Not Submitted to Destination
+                </p>
+                <p className="mb-3 text-xs text-gray-300">
+                  This transfer has been deposited on the source chain but{' '}
+                  <code className="text-yellow-300">withdrawSubmit</code> has not been called on the
+                  destination chain yet. The operator cannot approve until it is submitted.
+                </p>
+                {needsSubmit || localTransfer ? (
+                  <Link
+                    to={`/transfer/${inputHash}`}
+                    className="btn-primary inline-flex text-xs"
+                  >
+                    Submit Hash Now
+                  </Link>
+                ) : (
+                  <p className="text-xs text-gray-400">
+                    To submit, navigate to the transfer status page with this hash or connect your
+                    wallet on the destination chain.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

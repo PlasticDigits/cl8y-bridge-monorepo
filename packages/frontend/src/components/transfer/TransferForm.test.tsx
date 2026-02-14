@@ -45,6 +45,41 @@ vi.mock('../../hooks/useTokenRegistry', () => ({
   }),
 }))
 
+vi.mock('../../hooks/useTokenList', () => ({
+  useTokenList: () => ({
+    data: {
+      tokens: [
+        { symbol: 'LUNC', name: 'Luna Classic', denom: 'uluna', type: 'native', decimals: 6 },
+      ],
+    },
+  }),
+}))
+
+vi.mock('../../hooks/useTokenDestMapping', () => ({
+  useTokenDestMapping: () => ({ data: null }),
+}))
+
+vi.mock('../../hooks/useSourceChainTokenMappings', () => ({
+  useSourceChainTokenMappings: () => ({ mappings: {} }),
+}))
+
+vi.mock('../../hooks/useBridgeConfig', () => ({
+  useBridgeConfig: () => ({ data: [] }),
+  useTokenDetails: () => ({ data: null }),
+}))
+
+vi.mock('../../hooks/useTokenDisplayInfo', () => ({
+  useTerraTokenDisplayInfo: (tokenId: string) => ({
+    displayLabel: tokenId === 'uluna' ? 'LUNC' : tokenId === 'uusd' ? 'USTC' : tokenId,
+  }),
+  useEvmTokenDisplayInfo: () => ({ displayLabel: '' }),
+  useTokenOptionsDisplayMap: () => ({}),
+}))
+
+vi.mock('react-blockies', () => ({
+  default: () => null,
+}))
+
 vi.mock('../../hooks/useBridgeDeposit', () => ({
   useBridgeDeposit: () => ({
     status: 'idle',
@@ -178,7 +213,7 @@ describe('TransferForm', () => {
 
     it('should show LUNC label', () => {
       renderWithRouter(<TransferForm />)
-      expect(screen.getByText('LUNC')).toBeInTheDocument()
+      expect(screen.getAllByText('LUNC').length).toBeGreaterThan(0)
     })
 
     it('should update receive amount after fees', async () => {

@@ -38,7 +38,8 @@ describe('TokensPanel', () => {
 
   it('renders token cards when data is loaded', () => {
     render(wrap(<TokensPanel />))
-    expect(screen.getByText('uluna')).toBeInTheDocument()
+    // TokenCard shows friendly symbol (LUNC for uluna) via useTerraTokenDisplayInfo
+    expect(screen.getByRole('heading', { name: /LUNC/ })).toBeInTheDocument()
   })
 
   it('shows loading state', () => {

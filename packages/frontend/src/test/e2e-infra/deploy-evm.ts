@@ -12,6 +12,9 @@ const CONTRACTS_DIR = resolve(__dirname, '../../../../contracts-evm')
 const DEPLOYER_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const DEPLOYER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 
+/** Canceler EVM address (Anvil account 1 - matches canceler .env.example EVM_PRIVATE_KEY) */
+export const CANCELER_EVM_ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+
 interface EvmDeployResult {
   bridgeAddress: string
   accessManagerAddress: string
@@ -110,6 +113,22 @@ export function deployThreeTokens(rpcUrl: string): TokenDeployResult {
 }
 
 /**
+ * Deploy LUNC/tLUNC token (uluna representation) on a chain.
+ * Symbol "tLUNC" so UI shows LUNC on Anvil/Anvil1, not TKNA.
+ */
+export function deployLuncToken(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying LUNC token to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployLuncToken.s.sol:DeployLuncToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/LUNC_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find LUNC_TOKEN_ADDRESS in deploy output')
+  console.log(`[deploy-evm] LUNC token deployed: ${match[1]}`)
+  return match[1]
+}
+
+/**
  * Register a chain on the EVM ChainRegistry using cast.
  * NOTE: ChainRegistry.registerChain(string identifier, bytes4 chainId) - identifier first!
  */
@@ -124,6 +143,27 @@ export function registerChainOnEvm(
     `cast send ${chainRegistryAddress} "registerChain(string,bytes4)" "${chainName}" ${chainKey} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
     { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
   )
+}
+
+/**
+ * Add a canceler to the Bridge contract.
+ * Uses the canceler's EVM address (from canceler .env EVM_PRIVATE_KEY).
+ *
+ * @param rpcUrl - RPC URL of the chain
+ * @param bridgeAddress - Address of the Bridge contract
+ * @param cancelerAddress - Address to register as canceler (default: CANCELER_EVM_ADDRESS)
+ */
+export function addCancelerEvm(
+  rpcUrl: string,
+  bridgeAddress: string,
+  cancelerAddress: string = CANCELER_EVM_ADDRESS
+): void {
+  console.log(`[deploy-evm] Adding canceler ${cancelerAddress} on ${bridgeAddress} (${rpcUrl})...`)
+  execSync(
+    `cast send ${bridgeAddress} "addCanceler(address)" ${cancelerAddress} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  console.log('[deploy-evm] Canceler added')
 }
 
 /**

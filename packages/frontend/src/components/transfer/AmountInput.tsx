@@ -2,6 +2,7 @@ import { TokenLogo } from '../ui'
 import type { TokenOption } from './TokenSelect'
 import { sounds } from '../../lib/sounds'
 import { TokenSelect } from './TokenSelect'
+import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 
 export interface AmountInputProps {
   value: string
@@ -14,6 +15,12 @@ export interface AmountInputProps {
   onTokenChange?: (tokenId: string) => void
   placeholder?: string
   disabled?: boolean
+  /** Source chain RPC URL when EVM - enables onchain symbol lookup in token dropdown */
+  sourceChainRpcUrl?: string
+  /** Compact-formatted max amount for label (e.g. "100" or "1.23k") */
+  maxLabel?: string
+  /** Compact-formatted min amount for label (e.g. "0.001" or "1e-5") */
+  minLabel?: string
 }
 
 export function AmountInput({
@@ -26,12 +33,54 @@ export function AmountInput({
   onTokenChange,
   placeholder = '0.0',
   disabled,
+  sourceChainRpcUrl,
+  maxLabel,
+  minLabel,
 }: AmountInputProps) {
   const hasTokenSelector = tokens && tokens.length > 0 && onTokenChange
+  const selectedToken = tokens?.find((t) => t.id === selectedTokenId)
+  // Prefer parent-provided symbol (resolved via onchain/tokenlist) over token option's symbol,
+  // since token options may have address when not in tokenlist
+  const rawSymbol = selectedToken?.symbol ?? symbol
+  const displaySymbol = symbol && !isAddressLike(symbol) ? symbol : rawSymbol
+  const displayLabel = isAddressLike(displaySymbol) ? shortenAddress(displaySymbol) : displaySymbol
+  const addressForBlockie =
+    selectedToken?.evmTokenAddress?.startsWith('0x')
+      ? selectedToken.evmTokenAddress
+      : selectedToken && isAddressLike(selectedToken.tokenId)
+        ? selectedToken.tokenId
+        : isAddressLike(symbol)
+          ? symbol
+          : undefined
 
   return (
     <div>
-      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-300">Amount</label>
+      <label className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold uppercase tracking-wide text-gray-300">
+        <span>Amount</span>
+        {(displayLabel || maxLabel != null || minLabel != null) && (
+          <span className="flex items-center gap-1.5 normal-case font-normal text-gray-400">
+            <TokenLogo
+              symbol={selectedToken?.symbol ?? symbol}
+              tokenId={selectedToken?.tokenId}
+              addressForBlockie={addressForBlockie}
+              size={14}
+            />
+            {displayLabel}
+            {maxLabel != null && (
+              <>
+                {' · '}
+                <span className="text-cyan-400/90">MAX {maxLabel}</span>
+              </>
+            )}
+            {minLabel != null && (
+              <>
+                {' · '}
+                <span className="text-amber-400/90">MIN {minLabel}</span>
+              </>
+            )}
+          </span>
+        )}
+      </label>
       <div className="relative">
         <input
           type="number"
@@ -44,7 +93,7 @@ export function AmountInput({
           disabled={disabled}
           className="w-full border-2 border-white/20 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:border-cyan-300 focus:outline-none disabled:opacity-50"
         />
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+        <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 flex items-center gap-2">
           {onMax && (
             <button
               type="button"
@@ -63,6 +112,7 @@ export function AmountInput({
               value={selectedTokenId ?? tokens[0]?.id ?? ''}
               onChange={onTokenChange}
               disabled={disabled}
+              sourceChainRpcUrl={sourceChainRpcUrl}
             />
           ) : (
             <>
