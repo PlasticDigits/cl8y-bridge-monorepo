@@ -15,9 +15,14 @@
 
 import { useParams, Link } from 'react-router-dom'
 import { useMemo, useEffect, useState, useCallback, useRef } from 'react'
+import { useAccount, useSwitchChain } from 'wagmi'
 import { useTransferStore } from '../stores/transfer'
 import { useAutoWithdrawSubmit } from '../hooks/useAutoWithdrawSubmit'
 import { useMultiChainLookup } from '../hooks/useMultiChainLookup'
+import { useBrokenTransferFix } from '../hooks/useBrokenTransferFix'
+import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
+import { useWallet } from '../hooks/useWallet'
+import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { formatDuration } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
@@ -256,13 +261,13 @@ export default function TransferStatusPage() {
     setTransfer(found || null)
   }, [transferHash, getTransferByHash])
 
-  // If not in store but valid hash, lookup on chain
+  // Lookup on chain for any valid hash (needed for synthetic transfer when not in store,
+  // and for broken-transfer detection when transfer is in store)
   useEffect(() => {
     if (!transferHash) return
-    if (getTransferByHash(transferHash)) return
     if (!isValidTransferHash(transferHash)) return
     lookup(normalizeTransferHash(transferHash) as `0x${string}`)
-  }, [transferHash, getTransferByHash, lookup])
+  }, [transferHash, lookup])
 
   // Build transfer from lookup when we have chain data and no store match
   useEffect(() => {
@@ -408,6 +413,102 @@ export default function TransferStatusPage() {
     canAutoSubmit,
     triggerSubmit,
   } = useAutoWithdrawSubmit(transfer)
+
+  // --- Broken transfer detection (dest exists, source null → wrong chain submitted) ---
+  const normalizedHash = transferHash && isValidTransferHash(transferHash)
+    ? (normalizeTransferHash(transferHash) as `0x${string}`)
+    : undefined
+  const { isBroken, fix, loading: fixLoading, error: fixError, retry: retryFixDetection } = useBrokenTransferFix(
+    normalizedHash,
+    source,
+    dest,
+    destChain
+  )
+
+  const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
+  const { address: evmAddress, chain: evmChain } = useAccount()
+  const { switchChainAsync } = useSwitchChain()
+  const { connected: isTerraConnected } = useWallet()
+  const [fixSubmitting, setFixSubmitting] = useState(false)
+  const [fixSubmitError, setFixSubmitError] = useState<string | null>(null)
+
+  const handleFixTransfer = useCallback(async () => {
+    if (!fix || !transfer) return
+    setFixSubmitting(true)
+    setFixSubmitError(null)
+
+    try {
+      const { fixParams, correctHash, correctDestChain } = fix
+
+      if (fixParams.destType === 'evm') {
+        const destChainId = (correctDestChain.chainId as number) ?? 31337
+        if (evmChain?.id !== destChainId) {
+          await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
+        }
+
+        const { bytes32ToAddress } = await import('../services/evm/tokenRegistry')
+        const token: `0x${string}` =
+          typeof fixParams.token === 'string' && fixParams.token.length === 66
+            ? bytes32ToAddress(fixParams.token as `0x${string}`)
+            : ('0x0000000000000000000000000000000000000000' as `0x${string}`)
+
+        const txHash = await submitOnEvm({
+          bridgeAddress: correctDestChain.bridgeAddress as `0x${string}`,
+          srcChain: fixParams.srcChainBytes4,
+          srcAccount: fixParams.srcAccount,
+          destAccount: fixParams.destAccount,
+          token,
+          amount: fixParams.amount,
+          nonce: fixParams.nonce,
+          srcDecimals: 18,
+        })
+
+        if (txHash && transfer.id) {
+          const updates = {
+            transferHash: correctHash,
+            withdrawSubmitTxHash: txHash,
+            lifecycle: 'hash-submitted' as const,
+            sourceChain: fix.wrongChainKey,
+            destChain: fix.correctDestChainKey,
+            direction: (fix.correctDestChain.type === 'cosmos' ? 'evm-to-terra' : 'evm-to-evm') as TransferRecord['direction'],
+          }
+          updateTransferRecord(transfer.id, updates)
+          setTransfer((prev) => (prev ? { ...prev, ...updates } : null))
+        }
+      } else {
+        // Terra destination
+        const srcChainBytes4 = hexToUint8Array(fixParams.srcChainBytes4)
+        const srcAccountBytes32 = hexToUint8Array(fixParams.srcAccount)
+
+        const terraTxHash = await submitOnTerra({
+          bridgeAddress: correctDestChain.bridgeAddress!,
+          srcChainBytes4,
+          srcAccountBytes32,
+          token: fixParams.token as string,
+          recipient: fixParams.terraRecipient || '',
+          amount: fixParams.amount.toString(),
+          nonce: Number(fixParams.nonce),
+        })
+
+        if (terraTxHash && transfer.id) {
+          const updates = {
+            transferHash: correctHash,
+            withdrawSubmitTxHash: terraTxHash,
+            lifecycle: 'hash-submitted' as const,
+            sourceChain: fix.wrongChainKey,
+            destChain: fix.correctDestChainKey,
+            direction: 'evm-to-terra' as TransferRecord['direction'],
+          }
+          updateTransferRecord(transfer.id, updates)
+          setTransfer((prev) => (prev ? { ...prev, ...updates } : null))
+        }
+      }
+    } catch (err) {
+      setFixSubmitError(err instanceof Error ? err.message : 'Fix failed')
+    } finally {
+      setFixSubmitting(false)
+    }
+  }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord])
 
   const currentStepIdx = useMemo(
     () => getStepIndex(transfer?.lifecycle),
@@ -593,14 +694,58 @@ export default function TransferStatusPage() {
           )}
 
           {!isFailed && transfer.lifecycle === 'hash-submitted' && (
-            <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
-              <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
-                Waiting for Operator Approval
-              </p>
-              <p className="text-blue-400/70 text-xs mt-1">
-                The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
-              </p>
-            </div>
+            <>
+              {/* Broken transfer: wrong chain submitted, offer fix */}
+              {isBroken && fix && (
+                <div className="mt-2 border-2 border-amber-700 bg-[#221a12] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-amber-300 text-xs font-semibold uppercase tracking-wide">
+                    Hash Submitted on Wrong Chain
+                  </p>
+                  <p className="text-amber-400/80 text-xs mt-1">
+                    The withdrawal was submitted on {fix.wrongChain.name} but should have been on {fix.correctDestChain.name}.
+                    The operator cannot approve it. Submit on the correct chain to fix.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2 items-center">
+                    <button
+                      type="button"
+                      onClick={handleFixTransfer}
+                      disabled={fixSubmitting || (fix.fixParams.destType === 'evm' && !evmAddress) || (fix.fixParams.destType === 'cosmos' && !isTerraConnected)}
+                      className="btn-primary text-xs"
+                    >
+                      {fixSubmitting ? 'Submitting…' : `Fix: Submit on ${fix.correctDestChain.name}`}
+                    </button>
+                    <button type="button" onClick={retryFixDetection} disabled={fixLoading} className="btn-muted text-xs">
+                      Retry Detection
+                    </button>
+                    {fixSubmitError && (
+                      <span className="text-red-400 text-xs">{fixSubmitError}</span>
+                    )}
+                  </div>
+                  {(fix.fixParams.destType === 'evm' && !evmAddress) && (
+                    <p className="text-amber-400/60 text-xs mt-2">Connect your EVM wallet to fix.</p>
+                  )}
+                  {(fix.fixParams.destType === 'cosmos' && !isTerraConnected) && (
+                    <p className="text-amber-400/60 text-xs mt-2">Connect your Terra wallet to fix.</p>
+                  )}
+                </div>
+              )}
+              {(!isBroken || !fix) && (
+                <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+                    Waiting for Operator Approval
+                  </p>
+                  <p className="text-blue-400/70 text-xs mt-1">
+                    The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
+                  </p>
+                  {isBroken && fixLoading && (
+                    <p className="text-amber-400/70 text-xs mt-1">Checking for fix option…</p>
+                  )}
+                  {isBroken && fixError && (
+                    <p className="text-amber-400/70 text-xs mt-1">Could not find a fix: {fixError}</p>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {!isFailed && transfer.lifecycle === 'approved' && (

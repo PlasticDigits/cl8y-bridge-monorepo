@@ -118,6 +118,8 @@ fn setup() -> (App, Addr, Addr, Addr) {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -919,6 +921,23 @@ fn test_lock_stores_deposit_hash() {
 
     assert!(deposit_hash.is_some(), "deposit_hash attribute not found");
 
+    // Check that dest_token_address attribute is emitted and matches the registered EVM token
+    let dest_token_attr = res
+        .events
+        .iter()
+        .flat_map(|e| &e.attributes)
+        .find(|a| a.key == "dest_token_address");
+
+    assert!(
+        dest_token_attr.is_some(),
+        "dest_token_address attribute not found in deposit event"
+    );
+    assert_eq!(
+        dest_token_attr.unwrap().value,
+        "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "dest_token_address should match the registered evm_token_address for uluna"
+    );
+
     // Query deposit by nonce
     let deposit: Option<bridge::msg::DepositInfoResponse> = app
         .wrap()
@@ -928,6 +947,22 @@ fn test_lock_stores_deposit_hash() {
     assert!(deposit.is_some());
     let d = deposit.unwrap();
     assert_eq!(d.nonce, 0);
+
+    // Verify the queried dest_token_address matches the event attribute.
+    // Binary.to_vec() gives raw bytes; format them as hex for comparison.
+    let queried_dest_token_hex = format!(
+        "0x{}",
+        d.dest_token_address
+            .to_vec()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    assert_eq!(
+        queried_dest_token_hex,
+        dest_token_attr.unwrap().value,
+        "DepositByNonce dest_token_address must match the event attribute"
+    );
 }
 
 // ============================================================================
@@ -969,10 +1004,28 @@ fn test_withdraw_delay_query() {
 #[test]
 fn test_deposit_native_min_limit_enforced() {
     let (mut app, contract_addr, _operator, user) = setup();
+    let admin = Addr::unchecked("terra1admin");
+
+    // Set per-token min limit (per-token overrides global)
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::UpdateToken {
+            token: "uluna".to_string(),
+            evm_token_address: None,
+            enabled: None,
+            token_type: None,
+            min_bridge_amount: Some(Uint128::from(1000u128)),
+            max_bridge_amount: None,
+        },
+        &[],
+    )
+    .unwrap();
 
     let mut dest_account_bytes = [0u8; 32];
     dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
 
+    // Deposit limits are not enforced (only withdraw limits); below-min now succeeds
     let res = app.execute_contract(
         user.clone(),
         contract_addr.clone(),
@@ -980,16 +1033,9 @@ fn test_deposit_native_min_limit_enforced() {
             dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account_bytes.to_vec()),
         },
-        &coins(500, "uluna"), // Below min_bridge_amount of 1000
+        &coins(500, "uluna"), // Would have been below min_bridge_amount; now allowed
     );
-
-    assert!(res.is_err());
-    let err_str = res.unwrap_err().root_cause().to_string();
-    assert!(
-        err_str.contains("minimum") || err_str.contains("Minimum"),
-        "Expected min amount error, got: {}",
-        err_str
-    );
+    assert!(res.is_ok());
 }
 
 #[test]
@@ -997,12 +1043,16 @@ fn test_deposit_native_max_limit_enforced() {
     let (mut app, contract_addr, _operator, user) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    // Lower max to test enforcement
+    // Set per-token max limit (per-token overrides global)
     app.execute_contract(
         admin.clone(),
         contract_addr.clone(),
-        &ExecuteMsg::UpdateLimits {
-            min_bridge_amount: Some(Uint128::from(1000u128)),
+        &ExecuteMsg::UpdateToken {
+            token: "uluna".to_string(),
+            evm_token_address: None,
+            enabled: None,
+            token_type: None,
+            min_bridge_amount: None,
             max_bridge_amount: Some(Uint128::from(1_000_000u128)),
         },
         &[],
@@ -1012,6 +1062,7 @@ fn test_deposit_native_max_limit_enforced() {
     let mut dest_account_bytes = [0u8; 32];
     dest_account_bytes[12..32].copy_from_slice(&[0xAB; 20]);
 
+    // Deposit limits are not enforced (only withdraw limits); above-max now succeeds
     let res = app.execute_contract(
         user.clone(),
         contract_addr.clone(),
@@ -1019,16 +1070,9 @@ fn test_deposit_native_max_limit_enforced() {
             dest_chain: Binary::from(vec![0, 0, 0, 2]),
             dest_account: Binary::from(dest_account_bytes.to_vec()),
         },
-        &coins(2_000_000, "uluna"), // Above max_bridge_amount of 1_000_000
+        &coins(2_000_000, "uluna"), // Would have been above max_bridge_amount; now allowed
     );
-
-    assert!(res.is_err());
-    let err_str = res.unwrap_err().root_cause().to_string();
-    assert!(
-        err_str.contains("maximum") || err_str.contains("Maximum"),
-        "Expected max amount error, got: {}",
-        err_str
-    );
+    assert!(res.is_ok());
 }
 
 // ============================================================================
@@ -1174,6 +1218,8 @@ fn test_deposit_cw20_lock_full_flow() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: Some(Uint128::from(1u128)),
+            max_bridge_amount: Some(Uint128::from(10_000_000u128)),
         },
         &[],
     )
@@ -1275,6 +1321,8 @@ fn test_deposit_cw20_burn_full_flow() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: Some(Uint128::from(1u128)),
+            max_bridge_amount: Some(Uint128::from(10_000_000u128)),
         },
         &[],
     )
@@ -1524,6 +1572,8 @@ fn test_recover_asset_cw20_success() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: Some(Uint128::from(1u128)),
+            max_bridge_amount: Some(Uint128::from(1_000_000u128)),
         },
         &[],
     )
@@ -1647,6 +1697,8 @@ fn test_recover_asset_cw20_exceeds_balance_fails() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: Some(Uint128::from(1u128)),
+            max_bridge_amount: Some(Uint128::from(1_000_000u128)),
         },
         &[],
     )

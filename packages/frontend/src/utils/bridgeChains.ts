@@ -231,6 +231,18 @@ export function getBridgeChainByName(name: string): BridgeChainConfig | undefine
 }
 
 /**
+ * Get chain key (e.g. "anvil1", "localterra") from a bridge config by matching bridgeAddress.
+ */
+export function getChainKeyByConfig(config: BridgeChainConfig): string | undefined {
+  const tier = DEFAULT_NETWORK as NetworkTier
+  const chains = BRIDGE_CHAINS[tier]
+  const entry = Object.entries(chains).find(
+    ([_, c]) => c.bridgeAddress === config.bridgeAddress && c.chainId === config.chainId
+  )
+  return entry?.[0]
+}
+
+/**
  * Get EVM bridge chains only.
  */
 export function getEvmBridgeChains(): BridgeChainConfig[] {

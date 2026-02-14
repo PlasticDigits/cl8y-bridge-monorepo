@@ -922,6 +922,48 @@ contract BridgeTest is Test {
         assertFalse(bridge.isCanceler(newCanceler));
     }
 
+    function test_GetOperators_Enumerates() public view {
+        address[] memory ops = bridge.getOperators();
+        assertEq(ops.length, 1);
+        assertEq(ops[0], operator);
+        assertEq(bridge.getOperatorCount(), 1);
+        assertEq(bridge.operatorAt(0), operator);
+    }
+
+    function test_GetCancelers_Enumerates() public view {
+        address[] memory cans = bridge.getCancelers();
+        assertEq(cans.length, 1);
+        assertEq(cans[0], canceler);
+        assertEq(bridge.getCancelerCount(), 1);
+        assertEq(bridge.cancelerAt(0), canceler);
+    }
+
+    function test_Operators_AddRemove_UpdatesEnumeration() public {
+        address newOp = address(0xA);
+        vm.prank(admin);
+        bridge.addOperator(newOp);
+        assertEq(bridge.getOperatorCount(), 2);
+        address[] memory ops = bridge.getOperators();
+        assertEq(ops.length, 2);
+
+        vm.prank(admin);
+        bridge.removeOperator(newOp);
+        assertEq(bridge.getOperatorCount(), 1);
+        assertEq(bridge.operatorAt(0), operator);
+    }
+
+    function test_Cancelers_AddRemove_UpdatesEnumeration() public {
+        address newCan = address(0xB);
+        vm.prank(admin);
+        bridge.addCanceler(newCan);
+        assertEq(bridge.getCancelerCount(), 2);
+
+        vm.prank(admin);
+        bridge.removeCanceler(newCan);
+        assertEq(bridge.getCancelerCount(), 1);
+        assertEq(bridge.cancelerAt(0), canceler);
+    }
+
     // ============================================================================
     // Upgrade Tests
     // ============================================================================

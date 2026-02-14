@@ -45,7 +45,7 @@ impl E2eSetup {
 
         if !wasm_path.exists() {
             warn!(
-                "Terra bridge WASM not found at {}. Build with: cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown",
+                "Terra bridge WASM not found at {}. Build with: make build-terra-optimized",
                 wasm_path.display()
             );
             return Ok(None);

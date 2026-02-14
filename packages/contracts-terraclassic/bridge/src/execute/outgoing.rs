@@ -103,18 +103,7 @@ pub fn execute_deposit_native(
         });
     }
 
-    // Validate amount
-    if amount < config.min_bridge_amount {
-        return Err(ContractError::BelowMinimumAmount {
-            min_amount: config.min_bridge_amount.to_string(),
-        });
-    }
-
-    if amount > config.max_bridge_amount {
-        return Err(ContractError::AboveMaximumAmount {
-            max_amount: config.max_bridge_amount.to_string(),
-        });
-    }
+    // Deposit limits are not enforced (only withdraw limits apply)
 
     // Calculate fee using V2 fee manager (with CL8Y discount and custom fees)
     let fee_config = FEE_CONFIG
@@ -168,7 +157,6 @@ pub fn execute_deposit_native(
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
-        dest_chain_key: [0u8; 32],
     };
 
     let deposit_hash = compute_transfer_hash(
@@ -214,6 +202,7 @@ pub fn execute_deposit_native(
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
+        .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }
 
@@ -315,18 +304,7 @@ fn execute_deposit_cw20_lock(
         });
     }
 
-    // Validate amount
-    if amount < config.min_bridge_amount {
-        return Err(ContractError::BelowMinimumAmount {
-            min_amount: config.min_bridge_amount.to_string(),
-        });
-    }
-
-    if amount > config.max_bridge_amount {
-        return Err(ContractError::AboveMaximumAmount {
-            max_amount: config.max_bridge_amount.to_string(),
-        });
-    }
+    // Deposit limits are not enforced (only withdraw limits apply)
 
     // Calculate fee using V2 fee manager
     let fee_config = FEE_CONFIG
@@ -380,7 +358,6 @@ fn execute_deposit_cw20_lock(
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
-        dest_chain_key: [0u8; 32],
     };
 
     let deposit_hash = compute_transfer_hash(
@@ -427,6 +404,7 @@ fn execute_deposit_cw20_lock(
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
+        .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }
 
@@ -479,18 +457,7 @@ fn execute_deposit_cw20_burn(
         });
     }
 
-    // Validate amount
-    if amount < config.min_bridge_amount {
-        return Err(ContractError::BelowMinimumAmount {
-            min_amount: config.min_bridge_amount.to_string(),
-        });
-    }
-
-    if amount > config.max_bridge_amount {
-        return Err(ContractError::AboveMaximumAmount {
-            max_amount: config.max_bridge_amount.to_string(),
-        });
-    }
+    // Deposit limits are not enforced (only withdraw limits apply)
 
     // Calculate fee using V2 fee manager
     let fee_config = FEE_CONFIG
@@ -538,7 +505,6 @@ fn execute_deposit_cw20_burn(
         amount: net_amount,
         nonce,
         deposited_at: env.block.time,
-        dest_chain_key: [0u8; 32],
     };
 
     let deposit_hash = compute_transfer_hash(
@@ -594,5 +560,6 @@ fn execute_deposit_cw20_burn(
         .add_attribute("fee", fee_amount.to_string())
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
+        .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
         .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
 }

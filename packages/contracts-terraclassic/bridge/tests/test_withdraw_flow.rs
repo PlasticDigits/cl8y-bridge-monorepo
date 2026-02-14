@@ -115,6 +115,8 @@ fn setup() -> TestEnv {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -1030,6 +1032,8 @@ fn test_execute_unlock_wrong_token_type_rejected() {
                         .to_string(),
                 terra_decimals: 6,
                 evm_decimals: 18,
+                min_bridge_amount: None,
+                max_bridge_amount: None,
             },
             &[],
         )

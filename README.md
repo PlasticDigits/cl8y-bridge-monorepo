@@ -249,8 +249,11 @@ forge test
 ### Terra Classic Contracts
 
 ```bash
-cd packages/contracts-terraclassic
-cargo build --release --target wasm32-unknown-unknown
+# Optimized build (Docker, cosmwasm_1_2 for BankQuery::Supply):
+make build-terra-optimized
+
+# Or quick dev build:
+make build-terra
 ```
 
 ### Operator

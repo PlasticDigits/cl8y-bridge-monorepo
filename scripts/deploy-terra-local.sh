@@ -97,7 +97,7 @@ check_prereqs() {
     # Check WASM exists
     if [ ! -f "$WASM_PATH" ]; then
         log_error "WASM not found at $WASM_PATH"
-        log_info "Build with: cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown --lib"
+        log_info "Build with: make build-terra-optimized  (or make build-terra for dev)"
         exit 1
     fi
     
@@ -197,7 +197,7 @@ instantiate_bridge_contract() {
     "min_signatures": 1,
     "min_bridge_amount": "1000000",
     "max_bridge_amount": "1000000000000000",
-    "fee_bps": 30,
+    "fee_bps": 50,
     "fee_collector": "$TEST_ADDRESS",
     "this_chain_id": "$THIS_CHAIN_ID_B64"
 }
@@ -356,7 +356,25 @@ configure_local() {
     else
         log_warn "Could not set withdraw delay (may already be default or unsupported)"
     fi
-    
+
+    # Register canceler (matches canceler .env TERRA_MNEMONIC -> test1 address)
+    ADD_CANCELER_MSG=$(printf '{"add_canceler":{"address":"%s"}}' "$TEST_ADDRESS")
+    TX=$(terrad_tx tx wasm execute "$BRIDGE_CONTRACT" "$ADD_CANCELER_MSG" \
+        --from "$KEY_NAME" \
+        --chain-id "$CHAIN_ID" \
+        --gas auto --gas-adjustment 1.5 \
+        --fees 10000000uluna \
+        --broadcast-mode sync \
+        -y -o json 2>&1)
+    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
+    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        log_info "Add canceler TX: $TX_HASH"
+        sleep 6
+    else
+        log_warn "Could not add canceler (may already be registered)"
+    fi
+
     log_info "Local configuration complete"
 }
 

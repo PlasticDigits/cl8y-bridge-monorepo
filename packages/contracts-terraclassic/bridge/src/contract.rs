@@ -14,16 +14,17 @@ use cw2::set_contract_version;
 use crate::error::ContractError;
 use crate::execute::{
     execute_accept_admin, execute_add_canceler, execute_add_operator, execute_add_token,
-    execute_cancel_admin_proposal, execute_deposit_native, execute_pause, execute_propose_admin,
-    execute_receive, execute_recover_asset, execute_register_chain, execute_remove_canceler,
-    execute_remove_custom_account_fee, execute_remove_incoming_token_mapping,
-    execute_remove_operator, execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee,
-    execute_set_fee_params, execute_set_incoming_token_mapping, execute_set_rate_limit,
-    execute_set_token_destination, execute_set_withdraw_delay, execute_unpause,
-    execute_unregister_chain, execute_update_chain, execute_update_fees, execute_update_limits,
-    execute_update_min_signatures, execute_update_token, execute_withdraw_approve,
-    execute_withdraw_cancel, execute_withdraw_execute_mint, execute_withdraw_execute_unlock,
-    execute_withdraw_submit, execute_withdraw_uncancel,
+    execute_admin_fix_pending_decimals, execute_cancel_admin_proposal, execute_deposit_native,
+    execute_pause, execute_propose_admin, execute_receive, execute_recover_asset,
+    execute_register_chain, execute_remove_canceler, execute_remove_custom_account_fee,
+    execute_remove_incoming_token_mapping, execute_remove_operator,
+    execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee, execute_set_fee_params,
+    execute_set_incoming_token_mapping, execute_set_rate_limit, execute_set_token_destination,
+    execute_set_withdraw_delay, execute_unpause, execute_unregister_chain, execute_update_chain,
+    execute_update_fees, execute_update_limits, execute_update_min_signatures,
+    execute_update_token, execute_withdraw_approve, execute_withdraw_cancel,
+    execute_withdraw_execute_mint, execute_withdraw_execute_unlock, execute_withdraw_submit,
+    execute_withdraw_uncancel,
 };
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
@@ -109,8 +110,9 @@ pub fn instantiate(
     // Initialize withdraw delay (watchtower pattern)
     WITHDRAW_DELAY.save(deps.storage, &DEFAULT_WITHDRAW_DELAY)?;
 
-    // Initialize V2 fee config
-    let fee_config = FeeConfig::default_with_recipient(config.fee_collector.clone());
+    // Initialize V2 fee config - use msg.fee_bps for standard_fee_bps to match EVM (0.5% = 50 bps default)
+    let mut fee_config = FeeConfig::default_with_recipient(config.fee_collector.clone());
+    fee_config.standard_fee_bps = msg.fee_bps as u64;
     FEE_CONFIG.save(deps.storage, &fee_config)?;
 
     // Set this chain's predetermined 4-byte chain ID
@@ -228,6 +230,8 @@ pub fn execute(
             evm_token_address,
             terra_decimals,
             evm_decimals,
+            min_bridge_amount,
+            max_bridge_amount,
         } => execute_add_token(
             deps,
             info,
@@ -237,13 +241,26 @@ pub fn execute(
             evm_token_address,
             terra_decimals,
             evm_decimals,
+            min_bridge_amount,
+            max_bridge_amount,
         ),
         ExecuteMsg::UpdateToken {
             token,
             evm_token_address,
             enabled,
             token_type,
-        } => execute_update_token(deps, info, token, evm_token_address, enabled, token_type),
+            min_bridge_amount,
+            max_bridge_amount,
+        } => execute_update_token(
+            deps,
+            info,
+            token,
+            evm_token_address,
+            enabled,
+            token_type,
+            min_bridge_amount,
+            max_bridge_amount,
+        ),
         ExecuteMsg::SetTokenDestination {
             token,
             dest_chain,
@@ -322,6 +339,10 @@ pub fn execute(
             amount,
             recipient,
         } => execute_recover_asset(deps, info, asset, amount, recipient),
+        ExecuteMsg::AdminFixPendingDecimals {
+            withdraw_hash,
+            src_decimals,
+        } => execute_admin_fix_pending_decimals(deps, info, withdraw_hash, src_decimals),
     }
 }
 
@@ -404,7 +425,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::DepositByNonce { nonce } => to_json_binary(&query_deposit_by_nonce(deps, nonce)?),
         QueryMsg::VerifyDeposit {
             deposit_hash,
-            dest_chain_key,
             dest_token_address,
             dest_account,
             amount,
@@ -412,7 +432,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         } => to_json_binary(&query_verify_deposit(
             deps,
             deposit_hash,
-            dest_chain_key,
             dest_token_address,
             dest_account,
             amount,

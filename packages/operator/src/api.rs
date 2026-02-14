@@ -14,6 +14,7 @@ use axum::{
     Json, Router,
 };
 use eyre::Result;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use prometheus::{Encoder, TextEncoder};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -87,6 +88,28 @@ pub async fn start_api_server(addr: SocketAddr, db: PgPool) -> Result<()> {
         tracing::info!("OPERATOR_API_TOKEN set — /status and /pending require authentication");
     }
 
+    // Rate limiting (configurable via env)
+    let rate_per_second: u64 = std::env::var("RATE_LIMIT_PER_SECOND")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let rate_burst_size: u32 = std::env::var("RATE_LIMIT_BURST_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(rate_per_second)
+        .burst_size(rate_burst_size)
+        .finish()
+        .ok_or_else(|| eyre::eyre!("Invalid rate limit config"))?;
+
+    tracing::info!(
+        per_second = rate_per_second,
+        burst_size = rate_burst_size,
+        "API rate limiting enabled"
+    );
+
     // Mark relayer as up
     metrics::UP.set(1.0);
 
@@ -101,12 +124,14 @@ pub async fn start_api_server(addr: SocketAddr, db: PgPool) -> Result<()> {
         .route("/metrics", get(metrics_handler))
         .route("/status", get(status_handler))
         .route("/pending", get(pending_handler))
-        .with_state(state);
+        .with_state(state)
+        .layer(GovernorLayer::new(governor_conf));
 
     tracing::info!(%addr, "API server started");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Use into_make_service_with_connect_info so Governor can extract peer IP
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
 }

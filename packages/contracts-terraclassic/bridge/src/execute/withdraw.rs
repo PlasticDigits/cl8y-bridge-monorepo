@@ -689,3 +689,44 @@ fn query_token_supply(
         Ok(res.total_supply)
     }
 }
+
+// ============================================================================
+// AdminFixPendingDecimals — Admin-only
+// ============================================================================
+
+/// Fix `src_decimals` on a pending withdrawal.
+///
+/// Used when the incoming token mapping had incorrect `src_decimals` at submit time,
+/// causing `normalize_decimals` to produce the wrong payout amount at execution.
+/// Only allowed on approved-but-not-executed withdrawals.
+pub fn execute_admin_fix_pending_decimals(
+    deps: DepsMut,
+    info: MessageInfo,
+    withdraw_hash: Binary,
+    src_decimals: u8,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let hash_bytes = parse_hash(&withdraw_hash)?;
+
+    let mut pending = PENDING_WITHDRAWS
+        .may_load(deps.storage, &hash_bytes)?
+        .ok_or(ContractError::WithdrawNotFound)?;
+
+    if pending.executed {
+        return Err(ContractError::WithdrawAlreadyExecuted);
+    }
+
+    let old_src_decimals = pending.src_decimals;
+    pending.src_decimals = src_decimals;
+    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "admin_fix_pending_decimals")
+        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("old_src_decimals", old_src_decimals.to_string())
+        .add_attribute("new_src_decimals", src_decimals.to_string()))
+}

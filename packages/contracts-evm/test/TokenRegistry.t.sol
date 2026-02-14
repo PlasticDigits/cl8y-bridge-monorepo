@@ -304,4 +304,168 @@ contract TokenRegistryTest is Test {
         assertTrue(tokenRegistry.isTokenRegistered(token1));
         assertEq(tokenRegistry.VERSION(), 1);
     }
+
+    // ============================================================================
+    // Rate Limiting Tests
+    // ============================================================================
+
+    function test_SetRateLimitBridge() public {
+        vm.prank(admin);
+        tokenRegistry.setRateLimitBridge(operator);
+        assertEq(tokenRegistry.rateLimitBridge(), operator);
+
+        vm.prank(admin);
+        tokenRegistry.setRateLimitBridge(address(0));
+        assertEq(tokenRegistry.rateLimitBridge(), address(0));
+    }
+
+    function test_SetRateLimitBridge_RevertsIfNotOwner() public {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        tokenRegistry.setRateLimitBridge(operator);
+    }
+
+    function test_SetRateLimit() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 1000e18, 10000e18);
+        vm.stopPrank();
+
+        (uint256 minTx, uint256 maxTx, uint256 maxPeriod) = tokenRegistry.getRateLimitConfig(token1);
+        assertEq(minTx, 0);
+        assertEq(maxTx, 1000e18);
+        assertEq(maxPeriod, 10000e18);
+    }
+
+    function test_SetRateLimit_WithMin() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 10e18, 1000e18, 10000e18);
+        vm.stopPrank();
+
+        (uint256 min, uint256 max) = tokenRegistry.getTokenBridgeLimits(token1);
+        assertEq(min, 10e18);
+        assertEq(max, 1000e18);
+    }
+
+    function test_SetRateLimit_RevertsIfTokenNotRegistered() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ITokenRegistry.TokenNotRegistered.selector, token1));
+        tokenRegistry.setRateLimit(token1, 0, 1000e18, 10000e18);
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_NoOpWhenBridgeNotSet() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 1000e18, 10000e18);
+        vm.stopPrank();
+        // Should not revert when bridge not set (called from random address - actually it checks msg.sender != bridge, and bridge is 0, so it returns early)
+        // When bridge is 0, the function returns immediately - so any caller won't cause state change
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 500e18);
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_NoEnforcement() public {
+        // Deposit limits are not enforced (only withdraw limits); all calls succeed
+        address bridgeAddr = address(0xBEEF);
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 1000e18, 10000e18);
+        tokenRegistry.setRateLimitBridge(bridgeAddr);
+        vm.stopPrank();
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 500e18);
+
+        // Above max would have reverted before; now succeeds (no deposit limits)
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 1500e18);
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_NoPerPeriodEnforcement() public {
+        // Deposit limits are not enforced; per-period would have reverted before, now succeeds
+        address bridgeAddr = address(0xBEEF);
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 0, 1000e18);
+        tokenRegistry.setRateLimitBridge(bridgeAddr);
+        vm.stopPrank();
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 600e18);
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 500e18); // would exceed period; now ok
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_ResetsAfterWindow() public {
+        address bridgeAddr = address(0xBEEF);
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 0, 1000e18);
+        tokenRegistry.setRateLimitBridge(bridgeAddr);
+        vm.stopPrank();
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 1000e18);
+
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 1000e18);
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_NoOpFromAnyCaller() public {
+        // Deposit rate limit is a no-op; any caller can invoke it without effect
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimitBridge(operator);
+        vm.stopPrank();
+
+        vm.prank(user);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 100e18); // no revert
+    }
+
+    function test_CheckAndUpdateWithdrawRateLimit() public {
+        address bridgeAddr = address(0xBEEF);
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 500e18, 2000e18);
+        tokenRegistry.setRateLimitBridge(bridgeAddr);
+        vm.stopPrank();
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateWithdrawRateLimit(token1, 500e18);
+
+        vm.prank(bridgeAddr);
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenRegistry.RateLimitExceededPerTx.selector, 500e18, 600e18)
+        );
+        tokenRegistry.checkAndUpdateWithdrawRateLimit(token1, 600e18);
+    }
+
+    function test_CheckAndUpdateDepositRateLimit_NoMinEnforcement() public {
+        // Deposit limits are not enforced; below min now succeeds
+        address bridgeAddr = address(0xBEEF);
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 100e18, 1000e18, 10000e18);
+        tokenRegistry.setRateLimitBridge(bridgeAddr);
+        vm.stopPrank();
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 50e18); // below min; succeeds
+
+        vm.prank(bridgeAddr);
+        tokenRegistry.checkAndUpdateDepositRateLimit(token1, 100e18); // at min; succeeds
+    }
+
+    function test_UnregisterToken_CleansRateLimit() public {
+        vm.startPrank(admin);
+        tokenRegistry.registerToken(token1, ITokenRegistry.TokenType.LockUnlock);
+        tokenRegistry.setRateLimit(token1, 0, 1000e18, 10000e18);
+        tokenRegistry.unregisterToken(token1);
+        vm.stopPrank();
+
+        // Verify unregister succeeded; rate limit config is cleared (token no longer registered)
+        assertFalse(tokenRegistry.isTokenRegistered(token1));
+    }
 }

@@ -28,7 +28,7 @@ use std::str::FromStr;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{EvmConfig, FeeConfig, TerraConfig};
-use crate::contracts::evm_bridge::Bridge;
+use crate::contracts::evm_bridge::{Bridge, TokenRegistry};
 use crate::db::{self, EvmDeposit, NewApproval, TerraDeposit};
 use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash};
 use crate::types::{ChainId, EvmAddress};
@@ -159,12 +159,79 @@ impl EvmWriter {
         let terra_lcd_url = terra_config.map(|t| t.lcd_url.clone());
         let terra_bridge_address = terra_config.map(|t| t.bridge_address.clone());
         let terra_chain_id = if let Some(tc) = terra_config {
-            ChainId::from_u32(tc.this_chain_id.ok_or_else(|| {
-                eyre::eyre!(
-                    "TERRA_THIS_CHAIN_ID is required when Terra config is present. \
-                     Set it to the V2 chain ID from ChainRegistry (e.g., TERRA_THIS_CHAIN_ID=2)."
+            // Prefer TERRA_THIS_CHAIN_ID when explicitly set (e.g. TERRA_THIS_CHAIN_ID=2).
+            // ChainRegistry can return 0 or wrong values; explicit config takes precedence.
+            if let Some(id) = tc.this_chain_id {
+                info!(
+                    terra_v2_chain_id = %format!("0x{:08x}", id),
+                    "EVM writer: using TERRA_THIS_CHAIN_ID from config"
+                );
+                ChainId::from_u32(id)
+            } else {
+                // Auto-discover Terra V2 chain ID from ChainRegistry
+                let identifier = format!("terraclassic_{}", tc.chain_id);
+                let query_client = multichain_rs::evm::EvmQueryClient::new(
+                    &evm_config.rpc_url,
+                    bridge_address,
+                    evm_config.chain_id,
                 )
-            })?)
+                .wrap_err("Failed to create EVM query client")?;
+
+                let registry_addr = query_client
+                    .get_chain_registry_address()
+                    .await
+                    .wrap_err("Failed to get ChainRegistry address")?;
+
+                match query_client
+                    .compute_identifier_hash(registry_addr, &identifier)
+                    .await
+                {
+                    Ok(hash) => match query_client.get_chain_id_from_hash(registry_addr, hash).await
+                    {
+                        Ok(cid) if cid.to_u32() != 0 => {
+                            info!(
+                                identifier = %identifier,
+                                terra_v2_chain_id = %format!("0x{}", hex::encode(cid.as_bytes())),
+                                "EVM writer: queried Terra V2 chain ID from ChainRegistry"
+                            );
+                            cid
+                        }
+                        Ok(cid) => {
+                            warn!(
+                                identifier = %identifier,
+                                "ChainRegistry returned 0 for Terra; set TERRA_THIS_CHAIN_ID=2"
+                            );
+                            return Err(eyre::eyre!(
+                                "ChainRegistry returned 0 for Terra. Set TERRA_THIS_CHAIN_ID=2"
+                            ));
+                        }
+                        Err(e) => {
+                            warn!(
+                                identifier = %identifier,
+                                error = %e,
+                                "Failed to get Terra chain ID from hash"
+                            );
+                            return Err(eyre::eyre!(
+                                "Cannot resolve Terra V2 chain ID: ChainRegistry query failed ({}). \
+                                 Set TERRA_THIS_CHAIN_ID=2.",
+                                e
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        warn!(
+                            identifier = %identifier,
+                            error = %e,
+                            "Failed to compute Terra identifier hash"
+                        );
+                        return Err(eyre::eyre!(
+                            "Cannot resolve Terra V2 chain ID: ChainRegistry query failed ({}). \
+                             Set TERRA_THIS_CHAIN_ID=2.",
+                            e
+                        ));
+                    }
+                }
+            }
         } else {
             // No Terra config — use a placeholder; Terra paths won't be reached
             ChainId::from_u32(0)
@@ -733,11 +800,8 @@ impl EvmWriter {
 
     /// Process a single Terra deposit
     async fn process_deposit(&mut self, deposit: &TerraDeposit) -> Result<()> {
-        // Source chain is Terra Classic — use the V2 chain ID.
-        // In the local setup, Terra is registered as chain ID 2 in ChainRegistry.
-        // Previously used native chain IDs (5 for localterra, 4 for columbus-5) which were WRONG.
-        // TODO: Query from ChainRegistry or make configurable via TERRA_V2_CHAIN_ID env var
-        let src_chain_id = ChainId::from_u32(2);
+        // Source chain is Terra Classic — use the V2 chain ID (auto-discovered from ChainRegistry at startup)
+        let src_chain_id = self.terra_chain_id;
 
         debug!(
             deposit_id = deposit.id,
@@ -968,7 +1032,6 @@ impl EvmWriter {
     ///
     /// In V2, we call withdrawExecuteUnlock for lock/unlock tokens
     /// or withdrawExecuteMint for mintable tokens.
-    /// For now, we default to unlock mode.
     async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
         // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
@@ -979,19 +1042,73 @@ impl EvmWriter {
 
         let contract = Bridge::new(self.bridge_address, &provider);
 
+        // Query pending withdrawal — validate it exists and is ready for execution
+        let pending = contract
+            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;
+
+        // getPendingWithdraw returns a zero struct if the hash doesn't exist
+        if pending.submittedAt.is_zero() {
+            return Err(eyre!(
+                "Withdrawal {} not found (submittedAt is zero)",
+                bytes32_to_hex(&withdraw_hash)
+            ));
+        }
+        if pending.executed {
+            return Err(eyre!(
+                "Withdrawal {} already executed",
+                bytes32_to_hex(&withdraw_hash)
+            ));
+        }
+        if pending.cancelled {
+            return Err(eyre!(
+                "Withdrawal {} was cancelled",
+                bytes32_to_hex(&withdraw_hash)
+            ));
+        }
+
+        let token_addr = pending.token;
+
+        let registry_addr = contract
+            .tokenRegistry()
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get token registry: {}", e))?
+            ._0;
+
+        let token_registry = TokenRegistry::new(registry_addr, &provider);
+        let token_type = token_registry
+            .getTokenType(token_addr)
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get token type: {}", e))?
+            .tokenType;
+
+        // LockUnlock = 0, MintBurn = 1
+        let use_mint = token_type == 1;
+
         debug!(
             withdraw_hash = %bytes32_to_hex(&withdraw_hash),
-            "Submitting withdraw execution (V2 - unlock mode)"
+            token = %token_addr,
+            token_type = token_type,
+            mode = if use_mint { "mint" } else { "unlock" },
+            "Submitting withdraw execution (V2)"
         );
 
-        // Default to unlock mode
-        // TODO: Query token type to determine if we should use mint mode
-        let call = contract.withdrawExecuteUnlock(FixedBytes::from(withdraw_hash));
-
-        let pending_tx = call
-            .send()
-            .await
-            .map_err(|e| eyre!("Failed to send withdraw tx: {}", e))?;
+        let pending_tx = if use_mint {
+            contract
+                .withdrawExecuteMint(FixedBytes::from(withdraw_hash))
+                .send()
+                .await
+        } else {
+            contract
+                .withdrawExecuteUnlock(FixedBytes::from(withdraw_hash))
+                .send()
+                .await
+        }
+        .map_err(|e| eyre!("Failed to send withdraw tx: {}", e))?;
 
         let tx_hash = *pending_tx.tx_hash();
         info!(tx_hash = %tx_hash, "Withdraw transaction sent (V2)");
@@ -1370,7 +1487,6 @@ mod tests {
                 "deposit_hash": "de2e967d5bfeea4a57a752a561b70d241ef3ef8474a48901f92b0648cfb002f7",
                 "deposited_at": "1770716032132606174",
                 "dest_account": "AAAAAAAAAAAAAAAA85/W5RqtiPb0zmq4gnJ5z/+5ImY=",
-                "dest_chain_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
                 "dest_token_address": "AAAAAAAAAAAAAAAACzBr+RXE1kX/WW5Rj68/lmm5cBY=",
                 "src_account": "AAAAAAAAAAAAAAAANXQwdJVscQgA6DGYARzL1N3xVW0="
             }

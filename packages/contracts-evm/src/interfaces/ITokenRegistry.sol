@@ -52,6 +52,9 @@ interface ITokenRegistry {
     /// @notice Thrown when destToken is zero (invalid mapping)
     error InvalidDestToken();
 
+    /// @notice Thrown when another source token already maps to this destToken on this chain
+    error DestTokenAlreadyClaimed(bytes4 destChain, bytes32 destToken, address existingSource);
+
     /// @notice Thrown when caller is not operator
     error Unauthorized();
 

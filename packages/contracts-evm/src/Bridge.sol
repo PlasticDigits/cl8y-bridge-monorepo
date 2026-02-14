@@ -13,6 +13,7 @@ import {IBridge} from "./interfaces/IBridge.sol";
 import {IGuardBridge} from "./interfaces/IGuardBridge.sol";
 import {ITokenRegistry} from "./interfaces/ITokenRegistry.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {ChainRegistry} from "./ChainRegistry.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {LockUnlock} from "./LockUnlock.sol";
@@ -27,6 +28,7 @@ import {HashLib} from "./lib/HashLib.sol";
 contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuard, IBridge {
     using FeeCalculatorLib for FeeCalculatorLib.FeeConfig;
     using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
     // ============================================================================
     // Constants
@@ -74,14 +76,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     mapping(address => FeeCalculatorLib.CustomAccountFee) public customAccountFees;
 
     // ============================================================================
-    // Storage - Operators and Cancelers
+    // Storage - Operators and Cancelers (EnumerableSet for enumeration)
     // ============================================================================
 
-    /// @notice Mapping of operators
-    mapping(address => bool) public operators;
+    /// @notice Enumerable set of operators
+    EnumerableSet.AddressSet private _operators;
 
-    /// @notice Mapping of cancelers
-    mapping(address => bool) public cancelers;
+    /// @notice Enumerable set of cancelers
+    EnumerableSet.AddressSet private _cancelers;
 
     // ============================================================================
     // Storage - Deposit/Withdraw State
@@ -109,7 +111,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     address public guardBridge;
 
     /// @notice Reserved storage slots for future upgrades
-    uint256[39] private __gap;
+    uint256[37] private __gap;
 
     // ============================================================================
     // Modifiers
@@ -123,7 +125,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Reverts if msg.sender is not an operator or owner
     function _onlyOperator() internal view {
-        if (!operators[msg.sender] && msg.sender != owner()) {
+        if (!_operators.contains(msg.sender) && msg.sender != owner()) {
             revert Unauthorized();
         }
     }
@@ -136,7 +138,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
     /// @notice Reverts if msg.sender is not a canceler or owner
     function _onlyCanceler() internal view {
-        if (!cancelers[msg.sender] && msg.sender != owner()) {
+        if (!_cancelers.contains(msg.sender) && msg.sender != owner()) {
             revert Unauthorized();
         }
     }
@@ -188,7 +190,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         thisChainId = _thisChainId;
 
         // Set initial operator
-        operators[operator] = true;
+        _operators.add(operator);
 
         // Initialize fee config with defaults
         feeConfig = FeeCalculatorLib.defaultConfig(feeRecipient);
@@ -255,20 +257,41 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Add an operator
     /// @param operator The operator address
     function addOperator(address operator) external onlyOwner {
-        operators[operator] = true;
+        _operators.add(operator);
     }
 
     /// @notice Remove an operator
     /// @param operator The operator address
     function removeOperator(address operator) external onlyOwner {
-        operators[operator] = false;
+        _operators.remove(operator);
     }
 
     /// @notice Check if address is an operator
     /// @param account The address to check
     /// @return isOp True if address is an operator
     function isOperator(address account) external view returns (bool isOp) {
-        return operators[account] || account == owner();
+        return _operators.contains(account) || account == owner();
+    }
+
+    /// @notice Check if address is in the operator set (mapping-compatible getter)
+    /// @param account The address to check
+    function operators(address account) external view returns (bool) {
+        return _operators.contains(account);
+    }
+
+    /// @notice Get all operators
+    function getOperators() external view returns (address[] memory) {
+        return _operators.values();
+    }
+
+    /// @notice Get operator count
+    function getOperatorCount() external view returns (uint256) {
+        return _operators.length();
+    }
+
+    /// @notice Get operator at index
+    function operatorAt(uint256 index) external view returns (address) {
+        return _operators.at(index);
     }
 
     // ============================================================================
@@ -278,20 +301,41 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Add a canceler
     /// @param canceler The canceler address
     function addCanceler(address canceler) external onlyOwner {
-        cancelers[canceler] = true;
+        _cancelers.add(canceler);
     }
 
     /// @notice Remove a canceler
     /// @param canceler The canceler address
     function removeCanceler(address canceler) external onlyOwner {
-        cancelers[canceler] = false;
+        _cancelers.remove(canceler);
     }
 
     /// @notice Check if address is a canceler
     /// @param account The address to check
     /// @return isCan True if address is a canceler
     function isCanceler(address account) external view returns (bool isCan) {
-        return cancelers[account] || account == owner();
+        return _cancelers.contains(account) || account == owner();
+    }
+
+    /// @notice Check if address is in the canceler set (mapping-compatible getter)
+    /// @param account The address to check
+    function cancelers(address account) external view returns (bool) {
+        return _cancelers.contains(account);
+    }
+
+    /// @notice Get all cancelers
+    function getCancelers() external view returns (address[] memory) {
+        return _cancelers.values();
+    }
+
+    /// @notice Get canceler count
+    function getCancelerCount() external view returns (uint256) {
+        return _cancelers.length();
+    }
+
+    /// @notice Get canceler at index
+    function cancelerAt(uint256 index) external view returns (address) {
+        return _cancelers.at(index);
     }
 
     // ============================================================================
@@ -762,17 +806,23 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         }
     }
 
-    /// @notice Check deposit against guard bridge (no-op if guard is not set)
+    /// @notice Check deposit against guard bridge and TokenRegistry rate limits
     function _checkDepositGuard(address token, uint256 amount, address sender) internal {
         if (guardBridge != address(0)) {
             IGuardBridge(guardBridge).checkDeposit(token, amount, sender);
         }
+        if (address(tokenRegistry) != address(0) && tokenRegistry.rateLimitBridge() != address(0)) {
+            tokenRegistry.checkAndUpdateDepositRateLimit(token, amount);
+        }
     }
 
-    /// @notice Check withdrawal against guard bridge (no-op if guard is not set)
+    /// @notice Check withdrawal against guard bridge and TokenRegistry rate limits
     function _checkWithdrawGuard(address token, uint256 amount, address recipient) internal {
         if (guardBridge != address(0)) {
             IGuardBridge(guardBridge).checkWithdraw(token, amount, recipient);
+        }
+        if (address(tokenRegistry) != address(0) && tokenRegistry.rateLimitBridge() != address(0)) {
+            tokenRegistry.checkAndUpdateWithdrawRateLimit(token, amount);
         }
     }
 

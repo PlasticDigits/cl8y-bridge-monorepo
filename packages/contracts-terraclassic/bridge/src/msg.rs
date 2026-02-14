@@ -217,6 +217,10 @@ pub enum ExecuteMsg {
         evm_token_address: String,
         terra_decimals: u8,
         evm_decimals: u8,
+        /// Per-token minimum bridge amount (None = auto-compute 0.0001% of supply)
+        min_bridge_amount: Option<Uint128>,
+        /// Per-token maximum bridge amount (None = auto-compute 0.01% of supply)
+        max_bridge_amount: Option<Uint128>,
     },
 
     /// Update token configuration
@@ -226,6 +230,10 @@ pub enum ExecuteMsg {
         enabled: Option<bool>,
         /// Update token type: "lock_unlock" or "mint_burn"
         token_type: Option<String>,
+        /// Per-token minimum bridge amount (None = keep current)
+        min_bridge_amount: Option<Uint128>,
+        /// Per-token maximum bridge amount (None = keep current)
+        max_bridge_amount: Option<Uint128>,
     },
 
     /// Set destination chain token mapping (outgoing: local token → dest chain)
@@ -340,6 +348,17 @@ pub enum ExecuteMsg {
         asset: AssetInfo,
         amount: Uint128,
         recipient: String,
+    },
+
+    /// Fix src_decimals on a pending withdrawal (admin only)
+    ///
+    /// Used when the incoming token mapping had incorrect src_decimals at submit time.
+    /// Only allowed on withdrawals that are approved but not yet executed.
+    AdminFixPendingDecimals {
+        /// The 32-byte withdraw hash
+        withdraw_hash: Binary,
+        /// Corrected source chain decimals
+        src_decimals: u8,
     },
 }
 
@@ -500,7 +519,6 @@ pub enum QueryMsg {
     #[returns(VerifyDepositResponse)]
     VerifyDeposit {
         deposit_hash: Binary,
-        dest_chain_key: Binary,
         dest_token_address: Binary,
         dest_account: Binary,
         amount: Uint128,
@@ -640,6 +658,8 @@ pub struct TokenResponse {
     pub terra_decimals: u8,
     pub evm_decimals: u8,
     pub enabled: bool,
+    pub min_bridge_amount: Option<Uint128>,
+    pub max_bridge_amount: Option<Uint128>,
 }
 
 #[cw_serde]
@@ -784,7 +804,6 @@ pub struct ComputeHashResponse {
 #[cw_serde]
 pub struct DepositInfoResponse {
     pub deposit_hash: Binary,
-    pub dest_chain_key: Binary,
     pub src_account: Binary,
     pub dest_token_address: Binary,
     pub dest_account: Binary,

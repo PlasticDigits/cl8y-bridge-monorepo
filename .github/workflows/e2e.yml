@@ -173,10 +173,9 @@ jobs:
           echo "  Router: $ROUTER_ADDRESS"
           echo "  LockUnlock: $LOCK_UNLOCK"
 
-      - name: Build Terra Contracts
-        working-directory: packages/contracts-terraclassic/bridge
+      - name: Build Terra Contracts (Docker optimized, cosmwasm_1_2)
         run: |
-          cargo build --release --target wasm32-unknown-unknown
+          make build-terra-optimized
           echo "Terra contracts built successfully"
 
       - name: Deploy Terra Contracts

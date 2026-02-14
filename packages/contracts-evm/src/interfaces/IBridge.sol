@@ -101,6 +101,7 @@ interface IBridge {
     /// @notice Emitted when the guard bridge is updated
     event GuardBridgeUpdated(address indexed oldGuard, address indexed newGuard);
 
+
     // ============================================================================
     // Errors
     // ============================================================================
@@ -252,4 +253,5 @@ interface IBridge {
     /// @notice Get this chain's registered chain ID
     /// @return chainId This chain's 4-byte ID
     function getThisChainId() external view returns (bytes4 chainId);
+
 }

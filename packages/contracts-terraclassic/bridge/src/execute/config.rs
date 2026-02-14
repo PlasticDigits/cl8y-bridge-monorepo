@@ -23,8 +23,9 @@ use cosmwasm_std::Binary;
 use crate::hash::{hex_to_bytes32, keccak256};
 use crate::state::{
     ChainConfig, RateLimitConfig, TokenConfig, TokenDestMapping, TokenSrcMapping, TokenType,
-    ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CHAIN_BY_IDENTIFIER, CONFIG, OPERATORS,
-    OPERATOR_COUNT, RATE_LIMITS, TOKENS, TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY,
+    ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CHAIN_BY_IDENTIFIER, CONFIG, DEST_MAPPING_OWNER,
+    OPERATORS, OPERATOR_COUNT, RATE_LIMITS, SRC_MAPPING_OWNER, TOKENS, TOKEN_DEST_MAPPINGS,
+    TOKEN_SRC_MAPPINGS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -308,6 +309,8 @@ pub fn execute_add_token(
     evm_token_address: String,
     terra_decimals: u8,
     evm_decimals: u8,
+    min_bridge_amount: Option<Uint128>,
+    max_bridge_amount: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -344,6 +347,12 @@ pub fn execute_add_token(
 
     let token_type_parsed = parse_token_type(token_type);
 
+    // Auto-compute defaults from total supply if not provided
+    // min = 0.0001% of supply (1/1,000,000), max = 0.01% of supply (1/10,000)
+    let (default_min, default_max) = compute_default_limits(deps.as_ref(), &token, is_native);
+    let effective_min = min_bridge_amount.or(default_min);
+    let effective_max = max_bridge_amount.or(default_max);
+
     let token_config = TokenConfig {
         token: token.clone(),
         is_native,
@@ -352,8 +361,21 @@ pub fn execute_add_token(
         terra_decimals,
         evm_decimals,
         enabled: true,
+        min_bridge_amount: effective_min,
+        max_bridge_amount: effective_max,
     };
     TOKENS.save(deps.storage, token.clone(), &token_config)?;
+
+    // Also set default rate limit (24h window = max per tx) if not already configured
+    if RATE_LIMITS.may_load(deps.storage, &token)?.is_none() {
+        if let Some(max_val) = effective_max {
+            let rl = RateLimitConfig {
+                max_per_transaction: max_val,
+                max_per_period: max_val,
+            };
+            RATE_LIMITS.save(deps.storage, &token, &rl)?;
+        }
+    }
 
     Ok(Response::new()
         .add_attribute("action", "add_token")
@@ -362,7 +384,51 @@ pub fn execute_add_token(
         .add_attribute("token_type", token_type_parsed.as_str()))
 }
 
+/// Compute default min/max bridge limits from token total supply.
+/// min = 0.0001% of supply (1/1,000,000), max = 0.01% of supply (1/10,000).
+/// Returns (Some(min), Some(max)) if supply > 0, (None, None) otherwise.
+fn compute_default_limits(
+    deps: cosmwasm_std::Deps,
+    token: &str,
+    is_native: bool,
+) -> (Option<Uint128>, Option<Uint128>) {
+    let supply = if is_native {
+        // Native token: query bank supply (requires cosmwasm_1_2 feature)
+        #[cfg(feature = "cosmwasm_1_2")]
+        {
+            use cosmwasm_std::{BankQuery, QueryRequest};
+            deps.querier
+                .query::<cosmwasm_std::SupplyResponse>(&QueryRequest::Bank(BankQuery::Supply {
+                    denom: token.to_string(),
+                }))
+                .ok()
+                .map(|r| r.amount.amount)
+                .unwrap_or(Uint128::zero())
+        }
+        #[cfg(not(feature = "cosmwasm_1_2"))]
+        {
+            let _ = (deps, token);
+            Uint128::zero()
+        }
+    } else {
+        // CW20 token: query token_info
+        use cw20::Cw20QueryMsg;
+        deps.querier
+            .query_wasm_smart::<cw20::TokenInfoResponse>(token, &Cw20QueryMsg::TokenInfo {})
+            .ok()
+            .map(|r| r.total_supply)
+            .unwrap_or(Uint128::zero())
+    };
+    if supply.is_zero() {
+        return (None, None);
+    }
+    let min = Some(supply / Uint128::new(1_000_000)); // 0.0001%
+    let max = Some(supply / Uint128::new(10_000));     // 0.01%
+    (min, max)
+}
+
 /// Update an existing token configuration.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_update_token(
     deps: DepsMut,
     info: MessageInfo,
@@ -370,6 +436,8 @@ pub fn execute_update_token(
     evm_token_address: Option<String>,
     enabled: Option<bool>,
     token_type: Option<String>,
+    min_bridge_amount: Option<Uint128>,
+    max_bridge_amount: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -391,6 +459,12 @@ pub fn execute_update_token(
     }
     if let Some(tt) = token_type {
         token_config.token_type = parse_token_type(Some(tt));
+    }
+    if let Some(min) = min_bridge_amount {
+        token_config.min_bridge_amount = Some(min);
+    }
+    if let Some(max) = max_bridge_amount {
+        token_config.max_bridge_amount = Some(max);
     }
 
     TOKENS.save(deps.storage, token.clone(), &token_config)?;
@@ -444,12 +518,40 @@ pub fn execute_set_token_destination(
             reason: e.to_string(),
         })?;
 
+    let dest_chain_key = hex::encode(dest_chain_bytes);
+    let dest_token_key = hex::encode(dest_token_bytes);
+
+    // Enforce 1-to-1: no two local tokens may map to the same dest_token on the same chain.
+    if let Some(existing_owner) =
+        DEST_MAPPING_OWNER.may_load(deps.storage, (&dest_chain_key, &dest_token_key))?
+    {
+        if existing_owner != token {
+            return Err(ContractError::DestTokenAlreadyClaimed {
+                chain_id: format!("0x{}", dest_chain_key),
+                dest_token: format!("0x{}", dest_token_key),
+                existing_owner,
+            });
+        }
+    }
+
+    // Release old claim if this token previously pointed to a different dest_token on this chain
+    if let Some(old_mapping) =
+        TOKEN_DEST_MAPPINGS.may_load(deps.storage, (&token, &dest_chain_key))?
+    {
+        let old_dest_key = hex::encode(old_mapping.dest_token);
+        if old_dest_key != dest_token_key {
+            DEST_MAPPING_OWNER.remove(deps.storage, (&dest_chain_key, &old_dest_key));
+        }
+    }
+
+    // Claim the dest_token
+    DEST_MAPPING_OWNER.save(deps.storage, (&dest_chain_key, &dest_token_key), &token)?;
+
     let mapping = TokenDestMapping {
         dest_token: dest_token_bytes,
         dest_decimals,
     };
 
-    let dest_chain_key = hex::encode(dest_chain_bytes);
     TOKEN_DEST_MAPPINGS.save(deps.storage, (&token, &dest_chain_key), &mapping)?;
 
     Ok(Response::new()
@@ -516,6 +618,38 @@ pub fn execute_set_incoming_token_mapping(
 
     let src_chain_key = hex::encode(src_chain_bytes);
     let src_token_key = hex::encode(src_token.as_slice());
+
+    // Enforce 1-to-1: no two different src_tokens from the same chain may map to the same local_token.
+    if let Some(existing_src_token) =
+        SRC_MAPPING_OWNER.may_load(deps.storage, (&src_chain_key, &local_token))?
+    {
+        if existing_src_token != src_token_key {
+            return Err(ContractError::IncomingMappingAlreadyClaimed {
+                chain_id: format!("0x{}", src_chain_key),
+                local_token: local_token.clone(),
+                existing_src_token: format!("0x{}", existing_src_token),
+            });
+        }
+    }
+
+    // Release old claim if this src_token previously pointed to a different local_token
+    if let Some(old_mapping) =
+        TOKEN_SRC_MAPPINGS.may_load(deps.storage, (&src_chain_key, &src_token_key))?
+    {
+        if old_mapping.local_token != local_token {
+            SRC_MAPPING_OWNER.remove(
+                deps.storage,
+                (&src_chain_key, &old_mapping.local_token),
+            );
+        }
+    }
+
+    // Claim the local_token for this src_token on this chain
+    SRC_MAPPING_OWNER.save(
+        deps.storage,
+        (&src_chain_key, &local_token),
+        &src_token_key,
+    )?;
 
     let mapping = TokenSrcMapping {
         local_token: local_token.clone(),
@@ -586,6 +720,13 @@ pub fn execute_remove_incoming_token_mapping(
 
     let src_chain_key = hex::encode(&src_chain[..4]);
     let src_token_key = hex::encode(src_token.as_slice());
+
+    // Clean up reverse lookup
+    if let Some(old_mapping) =
+        TOKEN_SRC_MAPPINGS.may_load(deps.storage, (&src_chain_key, &src_token_key))?
+    {
+        SRC_MAPPING_OWNER.remove(deps.storage, (&src_chain_key, &old_mapping.local_token));
+    }
 
     TOKEN_SRC_MAPPINGS.remove(deps.storage, (&src_chain_key, &src_token_key));
 

@@ -27,6 +27,9 @@ tendermint-rpc = { version = "0.37", features = ["http-client"] }
 # HTTP server (matches canceler package)
 axum = "0.8"
 
+# Rate limiting
+tower_governor = { version = "0.8", features = ["axum"] }
+
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 

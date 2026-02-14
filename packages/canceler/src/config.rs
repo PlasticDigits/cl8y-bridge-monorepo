@@ -276,8 +276,10 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::{validate_rpc_url, Config};
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_evm_precheck_config_from_env() {
         // Set required vars for Config::load (use valid URLs per C5)
         let required = [
@@ -350,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multi_evm_config_loaded_when_set() {
         // Set required base vars
         let required = [
@@ -413,6 +416,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_multi_evm_config_none_when_not_set() {
         // Set required base vars only (no multi-EVM)
         let required = [

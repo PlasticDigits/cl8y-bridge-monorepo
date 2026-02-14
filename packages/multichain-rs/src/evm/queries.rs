@@ -257,6 +257,39 @@ impl EvmQueryClient {
         Ok(result.count.try_into().unwrap_or(u64::MAX))
     }
 
+    /// Compute the identifier hash (pure function)
+    /// Used to look up chain ID from identifier strings like "terraclassic_columbus-5"
+    pub async fn compute_identifier_hash(
+        &self,
+        registry_address: Address,
+        identifier: &str,
+    ) -> Result<[u8; 32]> {
+        let registry = ChainRegistry::new(registry_address, &self.provider);
+        let result = registry
+            .computeIdentifierHash(identifier.to_string())
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to compute identifier hash: {}", e))?;
+
+        Ok(result.hash.0)
+    }
+
+    /// Get chain ID from its identifier hash
+    pub async fn get_chain_id_from_hash(
+        &self,
+        registry_address: Address,
+        hash: [u8; 32],
+    ) -> Result<ChainId> {
+        let registry = ChainRegistry::new(registry_address, &self.provider);
+        let result = registry
+            .getChainIdFromHash(FixedBytes(hash))
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get chain ID from hash: {}", e))?;
+
+        Ok(ChainId::from_bytes(result.chainId.0))
+    }
+
     // =========================================================================
     // Token Registry Queries
     // =========================================================================

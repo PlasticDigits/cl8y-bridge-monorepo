@@ -677,6 +677,8 @@ fn test_deposit_to_registered_chain_succeeds() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -727,6 +729,8 @@ fn test_deposit_to_unregistered_chain_rejected() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -794,6 +798,8 @@ fn test_deposit_to_disabled_chain_rejected() {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )

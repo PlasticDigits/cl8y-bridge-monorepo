@@ -13,14 +13,17 @@ Requires Rust 1.75+ and CosmWasm toolchain. See monorepo root for Docker-based L
 ## Build
 
 ```bash
-# From monorepo root:
+# From monorepo root (recommended - Docker optimized with cosmwasm_1_2):
+make build-terra-optimized
+
+# Quick dev build (no Docker):
 make build-terra
 
 # Or from this directory:
-cargo build --release --target wasm32-unknown-unknown
-
-# Optimized WASM (for deployment): make build-terra-optimized
+cargo build --release -p bridge --target wasm32-unknown-unknown --features cosmwasm_1_2
 ```
+
+The `cosmwasm_1_2` feature enables `BankQuery::Supply` for native token rate limits (requires Cosmos SDK 0.47+).
 
 ## Test
 

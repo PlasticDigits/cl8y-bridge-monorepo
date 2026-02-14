@@ -20,9 +20,9 @@ pub struct Config {
     pub paused: bool,
     /// Minimum number of operator signatures required (legacy, kept for compatibility)
     pub min_signatures: u32,
-    /// Minimum bridge amount (in smallest unit)
+    /// Legacy global minimum bridge amount (deprecated: per-token limits are used instead)
     pub min_bridge_amount: Uint128,
-    /// Maximum bridge amount per transaction (in smallest unit)
+    /// Legacy global maximum bridge amount (deprecated: per-token limits are used instead)
     pub max_bridge_amount: Uint128,
     /// Fee percentage (in basis points, e.g., 30 = 0.3%)
     pub fee_bps: u32,
@@ -89,6 +89,12 @@ pub struct TokenConfig {
     pub evm_decimals: u8,
     /// Whether this token is currently enabled for bridging
     pub enabled: bool,
+    /// Per-token minimum bridge amount (None/zero = no minimum)
+    #[serde(default)]
+    pub min_bridge_amount: Option<Uint128>,
+    /// Per-token maximum bridge amount (None/zero = no maximum)
+    #[serde(default)]
+    pub max_bridge_amount: Option<Uint128>,
 }
 
 /// Destination chain token mapping
@@ -196,8 +202,6 @@ pub struct DepositInfo {
     pub nonce: u64,
     /// Block timestamp when deposit was made
     pub deposited_at: Timestamp,
-    /// Legacy field: destination chain key (32 bytes) - kept for backward compat
-    pub dest_chain_key: [u8; 32],
 }
 
 /// Rate limit configuration for a token
@@ -351,6 +355,14 @@ pub const TOKEN_DEST_MAPPINGS: Map<(&str, &str), TokenDestMapping> =
 /// given a source chain and token representation, look up the local Terra denom.
 /// Used by WithdrawSubmit to validate the incoming token is registered.
 pub const TOKEN_SRC_MAPPINGS: Map<(&str, &str), TokenSrcMapping> = Map::new("token_src_mappings");
+
+/// Reverse lookup for incoming mappings: (src_chain_hex, local_token) → src_token_hex.
+/// Enforces 1-to-1 per chain: no two different src_tokens on the same chain may map to the same local_token.
+pub const SRC_MAPPING_OWNER: Map<(&str, &str), String> = Map::new("src_mapping_owner");
+
+/// Reverse lookup for outgoing mappings: (dest_chain_hex, dest_token_hex) → local_token.
+/// Enforces 1-to-1 per chain: no two local tokens may map to the same dest_token on the same chain.
+pub const DEST_MAPPING_OWNER: Map<(&str, &str), String> = Map::new("dest_mapping_owner");
 
 /// Source chain token mapping to local Terra token
 #[cw_serde]

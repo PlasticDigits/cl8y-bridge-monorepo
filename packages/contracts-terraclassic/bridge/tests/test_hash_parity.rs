@@ -114,6 +114,8 @@ fn setup_with_e2e_chain_ids() -> TestEnv {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )

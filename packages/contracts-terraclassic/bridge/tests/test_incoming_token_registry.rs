@@ -97,6 +97,8 @@ fn setup() -> TestEnv {
             evm_token_address: "0x0000000000000000000000000000000000000000".to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -760,6 +762,8 @@ fn test_withdraw_submit_cw20_requires_incoming_mapping() {
                 evm_token_address: "0x0000000000000000000000000000000000000000".to_string(),
                 terra_decimals: 6,
                 evm_decimals: 18,
+                min_bridge_amount: None,
+                max_bridge_amount: None,
             },
             &[],
         )

@@ -87,6 +87,8 @@ fn setup() -> (App, Addr, Addr, Addr) {
                 .to_string(),
             terra_decimals: 6,
             evm_decimals: 18,
+            min_bridge_amount: None,
+            max_bridge_amount: None,
         },
         &[],
     )
@@ -114,7 +116,7 @@ fn test_default_fee_config() {
         .query_wasm_smart(&contract_addr, &QueryMsg::FeeConfig {})
         .unwrap();
 
-    assert_eq!(fee_config.standard_fee_bps, 50);
+    assert_eq!(fee_config.standard_fee_bps, 30);
     assert_eq!(fee_config.discounted_fee_bps, 10);
     assert_eq!(fee_config.cl8y_threshold, Uint128::from(100_000_000u128));
     assert!(fee_config.cl8y_token.is_none());
@@ -429,7 +431,7 @@ fn test_remove_custom_account_fee() {
             },
         )
         .unwrap();
-    assert_eq!(account_fee.fee_bps, 50); // back to standard
+    assert_eq!(account_fee.fee_bps, 30); // back to standard
     assert_eq!(account_fee.fee_type, "standard");
 }
 
@@ -469,9 +471,9 @@ fn test_calculate_fee_standard() {
         )
         .unwrap();
 
-    // 0.5% of 1_000_000 = 5_000
-    assert_eq!(result.fee_amount, Uint128::from(5_000u128));
-    assert_eq!(result.fee_bps, 50);
+    // 0.3% of 1_000_000 = 3_000
+    assert_eq!(result.fee_amount, Uint128::from(3_000u128));
+    assert_eq!(result.fee_bps, 30);
     assert_eq!(result.fee_type, "standard");
 }
 
@@ -590,8 +592,8 @@ fn test_deposit_applies_standard_fee() {
         .map(|a| a.value.clone())
         .unwrap();
 
-    // Standard fee: 0.5% of 1_000_000 = 5_000
-    assert_eq!(fee_attr, "5000");
+    // Standard fee: 0.3% of 1_000_000 = 3_000
+    assert_eq!(fee_attr, "3000");
 
     // Check fee_type attribute
     let fee_type_attr = res
@@ -603,7 +605,7 @@ fn test_deposit_applies_standard_fee() {
         .unwrap();
     assert_eq!(fee_type_attr, "standard");
 
-    // Net amount should be 1_000_000 - 5_000 = 995_000
+    // Net amount should be 1_000_000 - 3_000 = 997_000
     let amount_attr = res
         .events
         .iter()
@@ -611,7 +613,7 @@ fn test_deposit_applies_standard_fee() {
         .find(|a| a.key == "amount")
         .map(|a| a.value.clone())
         .unwrap();
-    assert_eq!(amount_attr, "995000");
+    assert_eq!(amount_attr, "997000");
 }
 
 #[test]
@@ -730,7 +732,7 @@ fn test_custom_fee_overrides_standard() {
     let admin = Addr::unchecked("terra1admin");
     let account = Addr::unchecked("terra1special");
 
-    // Standard is 50 bps
+    // Standard is 30 bps
     // Set custom to 10 bps
     app.execute_contract(
         admin.clone(),
@@ -796,7 +798,7 @@ fn test_remove_custom_reverts_to_standard() {
         )
         .unwrap();
 
-    assert_eq!(result.fee_bps, 50); // Standard
+    assert_eq!(result.fee_bps, 30); // Standard
     assert_eq!(result.fee_type, "standard");
 }
 
@@ -832,7 +834,7 @@ fn test_multiple_accounts_different_fees() {
     )
     .unwrap();
 
-    // user_c: no custom (standard 50 bps)
+    // user_c: no custom (standard 30 bps)
 
     let fee_a: AccountFeeResponse = app
         .wrap()
@@ -866,6 +868,6 @@ fn test_multiple_accounts_different_fees() {
     assert_eq!(fee_a.fee_type, "custom");
     assert_eq!(fee_b.fee_bps, 100);
     assert_eq!(fee_b.fee_type, "custom");
-    assert_eq!(fee_c.fee_bps, 50);
+    assert_eq!(fee_c.fee_bps, 30);
     assert_eq!(fee_c.fee_type, "standard");
 }

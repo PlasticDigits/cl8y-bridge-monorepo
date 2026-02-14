@@ -409,12 +409,6 @@ impl ApprovalVerifier {
 
         // Use the DepositHash query which only needs the deposit hash.
         // QueryMsg::DepositHash { deposit_hash: Binary } → Option<DepositInfoResponse>
-        //
-        // Previously used VerifyDeposit which requires 6 parameters
-        // (deposit_hash, dest_chain_key, dest_token_address, dest_account, amount, nonce).
-        // The old code only sent 3 of 6, causing the contract to reject the query with
-        // a deserialization error. The error handler returned Pending, creating an infinite
-        // retry loop that prevented fraud detection.
         let query = serde_json::json!({
             "deposit_hash": {
                 "deposit_hash": base64::engine::general_purpose::STANDARD.encode(approval.withdraw_hash)
@@ -709,7 +703,6 @@ mod tests {
         let response_json: serde_json::Value = serde_json::json!({
             "data": {
                 "deposit_hash": "AAAA",
-                "dest_chain_key": "AAAB",
                 "src_account": "AAAC",
                 "dest_token_address": "AAAD",
                 "dest_account": "AAAE",

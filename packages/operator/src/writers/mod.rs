@@ -103,7 +103,8 @@ impl WriterManager {
             source_chain_endpoints.clone(),
         )
         .await?;
-        let terra_writer = TerraWriter::new(&config.terra, &config.evm, db.clone()).await?;
+        let terra_writer =
+            TerraWriter::new(&config.terra, source_chain_endpoints.clone(), db.clone()).await?;
 
         // Create per-chain EVM writers from MultiEvmConfig
         let mut evm_chain_writers = HashMap::new();

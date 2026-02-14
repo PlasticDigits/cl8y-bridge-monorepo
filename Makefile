@@ -140,20 +140,22 @@ build-evm:
 	cd packages/contracts-evm && forge build
 
 build-terra:
-	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown
+	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown -p bridge --features cosmwasm_1_2 && \
+		mkdir -p artifacts && \
+		cp target/wasm32-unknown-unknown/release/bridge.wasm artifacts/
 
 build-terra-optimized:
-	@echo "Building optimized Terra WASM via Docker..."
+	@echo "Building optimized Terra WASM via Docker (cosmwasm_1_2 + BankQuery::Supply)..."
 	docker run --rm -v "$$(pwd)/packages/contracts-terraclassic":/code \
 		--mount type=volume,source=cl8y_terra_cache,target=/target \
 		--mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
 		--entrypoint /bin/sh \
-		cosmwasm/workspace-optimizer:0.16.1 \
+		cosmwasm/workspace-optimizer:0.17.0 \
 		-c '\
 			set -e && \
 			echo "Rust: $$(rustc --version)" && \
 			cd /code && \
-			RUSTFLAGS="-C link-arg=-s" cargo build --release --lib --target wasm32-unknown-unknown --target-dir=/target --locked && \
+			RUSTFLAGS="-C link-arg=-s" cargo build --release -p bridge --lib --target wasm32-unknown-unknown --features cosmwasm_1_2 --target-dir=/target --locked && \
 			mkdir -p artifacts && \
 			echo "Optimizing bridge.wasm ..." && \
 			wasm-opt -Os --signext-lowering /target/wasm32-unknown-unknown/release/bridge.wasm -o artifacts/bridge.wasm && \

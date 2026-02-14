@@ -139,6 +139,8 @@ pub fn query_token(deps: Deps, token: String) -> StdResult<TokenResponse> {
         terra_decimals: token_config.terra_decimals,
         evm_decimals: token_config.evm_decimals,
         enabled: token_config.enabled,
+        min_bridge_amount: token_config.min_bridge_amount,
+        max_bridge_amount: token_config.max_bridge_amount,
     })
 }
 
@@ -163,6 +165,8 @@ pub fn query_tokens(
                 terra_decimals: token_config.terra_decimals,
                 evm_decimals: token_config.evm_decimals,
                 enabled: token_config.enabled,
+                min_bridge_amount: token_config.min_bridge_amount,
+                max_bridge_amount: token_config.max_bridge_amount,
             })
         })
         .collect::<StdResult<Vec<_>>>()?;
@@ -508,7 +512,6 @@ pub fn query_deposit_hash(
 
     Ok(deposit.map(|d| DepositInfoResponse {
         deposit_hash: Binary::from(hash_bytes.to_vec()),
-        dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
         src_account: Binary::from(d.src_account.to_vec()),
         dest_token_address: Binary::from(d.dest_token_address.to_vec()),
         dest_account: Binary::from(d.dest_account.to_vec()),
@@ -527,7 +530,6 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
             let deposit = DEPOSIT_HASHES.may_load(deps.storage, &hash_bytes)?;
             Ok(deposit.map(|d| DepositInfoResponse {
                 deposit_hash: Binary::from(hash_bytes.to_vec()),
-                dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
                 src_account: Binary::from(d.src_account.to_vec()),
                 dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                 dest_account: Binary::from(d.dest_account.to_vec()),
@@ -544,7 +546,6 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
 pub fn query_verify_deposit(
     deps: Deps,
     deposit_hash: Binary,
-    dest_chain_key: Binary,
     dest_token_address: Binary,
     dest_account: Binary,
     amount: Uint128,
@@ -560,21 +561,18 @@ pub fn query_verify_deposit(
     match deposit {
         Some(d) => {
             // Verify parameters match
-            let dest_key_match = dest_chain_key.to_vec() == d.dest_chain_key.to_vec();
             let token_match = dest_token_address.to_vec() == d.dest_token_address.to_vec();
             let account_match = dest_account.to_vec() == d.dest_account.to_vec();
             let amount_match = amount == d.amount;
             let nonce_match = nonce == d.nonce;
 
-            let matches =
-                dest_key_match && token_match && account_match && amount_match && nonce_match;
+            let matches = token_match && account_match && amount_match && nonce_match;
 
             Ok(VerifyDepositResponse {
                 exists: true,
                 matches,
                 deposit: Some(DepositInfoResponse {
                     deposit_hash: Binary::from(hash_bytes.to_vec()),
-                    dest_chain_key: Binary::from(d.dest_chain_key.to_vec()),
                     src_account: Binary::from(d.src_account.to_vec()),
                     dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                     dest_account: Binary::from(d.dest_account.to_vec()),

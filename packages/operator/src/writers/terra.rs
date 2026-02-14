@@ -11,7 +11,6 @@
 //! 6. Anyone can call WithdrawExecuteUnlock/Mint after window
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::{Address, FixedBytes};
@@ -21,7 +20,7 @@ use reqwest::Client;
 use sqlx::PgPool;
 use tracing::{debug, info, warn};
 
-use crate::config::{EvmConfig, TerraConfig};
+use crate::config::TerraConfig;
 use crate::contracts::evm_bridge::Bridge as EvmBridge;
 use crate::contracts::terra_bridge::{
     build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
@@ -68,10 +67,10 @@ pub struct TerraWriter {
     /// This chain's 4-byte chain ID (V2)
     #[allow(dead_code)]
     this_chain_id: ChainId,
-    /// EVM RPC URL for cross-chain deposit verification
-    evm_rpc_url: String,
-    /// EVM Bridge contract address for deposit verification
-    evm_bridge_address: Address,
+    /// Source chain endpoints for cross-chain deposit verification routing.
+    /// Maps V2 4-byte chain ID → (rpc_url, bridge_address).
+    /// Includes all known EVM chains so we can verify deposits on any source.
+    source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     /// Set of hashes we've already approved (avoid duplicate approvals)
     approved_hashes: HashMap<[u8; 32], Instant>,
 }
@@ -79,11 +78,15 @@ pub struct TerraWriter {
 impl TerraWriter {
     /// Create a new Terra writer
     ///
-    /// Requires both Terra and EVM config: the operator verifies deposits
-    /// on the EVM Bridge before approving withdrawals on Terra.
+    /// Requires Terra config and source chain endpoints: the operator verifies
+    /// deposits on the correct EVM chain before approving withdrawals on Terra.
+    ///
+    /// `source_chain_endpoints` maps V2 4-byte chain IDs to (rpc_url, bridge_address)
+    /// for all known EVM chains, enabling deposit verification regardless of which
+    /// EVM chain the deposit originated from.
     pub async fn new(
         terra_config: &TerraConfig,
-        evm_config: &EvmConfig,
+        source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
         db: PgPool,
     ) -> Result<Self> {
         let client = Client::builder()
@@ -135,16 +138,12 @@ impl TerraWriter {
                 .await
                 .unwrap_or(60);
 
-        // Parse EVM bridge address
-        let evm_bridge_address =
-            Address::from_str(&evm_config.bridge_address).wrap_err("Invalid EVM bridge address")?;
-
         info!(
             delay_seconds = cancel_window,
             operator_address = %terra_client.address,
             this_chain_id = %this_chain_id.to_hex(),
-            evm_bridge = %evm_bridge_address,
-            "Terra writer initialized (V2 hash-matching)"
+            source_chains = source_chain_endpoints.len(),
+            "Terra writer initialized (V2 hash-matching, multi-EVM verification)"
         );
 
         Ok(Self {
@@ -158,8 +157,7 @@ impl TerraWriter {
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
             pending_executions: HashMap::new(),
             this_chain_id,
-            evm_rpc_url: evm_config.rpc_url.clone(),
-            evm_bridge_address,
+            source_chain_endpoints,
             approved_hashes: HashMap::new(),
         })
     }
@@ -387,12 +385,26 @@ impl TerraWriter {
                     continue;
                 }
 
+                // Extract src_chain from the withdrawal entry (V2 4-byte chain ID, base64)
+                let src_chain_id: [u8; 4] = entry["src_chain"]
+                    .as_str()
+                    .and_then(|b64| {
+                        base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            b64,
+                        )
+                        .ok()
+                    })
+                    .and_then(|b| b.try_into().ok())
+                    .unwrap_or([0u8; 4]);
+
                 // Log the entry details for debugging
                 let amount = entry["amount"].as_str().unwrap_or("?");
                 let token = entry["token"].as_str().unwrap_or("?");
                 let recipient = entry["recipient"].as_str().unwrap_or("?");
                 info!(
                     withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                    src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                     nonce = nonce,
                     amount = amount,
                     token = token,
@@ -400,14 +412,14 @@ impl TerraWriter {
                     "Processing unapproved withdrawal, verifying EVM deposit..."
                 );
 
-                // Verify the deposit exists on EVM
-                match self.verify_evm_deposit(&hash_bytes).await {
+                // Verify the deposit exists on the correct source EVM chain
+                match self.verify_evm_deposit(&hash_bytes, &src_chain_id).await {
                     Ok(true) => {
                         // Deposit verified — approve on Terra
                         info!(
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
-                            evm_bridge = %self.evm_bridge_address,
+                            src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                             "EVM deposit verified, submitting WithdrawApprove on Terra"
                         );
 
@@ -506,12 +518,12 @@ impl TerraWriter {
                         info!(
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
-                            evm_bridge = %self.evm_bridge_address,
-                            evm_rpc = %self.evm_rpc_url,
+                            src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                            known_evm_chains = self.source_chain_endpoints.len(),
                             "No matching EVM deposit found for withdraw hash. \
                              This withdrawal cannot be approved until the deposit is confirmed on EVM. \
                              Possible causes: (1) hash mismatch between chains, \
-                             (2) deposit not yet finalized, (3) wrong EVM bridge address."
+                             (2) deposit not yet finalized, (3) source chain not configured."
                         );
                     }
                     Err(e) => {
@@ -520,9 +532,8 @@ impl TerraWriter {
                             withdraw_hash = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
                             error = %e,
-                            evm_rpc = %self.evm_rpc_url,
-                            evm_bridge = %self.evm_bridge_address,
-                            "Failed to query EVM deposit (RPC error). \
+                            src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                            "Failed to query EVM deposit on source chain (RPC error). \
                              Will retry on next poll cycle."
                         );
                     }
@@ -561,22 +572,101 @@ impl TerraWriter {
     // EVM Deposit Verification
     // ========================================================================
 
-    /// Verify that a deposit with the given hash exists on the EVM Bridge
+    /// Verify that a deposit with the given hash exists on the correct EVM source chain.
     ///
-    /// Queries `getDeposit(hash)` on the EVM Bridge contract and checks
-    /// if the returned record has a non-zero timestamp (indicating it exists).
-    async fn verify_evm_deposit(&self, withdraw_hash: &[u8; 32]) -> Result<bool> {
-        debug!(
+    /// Routes verification to the EVM chain identified by `src_chain_id` (V2 4-byte ID)
+    /// from the pending withdrawal entry. If the source chain is not in
+    /// `source_chain_endpoints`, falls back to trying all known chains.
+    ///
+    /// Returns `true` if the deposit record has a non-zero timestamp on any chain.
+    async fn verify_evm_deposit(
+        &self,
+        withdraw_hash: &[u8; 32],
+        src_chain_id: &[u8; 4],
+    ) -> Result<bool> {
+        let src_chain_hex = format!("0x{}", hex::encode(src_chain_id));
+
+        // Try the specific source chain first (preferred — O(1) routing)
+        if let Some((rpc_url, bridge_address)) = self.source_chain_endpoints.get(src_chain_id) {
+            debug!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                src_chain = %src_chain_hex,
+                evm_rpc = %rpc_url,
+                evm_bridge = %bridge_address,
+                "Routing deposit verification to source chain endpoint"
+            );
+
+            return self
+                .verify_evm_deposit_on_chain(rpc_url, *bridge_address, withdraw_hash)
+                .await;
+        }
+
+        // Source chain not in endpoints map — try all known chains as fallback.
+        // This handles the case where src_chain_id is zero or unrecognized.
+        warn!(
             withdraw_hash = %bytes32_to_hex(withdraw_hash),
-            evm_rpc = %self.evm_rpc_url,
-            evm_bridge = %self.evm_bridge_address,
-            "Querying EVM Bridge.getDeposit() to verify deposit exists"
+            src_chain = %src_chain_hex,
+            known_chains = self.source_chain_endpoints.len(),
+            "Source chain not found in endpoints map, trying all known EVM chains"
         );
 
-        let provider = ProviderBuilder::new()
-            .on_http(self.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+        for (chain_id, (rpc_url, bridge_address)) in &self.source_chain_endpoints {
+            let chain_hex = format!("0x{}", hex::encode(chain_id));
+            debug!(
+                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                trying_chain = %chain_hex,
+                evm_rpc = %rpc_url,
+                "Trying fallback chain for deposit verification"
+            );
 
-        let contract = EvmBridge::new(self.evm_bridge_address, &provider);
+            match self
+                .verify_evm_deposit_on_chain(rpc_url, *bridge_address, withdraw_hash)
+                .await
+            {
+                Ok(true) => {
+                    info!(
+                        withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                        found_on_chain = %chain_hex,
+                        expected_src_chain = %src_chain_hex,
+                        "Deposit found on fallback chain (src_chain_id mismatch?)"
+                    );
+                    return Ok(true);
+                }
+                Ok(false) => continue,
+                Err(e) => {
+                    debug!(
+                        chain = %chain_hex,
+                        error = %e,
+                        "Fallback chain query failed, continuing"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        info!(
+            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            src_chain = %src_chain_hex,
+            chains_checked = self.source_chain_endpoints.len(),
+            "EVM deposit NOT found on any known chain"
+        );
+
+        Ok(false)
+    }
+
+    /// Verify a deposit exists on a specific EVM chain by querying `getDeposit(hash)`.
+    ///
+    /// Returns `true` if the deposit record has a non-zero timestamp.
+    async fn verify_evm_deposit_on_chain(
+        &self,
+        rpc_url: &str,
+        bridge_address: Address,
+        withdraw_hash: &[u8; 32],
+    ) -> Result<bool> {
+        let provider = ProviderBuilder::new()
+            .on_http(rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+
+        let contract = EvmBridge::new(bridge_address, &provider);
         let hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
 
         let result = match contract.getDeposit(hash_fixed).call().await {
@@ -585,8 +675,8 @@ impl TerraWriter {
                 warn!(
                     withdraw_hash = %bytes32_to_hex(withdraw_hash),
                     error = %e,
-                    evm_rpc = %self.evm_rpc_url,
-                    evm_bridge = %self.evm_bridge_address,
+                    evm_rpc = rpc_url,
+                    evm_bridge = %bridge_address,
                     "EVM getDeposit() call failed. Possible causes: \
                      (1) EVM RPC unreachable, (2) wrong bridge address, \
                      (3) contract not deployed at address."
@@ -606,15 +696,15 @@ impl TerraWriter {
                 amount = %result.amount,
                 timestamp = %result.timestamp,
                 dest_chain = %result.destChain,
+                evm_rpc = rpc_url,
                 "EVM deposit verified: deposit record found on-chain"
             );
         } else {
-            info!(
+            debug!(
                 withdraw_hash = %bytes32_to_hex(withdraw_hash),
-                evm_bridge = %self.evm_bridge_address,
-                "EVM deposit NOT found: getDeposit() returned zero timestamp. \
-                 The deposit hash on Terra does not match any deposit record on EVM. \
-                 Check hash computation parity between chains."
+                evm_bridge = %bridge_address,
+                evm_rpc = rpc_url,
+                "EVM deposit not found on this chain (zero timestamp)"
             );
         }
 

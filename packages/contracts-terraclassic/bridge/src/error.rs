@@ -199,6 +199,20 @@ pub enum ContractError {
     #[error("Amount overflow during decimal normalization (amount too large for conversion)")]
     AmountOverflow,
 
+    #[error("Destination token already claimed by another local token: chain={chain_id}, dest_token={dest_token}, existing_owner={existing_owner}")]
+    DestTokenAlreadyClaimed {
+        chain_id: String,
+        dest_token: String,
+        existing_owner: String,
+    },
+
+    #[error("Local token already has an incoming mapping from this chain: chain={chain_id}, local_token={local_token}, existing_src_token={existing_src_token}")]
+    IncomingMappingAlreadyClaimed {
+        chain_id: String,
+        local_token: String,
+        existing_src_token: String,
+    },
+
     #[error("Invalid withdraw delay: must be between 15 and 86400 seconds")]
     InvalidWithdrawDelay,
 
