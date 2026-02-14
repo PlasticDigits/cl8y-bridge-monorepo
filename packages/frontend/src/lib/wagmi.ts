@@ -55,7 +55,8 @@ const connectors = [
         }),
       ]
     : []),
-  walletConnect({ projectId: WC_PROJECT_ID }),
+  // WalletConnect requires a valid projectId — omit if not configured
+  ...(WC_PROJECT_ID ? [walletConnect({ projectId: WC_PROJECT_ID })] : []),
   coinbaseWallet(),
 ]
 

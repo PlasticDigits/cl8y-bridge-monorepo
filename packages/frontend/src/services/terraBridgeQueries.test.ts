@@ -139,16 +139,18 @@ describe('terraBridgeQueries', () => {
       )
     })
 
-    it('should handle non-uluna token as zero bytes', async () => {
+    it('should handle CW20 token address via terraAddressToBytes32', async () => {
       const bytes32Base64 = btoa(String.fromCharCode(...new Array(32).fill(3)))
       const bytes4Base64 = btoa(String.fromCharCode(0, 0, 0, 1))
+      // Valid 44-char Terra CW20 contract address
+      const cw20Addr = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
 
       vi.mocked(lcdClient.queryContract).mockResolvedValue({
         exists: true,
         src_chain: bytes4Base64,
         src_account: bytes32Base64,
         dest_account: bytes32Base64,
-        token: 'terra1cw20contract',
+        token: cw20Addr,
         recipient: 'terra1abc',
         amount: '100',
         nonce: 3,
@@ -163,8 +165,37 @@ describe('terraBridgeQueries', () => {
 
       const result = await queryTerraPendingWithdraw(lcdUrls, 'terra1bridge', hash, terraConfig)
       expect(result).not.toBeNull()
-      // Non-uluna token gets zero bytes32
-      expect(result!.token).toBe('0x' + '0'.repeat(64))
+      // CW20 address decoded to bytes32 (left-padded)
+      expect(result!.token).toMatch(/^0x[a-f0-9]{64}$/i)
+      expect(result!.token.slice(2, 26)).toBe('000000000000000000000000')
+    })
+
+    it('should handle native denom via keccak256', async () => {
+      const bytes32Base64 = btoa(String.fromCharCode(...new Array(32).fill(3)))
+      const bytes4Base64 = btoa(String.fromCharCode(0, 0, 0, 1))
+
+      vi.mocked(lcdClient.queryContract).mockResolvedValue({
+        exists: true,
+        src_chain: bytes4Base64,
+        src_account: bytes32Base64,
+        dest_account: bytes32Base64,
+        token: 'uusd',
+        recipient: 'terra1abc',
+        amount: '100',
+        nonce: 3,
+        src_decimals: 6,
+        dest_decimals: 6,
+        submitted_at: 1700000020,
+        approved_at: 0,
+        approved: false,
+        cancelled: false,
+        executed: false,
+      })
+
+      const result = await queryTerraPendingWithdraw(lcdUrls, 'terra1bridge', hash, terraConfig)
+      expect(result).not.toBeNull()
+      // Native denom hashed with keccak256
+      expect(result!.token).toMatch(/^0x[a-f0-9]{64}$/i)
     })
   })
 })

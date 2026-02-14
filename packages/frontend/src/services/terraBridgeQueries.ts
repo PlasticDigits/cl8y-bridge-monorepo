@@ -6,10 +6,16 @@
  */
 
 import { queryContract } from './lcdClient'
-import { base64ToHex, hexToBase64, chainIdToBytes32 } from './hashVerification'
+import {
+  base64ToHex,
+  hexToBase64,
+  chainIdToBytes32,
+  terraAddressToBytes32,
+} from './hashVerification'
 import type { DepositData, PendingWithdrawData } from '../hooks/useTransferLookup'
 import type { BridgeChainConfig } from '../types/chain'
 import type { Hex } from 'viem'
+import { keccak256, toBytes } from 'viem'
 
 // Terra contract query message types
 interface TerraDepositHashQuery {
@@ -155,12 +161,21 @@ export async function queryTerraPendingWithdraw(
     const srcAccountHex = base64ToHex(response.src_account)
     const destAccountHex = base64ToHex(response.dest_account)
 
-    // Token encoding: if it's a denom (uluna), use keccak256("uluna"), otherwise decode as address
-    // For now, assume native uluna if token is "uluna"
-    const tokenHex: Hex =
-      response.token === 'uluna'
-        ? ('0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da' as Hex)
-        : ('0x' + '0'.repeat(64)) as Hex // TODO: Handle CW20 addresses properly
+    // Token encoding: CW20 addresses (terra1...) decode to bytes32; native denoms use keccak256
+    let tokenHex: Hex
+    if (response.token.startsWith('terra1') && response.token.length >= 44) {
+      try {
+        tokenHex = terraAddressToBytes32(response.token)
+      } catch (e) {
+        console.warn(
+          `Failed to decode CW20 address "${response.token}", falling back to keccak256:`,
+          e
+        )
+        tokenHex = keccak256(toBytes(response.token)) as Hex
+      }
+    } else {
+      tokenHex = keccak256(toBytes(response.token)) as Hex
+    }
 
     // For Terra withdrawals, destChain is Terra's bytes4 chain ID
     const destChainHex = terraChainConfig.bytes4ChainId

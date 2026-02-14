@@ -155,8 +155,9 @@ describe('UI Constants', () => {
     expect(TOAST_DURATION).toBeLessThan(10000) // Not too annoying
   })
 
-  it('WC_PROJECT_ID is defined', () => {
+  it('WC_PROJECT_ID is a string (empty when not configured; set VITE_WC_PROJECT_ID for production)', () => {
     expect(typeof WC_PROJECT_ID).toBe('string')
-    expect(WC_PROJECT_ID.length).toBeGreaterThan(0)
+    // Can be empty when not set - env-only, no hardcoded fallback
+    expect(WC_PROJECT_ID.length).toBeGreaterThanOrEqual(0)
   })
 })

@@ -152,8 +152,8 @@ export const BRIDGE_CONFIG = {
 export const POLLING_INTERVAL = parseInt(import.meta.env.VITE_POLLING_INTERVAL || '10000', 10)
 export const TOAST_DURATION = 5000; // 5 seconds
 
-// WalletConnect Project ID (get from cloud.walletconnect.com)
-export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || '2ce7811b869be33ffad28cff05c93c15';
+// WalletConnect Project ID (required for WalletConnect — get from cloud.walletconnect.com)
+export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || '';
 
 // Dev mode: allows connecting simulated EVM and Terra wallets (for local dev without extensions)
 // On by default in non-production; opt-out with VITE_DEV_MODE=false; always off in production builds
