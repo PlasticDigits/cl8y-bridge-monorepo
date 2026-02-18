@@ -584,15 +584,15 @@ pub struct CancelWithdrawApprovalMsg {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CancelWithdrawApprovalInner {
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
 }
 
 impl CancelWithdrawApprovalMsg {
-    pub fn new(withdraw_hash: [u8; 32]) -> Self {
+    pub fn new(xchain_hash_id: [u8; 32]) -> Self {
         use base64::Engine;
         Self {
             cancel_withdraw_approval: CancelWithdrawApprovalInner {
-                withdraw_hash: base64::engine::general_purpose::STANDARD.encode(withdraw_hash),
+                xchain_hash_id: base64::engine::general_purpose::STANDARD.encode(xchain_hash_id),
             },
         }
     }
@@ -623,6 +623,6 @@ mod tests {
         let msg = CancelWithdrawApprovalMsg::new([0u8; 32]);
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("cancel_withdraw_approval"));
-        assert!(json.contains("withdraw_hash"));
+        assert!(json.contains("xchain_hash_id"));
     }
 }

@@ -349,7 +349,7 @@ pub async fn test_evm_to_evm_full_cycle(
         Ok(a) => {
             info!(
                 "Approval received: 0x{}",
-                hex::encode(&a.withdraw_hash.as_slice()[..8])
+                hex::encode(&a.xchain_hash_id.as_slice()[..8])
             );
             a
         }
@@ -368,7 +368,7 @@ pub async fn test_evm_to_evm_full_cycle(
     }
 
     // Check if withdrawal was executed
-    match verify_withdrawal_executed(config, approval.withdraw_hash).await {
+    match verify_withdrawal_executed(config, approval.xchain_hash_id).await {
         Ok(true) => {
             info!("Withdrawal executed successfully");
         }
@@ -617,7 +617,7 @@ pub async fn test_real_evm1_to_evm2_transfer(
         Ok(approval) => {
             info!(
                 "Approval received on destination chain (chain2): 0x{}",
-                hex::encode(&approval.withdraw_hash.as_slice()[..8])
+                hex::encode(&approval.xchain_hash_id.as_slice()[..8])
             );
         }
         Err(e) => {

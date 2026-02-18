@@ -1,7 +1,7 @@
 //! Hash computation module for cross-chain verification
 //!
 //! This module provides canonical hash computation that produces identical output
-//! to the EVM contract's `HashLib.computeTransferHash` function.
+//! to the EVM contract's `HashLib.computeXchainHashId` function.
 //!
 //! # V2 Unified Transfer Hash (7-field)
 //!
@@ -44,7 +44,7 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
     output
 }
 
-/// Compute unified transfer hash matching EVM's HashLib.computeTransferHash
+/// Compute unified cross-chain hash ID matching EVM's HashLib.computeXchainHashId
 ///
 /// This function produces identical output to the Solidity:
 /// ```solidity
@@ -66,7 +66,7 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
 ///
 /// # Returns
 /// 32-byte keccak256 hash
-pub fn compute_transfer_hash(
+pub fn compute_xchain_hash_id(
     src_chain: &[u8; 4],
     dest_chain: &[u8; 4],
     src_account: &[u8; 32],
@@ -105,31 +105,6 @@ pub fn compute_transfer_hash(
     let nonce_bytes = nonce.to_be_bytes();
     data[192 + 24..224].copy_from_slice(&nonce_bytes);
 
-    keccak256(&data)
-}
-
-/// Legacy V1 transfer ID computation (6-field, 32-byte chain keys).
-///
-/// **Deprecated**: Use [`compute_transfer_hash`] for the unified 7-field V2 hash.
-/// Retained for backward compatibility with `ComputeWithdrawHash` legacy query.
-#[deprecated(note = "Use compute_transfer_hash (V2 7-field) instead")]
-pub fn compute_transfer_id(
-    src_chain_key: &[u8; 32],
-    dest_chain_key: &[u8; 32],
-    token: &[u8; 32],
-    account: &[u8; 32],
-    amount: u128,
-    nonce: u64,
-) -> [u8; 32] {
-    let mut data = [0u8; 192]; // 6 * 32 = 192 bytes
-    data[0..32].copy_from_slice(src_chain_key);
-    data[32..64].copy_from_slice(dest_chain_key);
-    data[64..96].copy_from_slice(token);
-    data[96..128].copy_from_slice(account);
-    let amount_bytes = amount.to_be_bytes();
-    data[128 + 16..160].copy_from_slice(&amount_bytes);
-    let nonce_bytes = nonce.to_be_bytes();
-    data[160 + 24..192].copy_from_slice(&nonce_bytes);
     keccak256(&data)
 }
 
@@ -335,8 +310,8 @@ mod tests {
 
     /// Test V2 7-field hash: all zeros
     #[test]
-    fn test_transfer_hash_all_zeros() {
-        let result = compute_transfer_hash(
+    fn test_xchain_hash_id_all_zeros() {
+        let result = compute_xchain_hash_id(
             &[0u8; 4], &[0u8; 4], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0,
         );
 
@@ -344,7 +319,7 @@ mod tests {
         assert_eq!(result.len(), 32);
 
         // Same inputs should produce same hash
-        let result2 = compute_transfer_hash(
+        let result2 = compute_xchain_hash_id(
             &[0u8; 4], &[0u8; 4], &[0u8; 32], &[0u8; 32], &[0u8; 32], 0, 0,
         );
         assert_eq!(result, result2);
@@ -352,14 +327,14 @@ mod tests {
 
     /// Test V2 7-field hash: different nonces produce different hashes
     #[test]
-    fn test_transfer_hash_different_nonce() {
+    fn test_xchain_hash_id_different_nonce() {
         let src_chain: [u8; 4] = [0, 0, 0, 1];
         let dest_chain: [u8; 4] = [0, 0, 0, 2];
         let src_account = [0u8; 32];
         let dest_account = [0u8; 32];
         let token = [0u8; 32];
 
-        let hash1 = compute_transfer_hash(
+        let hash1 = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -368,7 +343,7 @@ mod tests {
             1_000_000,
             1,
         );
-        let hash2 = compute_transfer_hash(
+        let hash2 = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -386,7 +361,7 @@ mod tests {
 
     /// Test V2 7-field hash: srcAccount matters
     #[test]
-    fn test_transfer_hash_src_account_matters() {
+    fn test_xchain_hash_id_src_account_matters() {
         let src_chain: [u8; 4] = [0, 0, 0, 1];
         let dest_chain: [u8; 4] = [0, 0, 0, 2];
         let mut src_account_a = [0u8; 32];
@@ -396,7 +371,7 @@ mod tests {
         let dest_account = [0u8; 32];
         let token = [0u8; 32];
 
-        let hash_a = compute_transfer_hash(
+        let hash_a = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account_a,
@@ -405,7 +380,7 @@ mod tests {
             1_000_000,
             1,
         );
-        let hash_b = compute_transfer_hash(
+        let hash_b = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account_b,
@@ -577,7 +552,7 @@ mod tests {
     /// EVM → Terra transfer hash with native uluna.
     /// Cross-chain parity: must match Solidity and Rust operator hash.
     #[test]
-    fn test_transfer_hash_evm_to_terra_uluna() {
+    fn test_xchain_hash_id_evm_to_terra_uluna() {
         let evm_chain: [u8; 4] = [0, 0, 0, 1];
         let terra_chain: [u8; 4] = [0, 0, 0, 2];
 
@@ -596,7 +571,7 @@ mod tests {
         // Token: native uluna = keccak256("uluna")
         let token = keccak256(b"uluna");
 
-        let hash = compute_transfer_hash(
+        let hash = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &src_account,
@@ -616,7 +591,7 @@ mod tests {
 
     /// Terra → EVM transfer hash with native uluna.
     #[test]
-    fn test_transfer_hash_terra_to_evm_uluna() {
+    fn test_xchain_hash_id_terra_to_evm_uluna() {
         let terra_chain: [u8; 4] = [0, 0, 0, 2];
         let evm_chain: [u8; 4] = [0, 0, 0, 1];
 
@@ -632,7 +607,7 @@ mod tests {
 
         let token = keccak256(b"uluna");
 
-        let hash = compute_transfer_hash(
+        let hash = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &src_account,
@@ -651,7 +626,7 @@ mod tests {
 
     /// EVM → Terra transfer hash with CW20 token.
     #[test]
-    fn test_transfer_hash_evm_to_terra_cw20() {
+    fn test_xchain_hash_id_evm_to_terra_cw20() {
         let evm_chain: [u8; 4] = [0, 0, 0, 1];
         let terra_chain: [u8; 4] = [0, 0, 0, 2];
 
@@ -666,7 +641,7 @@ mod tests {
             hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
                 .unwrap();
 
-        let hash = compute_transfer_hash(
+        let hash = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &src_account,
@@ -685,7 +660,7 @@ mod tests {
 
     /// Terra → EVM transfer hash with CW20 token.
     #[test]
-    fn test_transfer_hash_terra_to_evm_cw20() {
+    fn test_xchain_hash_id_terra_to_evm_cw20() {
         let terra_chain: [u8; 4] = [0, 0, 0, 2];
         let evm_chain: [u8; 4] = [0, 0, 0, 1];
 
@@ -699,7 +674,7 @@ mod tests {
             0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66,
         ]);
 
-        let hash = compute_transfer_hash(
+        let hash = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &cw20_bytes32,
@@ -735,7 +710,7 @@ mod tests {
             "uluna hash and CW20 bytes32 must be different token encodings"
         );
 
-        let hash_uluna = compute_transfer_hash(
+        let hash_uluna = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &src,
@@ -744,7 +719,7 @@ mod tests {
             1_000_000,
             1,
         );
-        let hash_cw20 = compute_transfer_hash(
+        let hash_cw20 = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &src,
@@ -777,7 +752,7 @@ mod tests {
                 .unwrap();
         let token = keccak256(b"uluna");
 
-        let evm_to_terra = compute_transfer_hash(
+        let evm_to_terra = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &evm_account,
@@ -786,7 +761,7 @@ mod tests {
             1_000_000,
             1,
         );
-        let terra_to_evm = compute_transfer_hash(
+        let terra_to_evm = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &terra_account,
@@ -835,7 +810,7 @@ mod tests {
             0x64, 0x2f, 0x64, 0x18, 0x0a, 0xa3,
         ]);
 
-        let deposit_hash = compute_transfer_hash(
+        let hash_from_deposit = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -844,7 +819,7 @@ mod tests {
             1_000_000_000_000_000_000,
             42,
         );
-        let withdraw_hash = compute_transfer_hash(
+        let hash_from_withdraw = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -855,11 +830,11 @@ mod tests {
         );
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
+            hash_from_deposit, hash_from_withdraw,
             "EVM→EVM ERC20: deposit must equal withdraw"
         );
         assert_eq!(
-            bytes32_to_hex(&deposit_hash),
+            bytes32_to_hex(&hash_from_deposit),
             "0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54",
             "Must match Solidity and Rust"
         );
@@ -882,7 +857,7 @@ mod tests {
 
         let token = keccak256(b"uluna");
 
-        let deposit_hash = compute_transfer_hash(
+        let hash_from_deposit = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &evm_account,
@@ -891,7 +866,7 @@ mod tests {
             995_000,
             1,
         );
-        let withdraw_hash = compute_transfer_hash(
+        let hash_from_withdraw = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &evm_account,
@@ -902,11 +877,11 @@ mod tests {
         );
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
+            hash_from_deposit, hash_from_withdraw,
             "EVM→Terra native uluna: deposit must equal withdraw"
         );
         assert_eq!(
-            bytes32_to_hex(&deposit_hash),
+            bytes32_to_hex(&hash_from_deposit),
             "0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453",
             "Must match Solidity and Rust"
         );
@@ -927,7 +902,7 @@ mod tests {
             hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
                 .unwrap();
 
-        let deposit_hash = compute_transfer_hash(
+        let hash_from_deposit = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &evm_account,
@@ -936,7 +911,7 @@ mod tests {
             1_000_000,
             5,
         );
-        let withdraw_hash = compute_transfer_hash(
+        let hash_from_withdraw = compute_xchain_hash_id(
             &evm_chain,
             &terra_chain,
             &evm_account,
@@ -947,11 +922,11 @@ mod tests {
         );
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
+            hash_from_deposit, hash_from_withdraw,
             "EVM→Terra CW20: deposit must equal withdraw"
         );
         assert_eq!(
-            bytes32_to_hex(&deposit_hash),
+            bytes32_to_hex(&hash_from_deposit),
             "0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b",
             "Must match Solidity and Rust"
         );
@@ -978,7 +953,7 @@ mod tests {
             0x64, 0x2f, 0x64, 0x18, 0x0a, 0xa3,
         ]);
 
-        let deposit_hash = compute_transfer_hash(
+        let hash_from_deposit = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &terra_account,
@@ -987,7 +962,7 @@ mod tests {
             500_000,
             3,
         );
-        let withdraw_hash = compute_transfer_hash(
+        let hash_from_withdraw = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &terra_account,
@@ -998,11 +973,11 @@ mod tests {
         );
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
+            hash_from_deposit, hash_from_withdraw,
             "Terra→EVM native→ERC20: deposit must equal withdraw"
         );
         assert_eq!(
-            bytes32_to_hex(&deposit_hash),
+            bytes32_to_hex(&hash_from_deposit),
             "0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438",
             "Must match Solidity and Rust"
         );
@@ -1029,7 +1004,7 @@ mod tests {
             0x3E, 0x90, 0xbb, 0x3F, 0x05, 0x12,
         ]);
 
-        let deposit_hash = compute_transfer_hash(
+        let hash_from_deposit = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &terra_account,
@@ -1038,7 +1013,7 @@ mod tests {
             2_500_000,
             7,
         );
-        let withdraw_hash = compute_transfer_hash(
+        let hash_from_withdraw = compute_xchain_hash_id(
             &terra_chain,
             &evm_chain,
             &terra_account,
@@ -1049,11 +1024,11 @@ mod tests {
         );
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
+            hash_from_deposit, hash_from_withdraw,
             "Terra→EVM CW20→ERC20: deposit must equal withdraw"
         );
         assert_eq!(
-            bytes32_to_hex(&deposit_hash),
+            bytes32_to_hex(&hash_from_deposit),
             "0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab",
             "Must match Solidity and Rust"
         );

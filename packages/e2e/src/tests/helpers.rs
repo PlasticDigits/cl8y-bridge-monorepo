@@ -533,7 +533,7 @@ pub struct FraudulentApprovalResult {
     /// The transaction hash
     pub tx_hash: B256,
     /// The computed withdraw hash (for querying approval status)
-    pub withdraw_hash: B256,
+    pub xchain_hash_id: B256,
 }
 
 /// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
@@ -546,7 +546,7 @@ pub struct FraudulentApprovalResult {
 /// and `token` must be a registered token. The fraud aspect comes from using a nonce
 /// that has no matching deposit on the source chain.
 ///
-/// The withdrawHash is extracted from the WithdrawSubmit event log (topics[1])
+/// The xchainHashId is extracted from the WithdrawSubmit event log (topics[1])
 /// rather than computed locally, ensuring it always matches the contract.
 pub(crate) async fn create_fraudulent_approval(
     config: &E2eConfig,
@@ -636,7 +636,7 @@ pub(crate) async fn create_fraudulent_approval(
     // Wait for confirmation
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Extract withdrawHash from WithdrawSubmit event log (indexed topics[1])
+    // Extract xchainHashId from WithdrawSubmit event log (indexed topics[1])
     let receipt_response = client
         .post(config.evm.rpc_url.as_str())
         .json(&serde_json::json!({
@@ -667,13 +667,13 @@ pub(crate) async fn create_fraudulent_approval(
         ));
     }
 
-    // Parse WithdrawSubmit event: topics[0] = event sig, topics[1] = withdrawHash (indexed)
+    // Parse WithdrawSubmit event: topics[0] = event sig, topics[1] = xchainHashId (indexed)
     let logs = receipt
         .get("logs")
         .and_then(|l| l.as_array())
         .ok_or_else(|| eyre::eyre!("No logs in withdrawSubmit receipt"))?;
 
-    let withdraw_hash = logs
+    let xchain_hash_id = logs
         .iter()
         .find_map(|log| {
             let topics = log.get("topics")?.as_array()?;
@@ -686,12 +686,12 @@ pub(crate) async fn create_fraudulent_approval(
             }
             None
         })
-        .ok_or_else(|| eyre::eyre!("Could not extract withdrawHash from WithdrawSubmit event"))?;
+        .ok_or_else(|| eyre::eyre!("Could not extract xchainHashId from WithdrawSubmit event"))?;
 
     // --- Step 2: withdrawApprove ---
     let approve_sel = selector("withdrawApprove(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let approve_data = format!("0x{}{}", approve_sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let approve_data = format!("0x{}{}", approve_sel, xchain_hash_id_hex);
 
     let response2 = client
         .post(config.evm.rpc_url.as_str())
@@ -721,9 +721,9 @@ pub(crate) async fn create_fraudulent_approval(
 
     let approve_tx_hash = B256::from_slice(&hex::decode(approve_tx_hex.trim_start_matches("0x"))?);
     info!(
-        "Fraudulent approval transaction: 0x{}, withdrawHash: 0x{}",
+        "Fraudulent approval transaction: 0x{}, xchainHashId: 0x{}",
         hex::encode(approve_tx_hash),
-        hex::encode(withdraw_hash)
+        hex::encode(xchain_hash_id)
     );
 
     // Wait for confirmation
@@ -731,7 +731,7 @@ pub(crate) async fn create_fraudulent_approval(
 
     Ok(FraudulentApprovalResult {
         tx_hash: approve_tx_hash,
-        withdraw_hash,
+        xchain_hash_id,
     })
 }
 
@@ -753,16 +753,19 @@ pub(crate) async fn create_fraudulent_approval(
 /// - slot 12: approved (bool)
 /// - slot 13: cancelled (bool)
 /// - slot 14: executed (bool)
-pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
+pub(crate) async fn is_approval_cancelled(
+    config: &E2eConfig,
+    xchain_hash_id: B256,
+) -> Result<bool> {
     let client = reqwest::Client::new();
 
     let sel = selector("pendingWithdraws(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let call_data = format!("0x{}{}", sel, xchain_hash_id_hex);
 
     debug!(
-        "Checking approval status for withdrawHash=0x{}",
-        hex::encode(&withdraw_hash.as_slice()[..8])
+        "Checking approval status for xchainHashId=0x{}",
+        hex::encode(&xchain_hash_id.as_slice()[..8])
     );
 
     let response = client
@@ -820,8 +823,8 @@ pub(crate) async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B25
     let cancelled = bytes.get(13 * 32 + 31).copied().unwrap_or(0) != 0;
 
     debug!(
-        "Withdrawal status for withdrawHash=0x{}: submitted={}, approved={}, cancelled={}",
-        hex::encode(&withdraw_hash.as_slice()[..8]),
+        "Withdrawal status for xchainHashId=0x{}: submitted={}, approved={}, cancelled={}",
+        hex::encode(&xchain_hash_id.as_slice()[..8]),
         submitted_at_byte != 0 || submitted_at_nonzero,
         approved,
         cancelled
@@ -867,9 +870,9 @@ pub(crate) fn chain_id4_to_bytes32(chain_id: [u8; 4]) -> [u8; 32] {
     result
 }
 
-/// Compute the withdrawHash for a given set of parameters
+/// Compute the xchainHashId for a given set of parameters
 ///
-/// Matches HashLib.computeTransferHash which uses bytes4 chain IDs
+/// Matches HashLib.computeXchainHashId which uses bytes4 chain IDs
 /// cast to bytes32 for hashing:
 /// ```solidity
 /// keccak256(abi.encode(
@@ -887,7 +890,7 @@ pub(crate) fn chain_id4_to_bytes32(chain_id: [u8; 4]) -> [u8; 32] {
 ///   token = token address on this chain (left-padded to bytes32)
 ///   amount = transfer amount
 ///   nonce = deposit nonce from source chain
-pub(crate) fn compute_withdraw_hash(
+pub(crate) fn compute_xchain_hash_id(
     src_chain_key: B256,
     dest_chain_id: u64,
     token: Address,

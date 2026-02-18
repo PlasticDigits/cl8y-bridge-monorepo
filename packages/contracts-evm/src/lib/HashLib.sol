@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 /// @notice Library for cross-chain hash computation
 /// @dev Provides deterministic hash computation for transfer IDs that match across all chains
 ///
-/// V2 Transfer Hash Format (7-field, unified for deposit and withdraw):
+/// V2 Cross-Chain Hash ID Format (7-field, unified for deposit and withdraw):
 /// keccak256(abi.encode(srcChain, destChain, srcAccount, destAccount, token, amount, nonce))
 ///
 /// Chain Key Format (V2):
@@ -116,7 +116,7 @@ library HashLib {
     }
 
     // ============================================================================
-    // V2 Transfer Hash (Unified for Deposit and Withdraw)
+    // V2 Cross-Chain Hash ID (Unified for Deposit and Withdraw)
     // ============================================================================
 
     /// @notice Compute unified transfer hash for cross-chain matching
@@ -135,8 +135,8 @@ library HashLib {
     /// @param token Token address on destination chain encoded as bytes32
     /// @param amount Transfer amount
     /// @param nonce Deposit nonce from source chain
-    /// @return transferHash The canonical transfer hash
-    function computeTransferHash(
+    /// @return xchainHashId The canonical transfer hash
+    function computeXchainHashId(
         bytes4 srcChain,
         bytes4 destChain,
         bytes32 srcAccount,
@@ -144,7 +144,7 @@ library HashLib {
         bytes32 token,
         uint256 amount,
         uint64 nonce
-    ) internal pure returns (bytes32 transferHash) {
+    ) internal pure returns (bytes32 xchainHashId) {
         bytes memory data = abi.encode(
             bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
         );

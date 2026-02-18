@@ -30,14 +30,13 @@ use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{
     query_account_fee, query_allowed_cw20_code_ids, query_calculate_fee, query_cancelers,
-    query_chain, query_chains, query_compute_transfer_hash, query_compute_withdraw_hash,
-    query_config, query_current_nonce, query_deposit_by_nonce, query_deposit_hash,
-    query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
+    query_chain, query_chains, query_compute_xchain_hash_id, query_config, query_current_nonce,
+    query_deposit_by_nonce, query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
     query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_nonce_used,
     query_operators, query_pending_admin, query_pending_withdraw, query_pending_withdrawals,
     query_period_usage, query_rate_limit, query_simulate_bridge, query_stats, query_status,
     query_this_chain_id, query_token, query_token_dest_mapping, query_token_type, query_tokens,
-    query_transaction, query_verify_deposit, query_withdraw_delay,
+    query_transaction, query_verify_deposit, query_withdraw_delay, query_xchain_hash_id,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -184,20 +183,20 @@ pub fn execute(
             amount,
             nonce,
         ),
-        ExecuteMsg::WithdrawApprove { withdraw_hash } => {
-            execute_withdraw_approve(deps, env, info, withdraw_hash)
+        ExecuteMsg::WithdrawApprove { xchain_hash_id } => {
+            execute_withdraw_approve(deps, env, info, xchain_hash_id)
         }
-        ExecuteMsg::WithdrawCancel { withdraw_hash } => {
-            execute_withdraw_cancel(deps, env, info, withdraw_hash)
+        ExecuteMsg::WithdrawCancel { xchain_hash_id } => {
+            execute_withdraw_cancel(deps, env, info, xchain_hash_id)
         }
-        ExecuteMsg::WithdrawUncancel { withdraw_hash } => {
-            execute_withdraw_uncancel(deps, env, info, withdraw_hash)
+        ExecuteMsg::WithdrawUncancel { xchain_hash_id } => {
+            execute_withdraw_uncancel(deps, env, info, xchain_hash_id)
         }
-        ExecuteMsg::WithdrawExecuteUnlock { withdraw_hash } => {
-            execute_withdraw_execute_unlock(deps, env, info, withdraw_hash)
+        ExecuteMsg::WithdrawExecuteUnlock { xchain_hash_id } => {
+            execute_withdraw_execute_unlock(deps, env, info, xchain_hash_id)
         }
-        ExecuteMsg::WithdrawExecuteMint { withdraw_hash } => {
-            execute_withdraw_execute_mint(deps, env, info, withdraw_hash)
+        ExecuteMsg::WithdrawExecuteMint { xchain_hash_id } => {
+            execute_withdraw_execute_mint(deps, env, info, xchain_hash_id)
         }
 
         // Canceler management
@@ -340,9 +339,9 @@ pub fn execute(
             recipient,
         } => execute_recover_asset(deps, info, asset, amount, recipient),
         ExecuteMsg::AdminFixPendingDecimals {
-            withdraw_hash,
+            xchain_hash_id,
             src_decimals,
-        } => execute_admin_fix_pending_decimals(deps, info, withdraw_hash, src_decimals),
+        } => execute_admin_fix_pending_decimals(deps, info, xchain_hash_id, src_decimals),
     }
 }
 
@@ -381,28 +380,13 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         )?),
 
         // Withdrawal queries (V2)
-        QueryMsg::PendingWithdraw { withdraw_hash } => {
-            to_json_binary(&query_pending_withdraw(deps, env, withdraw_hash)?)
+        QueryMsg::PendingWithdraw { xchain_hash_id } => {
+            to_json_binary(&query_pending_withdraw(deps, env, xchain_hash_id)?)
         }
         QueryMsg::PendingWithdrawals { start_after, limit } => {
             to_json_binary(&query_pending_withdrawals(deps, env, start_after, limit)?)
         }
-        QueryMsg::ComputeWithdrawHash {
-            src_chain_key,
-            dest_chain_key,
-            dest_token_address,
-            dest_account,
-            amount,
-            nonce,
-        } => to_json_binary(&query_compute_withdraw_hash(
-            src_chain_key,
-            dest_chain_key,
-            dest_token_address,
-            dest_account,
-            amount,
-            nonce,
-        )?),
-        QueryMsg::ComputeTransferHash {
+        QueryMsg::ComputeXchainHashId {
             src_chain,
             dest_chain,
             src_account,
@@ -410,7 +394,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             token,
             amount,
             nonce,
-        } => to_json_binary(&query_compute_transfer_hash(
+        } => to_json_binary(&query_compute_xchain_hash_id(
             src_chain,
             dest_chain,
             src_account,
@@ -419,19 +403,19 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             amount,
             nonce,
         )?),
-        QueryMsg::DepositHash { deposit_hash } => {
-            to_json_binary(&query_deposit_hash(deps, deposit_hash)?)
+        QueryMsg::XchainHashId { xchain_hash_id } => {
+            to_json_binary(&query_xchain_hash_id(deps, xchain_hash_id)?)
         }
         QueryMsg::DepositByNonce { nonce } => to_json_binary(&query_deposit_by_nonce(deps, nonce)?),
         QueryMsg::VerifyDeposit {
-            deposit_hash,
+            xchain_hash_id,
             dest_token_address,
             dest_account,
             amount,
             nonce,
         } => to_json_binary(&query_verify_deposit(
             deps,
-            deposit_hash,
+            xchain_hash_id,
             dest_token_address,
             dest_account,
             amount,

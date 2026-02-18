@@ -56,11 +56,11 @@ sol! {
     contract Bridge {
         /// V2 WithdrawApprove event
         event WithdrawApprove(
-            bytes32 indexed withdrawHash
+            bytes32 indexed xchainHashId
         );
 
         /// Get pending withdrawal info (matches IBridge.PendingWithdraw struct)
-        function getPendingWithdraw(bytes32 withdrawHash) external view returns (
+        function getPendingWithdraw(bytes32 xchainHashId) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -520,24 +520,24 @@ impl CancelerWatcher {
 
         // Process each approval event
         for (event, log) in logs {
-            let withdraw_hash: [u8; 32] = event.withdrawHash.0;
+            let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
 
             // Skip if already processed
-            if self.verified_hashes.contains(&withdraw_hash)
-                || self.cancelled_hashes.contains(&withdraw_hash)
+            if self.verified_hashes.contains(&xchain_hash_id)
+                || self.cancelled_hashes.contains(&xchain_hash_id)
             {
                 continue;
             }
 
             info!(
-                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                 block = ?log.block_number,
                 "Processing EVM approval event"
             );
 
             // Query withdrawal details from contract using getPendingWithdraw
             let withdrawal_info = contract
-                .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+                .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
                 .call()
                 .await;
 
@@ -545,11 +545,11 @@ impl CancelerWatcher {
                 Ok(info) => {
                     // Skip if already cancelled or executed
                     if info.cancelled {
-                        debug!(withdraw_hash = %bytes32_to_hex(&withdraw_hash), "Already cancelled, skipping");
+                        debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already cancelled, skipping");
                         continue;
                     }
                     if info.executed {
-                        debug!(withdraw_hash = %bytes32_to_hex(&withdraw_hash), "Already executed, skipping");
+                        debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already executed, skipping");
                         continue;
                     }
 
@@ -570,7 +570,7 @@ impl CancelerWatcher {
 
                     // Create a pending approval for verification
                     let approval = PendingApproval {
-                        withdraw_hash,
+                        xchain_hash_id,
                         src_chain_id: info.srcChain.0,
                         dest_chain_id: self.this_chain_id,
                         src_account: info.srcAccount.0,
@@ -578,7 +578,7 @@ impl CancelerWatcher {
                         dest_account: info.destAccount.0,
                         amount: info.amount.try_into().unwrap_or_else(|_| {
                             warn!(
-                                withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                                 amount = %info.amount,
                                 "Approval amount exceeds u128::MAX, clamping"
                             );
@@ -591,7 +591,7 @@ impl CancelerWatcher {
 
                     // Detailed diagnostic before verification
                     info!(
-                        withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                        xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                         src_chain_id = %format!("0x{}", hex::encode(info.srcChain.0)),
                         dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id)),
                         nonce = approval.nonce,
@@ -607,7 +607,7 @@ impl CancelerWatcher {
                     if let Err(e) = self.verify_and_cancel(&approval).await {
                         error!(
                             error = %e,
-                            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                             "Failed to verify approval"
                         );
                     }
@@ -709,17 +709,17 @@ impl CancelerWatcher {
             }
 
             for (event, _log) in &logs {
-                let withdraw_hash: [u8; 32] = event.withdrawHash.0;
+                let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
 
-                if self.verified_hashes.contains(&withdraw_hash)
-                    || self.cancelled_hashes.contains(&withdraw_hash)
+                if self.verified_hashes.contains(&xchain_hash_id)
+                    || self.cancelled_hashes.contains(&xchain_hash_id)
                 {
                     continue;
                 }
 
                 // Get withdrawal details
                 let info_result = contract
-                    .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+                    .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
                     .call()
                     .await;
 
@@ -740,7 +740,7 @@ impl CancelerWatcher {
                         token_bytes32[12..32].copy_from_slice(info.token.as_slice());
 
                         collected_approvals.push(PendingApproval {
-                            withdraw_hash,
+                            xchain_hash_id,
                             src_chain_id: info.srcChain.0,
                             dest_chain_id: chain_v2_id,
                             src_account: info.srcAccount.0,
@@ -771,7 +771,7 @@ impl CancelerWatcher {
             if let Err(e) = self.verify_and_cancel(&approval).await {
                 error!(
                     error = %e,
-                    withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&approval.xchain_hash_id),
                     "Failed to verify approval on additional chain"
                 );
             }
@@ -911,38 +911,72 @@ impl CancelerWatcher {
 
             let mut last_hash_b64: Option<String> = None;
             for withdrawal_json in withdrawals {
-                let withdraw_hash_b64 = withdrawal_json["withdraw_hash"].as_str().unwrap_or("");
-                last_hash_b64 = Some(withdraw_hash_b64.to_string());
+                let xchain_hash_id_b64 = withdrawal_json["xchain_hash_id"].as_str().unwrap_or("");
+                last_hash_b64 = Some(xchain_hash_id_b64.to_string());
 
-                let withdraw_hash_bytes = base64::engine::general_purpose::STANDARD
-                    .decode(withdraw_hash_b64)
+                let xchain_hash_id_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(xchain_hash_id_b64)
                     .unwrap_or_default();
 
-                if withdraw_hash_bytes.len() != 32 {
+                if xchain_hash_id_bytes.len() != 32 {
                     continue;
                 }
 
-                let mut withdraw_hash = [0u8; 32];
-                withdraw_hash.copy_from_slice(&withdraw_hash_bytes);
+                let mut xchain_hash_id = [0u8; 32];
+                xchain_hash_id.copy_from_slice(&xchain_hash_id_bytes);
 
-                if self.verified_hashes.contains(&withdraw_hash)
-                    || self.cancelled_hashes.contains(&withdraw_hash)
+                if self.verified_hashes.contains(&xchain_hash_id)
+                    || self.cancelled_hashes.contains(&xchain_hash_id)
                 {
                     continue;
                 }
 
-                let src_chain_id = self.parse_bytes4_from_json(&withdrawal_json["src_chain"]);
-                let dest_chain_id = self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]);
+                let src_chain_id = match self.parse_bytes4_from_json(&withdrawal_json["src_chain"])
+                {
+                    Some(id) => id,
+                    None => {
+                        warn!(
+                            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                            raw = ?withdrawal_json["src_chain"],
+                            "Skipping: failed to parse src_chain bytes4"
+                        );
+                        continue;
+                    }
+                };
+                let dest_chain_id =
+                    match self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]) {
+                        Some(id) => id,
+                        None => {
+                            warn!(
+                                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                                raw = ?withdrawal_json["dest_chain"],
+                                "Skipping: failed to parse dest_chain bytes4"
+                            );
+                            continue;
+                        }
+                    };
                 let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
                 let src_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
                 let dest_account = self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
 
-                let amount: u128 = withdrawal_json["amount"]
+                let amount: u128 = match withdrawal_json["amount"]
                     .as_str()
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                {
+                    Some(a) => a,
+                    None => {
+                        warn!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Skipping: failed to parse amount");
+                        continue;
+                    }
+                };
 
-                let nonce: u64 = withdrawal_json["nonce"].as_u64().unwrap_or(0);
+                let nonce: u64 = match withdrawal_json["nonce"].as_u64() {
+                    Some(n) => n,
+                    None => {
+                        warn!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Skipping: failed to parse nonce");
+                        continue;
+                    }
+                };
 
                 let approved_at_timestamp: u64 =
                     withdrawal_json["approved_at"].as_u64().unwrap_or(0);
@@ -950,7 +984,7 @@ impl CancelerWatcher {
                 let cancel_window: u64 = withdrawal_json["cancel_window"].as_u64().unwrap_or(300);
 
                 let approval = PendingApproval {
-                    withdraw_hash,
+                    xchain_hash_id,
                     src_chain_id,
                     dest_chain_id,
                     src_account,
@@ -985,7 +1019,7 @@ impl CancelerWatcher {
 
         for approval in &all_approvals {
             info!(
-                withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(&approval.xchain_hash_id),
                 nonce = approval.nonce,
                 amount = approval.amount,
                 "Processing Terra withdrawal"
@@ -994,7 +1028,7 @@ impl CancelerWatcher {
             if let Err(e) = self.verify_and_cancel(approval).await {
                 error!(
                     error = %e,
-                    withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&approval.xchain_hash_id),
                     "Failed to verify Terra withdrawal"
                 );
             }
@@ -1012,20 +1046,17 @@ impl CancelerWatcher {
         Ok(())
     }
 
-    /// Helper to parse bytes4 from JSON (base64 encoded)
-    fn parse_bytes4_from_json(&self, value: &serde_json::Value) -> [u8; 4] {
-        let b64 = value.as_str().unwrap_or("");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .unwrap_or_default();
-
-        let mut result = [0u8; 4];
-        if bytes.len() >= 4 {
-            result.copy_from_slice(&bytes[..4]);
-        } else if !bytes.is_empty() {
-            result[..bytes.len()].copy_from_slice(&bytes);
+    /// Helper to parse bytes4 from JSON (base64 encoded).
+    /// Returns None if the value is missing, empty, or cannot be decoded.
+    fn parse_bytes4_from_json(&self, value: &serde_json::Value) -> Option<[u8; 4]> {
+        let b64 = value.as_str()?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+        if bytes.len() < 4 {
+            return None;
         }
-        result
+        let mut result = [0u8; 4];
+        result.copy_from_slice(&bytes[..4]);
+        Some(result)
     }
 
     /// Helper to parse bytes32 from JSON (base64 encoded)
@@ -1047,15 +1078,15 @@ impl CancelerWatcher {
     /// Verify an approval and potentially cancel it
     pub async fn verify_and_cancel(&mut self, approval: &PendingApproval) -> Result<()> {
         // Skip if already verified or cancelled
-        if self.verified_hashes.contains(&approval.withdraw_hash) {
+        if self.verified_hashes.contains(&approval.xchain_hash_id) {
             return Ok(());
         }
-        if self.cancelled_hashes.contains(&approval.withdraw_hash) {
+        if self.cancelled_hashes.contains(&approval.xchain_hash_id) {
             return Ok(());
         }
 
         info!(
-            hash = %bytes32_to_hex(&approval.withdraw_hash),
+            hash = %bytes32_to_hex(&approval.xchain_hash_id),
             src_chain = %hex::encode(approval.src_chain_id),
             dest_chain = %hex::encode(approval.dest_chain_id),
             nonce = approval.nonce,
@@ -1068,11 +1099,11 @@ impl CancelerWatcher {
         match result {
             VerificationResult::Valid => {
                 info!(
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     nonce = approval.nonce,
                     "Approval verified as VALID — deposit found on source chain"
                 );
-                self.verified_hashes.insert(approval.withdraw_hash);
+                self.verified_hashes.insert(approval.xchain_hash_id);
                 self.maybe_warn_dedupe_capacity("verified");
 
                 // Update stats and metrics
@@ -1084,7 +1115,7 @@ impl CancelerWatcher {
             }
             VerificationResult::Invalid { reason } => {
                 warn!(
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     reason = %reason,
                     nonce = approval.nonce,
                     src_chain = %hex::encode(approval.src_chain_id),
@@ -1101,12 +1132,12 @@ impl CancelerWatcher {
                 // Submit cancel transaction
                 if let Err(e) = self.submit_cancel(approval).await {
                     error!(
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         error = %e,
                         "Failed to submit cancellation"
                     );
                 } else {
-                    self.cancelled_hashes.insert(approval.withdraw_hash);
+                    self.cancelled_hashes.insert(approval.xchain_hash_id);
                     self.maybe_warn_dedupe_capacity("cancelled");
 
                     // Update cancelled count and metrics
@@ -1119,7 +1150,7 @@ impl CancelerWatcher {
             }
             VerificationResult::Pending => {
                 debug!(
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     "Verification pending - will retry"
                 );
             }
@@ -1130,11 +1161,11 @@ impl CancelerWatcher {
 
     /// Submit cancel transaction to the appropriate chain (C4: EVM pre-check safety)
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
-        let withdraw_hash = approval.withdraw_hash;
+        let xchain_hash_id = approval.xchain_hash_id;
         let dest_chain = approval.dest_chain_id;
 
         info!(
-            hash = %bytes32_to_hex(&withdraw_hash),
+            hash = %bytes32_to_hex(&xchain_hash_id),
             dest_chain = %hex::encode(dest_chain),
             "Attempting to submit cancellation transaction"
         );
@@ -1146,7 +1177,7 @@ impl CancelerWatcher {
             // C4: If circuit breaker is open, skip EVM cancel attempts
             if self.evm_precheck_circuit_open.load(Ordering::Relaxed) {
                 debug!(
-                    hash = %bytes32_to_hex(&withdraw_hash),
+                    hash = %bytes32_to_hex(&xchain_hash_id),
                     "EVM pre-check circuit breaker is OPEN — skipping EVM cancel path"
                 );
             } else {
@@ -1154,7 +1185,7 @@ impl CancelerWatcher {
                 let mut can_cancel_evm = false;
                 let mut last_err = None;
                 for attempt in 0..=self.config.evm_precheck_max_retries {
-                    match self.evm_client.can_cancel(withdraw_hash).await {
+                    match self.evm_client.can_cancel(xchain_hash_id).await {
                         Ok(can) => {
                             can_cancel_evm = can;
                             self.evm_precheck_consecutive_failures
@@ -1164,12 +1195,12 @@ impl CancelerWatcher {
                                 .swap(false, Ordering::Relaxed)
                             {
                                 info!(
-                                    hash = %bytes32_to_hex(&withdraw_hash),
+                                    hash = %bytes32_to_hex(&xchain_hash_id),
                                     "EVM pre-check circuit breaker CLOSED"
                                 );
                             }
                             debug!(
-                                hash = %bytes32_to_hex(&withdraw_hash),
+                                hash = %bytes32_to_hex(&xchain_hash_id),
                                 can_cancel = can,
                                 "Checked EVM can_cancel status on base configured chain"
                             );
@@ -1192,7 +1223,7 @@ impl CancelerWatcher {
                     let count = prev + 1;
                     warn!(
                         error = %e,
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         consecutive_failures = count,
                         "EVM can_cancel pre-check failed; skipping cancel attempt this cycle (will retry)"
                     );
@@ -1201,7 +1232,7 @@ impl CancelerWatcher {
                             .store(true, Ordering::Relaxed);
                         self.metrics.evm_precheck_circuit_breaker_trips_total.inc();
                         error!(
-                            hash = %bytes32_to_hex(&withdraw_hash),
+                            hash = %bytes32_to_hex(&xchain_hash_id),
                             threshold = self.config.evm_precheck_circuit_breaker_threshold,
                             "EVM pre-check circuit breaker OPEN — skipping all EVM cancel attempts \
                              until a successful pre-check"
@@ -1211,20 +1242,20 @@ impl CancelerWatcher {
 
                 if can_cancel_evm {
                     info!(
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         canceler_address = %self.evm_client.address(),
                         "Submitting withdrawCancel transaction to base configured EVM chain"
                     );
 
                     match self
                         .evm_client
-                        .cancel_withdraw_approval(withdraw_hash)
+                        .cancel_withdraw_approval(xchain_hash_id)
                         .await
                     {
                         Ok(tx_hash) => {
                             info!(
                                 tx_hash = %tx_hash,
-                                hash = %bytes32_to_hex(&withdraw_hash),
+                                hash = %bytes32_to_hex(&xchain_hash_id),
                                 "EVM cancellation transaction SUCCEEDED"
                             );
                             return Ok(());
@@ -1232,7 +1263,7 @@ impl CancelerWatcher {
                         Err(e) => {
                             warn!(
                                 error = %e,
-                                hash = %bytes32_to_hex(&withdraw_hash),
+                                hash = %bytes32_to_hex(&xchain_hash_id),
                                 canceler_address = %self.evm_client.address(),
                                 "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
                             );
@@ -1250,17 +1281,21 @@ impl CancelerWatcher {
                 &peer.bridge_address,
                 &self.config.evm_private_key,
             )?;
-            if peer_client.can_cancel(withdraw_hash).await.unwrap_or(false) {
+            if peer_client
+                .can_cancel(xchain_hash_id)
+                .await
+                .unwrap_or(false)
+            {
                 info!(
-                    hash = %bytes32_to_hex(&withdraw_hash),
+                    hash = %bytes32_to_hex(&xchain_hash_id),
                     chain = %peer.name,
                     "Submitting withdrawCancel transaction to EVM peer chain"
                 );
-                match peer_client.cancel_withdraw_approval(withdraw_hash).await {
+                match peer_client.cancel_withdraw_approval(xchain_hash_id).await {
                     Ok(tx_hash) => {
                         info!(
                             tx_hash = %tx_hash,
-                            hash = %bytes32_to_hex(&withdraw_hash),
+                            hash = %bytes32_to_hex(&xchain_hash_id),
                             chain = %peer.name,
                             "EVM peer-chain cancellation transaction SUCCEEDED"
                         );
@@ -1269,7 +1304,7 @@ impl CancelerWatcher {
                     Err(e) => {
                         warn!(
                             error = %e,
-                            hash = %bytes32_to_hex(&withdraw_hash),
+                            hash = %bytes32_to_hex(&xchain_hash_id),
                             chain = %peer.name,
                             "EVM peer-chain cancellation FAILED"
                         );
@@ -1281,29 +1316,29 @@ impl CancelerWatcher {
         // Try Terra
         if self
             .terra_client
-            .can_cancel(withdraw_hash)
+            .can_cancel(xchain_hash_id)
             .await
             .unwrap_or(false)
         {
             info!(
-                hash = %bytes32_to_hex(&withdraw_hash),
+                hash = %bytes32_to_hex(&xchain_hash_id),
                 "Submitting cancellation to Terra"
             );
 
             let tx_hash = self
                 .terra_client
-                .cancel_withdraw_approval(withdraw_hash)
+                .cancel_withdraw_approval(xchain_hash_id)
                 .await?;
             info!(
                 tx_hash = %tx_hash,
-                hash = %bytes32_to_hex(&withdraw_hash),
+                hash = %bytes32_to_hex(&xchain_hash_id),
                 "Terra cancellation submitted"
             );
             return Ok(());
         }
 
         warn!(
-            hash = %bytes32_to_hex(&withdraw_hash),
+            hash = %bytes32_to_hex(&xchain_hash_id),
             "Could not submit cancellation to any chain"
         );
 
@@ -1341,7 +1376,7 @@ mod tests {
     #[test]
     fn test_terra_approval_sort_order() {
         let make_approval = |approved_at: u64, nonce: u64| PendingApproval {
-            withdraw_hash: [nonce as u8; 32],
+            xchain_hash_id: [nonce as u8; 32],
             src_chain_id: [0, 0, 0, 1],
             dest_chain_id: [0, 0, 0, 2],
             src_account: [0u8; 32],

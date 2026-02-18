@@ -178,9 +178,9 @@ impl fmt::Display for EvmAddress {
 
 /// Unique identifier for a withdrawal
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WithdrawHash(pub [u8; 32]);
+pub struct XchainHashId(pub [u8; 32]);
 
-impl WithdrawHash {
+impl XchainHashId {
     /// Compute withdraw hash from V2 parameters (7-field unified hash)
     ///
     /// Uses the same hash as deposits for cross-chain matching.
@@ -193,7 +193,7 @@ impl WithdrawHash {
         amount: u128,
         nonce: u64,
     ) -> Self {
-        let hash = crate::hash::compute_transfer_hash(
+        let hash = crate::hash::compute_xchain_hash_id(
             src_chain.as_bytes(),
             dest_chain.as_bytes(),
             src_account,
@@ -202,7 +202,7 @@ impl WithdrawHash {
             amount,
             nonce,
         );
-        WithdrawHash(hash)
+        XchainHashId(hash)
     }
 
     /// Get the raw bytes
@@ -217,7 +217,7 @@ impl WithdrawHash {
 
     /// Create from bytes
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        WithdrawHash(bytes)
+        XchainHashId(bytes)
     }
 
     /// Create from hex string
@@ -225,15 +225,15 @@ impl WithdrawHash {
         let hex = hex.strip_prefix("0x").unwrap_or(hex);
         let bytes = hex::decode(hex)?;
         if bytes.len() != 32 {
-            return Err(eyre!("WithdrawHash must be 32 bytes"));
+            return Err(eyre!("XchainHashId must be 32 bytes"));
         }
         let mut result = [0u8; 32];
         result.copy_from_slice(&bytes);
-        Ok(WithdrawHash(result))
+        Ok(XchainHashId(result))
     }
 }
 
-impl fmt::Display for WithdrawHash {
+impl fmt::Display for XchainHashId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_hex())
     }
@@ -481,13 +481,13 @@ mod tests {
     }
 
     #[test]
-    fn test_withdraw_hash_hex() {
-        let hash = WithdrawHash::from_bytes([1u8; 32]);
+    fn test_xchain_hash_id_hex() {
+        let hash = XchainHashId::from_bytes([1u8; 32]);
         let hex = hash.to_hex();
         assert!(hex.starts_with("0x"));
         assert_eq!(hex.len(), 66);
 
-        let parsed = WithdrawHash::from_hex(&hex).unwrap();
+        let parsed = XchainHashId::from_hex(&hex).unwrap();
         assert_eq!(hash, parsed);
     }
 

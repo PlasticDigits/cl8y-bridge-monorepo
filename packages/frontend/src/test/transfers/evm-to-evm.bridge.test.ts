@@ -42,7 +42,7 @@ import {
   withdrawSubmitViaCast,
   withdrawExecuteViaCast,
   pollForApproval,
-  computeWithdrawHashViaCast,
+  computeXchainHashIdViaCast,
   mintTestTokens,
   ANVIL_ACCOUNTS,
 } from '../../../e2e/fixtures/transfer-helpers'
@@ -191,7 +191,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
     console.log(`[test] WithdrawSubmit tx on anvil1: ${wsTxHash}`)
 
     // Compute withdraw hash for polling
-    const withdrawHash = computeWithdrawHashViaCast({
+    const xchainHashId = computeXchainHashIdViaCast({
       srcChain,
       destChain: '0x00000003',
       srcAccount,
@@ -200,11 +200,11 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       amount,
       nonce: String(nonce),
     })
-    console.log(`[test] Withdraw hash: ${withdrawHash}`)
+    console.log(`[test] Xchain hash id: ${xchainHashId}`)
 
     // 4. Poll for approval
     console.log('[test] Polling for operator approval...')
-    const approved = await pollForApproval(ANVIL1_RPC, bridge1Address, withdrawHash, 60_000)
+    const approved = await pollForApproval(ANVIL1_RPC, bridge1Address, xchainHashId, 60_000)
     console.log(`[test] Approval status: ${approved}`)
 
     // 5. Skip cancel window on anvil1
@@ -217,7 +217,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       rpcUrl: ANVIL1_RPC,
       bridgeAddress: bridge1Address,
       privateKey: recipientKey,
-      withdrawHash,
+      xchainHashId,
     })
     console.log(`[test] WithdrawExecute tx on anvil1: ${execTxHash}`)
 

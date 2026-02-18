@@ -13,13 +13,14 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   useAccount,
+  usePublicClient,
   useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
   useSwitchChain,
 } from 'wagmi'
-import { parseUnits, pad, type Address, type Hex } from 'viem'
-import { CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
+import { createPublicClient, http, parseUnits, pad, type Address, type Hex } from 'viem'
+import { DECIMALS } from '../utils/constants'
 import { terraAddressToBytes32 } from '../services/hashVerification'
 
 // Configuration
@@ -93,9 +94,9 @@ export interface UseDepositParams {
   tokenAddress: Address
   lockUnlockAddress: Address
   /**
-   * Override the bridge contract address. Required for multi-chain support:
+   * The bridge contract address for the source chain. Required for multi-chain support:
    * when the source chain is Anvil1, this should be the Anvil1 bridge address.
-   * Falls back to CONTRACTS[DEFAULT_NETWORK].evmBridge if not provided.
+   * Must be provided — no fallback to a single default bridge.
    */
   bridgeAddress?: Address
   /**
@@ -103,6 +104,11 @@ export interface UseDepositParams {
    * If the wallet is on a different chain, the hook will auto-switch before transacting.
    */
   sourceNativeChainId?: number
+  /**
+   * RPC URL of the source chain. Used for pre-flight checks (e.g. verifying token
+   * contract exists) that must target the source chain even before wallet switching.
+   */
+  sourceRpcUrl?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -162,13 +168,14 @@ export const computeEvmChainKey = computeEvmChainBytes4
 
 export function useBridgeDeposit(params?: UseDepositParams) {
   const { address: userAddress, isConnected, chainId: walletChainId } = useAccount()
+  const publicClient = usePublicClient()
   const [state, setState] = useState<DepositState>({ status: 'idle' })
   const { switchChainAsync } = useSwitchChain()
 
   // V2: deposit directly on the Bridge contract.
-  // If the caller provides a per-source-chain bridge address, use it;
-  // otherwise fall back to the default from CONTRACTS (base configured EVM bridge).
-  const bridgeAddress = (params?.bridgeAddress || CONTRACTS[DEFAULT_NETWORK].evmBridge) as Address
+  // Caller MUST provide bridgeAddress via params for multi-chain support.
+  // No silent fallback — deposit() will error if missing.
+  const bridgeAddress = params?.bridgeAddress as Address | undefined
 
   // Contract write hooks
   const { writeContractAsync: writeApprove } = useWriteContract()
@@ -328,9 +335,40 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       }
       const amountWei = parseUnits(amount, tokenDecimals)
 
+      // Pre-flight: verify the token contract exists on the SOURCE chain.
+      // After switchChainAsync(), the React hook `publicClient` still references
+      // the old chain until re-render, so we create a one-off client targeting
+      // the source chain's RPC directly.
+      {
+        const rpcUrl = params?.sourceRpcUrl
+        const checkClient = rpcUrl
+          ? createPublicClient({ transport: http(rpcUrl) })
+          : publicClient
+        if (!rpcUrl) {
+          console.warn('[useBridgeDeposit] No sourceRpcUrl provided, using wallet-bound publicClient for pre-flight check')
+        }
+        if (checkClient) {
+          const code = await checkClient.getCode({ address: params.tokenAddress })
+          if (!code || code === '0x') {
+            setState({
+              status: 'error',
+              error: `Token contract ${params.tokenAddress} does not exist on the source chain. Check that the correct token is selected for this network.`,
+            })
+            return
+          }
+        }
+      }
+
       // Step 1: Check allowance (single Bridge approval for fee + net transfer to LockUnlock)
       setState({ status: 'checking-allowance' })
       const { data: freshAllowance } = await refetchAllowance()
+      if (freshAllowance === undefined && currentAllowance === undefined) {
+        setState({
+          status: 'error',
+          error: `Could not read token allowance — the token contract may not exist on this chain.`,
+        })
+        return
+      }
       const allowance = freshAllowance ?? currentAllowance ?? 0n
 
       // Step 2: Approve Bridge if needed
@@ -366,11 +404,24 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         // Poll for allowance change
         await new Promise<void>((resolve, reject) => {
           let attempts = 0
+          let undefinedCount = 0
           const maxAttempts = 60
           const checkAllowance = setInterval(async () => {
             attempts++
             try {
               const { data: newAllowance } = await refetchAllowance()
+              if (newAllowance === undefined) {
+                undefinedCount++
+                if (undefinedCount >= 3) {
+                  clearInterval(checkAllowance)
+                  reject(new Error(
+                    'Token contract returned empty data — it may not exist on this chain. Check that you are on the correct network.'
+                  ))
+                  return
+                }
+              } else {
+                undefinedCount = 0
+              }
               if (newAllowance && newAllowance >= amountWei) {
                 clearInterval(checkAllowance)
                 resolve()
@@ -438,6 +489,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   }, [
     isConnected,
     userAddress,
+    publicClient,
     params,
     bridgeAddress,
     walletChainId,

@@ -303,9 +303,9 @@ Calling the wrong function will typically revert (e.g., minting on a non-mintabl
 Consider adding an explicit check:
 
 ```solidity
-function withdrawExecuteUnlock(bytes32 withdrawHash) external whenNotPaused nonReentrant {
-    PendingWithdraw storage w = pendingWithdraws[withdrawHash];
-    _validateWithdrawExecution(w, withdrawHash);
+function withdrawExecuteUnlock(bytes32 xchainHashId) external whenNotPaused nonReentrant {
+    PendingWithdraw storage w = pendingWithdraws[xchainHashId];
+    _validateWithdrawExecution(w, xchainHashId);
     require(tokenRegistry.getTokenType(w.token) == ITokenRegistry.TokenType.LockUnlock, "Wrong token type");
     // ...
 }
@@ -345,7 +345,7 @@ Consider adding a cross-registry cleanup mechanism, or document that chain re-re
 
 6. **UUPS upgrade safety**: All upgradeable contracts properly call `_disableInitializers()` in constructors, use `__gap` storage slots (40-49 slots), and gate `_authorizeUpgrade` with `onlyOwner`.
 
-7. **Deterministic cross-chain hashing**: `HashLib.computeTransferHash` produces identical hashes on both source and destination chains using the same 7-field encoding (`srcChain, destChain, srcAccount, destAccount, token, amount, nonce`). Verified by cross-chain parity test vectors.
+7. **Deterministic cross-chain hashing**: `HashLib.computeXchainHashId` produces identical hashes on both source and destination chains using the same 7-field encoding (`srcChain, destChain, srcAccount, destAccount, token, amount, nonce`). Verified by cross-chain parity test vectors.
 
 8. **Fee system robustness**: Fee calculation uses a clear priority system (custom > CL8Y discount > standard) with `try/catch` around CL8Y balance queries. Fee is capped at 1% (100 bps) enforced both in `setFeeParams` and `setCustomAccountFee`.
 

@@ -6,7 +6,9 @@
 # - LocalTerra (Terra Classic local chain)
 # - PostgreSQL database
 # - Operator service (if running)
+# - Canceler service (if running)
 # - Frontend (if running)
+# - Contract addresses (loaded from .env.e2e.local, verified on-chain)
 #
 # Usage:
 #   ./scripts/status.sh
@@ -17,12 +19,24 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Source .env.e2e.local if it exists (provides contract addresses, bridge vars, etc.)
+if [ -f "$PROJECT_ROOT/.env.e2e.local" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env.e2e.local"
+    set +a
+fi
+
+# Map VITE_ vars to the names used by scripts/operator/canceler
+[ -n "${VITE_EVM_BRIDGE_ADDRESS:-}" ] && EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-$VITE_EVM_BRIDGE_ADDRESS}"
+[ -n "${VITE_TERRA_BRIDGE_ADDRESS:-}" ] && TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-$VITE_TERRA_BRIDGE_ADDRESS}"
+
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
 TERRA_RPC_URL="${TERRA_RPC_URL:-http://localhost:26657}"
 TERRA_LCD_URL="${TERRA_LCD_URL:-http://localhost:1317}"
 DATABASE_URL="${DATABASE_URL:-postgres://operator:operator@localhost:5433/operator}"
-OPERATOR_API_URL="${OPERATOR_API_URL:-http://localhost:8080}"
+OPERATOR_API_URL="${OPERATOR_API_URL:-http://localhost:9092}"
+CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://localhost:9099}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
 
 # Colors
@@ -91,7 +105,6 @@ check_localterra() {
 
 # Check PostgreSQL
 check_postgres() {
-    # Extract host and port from DATABASE_URL
     if command -v psql &> /dev/null; then
         if psql "$DATABASE_URL" -c "SELECT 1" &> /dev/null; then
             local tables
@@ -121,6 +134,42 @@ check_operator() {
         return 0
     else
         log_status "Operator" "stopped"
+        return 1
+    fi
+}
+
+# Check Canceler
+check_canceler() {
+    # Try the configured health URL first
+    local health_response
+    health_response=$(curl -sf "$CANCELER_HEALTH_URL/health" 2>/dev/null || echo "")
+    if [ -n "$health_response" ]; then
+        local canceler_id
+        canceler_id=$(echo "$health_response" | jq -r '.canceler_id // empty' 2>/dev/null || echo "")
+        if [ -n "$canceler_id" ]; then
+            log_status "Canceler" "running" "($canceler_id)"
+        else
+            log_status "Canceler" "running"
+        fi
+        return 0
+    fi
+
+    # Check common canceler health ports (9099 default, 9200 override)
+    for port in 9099 9200; do
+        if [ "http://localhost:$port" != "$CANCELER_HEALTH_URL" ]; then
+            health_response=$(curl -sf "http://localhost:$port/health" 2>/dev/null || echo "")
+            if [ -n "$health_response" ]; then
+                log_status "Canceler" "running" "(port $port)"
+                return 0
+            fi
+        fi
+    done
+
+    if pgrep -f "cl8y-canceler" &> /dev/null; then
+        log_status "Canceler" "running" "(no health)"
+        return 0
+    else
+        log_status "Canceler" "stopped"
         return 1
     fi
 }
@@ -159,22 +208,39 @@ check_docker() {
     fi
 }
 
-# Get contract addresses if set
+# Verify contract addresses on-chain and display them
 get_contracts() {
     if [ "$JSON_OUTPUT" = false ]; then
         echo ""
         echo -e "${BLUE}Contract Addresses:${NC}"
-        
+
         if [ -n "${EVM_BRIDGE_ADDRESS:-}" ]; then
-            echo "  EVM Bridge:   $EVM_BRIDGE_ADDRESS"
+            # Verify the contract exists on-chain by checking code size
+            local code_size
+            code_size=$(cast codesize "$EVM_BRIDGE_ADDRESS" --rpc-url "$EVM_RPC_URL" 2>/dev/null || echo "0")
+            if [ "$code_size" -gt 0 ] 2>/dev/null; then
+                echo -e "  EVM Bridge:   $EVM_BRIDGE_ADDRESS ${GREEN}(verified on-chain)${NC}"
+            else
+                echo -e "  EVM Bridge:   $EVM_BRIDGE_ADDRESS ${RED}(NOT found on-chain)${NC}"
+            fi
         else
             echo "  EVM Bridge:   (not set)"
         fi
-        
+
         if [ -n "${TERRA_BRIDGE_ADDRESS:-}" ]; then
-            echo "  Terra Bridge: $TERRA_BRIDGE_ADDRESS"
+            local terra_info
+            terra_info=$(curl -sf "${TERRA_LCD_URL}/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}" 2>/dev/null | jq -r '.contract_info.label // empty' 2>/dev/null || echo "")
+            if [ -n "$terra_info" ]; then
+                echo -e "  Terra Bridge: $TERRA_BRIDGE_ADDRESS ${GREEN}(verified: $terra_info)${NC}"
+            else
+                echo -e "  Terra Bridge: $TERRA_BRIDGE_ADDRESS ${YELLOW}(could not verify)${NC}"
+            fi
         else
             echo "  Terra Bridge: (not set)"
+        fi
+
+        if [ -f "$PROJECT_ROOT/.env.e2e.local" ]; then
+            echo -e "  ${BLUE}Source:${NC}       .env.e2e.local"
         fi
     fi
 }
@@ -222,6 +288,7 @@ main() {
     fi
     
     check_operator || true
+    check_canceler || true
     check_frontend || true
     
     get_contracts

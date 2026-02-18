@@ -21,14 +21,15 @@ export interface TransferState {
   updateActiveTransfer: (updates: Partial<ActiveTransfer>) => void
   recordTransfer: (record: Omit<TransferRecord, 'id' | 'timestamp'>) => string
   updateTransferRecord: (id: string, updates: Partial<TransferRecord>) => void
-  getTransferByHash: (transferHash: string) => TransferRecord | null
+  getTransferByXchainHashId: (xchainHashId: string) => TransferRecord | null
   getAllTransfers: () => TransferRecord[]
 }
 
 function readTransfers(): TransferRecord[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : []
+    if (!stored) return []
+    return JSON.parse(stored) as TransferRecord[]
   } catch {
     return []
   }
@@ -76,9 +77,9 @@ export const useTransferStore = create<TransferState>((set) => ({
     window.dispatchEvent(new CustomEvent('cl8y-transfer-updated', { detail: { id } }))
   },
 
-  getTransferByHash: (transferHash) => {
+  getTransferByXchainHashId: (xchainHashId) => {
     const list = readTransfers()
-    return list.find((t) => t.transferHash === transferHash) || null
+    return list.find((t) => t.xchainHashId === xchainHashId) || null
   },
 
   getAllTransfers: () => {

@@ -114,8 +114,8 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
     {
         Ok(result) => {
             info!(
-                "Fraudulent approval created: withdrawHash=0x{}",
-                hex::encode(&result.withdraw_hash.as_slice()[..8])
+                "Fraudulent approval created: xchainHashId=0x{}",
+                hex::encode(&result.xchain_hash_id.as_slice()[..8])
             );
             result
         }
@@ -144,7 +144,7 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
     let mut last_log = Instant::now();
 
     while poll_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
-        match is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+        match is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
             Ok(true) => {
                 info!(
                     "Fraudulent approval cancelled in {:?}",
@@ -155,10 +155,10 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
             Ok(false) => {
                 if last_log.elapsed() > Duration::from_secs(10) {
                     info!(
-                        "Still waiting for cancellation... elapsed={:?}, remaining={:?}, withdrawHash=0x{}",
+                        "Still waiting for cancellation... elapsed={:?}, remaining={:?}, xchainHashId=0x{}",
                         poll_start.elapsed(),
                         FRAUD_DETECTION_TIMEOUT.saturating_sub(poll_start.elapsed()),
-                        hex::encode(&fraud_result.withdraw_hash.as_slice()[..8])
+                        hex::encode(&fraud_result.xchain_hash_id.as_slice()[..8])
                     );
                     last_log = Instant::now();
                 }
@@ -176,7 +176,7 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
          Checking withdrawal status for final state...",
         FRAUD_DETECTION_TIMEOUT
     );
-    match is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+    match is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
         Ok(cancelled) => info!("  Final cancelled status: {}", cancelled),
         Err(e) => info!("  Could not check final status: {}", e),
     }
@@ -246,19 +246,19 @@ pub async fn test_cancelled_approval_blocks_withdrawal(config: &E2eConfig) -> Te
     if canceler_running {
         let poll_start = Instant::now();
         while poll_start.elapsed() < Duration::from_secs(30) {
-            if let Ok(true) = is_approval_cancelled(config, approval_result.withdraw_hash).await {
+            if let Ok(true) = is_approval_cancelled(config, approval_result.xchain_hash_id).await {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-    } else if let Err(e) = cancel_approval_directly(config, approval_result.withdraw_hash).await {
+    } else if let Err(e) = cancel_approval_directly(config, approval_result.xchain_hash_id).await {
         return TestResult::skip(name, format!("Could not cancel approval: {}", e));
     }
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify cancelled
-    if let Ok(false) = is_approval_cancelled(config, approval_result.withdraw_hash).await {
+    if let Ok(false) = is_approval_cancelled(config, approval_result.xchain_hash_id).await {
         return TestResult::fail(name, "Approval was not cancelled", start.elapsed());
     }
 
@@ -268,7 +268,7 @@ pub async fn test_cancelled_approval_blocks_withdrawal(config: &E2eConfig) -> Te
     let _ = anvil.mine_block().await;
 
     // Verify withdrawal is blocked
-    match try_execute_withdrawal(config, approval_result.withdraw_hash).await {
+    match try_execute_withdrawal(config, approval_result.xchain_hash_id).await {
         Ok(true) => TestResult::fail(
             name,
             "SECURITY ISSUE: Cancelled approval allowed withdrawal!",
@@ -341,7 +341,7 @@ pub async fn test_canceler_concurrent_fraud_handling(config: &E2eConfig) -> Test
     let cancelled_count = {
         let mut count = 0;
         for result in &fraud_results {
-            if let Ok(true) = is_approval_cancelled(config, result.withdraw_hash).await {
+            if let Ok(true) = is_approval_cancelled(config, result.xchain_hash_id).await {
                 count += 1;
             }
         }
@@ -404,13 +404,13 @@ pub async fn test_canceler_restart_fraud_detection(config: &E2eConfig) -> TestRe
     // Wait for canceler to detect
     tokio::time::sleep(Duration::from_secs(15)).await;
 
-    if let Ok(true) = is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+    if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
         return TestResult::pass(name, start.elapsed());
     }
 
     tokio::time::sleep(Duration::from_secs(15)).await;
 
-    if let Ok(true) = is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+    if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
         TestResult::pass(name, start.elapsed())
     } else {
         TestResult::fail(
@@ -472,7 +472,7 @@ pub async fn test_canceler_evm_source_fraud_detection(config: &E2eConfig) -> Tes
     let poll_start = Instant::now();
 
     while poll_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
-        if let Ok(true) = is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+        if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
             info!(
                 "EVM-source fraud detected and cancelled in {:?}",
                 poll_start.elapsed()
@@ -540,7 +540,7 @@ pub async fn test_canceler_terra_source_fraud_detection(config: &E2eConfig) -> T
     let poll_start = Instant::now();
 
     while poll_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
-        if let Ok(true) = is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+        if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
             info!(
                 "Terra-source fraud detected and cancelled in {:?}",
                 poll_start.elapsed()

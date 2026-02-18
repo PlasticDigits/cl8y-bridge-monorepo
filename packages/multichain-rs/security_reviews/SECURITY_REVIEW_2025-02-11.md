@@ -51,7 +51,7 @@ The codebase contains **no `unsafe`** blocks or functions. All memory safety is 
 |---------|----------|------------|
 | Keccak256 (tiny-keccak) for transfer hashes | ✅ Appropriate | Correct choice for EVM/Solidity compatibility; matches `HashLib.sol` |
 
-**Location:** `hash.rs` – `keccak256`, `compute_transfer_hash`, etc.
+**Location:** `hash.rs` – `keccak256`, `compute_xchain_hash_id`, etc.
 
 #### 2.2.2 Key Derivation & Signing
 
@@ -87,7 +87,7 @@ The codebase contains **no `unsafe`** blocks or functions. All memory safety is 
 | `decode_bech32_address_raw` | 20 or 32 bytes | ✅ Validates length |
 | `ChainId::from_hex` | 4 bytes | ✅ Validates |
 | `EvmAddress::from_hex` | 20 or 32 bytes, padding check | ✅ Validates |
-| `WithdrawHash::from_hex` | 32 bytes | ✅ Validates |
+| `XchainHashId::from_hex` | 32 bytes | ✅ Validates |
 
 #### 2.3.2 Bytes Length Handling (F3)
 

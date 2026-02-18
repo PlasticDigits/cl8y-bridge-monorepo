@@ -7,7 +7,7 @@
 
 import { decodeEventLog, type Address, type Hex, type PublicClient } from 'viem'
 import {
-  computeTransferHashFromDeposit,
+  computeXchainHashIdFromDeposit,
 } from './hashVerification'
 import { getEvmClient } from './evmClient'
 import { getTokenRegistryAddress, TOKEN_REGISTRY_ABI } from './evm/tokenRegistry'
@@ -42,7 +42,7 @@ const WITHDRAW_SUBMIT_EVENT_ABI = [
     type: 'event',
     name: 'WithdrawSubmit',
     inputs: [
-      { name: 'withdrawHash', type: 'bytes32', indexed: true },
+      { name: 'xchainHashId', type: 'bytes32', indexed: true },
       { name: 'srcChain', type: 'bytes4', indexed: false },
       { name: 'srcAccount', type: 'bytes32', indexed: false },
       { name: 'destAccount', type: 'bytes32', indexed: false },
@@ -59,7 +59,7 @@ const WITHDRAW_EXECUTE_EVENT_ABI = [
     type: 'event',
     name: 'WithdrawExecute',
     inputs: [
-      { name: 'withdrawHash', type: 'bytes32', indexed: true },
+      { name: 'xchainHashId', type: 'bytes32', indexed: true },
       { name: 'recipient', type: 'address', indexed: false },
       { name: 'amount', type: 'uint256', indexed: false },
     ],
@@ -71,7 +71,7 @@ const WITHDRAW_CANCEL_EVENT_ABI = [
     type: 'event',
     name: 'WithdrawCancel',
     inputs: [
-      { name: 'withdrawHash', type: 'bytes32', indexed: true },
+      { name: 'xchainHashId', type: 'bytes32', indexed: true },
       { name: 'canceler', type: 'address', indexed: false },
     ],
   },
@@ -92,7 +92,7 @@ export interface MonitorHashEntry {
 /**
  * Fetch transfer hashes from an EVM bridge via Deposit and WithdrawSubmit events.
  */
-export async function fetchEvmTransferHashes(
+export async function fetchEvmXchainHashIds(
   client: PublicClient,
   bridgeAddress: Address,
   _chainId: number,
@@ -130,7 +130,7 @@ export async function fetchEvmTransferHashes(
         type: 'event',
         name: 'WithdrawSubmit',
         inputs: [
-          { name: 'withdrawHash', type: 'bytes32', indexed: true },
+          { name: 'xchainHashId', type: 'bytes32', indexed: true },
           { name: 'srcChain', type: 'bytes4', indexed: false },
           { name: 'srcAccount', type: 'bytes32', indexed: false },
           { name: 'destAccount', type: 'bytes32', indexed: false },
@@ -149,7 +149,7 @@ export async function fetchEvmTransferHashes(
         type: 'event',
         name: 'WithdrawExecute',
         inputs: [
-          { name: 'withdrawHash', type: 'bytes32', indexed: true },
+          { name: 'xchainHashId', type: 'bytes32', indexed: true },
           { name: 'recipient', type: 'address', indexed: false },
           { name: 'amount', type: 'uint256', indexed: false },
         ],
@@ -163,7 +163,7 @@ export async function fetchEvmTransferHashes(
         type: 'event',
         name: 'WithdrawCancel',
         inputs: [
-          { name: 'withdrawHash', type: 'bytes32', indexed: true },
+          { name: 'xchainHashId', type: 'bytes32', indexed: true },
           { name: 'canceler', type: 'address', indexed: false },
         ],
       },
@@ -191,8 +191,8 @@ export async function fetchEvmTransferHashes(
         topics: log.topics,
       })
       if (decoded.eventName === 'WithdrawExecute') {
-        const args = decoded.args as { withdrawHash: Hex }
-        executedHashes.add(args.withdrawHash.toLowerCase())
+        const args = decoded.args as { xchainHashId: Hex }
+        executedHashes.add(args.xchainHashId.toLowerCase())
       }
     } catch {
       /* skip */
@@ -206,8 +206,8 @@ export async function fetchEvmTransferHashes(
         topics: log.topics,
       })
       if (decoded.eventName === 'WithdrawCancel') {
-        const args = decoded.args as { withdrawHash: Hex }
-        cancelledHashes.add(args.withdrawHash.toLowerCase())
+        const args = decoded.args as { xchainHashId: Hex }
+        cancelledHashes.add(args.xchainHashId.toLowerCase())
       }
     } catch {
       /* skip */
@@ -285,7 +285,7 @@ export async function fetchEvmTransferHashes(
       if (!destToken) continue // Can't compute hash without destToken
 
       const destChainBytes32 = bytes4ToBytes32(d.destChain)
-      const hash = computeTransferHashFromDeposit(
+      const hash = computeXchainHashIdFromDeposit(
         thisChainId,
         destChainBytes32,
         d.srcAccount,
@@ -311,10 +311,10 @@ export async function fetchEvmTransferHashes(
         topics: log.topics,
       })
       if (decoded.eventName === 'WithdrawSubmit') {
-        const args = decoded.args as { withdrawHash: Hex }
-        const hashKey = args.withdrawHash.toLowerCase()
+        const args = decoded.args as { xchainHashId: Hex }
+        const hashKey = args.xchainHashId.toLowerCase()
         entries.push({
-          hash: args.withdrawHash,
+          hash: args.xchainHashId,
           source: 'withdraw',
           chainKey,
           chainName,
@@ -331,7 +331,7 @@ export async function fetchEvmTransferHashes(
 }
 
 interface TerraPendingWithdrawalEntry {
-  withdraw_hash: string
+  xchain_hash_id: string
   submitted_at: number
   approved: boolean
   cancelled: boolean
@@ -366,7 +366,7 @@ export async function fetchTerraWithdrawHashes(
     const response = await queryContract<TerraPendingWithdrawalsResponse>(lcdUrls, bridgeAddress, query)
 
     for (const w of response?.withdrawals ?? []) {
-      const hash = base64ToHex(w.withdraw_hash) as Hex
+      const hash = base64ToHex(w.xchain_hash_id) as Hex
       entries.push({
         hash,
         source: 'withdraw',
@@ -386,7 +386,7 @@ export async function fetchTerraWithdrawHashes(
 }
 
 interface TerraDepositInfoResponse {
-  deposit_hash: string
+  xchain_hash_id: string
 }
 
 /**
@@ -420,8 +420,8 @@ export async function fetchTerraDepositHashes(
       })
       const results = await Promise.all(promises)
       for (const r of results) {
-        if (r?.deposit_hash) {
-          const hash = base64ToHex(r.deposit_hash) as Hex
+        if (r?.xchain_hash_id) {
+          const hash = base64ToHex(r.xchain_hash_id) as Hex
           entries.push({
             hash,
             source: 'deposit',
@@ -442,7 +442,7 @@ export async function fetchTerraDepositHashes(
  * Fetch all transfer hashes from all configured bridge chains.
  * Merges and deduplicates by hash, optionally capped for pagination.
  */
-export async function fetchAllTransferHashes(
+export async function fetchAllXchainHashIds(
   options?: {
     evmFromBlock?: bigint
     evmToBlock?: bigint
@@ -457,7 +457,7 @@ export async function fetchAllTransferHashes(
   const evmPromises = evmChains.map(async (chain) => {
     try {
       const client = getEvmClient(chain)
-      return fetchEvmTransferHashes(
+      return fetchEvmXchainHashIds(
         client,
         chain.bridgeAddress as Address,
         chain.chainId as number,

@@ -537,22 +537,22 @@ async fn test_withdraw_function_signature() {
 #[tokio::test]
 async fn test_withdraw_event_signatures() {
     // WithdrawSubmit event (matches IBridge.sol):
-    //   event WithdrawSubmit(bytes32 indexed withdrawHash, bytes4 srcChain,
+    //   event WithdrawSubmit(bytes32 indexed xchainHashId, bytes4 srcChain,
     //     bytes32 srcAccount, bytes32 destAccount, address token,
     //     uint256 amount, uint64 nonce, uint256 operatorGas)
     let submit_sig =
         keccak256(b"WithdrawSubmit(bytes32,bytes4,bytes32,bytes32,address,uint256,uint64,uint256)");
 
     // WithdrawApprove event:
-    //   event WithdrawApprove(bytes32 indexed withdrawHash)
+    //   event WithdrawApprove(bytes32 indexed xchainHashId)
     let approve_sig = keccak256(b"WithdrawApprove(bytes32)");
 
     // WithdrawCancel event:
-    //   event WithdrawCancel(bytes32 indexed withdrawHash, address canceler)
+    //   event WithdrawCancel(bytes32 indexed xchainHashId, address canceler)
     let cancel_sig = keccak256(b"WithdrawCancel(bytes32,address)");
 
     // WithdrawExecute event:
-    //   event WithdrawExecute(bytes32 indexed withdrawHash, address recipient, uint256 amount)
+    //   event WithdrawExecute(bytes32 indexed xchainHashId, address recipient, uint256 amount)
     let execute_sig = keccak256(b"WithdrawExecute(bytes32,address,uint256)");
 
     // All must be unique
@@ -577,7 +577,7 @@ async fn test_withdraw_event_signatures() {
 // Transfer Hash Tests (cross-chain parity)
 // ============================================================================
 
-/// Compute a V2 unified transfer hash (matching EVM's HashLib.computeTransferHash)
+/// Compute a V2 unified cross-chain hash ID (matching EVM's HashLib.computeXchainHashId)
 ///
 /// keccak256(abi.encode(
 ///     bytes32(srcChain),     // 4 bytes -> padded to 32
@@ -588,7 +588,7 @@ async fn test_withdraw_event_signatures() {
 ///     uint256(amount),       // 32 bytes
 ///     uint256(nonce)         // 32 bytes
 /// ))
-fn compute_transfer_hash(
+fn compute_xchain_hash_id(
     src_chain: &[u8; 4],
     dest_chain: &[u8; 4],
     src_account: &[u8; 32],
@@ -618,7 +618,7 @@ fn compute_transfer_hash(
 }
 
 #[tokio::test]
-async fn test_transfer_hash_deterministic() {
+async fn test_xchain_hash_id_deterministic() {
     let src_chain: [u8; 4] = [0, 0, 0, 1]; // EVM
     let dest_chain: [u8; 4] = [0, 0, 0, 2]; // Terra
     let src_account = [0xABu8; 32];
@@ -627,7 +627,7 @@ async fn test_transfer_hash_deterministic() {
     let amount = 1_000_000u128;
     let nonce = 1u64;
 
-    let hash1 = compute_transfer_hash(
+    let hash1 = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -636,7 +636,7 @@ async fn test_transfer_hash_deterministic() {
         amount,
         nonce,
     );
-    let hash2 = compute_transfer_hash(
+    let hash2 = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -653,14 +653,14 @@ async fn test_transfer_hash_deterministic() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_different_nonce() {
+async fn test_xchain_hash_id_different_nonce() {
     let src_chain: [u8; 4] = [0, 0, 0, 1];
     let dest_chain: [u8; 4] = [0, 0, 0, 2];
     let src_account = [0u8; 32];
     let dest_account = [0u8; 32];
     let token = [0u8; 32];
 
-    let hash1 = compute_transfer_hash(
+    let hash1 = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -669,7 +669,7 @@ async fn test_transfer_hash_different_nonce() {
         1_000_000,
         1,
     );
-    let hash2 = compute_transfer_hash(
+    let hash2 = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -686,7 +686,7 @@ async fn test_transfer_hash_different_nonce() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_src_account_matters() {
+async fn test_xchain_hash_id_src_account_matters() {
     let src_chain: [u8; 4] = [0, 0, 0, 1];
     let dest_chain: [u8; 4] = [0, 0, 0, 2];
     let mut src_a = [0u8; 32];
@@ -696,8 +696,8 @@ async fn test_transfer_hash_src_account_matters() {
     let dest = [0u8; 32];
     let token = [0u8; 32];
 
-    let hash_a = compute_transfer_hash(&src_chain, &dest_chain, &src_a, &dest, &token, 100, 1);
-    let hash_b = compute_transfer_hash(&src_chain, &dest_chain, &src_b, &dest, &token, 100, 1);
+    let hash_a = compute_xchain_hash_id(&src_chain, &dest_chain, &src_a, &dest, &token, 100, 1);
+    let hash_b = compute_xchain_hash_id(&src_chain, &dest_chain, &src_b, &dest, &token, 100, 1);
 
     assert_ne!(
         hash_a, hash_b,
@@ -706,15 +706,15 @@ async fn test_transfer_hash_src_account_matters() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_amount_matters() {
+async fn test_xchain_hash_id_amount_matters() {
     let src_chain: [u8; 4] = [0, 0, 0, 1];
     let dest_chain: [u8; 4] = [0, 0, 0, 2];
     let src = [0u8; 32];
     let dest = [0u8; 32];
     let token = [0u8; 32];
 
-    let hash_a = compute_transfer_hash(&src_chain, &dest_chain, &src, &dest, &token, 1_000_000, 1);
-    let hash_b = compute_transfer_hash(&src_chain, &dest_chain, &src, &dest, &token, 995_000, 1);
+    let hash_a = compute_xchain_hash_id(&src_chain, &dest_chain, &src, &dest, &token, 1_000_000, 1);
+    let hash_b = compute_xchain_hash_id(&src_chain, &dest_chain, &src, &dest, &token, 995_000, 1);
 
     assert_ne!(
         hash_a, hash_b,
@@ -724,7 +724,7 @@ async fn test_transfer_hash_amount_matters() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_chain_padding() {
+async fn test_xchain_hash_id_chain_padding() {
     // Verify bytes4 chain IDs are correctly left-aligned in bytes32
     // EVM's abi.encode(bytes4) -> bytes32 with bytes4 at position 0-3
     let chain_id: [u8; 4] = [0, 0, 0, 1];
@@ -766,7 +766,7 @@ async fn test_pending_withdrawals_response_parsing() {
         "data": {
             "withdrawals": [
                 {
-                    "withdraw_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    "xchain_hash_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
                     "src_chain": "AAAAAQ==",
                     "src_account": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
                     "dest_account": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -804,7 +804,7 @@ async fn test_pending_withdrawals_response_parsing() {
     assert_eq!(entry["amount"].as_str(), Some("995000"));
 
     // Test base64 hash decoding
-    let hash_b64 = entry["withdraw_hash"].as_str().unwrap();
+    let hash_b64 = entry["xchain_hash_id"].as_str().unwrap();
     use base64::Engine as _;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(hash_b64)
@@ -860,7 +860,7 @@ async fn test_uluna_vs_cw20_different_token_encoding() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_uluna_evm_to_terra() {
+async fn test_xchain_hash_id_uluna_evm_to_terra() {
     // Full transfer hash: EVM → Terra with native uluna
     let evm_chain: [u8; 4] = [0, 0, 0, 1];
     let terra_chain: [u8; 4] = [0, 0, 0, 2];
@@ -877,7 +877,7 @@ async fn test_transfer_hash_uluna_evm_to_terra() {
 
     let token = keccak256(b"uluna").0;
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src_account,
@@ -892,7 +892,7 @@ async fn test_transfer_hash_uluna_evm_to_terra() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_uluna_terra_to_evm() {
+async fn test_xchain_hash_id_uluna_terra_to_evm() {
     // Full transfer hash: Terra → EVM with native uluna
     let terra_chain: [u8; 4] = [0, 0, 0, 2];
     let evm_chain: [u8; 4] = [0, 0, 0, 1];
@@ -909,7 +909,7 @@ async fn test_transfer_hash_uluna_terra_to_evm() {
 
     let token = keccak256(b"uluna").0;
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &src_account,
@@ -924,7 +924,7 @@ async fn test_transfer_hash_uluna_terra_to_evm() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_cw20_evm_to_terra() {
+async fn test_xchain_hash_id_cw20_evm_to_terra() {
     // Full transfer hash: EVM → Terra with CW20 token
     let evm_chain: [u8; 4] = [0, 0, 0, 1];
     let terra_chain: [u8; 4] = [0, 0, 0, 2];
@@ -945,7 +945,7 @@ async fn test_transfer_hash_cw20_evm_to_terra() {
     )
     .unwrap();
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src_account,
@@ -961,7 +961,7 @@ async fn test_transfer_hash_cw20_evm_to_terra() {
 }
 
 #[tokio::test]
-async fn test_transfer_hash_cw20_terra_to_evm() {
+async fn test_xchain_hash_id_cw20_terra_to_evm() {
     // Full transfer hash: Terra → EVM with CW20 token
     let terra_chain: [u8; 4] = [0, 0, 0, 2];
     let evm_chain: [u8; 4] = [0, 0, 0, 1];
@@ -981,7 +981,7 @@ async fn test_transfer_hash_cw20_terra_to_evm() {
     )
     .unwrap();
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &src_account,
@@ -1012,7 +1012,7 @@ async fn test_uluna_vs_cw20_hash_mismatch_causes_approval_failure() {
     )
     .unwrap();
 
-    let hash_uluna = compute_transfer_hash(
+    let hash_uluna = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src,
@@ -1021,7 +1021,7 @@ async fn test_uluna_vs_cw20_hash_mismatch_causes_approval_failure() {
         1_000_000,
         1,
     );
-    let hash_cw20 = compute_transfer_hash(
+    let hash_cw20 = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src,
@@ -1071,7 +1071,7 @@ async fn test_deposit_withdraw_match_evm_to_evm_erc20() {
         0x2f, 0x64, 0x18, 0x0a, 0xa3,
     ]);
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -1080,7 +1080,7 @@ async fn test_deposit_withdraw_match_evm_to_evm_erc20() {
         1_000_000_000_000_000_000,
         42,
     );
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -1091,11 +1091,11 @@ async fn test_deposit_withdraw_match_evm_to_evm_erc20() {
     );
 
     assert_eq!(
-        deposit_hash, withdraw_hash,
+        xchain_hash_id, xchain_hash_id,
         "EVM→EVM ERC20: deposit must equal withdraw"
     );
     assert_eq!(
-        format!("0x{}", hex::encode(deposit_hash)),
+        format!("0x{}", hex::encode(xchain_hash_id)),
         "0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54",
         "Must match Solidity and multichain-rs"
     );
@@ -1117,7 +1117,7 @@ async fn test_deposit_withdraw_match_evm_to_terra_native() {
 
     let token = keccak256(b"uluna").0;
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &evm_depositor,
@@ -1126,7 +1126,7 @@ async fn test_deposit_withdraw_match_evm_to_terra_native() {
         995_000,
         1,
     );
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &evm_depositor,
@@ -1137,11 +1137,11 @@ async fn test_deposit_withdraw_match_evm_to_terra_native() {
     );
 
     assert_eq!(
-        deposit_hash, withdraw_hash,
+        xchain_hash_id, xchain_hash_id,
         "EVM→Terra native uluna: deposit must equal withdraw"
     );
     assert_eq!(
-        format!("0x{}", hex::encode(deposit_hash)),
+        format!("0x{}", hex::encode(xchain_hash_id)),
         "0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453"
     );
 }
@@ -1160,7 +1160,7 @@ async fn test_deposit_withdraw_match_evm_to_terra_cw20() {
     )
     .unwrap();
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &evm_depositor,
@@ -1169,7 +1169,7 @@ async fn test_deposit_withdraw_match_evm_to_terra_cw20() {
         1_000_000,
         5,
     );
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &evm_depositor,
@@ -1180,11 +1180,11 @@ async fn test_deposit_withdraw_match_evm_to_terra_cw20() {
     );
 
     assert_eq!(
-        deposit_hash, withdraw_hash,
+        xchain_hash_id, xchain_hash_id,
         "EVM→Terra CW20: deposit must equal withdraw"
     );
     assert_eq!(
-        format!("0x{}", hex::encode(deposit_hash)),
+        format!("0x{}", hex::encode(xchain_hash_id)),
         "0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b"
     );
 }
@@ -1208,7 +1208,7 @@ async fn test_deposit_withdraw_match_terra_to_evm_native_erc20() {
         0x2f, 0x64, 0x18, 0x0a, 0xa3,
     ]);
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &terra_depositor,
@@ -1217,7 +1217,7 @@ async fn test_deposit_withdraw_match_terra_to_evm_native_erc20() {
         500_000,
         3,
     );
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &terra_depositor,
@@ -1228,11 +1228,11 @@ async fn test_deposit_withdraw_match_terra_to_evm_native_erc20() {
     );
 
     assert_eq!(
-        deposit_hash, withdraw_hash,
+        xchain_hash_id, xchain_hash_id,
         "Terra→EVM native→ERC20: deposit must equal withdraw"
     );
     assert_eq!(
-        format!("0x{}", hex::encode(deposit_hash)),
+        format!("0x{}", hex::encode(xchain_hash_id)),
         "0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438"
     );
 }
@@ -1257,7 +1257,7 @@ async fn test_deposit_withdraw_match_terra_to_evm_cw20_erc20() {
         0x90, 0xbb, 0x3F, 0x05, 0x12,
     ]);
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &terra_depositor,
@@ -1266,7 +1266,7 @@ async fn test_deposit_withdraw_match_terra_to_evm_cw20_erc20() {
         2_500_000,
         7,
     );
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &terra_chain,
         &evm_chain,
         &terra_depositor,
@@ -1277,11 +1277,11 @@ async fn test_deposit_withdraw_match_terra_to_evm_cw20_erc20() {
     );
 
     assert_eq!(
-        deposit_hash, withdraw_hash,
+        xchain_hash_id, xchain_hash_id,
         "Terra→EVM CW20→ERC20: deposit must equal withdraw"
     );
     assert_eq!(
-        format!("0x{}", hex::encode(deposit_hash)),
+        format!("0x{}", hex::encode(xchain_hash_id)),
         "0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab"
     );
 }
@@ -1306,7 +1306,7 @@ async fn test_v2_withdraw_submit_event_signature() {
     //
     // Bridge.sol/IBridge.sol:
     //   event WithdrawSubmit(
-    //     bytes32 indexed withdrawHash,
+    //     bytes32 indexed xchainHashId,
     //     bytes4 srcChain,
     //     bytes32 srcAccount,
     //     bytes32 destAccount,
@@ -1416,7 +1416,7 @@ async fn test_deposit_routing_evm_to_evm() {
     let dest_account = [0xBB; 32];
     let token = [0xCC; 32];
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -1430,7 +1430,7 @@ async fn test_deposit_routing_evm_to_evm() {
     assert_ne!(hash, [0u8; 32], "Same-chain hash should be non-zero");
 
     // Different amounts produce different hashes (important for fee verification)
-    let hash2 = compute_transfer_hash(
+    let hash2 = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -1475,7 +1475,7 @@ async fn test_evm_to_evm_hash_computation() {
     let nonce = 1u64;
 
     // Compute hash using the shared function (same as EVM contract uses)
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &bsc_chain,
         &opbnb_chain,
         &src_account,
@@ -1489,7 +1489,7 @@ async fn test_evm_to_evm_hash_computation() {
     assert_ne!(hash, [0u8; 32], "EVM→EVM hash should be non-zero");
 
     // Hash should be deterministic
-    let hash2 = compute_transfer_hash(
+    let hash2 = compute_xchain_hash_id(
         &bsc_chain,
         &opbnb_chain,
         &src_account,
@@ -1501,7 +1501,7 @@ async fn test_evm_to_evm_hash_computation() {
     assert_eq!(hash, hash2, "EVM→EVM hash must be deterministic");
 
     // Swapping src/dest chains should produce a different hash
-    let reverse_hash = compute_transfer_hash(
+    let reverse_hash = compute_xchain_hash_id(
         &opbnb_chain, // swapped
         &bsc_chain,   // swapped
         &src_account,

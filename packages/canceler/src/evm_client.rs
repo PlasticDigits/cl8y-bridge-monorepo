@@ -12,7 +12,7 @@
 //!
 //! ```ignore
 //! let client = EvmClient::new(config).await?;
-//! client.cancel_withdraw_approval(withdraw_hash).await?;
+//! client.cancel_withdraw_approval(xchain_hash_id).await?;
 //! ```
 
 #![allow(dead_code)]
@@ -38,10 +38,10 @@ sol! {
     #[sol(rpc)]
     contract CL8YBridge {
         /// Cancel a pending withdrawal (V2: onlyCanceler)
-        function withdrawCancel(bytes32 withdrawHash) external;
+        function withdrawCancel(bytes32 xchainHashId) external;
 
         /// Get pending withdrawal info (V2: PendingWithdraw struct)
-        function getPendingWithdraw(bytes32 withdrawHash) external view returns (
+        function getPendingWithdraw(bytes32 xchainHashId) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -90,7 +90,7 @@ impl EvmClient {
     }
 
     /// Cancel a withdraw approval on EVM
-    pub async fn cancel_withdraw_approval(&self, withdraw_hash: [u8; 32]) -> Result<String> {
+    pub async fn cancel_withdraw_approval(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
         // Build provider with signer and gas filler
         // Use with_recommended_fillers() to automatically fill nonce, gas, and fees
         let wallet = EthereumWallet::from(self.signer.clone());
@@ -103,7 +103,7 @@ impl EvmClient {
 
         // First check if the withdrawal exists and is cancellable
         let pending = contract
-            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+            .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to query pending withdrawal: {}", e))?;
@@ -122,7 +122,7 @@ impl EvmClient {
         }
 
         info!(
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             nonce = pending.nonce,
             amount = %pending.amount,
             approved_at = %pending.approvedAt,
@@ -130,7 +130,7 @@ impl EvmClient {
         );
 
         // Submit cancel transaction
-        let call = contract.withdrawCancel(FixedBytes::from(withdraw_hash));
+        let call = contract.withdrawCancel(FixedBytes::from(xchain_hash_id));
 
         let pending_tx = call
             .send()
@@ -152,7 +152,7 @@ impl EvmClient {
 
         info!(
             tx_hash = %tx_hash,
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             "Approval successfully cancelled on EVM"
         );
 
@@ -160,7 +160,7 @@ impl EvmClient {
     }
 
     /// Check if a withdrawal can be cancelled (submitted, approved, not cancelled, not executed)
-    pub async fn can_cancel(&self, withdraw_hash: [u8; 32]) -> Result<bool> {
+    pub async fn can_cancel(&self, xchain_hash_id: [u8; 32]) -> Result<bool> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
@@ -170,7 +170,7 @@ impl EvmClient {
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
         let pending = contract
-            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+            .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to query pending withdrawal: {}", e))?;
@@ -181,7 +181,7 @@ impl EvmClient {
             && !pending.executed;
 
         debug!(
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             submitted_at = %pending.submittedAt,
             approved = pending.approved,
             cancelled = pending.cancelled,

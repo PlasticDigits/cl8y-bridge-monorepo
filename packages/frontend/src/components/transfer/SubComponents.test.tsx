@@ -15,6 +15,8 @@ vi.mock('../../hooks/useTokenList', () => ({
 }))
 
 vi.mock('../../hooks/useTokenDisplayInfo', () => ({
+  useTerraTokenDisplayInfo: () => ({ displayLabel: 'LUNC', symbol: 'LUNC', addressForBlockie: undefined, hasLogo: true }),
+  useEvmTokenDisplayInfo: () => ({ displayLabel: '', symbol: '', hasLogo: false }),
   useTokenOptionsDisplayMap: () => ({}),
 }))
 
@@ -183,7 +185,8 @@ describe('FeeBreakdown', () => {
 
   it('should show receive amount with symbol', () => {
     render(<FeeBreakdown receiveAmount="99.7" symbol="LUNC" />)
-    expect(screen.getByText('99.7 LUNC')).toBeInTheDocument()
+    expect(screen.getByText('99.7')).toBeInTheDocument()
+    expect(screen.getByText('LUNC')).toBeInTheDocument()
   })
 })
 

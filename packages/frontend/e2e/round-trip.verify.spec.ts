@@ -24,7 +24,7 @@ import {
   parseDepositEvent,
   withdrawSubmitViaCast,
   withdrawExecuteViaCast,
-  computeWithdrawHashViaCast,
+  computeXchainHashIdViaCast,
   pollForApproval,
   pollForExecution,
   mintTestTokens,
@@ -120,7 +120,7 @@ test.describe('Round-Trip Transfer Verification', () => {
     console.log(`[round-trip] Leg 1 withdrawSubmit tx: ${wsTx1}`)
 
     // Compute hash and poll for approval — also use netAmount
-    const hash1 = computeWithdrawHashViaCast({
+    const hash1 = computeXchainHashIdViaCast({
       srcChain: srcChainAnvil,
       destChain: destChainAnvil1,
       srcAccount,
@@ -142,7 +142,7 @@ test.describe('Round-Trip Transfer Verification', () => {
         rpcUrl: ANVIL1_RPC,
         bridgeAddress: bridge1Address,
         privateKey: userKey,
-        withdrawHash: hash1,
+        xchainHashId: hash1,
       })
       console.log(`[round-trip] Leg 1 withdrawExecute tx: ${execTx1}`)
     } catch (e) {
@@ -202,7 +202,7 @@ test.describe('Round-Trip Transfer Verification', () => {
     console.log(`[round-trip] Leg 2 withdrawSubmit tx: ${wsTx2}`)
 
     // Compute hash and poll — also use netAmount
-    const hash2 = computeWithdrawHashViaCast({
+    const hash2 = computeXchainHashIdViaCast({
       srcChain: destChainAnvil1,
       destChain: destChainAnvil,
       srcAccount,
@@ -224,7 +224,7 @@ test.describe('Round-Trip Transfer Verification', () => {
         rpcUrl: ANVIL_RPC,
         bridgeAddress,
         privateKey: userKey,
-        withdrawHash: hash2,
+        xchainHashId: hash2,
       })
       console.log(`[round-trip] Leg 2 withdrawExecute tx: ${execTx2}`)
     } catch (e) {

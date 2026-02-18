@@ -239,7 +239,7 @@ setup-bridge:
 
 # Full E2E setup (infrastructure + contracts + tokens)
 e2e-setup:
-	./scripts/e2e-setup.sh
+	cd packages/frontend && npx tsx src/test/e2e-infra/setup.ts
 
 e2e-setup-full: e2e-setup deploy-tokens register-tokens
 	@echo "Full E2E setup complete with tokens"

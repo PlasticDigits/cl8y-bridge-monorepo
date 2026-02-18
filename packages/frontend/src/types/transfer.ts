@@ -30,13 +30,14 @@ export interface TransferRecord {
   txHash: string              // source chain deposit tx hash
   timestamp: number
   // V2 lifecycle tracking fields
-  transferHash?: string       // keccak256 transfer hash (computed from deposit params)
+  xchainHashId?: string       // keccak256 transfer hash (computed from deposit params)
   depositNonce?: number       // nonce from deposit event
   lifecycle?: TransferLifecycle
   withdrawSubmitTxHash?: string  // destination chain withdrawSubmit tx hash
   srcAccount?: string         // depositor address on source chain
   destAccount?: string        // recipient address on destination chain
   token?: string              // token identifier (denom or address)
+  tokenSymbol?: string        // human-readable token symbol (e.g. "LUNC", "TKNA")
   srcDecimals?: number        // token decimals on source chain
   destToken?: string          // token address on destination chain (bytes32 or hex)
   destTokenId?: string        // raw destination token identifier (e.g. "uluna" for Terra, EVM address for EVM)
@@ -44,7 +45,7 @@ export interface TransferRecord {
   sourceChainIdBytes4?: string // bytes4 hex of source chain (e.g. "0x00007a69")
 }
 
-export interface TransferHash {
+export interface XchainHashId {
   hash: string
   srcChain: string
   destChain: string

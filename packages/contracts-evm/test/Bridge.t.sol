@@ -487,15 +487,15 @@ contract BridgeTest is Test {
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
         // Get withdrawal hash
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         // Approve
         uint256 operatorBalanceBefore = operator.balance;
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         assertTrue(w.approved);
         assertEq(w.approvedAt, block.timestamp);
 
@@ -512,17 +512,17 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         // Cancel within window
         vm.prank(canceler);
-        bridge.withdrawCancel(withdrawHash);
+        bridge.withdrawCancel(xchainHashId);
 
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         assertTrue(w.cancelled);
     }
 
@@ -535,18 +535,18 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         // Fast forward past cancel window
         vm.warp(block.timestamp + 6 minutes);
 
         vm.prank(canceler);
         vm.expectRevert(IBridge.CancelWindowExpired.selector);
-        bridge.withdrawCancel(withdrawHash);
+        bridge.withdrawCancel(xchainHashId);
     }
 
     function test_WithdrawUncancel() public {
@@ -558,20 +558,20 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.prank(canceler);
-        bridge.withdrawCancel(withdrawHash);
+        bridge.withdrawCancel(xchainHashId);
 
         // Uncancel
         vm.prank(operator);
-        bridge.withdrawUncancel(withdrawHash);
+        bridge.withdrawUncancel(xchainHashId);
 
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         assertFalse(w.cancelled);
     }
 
@@ -592,20 +592,20 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
 
         // Approve
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         // Wait for cancel window
         vm.warp(block.timestamp + 6 minutes);
 
         // Execute
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        bridge.withdrawExecuteUnlock(xchainHashId);
 
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         assertTrue(w.executed);
         assertEq(token.balanceOf(recipient), 50 ether);
     }
@@ -621,17 +621,17 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
 
-        bridge.withdrawExecuteMint(withdrawHash);
+        bridge.withdrawExecuteMint(xchainHashId);
 
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         assertTrue(w.executed);
         assertEq(mintableToken.balanceOf(recipient), 50 ether);
     }
@@ -644,11 +644,11 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
-        vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawNotApproved.selector, withdrawHash));
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawNotApproved.selector, xchainHashId));
+        bridge.withdrawExecuteUnlock(xchainHashId);
     }
 
     function test_WithdrawExecute_RevertsDuringCancelWindow() public {
@@ -659,18 +659,18 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         // Try to execute immediately (within cancel window)
-        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(withdrawHash);
+        IBridge.PendingWithdraw memory w = bridge.getPendingWithdraw(xchainHashId);
         uint256 windowEnd = w.approvedAt + bridge.getCancelWindow();
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.CancelWindowActive.selector, windowEnd));
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        bridge.withdrawExecuteUnlock(xchainHashId);
     }
 
     function test_WithdrawExecute_RevertsIfCancelled() public {
@@ -681,19 +681,19 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, userDestAccount, address(token), 100 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.prank(canceler);
-        bridge.withdrawCancel(withdrawHash);
+        bridge.withdrawCancel(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
 
-        vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawCancelled.selector, withdrawHash));
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        vm.expectRevert(abi.encodeWithSelector(IBridge.WithdrawCancelled.selector, xchainHashId));
+        bridge.withdrawExecuteUnlock(xchainHashId);
     }
 
     // ============================================================================
@@ -1148,16 +1148,16 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.WrongTokenType.selector, address(mintableToken), "LockUnlock"));
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        bridge.withdrawExecuteUnlock(xchainHashId);
     }
 
     function test_WithdrawExecuteMint_RevertsIfWrongTokenType() public {
@@ -1171,16 +1171,16 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
 
         vm.expectRevert(abi.encodeWithSelector(IBridge.WrongTokenType.selector, address(token), "MintBurn"));
-        bridge.withdrawExecuteMint(withdrawHash);
+        bridge.withdrawExecuteMint(xchainHashId);
     }
 
     // ============================================================================
@@ -1203,14 +1203,14 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1, 18);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(token), 50 ether, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        bridge.withdrawExecuteUnlock(xchainHashId);
 
         assertEq(token.balanceOf(recipient), 50 ether);
     }
@@ -1232,14 +1232,14 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e24, 1, 24);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e24, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e24, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
-        bridge.withdrawExecuteUnlock(withdrawHash);
+        bridge.withdrawExecuteUnlock(xchainHashId);
 
         // Should receive 50 * 10^18 (normalized from 24 to 18 decimals)
         assertEq(token.balanceOf(recipient), 50 ether);
@@ -1257,14 +1257,14 @@ contract BridgeTest is Test {
             value: 0.01 ether
         }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1, 6);
 
-        bytes32 withdrawHash =
-            _computeWithdrawHash(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1);
+        bytes32 xchainHashId =
+            _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1);
 
         vm.prank(operator);
-        bridge.withdrawApprove(withdrawHash);
+        bridge.withdrawApprove(xchainHashId);
 
         vm.warp(block.timestamp + 6 minutes);
-        bridge.withdrawExecuteMint(withdrawHash);
+        bridge.withdrawExecuteMint(xchainHashId);
 
         // Should receive 50 * 10^18 (normalized from 6 to 18 decimals)
         assertEq(mintableToken.balanceOf(recipient), 50 ether);
@@ -1358,7 +1358,7 @@ contract BridgeTest is Test {
     // Helper Functions
     // ============================================================================
 
-    function _computeWithdrawHash(
+    function _computeXchainHashId(
         bytes4 srcChain,
         bytes32 srcAccount,
         bytes32 _destAccount,
@@ -1366,7 +1366,7 @@ contract BridgeTest is Test {
         uint256 amount,
         uint64 nonce
     ) internal view returns (bytes32) {
-        // Matches HashLib.computeTransferHash (7-field unified hash)
+        // Matches HashLib.computeXchainHashId (7-field unified hash)
         return keccak256(
             abi.encode(
                 bytes32(srcChain),

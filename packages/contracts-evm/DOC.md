@@ -96,7 +96,7 @@ function approveWithdraw(
    - `amount`: from event; `nonce`: from event.
    - `fee` and `feeRecipient`: set by policy; `feeRecipient` must be non-zero if `fee > 0`.
 3. Call `approveWithdraw(srcChainKey, token, to, amount, nonce, fee, feeRecipient, deductFromAmount)` on destination chain.
-4. If deposit is reorged out later, call `cancelWithdrawApproval(withdrawHash)`. If reappears and should be honored, call `reenableWithdrawApproval(withdrawHash)` (resets the delay timer).
+4. If deposit is reorged out later, call `cancelWithdrawApproval(xchainHashId)`. If reappears and should be honored, call `reenableWithdrawApproval(xchainHashId)` (resets the delay timer).
 
 ### Withdraw on Destination Chain (User)
 
@@ -120,8 +120,8 @@ function approveWithdraw(
   - `address(uint160(uint256(bytes32Value)))` for both `destAccount` and `destTokenAddress`.
 - Approval uniqueness and idempotency:
   - At destination chain, only one approval is allowed per `(srcChainKey, nonce)`.
-  - If a write may have succeeded, first read `getWithdrawApproval(withdrawHash)` before re-submitting.
-- Optional off-chain dedupe: compute `depositHash = keccak256(abi.encode(Deposit{...}))` if useful for tracking.
+  - If a write may have succeeded, first read `getWithdrawApproval(xchainHashId)` before re-submitting.
+- Optional off-chain dedupe: compute `xchainHashId = keccak256(abi.encode(Deposit{...}))` if useful for tracking.
 
 ---
 
@@ -172,7 +172,7 @@ Validation rules enforced by bridge:
 Data model (suggested):
 
 - Deposits: `(sourceChainId, txHash, logIndex)` and `(srcChainKey, nonce)`.
-- Approvals: `(destChainId, withdrawHash)` and `(srcChainKey, nonce)` with status: planned | approved | cancelled | reenabled | executed.
+- Approvals: `(destChainId, xchainHashId)` and `(srcChainKey, nonce)` with status: planned | approved | cancelled | reenabled | executed.
 
 Concurrency:
 
@@ -238,8 +238,8 @@ async function onDeposit(event) {
 
 - Bad Approvals:
 
-  - `cancelWithdrawApproval(withdrawHash)` to disable. This can be called during the withdrawDelay window; no delay check applies to cancellation.
-  - `reenableWithdrawApproval(withdrawHash)` to re-activate (resets `approvedAt`).
+  - `cancelWithdrawApproval(xchainHashId)` to disable. This can be called during the withdrawDelay window; no delay check applies to cancellation.
+  - `reenableWithdrawApproval(xchainHashId)` to re-activate (resets `approvedAt`).
 
 - Common Errors:
 

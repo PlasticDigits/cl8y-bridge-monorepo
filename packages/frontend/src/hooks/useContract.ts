@@ -34,7 +34,7 @@ export interface BridgeConfig {
 }
 
 export interface PendingApproval {
-  withdraw_hash: string;
+  xchain_hash_id: string;
   recipient: string;
   amount: string;
   approved_at: number;

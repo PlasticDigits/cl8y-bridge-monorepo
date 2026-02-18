@@ -29,7 +29,7 @@ describe('HashSearchBar', () => {
     await user.type(input, 'invalid')
     fireEvent.submit(screen.getByRole('button', { name: 'Verify' }).closest('form')!)
     expect(onSearch).not.toHaveBeenCalled()
-    expect(screen.getByText(/Invalid transfer hash/)).toBeInTheDocument()
+    expect(screen.getByText(/Invalid XChain Hash ID/)).toBeInTheDocument()
   })
 
   it('should accept hash with 0x prefix', async () => {

@@ -10,6 +10,7 @@
  * 6. Deploy TokenA/B/C on all 3 chains
  * 7. Register all tokens across all bridges
  * 8. Write contract addresses to .env.e2e.local
+ * 9. Start operator and canceler
  *
  * Used as globalSetup for both Vitest integration and Playwright E2E tests.
  */
@@ -34,6 +35,33 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 // We write VITE_* vars here so import.meta.env picks them up at dev time.
 const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 
+/**
+ * Start the canceler via canceler-ctl.sh (which sources .env.e2e.local automatically).
+ * Builds the binary first if needed, then starts instance 1.
+ */
+function startCanceler(rootDir: string): void {
+  // Build canceler (release) if binary doesn't exist
+  const cancelerBinary = resolve(rootDir, 'packages/canceler/target/release/cl8y-canceler')
+  if (!existsSync(cancelerBinary)) {
+    console.log('[setup] Building canceler (release)...')
+    execSync('cargo build --manifest-path packages/canceler/Cargo.toml --release', {
+      cwd: rootDir,
+      stdio: 'inherit',
+      timeout: 300_000,
+    })
+  }
+
+  try {
+    execSync('./scripts/canceler-ctl.sh start', {
+      cwd: rootDir,
+      stdio: 'inherit',
+      timeout: 30_000,
+    })
+  } catch (err) {
+    console.warn('[setup] Warning: canceler start failed:', (err as Error).message?.slice(0, 200))
+  }
+}
+
 export default async function setup(): Promise<void> {
   console.log('=== E2E Test Infrastructure Setup ===\n')
   const start = Date.now()
@@ -57,6 +85,8 @@ export default async function setup(): Promise<void> {
       }
       console.log('[setup] Ensuring operator is running...')
       await startOperator(ENV_FILE)
+      console.log('[setup] Ensuring canceler is running...')
+      startCanceler(ROOT_DIR)
       const elapsed = ((Date.now() - start) / 1000).toFixed(1)
       console.log(`\n=== E2E Setup Complete (reused, ${elapsed}s) ===\n`)
       return
@@ -228,6 +258,10 @@ export default async function setup(): Promise<void> {
     // 12. Start operator (force restart to pick up new contract addresses)
     console.log('\n[setup] Starting operator...')
     await startOperator(ENV_FILE, true)
+
+    // 13. Start canceler
+    console.log('\n[setup] Starting canceler...')
+    startCanceler(ROOT_DIR)
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1)
     console.log(`\n=== E2E Setup Complete (${elapsed}s) ===\n`)

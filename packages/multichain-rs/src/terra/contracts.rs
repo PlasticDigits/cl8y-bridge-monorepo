@@ -46,13 +46,13 @@ pub enum ExecuteMsg {
     /// Execute a previously approved withdrawal (after delay has elapsed)
     ExecuteWithdraw {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Cancel a withdrawal approval (canceler/operator/admin only)
     CancelWithdrawApproval {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 }
 
@@ -85,31 +85,31 @@ pub enum ExecuteMsgV2 {
     /// Operator approves a pending withdrawal
     WithdrawApprove {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Canceler cancels a pending withdrawal
     WithdrawCancel {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Admin un-cancels a previously cancelled withdrawal (for reorg recovery)
     WithdrawUncancel {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Execute a withdrawal (unlock mode) - for lock/unlock tokens
     WithdrawExecuteUnlock {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Execute a withdrawal (mint mode) - for mintable tokens
     WithdrawExecuteMint {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// Set incoming token mapping (source chain token → local token)
@@ -153,13 +153,13 @@ pub enum QueryMsg {
     /// Query a withdraw approval by hash
     WithdrawApproval {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// V2: Get pending withdrawal info
     PendingWithdraw {
         /// The withdraw hash (32 bytes as base64)
-        withdraw_hash: String,
+        xchain_hash_id: String,
     },
 
     /// V2: List pending withdrawals with cursor-based pagination
@@ -168,40 +168,14 @@ pub enum QueryMsg {
     /// Operators use this to find unapproved submissions to approve.
     /// Cancelers use this to find approved-but-not-executed entries to verify.
     PendingWithdrawals {
-        /// Cursor: the withdraw_hash (base64) of the last item from the previous page
+        /// Cursor: the xchain_hash_id (base64) of the last item from the previous page
         start_after: Option<String>,
         /// Max entries to return (default 10, max 30)
         limit: Option<u32>,
     },
 
-    /// Compute a withdraw hash from parameters (V1 - 32 byte chain keys)
-    ComputeWithdrawHash {
-        src_chain_key: String,
-        dest_chain_key: String,
-        dest_token_address: String,
-        dest_account: String,
-        amount: String,
-        nonce: u64,
-    },
-
-    /// V2: Compute a withdraw hash from parameters (4-byte chain IDs, legacy 6-field)
-    ComputeWithdrawHashV2 {
-        /// Source chain ID (4 bytes as base64)
-        src_chain: String,
-        /// Destination chain ID (4 bytes as base64)
-        dest_chain: String,
-        /// Destination token (32 bytes as base64)
-        dest_token: String,
-        /// Destination account (32 bytes as base64)
-        dest_account: String,
-        /// Amount
-        amount: String,
-        /// Nonce
-        nonce: u64,
-    },
-
-    /// V2: Compute unified transfer hash (7-field: srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
-    ComputeTransferHash {
+    /// Compute unified cross-chain hash ID (7-field: srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
+    ComputeXchainHashId {
         /// Source chain ID (4 bytes as base64)
         src_chain: String,
         /// Destination chain ID (4 bytes as base64)
@@ -282,12 +256,12 @@ pub fn build_approve_withdraw_msg(
 
 /// Build an ExecuteWithdraw message (V1 - Legacy)
 #[deprecated(note = "Use build_withdraw_execute_unlock_msg_v2 for V2 contracts")]
-pub fn build_execute_withdraw_msg(withdraw_hash: [u8; 32]) -> ExecuteMsg {
+pub fn build_execute_withdraw_msg(xchain_hash_id: [u8; 32]) -> ExecuteMsg {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsg::ExecuteWithdraw {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
@@ -360,46 +334,46 @@ pub fn build_withdraw_submit_msg_v2(
 /// Build a WithdrawApprove message (V2)
 ///
 /// In V2, operator just approves the hash. User already submitted the withdrawal.
-pub fn build_withdraw_approve_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteMsgV2 {
+pub fn build_withdraw_approve_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsgV2::WithdrawApprove {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
 /// Build a WithdrawCancel message (V2)
 #[allow(dead_code)]
-pub fn build_withdraw_cancel_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteMsgV2 {
+pub fn build_withdraw_cancel_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsgV2::WithdrawCancel {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
 /// Build a WithdrawUncancel message (V2)
 #[allow(dead_code)]
-pub fn build_withdraw_uncancel_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteMsgV2 {
+pub fn build_withdraw_uncancel_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsgV2::WithdrawUncancel {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
 /// Build a WithdrawExecuteUnlock message (V2)
 ///
 /// For lock/unlock tokens on Terra.
-pub fn build_withdraw_execute_unlock_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteMsgV2 {
+pub fn build_withdraw_execute_unlock_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsgV2::WithdrawExecuteUnlock {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
@@ -407,12 +381,12 @@ pub fn build_withdraw_execute_unlock_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteM
 ///
 /// For mintable tokens on Terra.
 #[allow(dead_code)]
-pub fn build_withdraw_execute_mint_msg_v2(withdraw_hash: [u8; 32]) -> ExecuteMsgV2 {
+pub fn build_withdraw_execute_mint_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;
 
     ExecuteMsgV2::WithdrawExecuteMint {
-        withdraw_hash: encoder.encode(withdraw_hash),
+        xchain_hash_id: encoder.encode(xchain_hash_id),
     }
 }
 
@@ -494,7 +468,7 @@ pub struct PendingWithdrawResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingWithdrawalEntry {
     /// The 32-byte withdraw hash as base64
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     /// Source chain ID (4 bytes as base64)
     pub src_chain: String,
     /// Source account (32 bytes as base64)
@@ -624,7 +598,7 @@ mod tests {
         let msg = build_withdraw_approve_msg_v2([1u8; 32]);
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("withdraw_approve"));
-        assert!(json.contains("withdraw_hash"));
+        assert!(json.contains("xchain_hash_id"));
     }
 
     #[test]
@@ -648,7 +622,7 @@ mod tests {
         assert!(json.contains("this_chain_id"));
 
         let msg = QueryMsg::PendingWithdraw {
-            withdraw_hash: "test".to_string(),
+            xchain_hash_id: "test".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("pending_withdraw"));

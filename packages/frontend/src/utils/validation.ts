@@ -15,11 +15,11 @@ export function isValidTerraAddress(value: string): boolean {
   return TERRA_ADDRESS_REGEX.test(value)
 }
 
-export function isValidTransferHash(value: string): boolean {
+export function isValidXchainHashId(value: string): boolean {
   return HEX_HASH_REGEX.test(value) || HEX_HASH_NO_PREFIX_REGEX.test(value)
 }
 
-export function normalizeTransferHash(value: string): string {
+export function normalizeXchainHashId(value: string): string {
   const trimmed = value.trim()
   if (HEX_HASH_NO_PREFIX_REGEX.test(trimmed)) {
     return `0x${trimmed}`

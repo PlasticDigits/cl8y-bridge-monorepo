@@ -8,7 +8,7 @@
 import { useCallback, useState } from 'react'
 import type { Hex } from 'viem'
 import {
-  computeTransferHash,
+  computeXchainHashId,
   normalizeHash,
 } from '../services/hashVerification'
 import { useMultiChainLookup } from './useMultiChainLookup'
@@ -63,7 +63,7 @@ export function useHashVerification() {
   // fill it from dest if available.
   const computedHash = (() => {
     if (dest) {
-      return computeTransferHash(
+      return computeXchainHashId(
         dest.srcChain,
         dest.destChain,
         dest.srcAccount,
@@ -74,7 +74,7 @@ export function useHashVerification() {
       )
     }
     if (source && source.destChain !== ZERO_BYTES32) {
-      return computeTransferHash(
+      return computeXchainHashId(
         source.srcChain,
         source.destChain,
         source.srcAccount,

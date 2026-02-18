@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { isValidTransferHash, normalizeTransferHash } from '../../utils/validation'
+import { isValidXchainHashId, normalizeXchainHashId } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 
 export interface HashSearchBarProps {
@@ -25,12 +25,12 @@ export function HashSearchBar({ onSearch, disabled, placeholder, initialValue }:
     e.preventDefault()
     const trimmed = value.trim()
     if (!trimmed) return
-    if (!isValidTransferHash(trimmed)) {
+    if (!isValidXchainHashId(trimmed)) {
       setInvalid(true)
       return
     }
     setInvalid(false)
-    onSearch(normalizeTransferHash(trimmed))
+    onSearch(normalizeXchainHashId(trimmed))
   }
 
   return (
@@ -60,7 +60,7 @@ export function HashSearchBar({ onSearch, disabled, placeholder, initialValue }:
         </button>
       </div>
       {invalid && (
-        <p className="text-xs text-red-400">Invalid transfer hash. Expected 64 hex characters (with or without 0x).</p>
+        <p className="text-xs text-red-400">Invalid XChain Hash ID. Expected 64 hex characters (with or without 0x).</p>
       )}
     </form>
   )

@@ -96,7 +96,7 @@ The V2 watchtower pattern is well-implemented:
 
 ### 2.4 Hash Computation (Strong)
 
-- 7-field unified hash matches EVM `HashLib.computeTransferHash` layout exactly.
+- 7-field unified hash matches EVM `HashLib.computeXchainHashId` layout exactly.
 - Chain IDs left-aligned in bytes32, amounts/nonces left-padded as uint256 big-endian.
 - Extensive cross-chain parity tests with known vectors.
 - Native token encoding uses `keccak256(denom)`, CW20 uses canonical address left-padded.

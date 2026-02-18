@@ -7,7 +7,7 @@
 //!
 //! 1. Canceler observes WithdrawApprove event on destination chain
 //! 2. Verifier queries source chain for matching deposit:
-//!    - For EVM source: calls `deposits(depositHash)` on EVM bridge
+//!    - For EVM source: calls `deposits(xchainHashId)` on EVM bridge
 //!    - For Terra source: calls `VerifyDeposit` query on Terra bridge
 //! 3. If deposit exists and parameters match → Valid
 //! 4. If deposit missing or parameters mismatch → Invalid → Submit cancellation
@@ -24,7 +24,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, error, info, warn};
 
-use crate::hash::{bytes32_to_hex, compute_transfer_hash};
+use crate::hash::{bytes32_to_hex, compute_xchain_hash_id};
 
 // EVM bridge contract interface for deposit verification (V2)
 //
@@ -36,7 +36,7 @@ sol! {
     #[sol(rpc)]
     contract Bridge {
         /// Get deposit record by hash (V2 DepositRecord struct)
-        function getDeposit(bytes32 depositHash) external view returns (
+        function getDeposit(bytes32 xchainHashId) external view returns (
             bytes4 destChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -52,7 +52,7 @@ sol! {
 /// Pending approval to verify (V2 - uses 4-byte chain IDs)
 #[derive(Debug, Clone)]
 pub struct PendingApproval {
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Source chain ID (4 bytes)
     pub src_chain_id: [u8; 4],
     /// Destination chain ID (4 bytes)
@@ -119,6 +119,7 @@ impl ApprovalVerifier {
     ///
     /// WARNING: Only use in tests where native == V2. In production,
     /// use `new_v2()` with explicitly resolved chain IDs.
+    #[deprecated(note = "Use new_v2 with explicit chain IDs from ChainRegistry")]
     #[allow(dead_code)]
     #[cfg(test)]
     pub fn new(
@@ -191,7 +192,7 @@ impl ApprovalVerifier {
     /// Verify an approval against the source chain
     pub async fn verify(&self, approval: &PendingApproval) -> Result<VerificationResult> {
         // First, verify the hash is correctly computed from the approval parameters
-        let computed_hash = compute_transfer_hash(
+        let computed_hash = compute_xchain_hash_id(
             &approval.src_chain_id,
             &approval.dest_chain_id,
             &approval.src_account,
@@ -201,17 +202,17 @@ impl ApprovalVerifier {
             approval.nonce,
         );
 
-        if computed_hash != approval.withdraw_hash {
+        if computed_hash != approval.xchain_hash_id {
             warn!(
                 expected = %bytes32_to_hex(&computed_hash),
-                got = %bytes32_to_hex(&approval.withdraw_hash),
+                got = %bytes32_to_hex(&approval.xchain_hash_id),
                 "Hash mismatch in approval - parameters don't match claimed hash"
             );
             return Ok(VerificationResult::Invalid {
                 reason: format!(
                     "Hash does not match parameters. Expected {}, got {}",
                     bytes32_to_hex(&computed_hash),
-                    bytes32_to_hex(&approval.withdraw_hash)
+                    bytes32_to_hex(&approval.xchain_hash_id)
                 ),
             });
         }
@@ -219,7 +220,7 @@ impl ApprovalVerifier {
         // Determine source chain type from chain ID
         if self.is_evm_chain(&approval.src_chain_id) {
             debug!(
-                hash = %bytes32_to_hex(&approval.withdraw_hash),
+                hash = %bytes32_to_hex(&approval.xchain_hash_id),
                 "Source is EVM chain, verifying deposit on EVM"
             );
             return self.verify_evm_deposit(approval).await;
@@ -227,7 +228,7 @@ impl ApprovalVerifier {
 
         if self.is_terra_chain(&approval.src_chain_id) {
             debug!(
-                hash = %bytes32_to_hex(&approval.withdraw_hash),
+                hash = %bytes32_to_hex(&approval.xchain_hash_id),
                 "Source is Terra chain, verifying deposit on Terra"
             );
             return self.verify_terra_deposit(approval).await;
@@ -253,7 +254,7 @@ impl ApprovalVerifier {
             src_chain_id = %hex::encode(approval.src_chain_id),
             known_evm_id = %hex::encode(self.evm_chain_id),
             known_terra_id = %hex::encode(self.terra_chain_id),
-            withdraw_hash = %bytes32_to_hex(&approval.withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&approval.xchain_hash_id),
             nonce = approval.nonce,
             unknown_chain_count = count,
             "UNKNOWN SOURCE CHAIN — cannot verify deposit, returning Pending (not cancelling). \
@@ -282,7 +283,7 @@ impl ApprovalVerifier {
         let bridge_addr_str = chain.bridge_address.as_str();
 
         debug!(
-            hash = %bytes32_to_hex(&approval.withdraw_hash),
+            hash = %bytes32_to_hex(&approval.xchain_hash_id),
             nonce = approval.nonce,
             amount = approval.amount,
             src_chain = %hex::encode(approval.src_chain_id),
@@ -311,14 +312,14 @@ impl ApprovalVerifier {
         let contract = Bridge::new(bridge_address, &provider);
 
         // Query the deposit by hash using V2 getDeposit()
-        let deposit_hash = FixedBytes::from(approval.withdraw_hash);
+        let xchain_hash_id = FixedBytes::from(approval.xchain_hash_id);
 
-        match contract.getDeposit(deposit_hash).call().await {
+        match contract.getDeposit(xchain_hash_id).call().await {
             Ok(deposit) => {
                 // Check if deposit exists (timestamp == 0 means no record)
                 if deposit.timestamp.is_zero() {
                     info!(
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         "No deposit found on EVM source chain (timestamp=0)"
                     );
                     return Ok(VerificationResult::Invalid {
@@ -329,7 +330,7 @@ impl ApprovalVerifier {
                 // Convert amount for comparison (V2 uses uint256, we use u128)
                 let deposit_amount: u128 = deposit.amount.try_into().unwrap_or_else(|_| {
                     warn!(
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         amount = %deposit.amount,
                         "Deposit amount exceeds u128::MAX"
                     );
@@ -341,7 +342,7 @@ impl ApprovalVerifier {
                     info!(
                         expected = approval.amount,
                         got = deposit_amount,
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         "Amount mismatch"
                     );
                     return Ok(VerificationResult::Invalid {
@@ -357,7 +358,7 @@ impl ApprovalVerifier {
                     info!(
                         expected = approval.nonce,
                         got = deposit.nonce,
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         "Nonce mismatch"
                     );
                     return Ok(VerificationResult::Invalid {
@@ -369,7 +370,7 @@ impl ApprovalVerifier {
                 }
 
                 info!(
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     nonce = approval.nonce,
                     amount = approval.amount,
                     dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
@@ -380,7 +381,7 @@ impl ApprovalVerifier {
             Err(e) => {
                 warn!(
                     error = %e,
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     "Failed to query EVM deposit - will retry"
                 );
                 Ok(VerificationResult::Pending)
@@ -396,20 +397,20 @@ impl ApprovalVerifier {
     /// `VerifyDeposit` which requires 6 fields.
     ///
     /// Response:
-    /// - Deposit exists: `{"data": {"deposit_hash": "...", "nonce": N, ...}}`
+    /// - Deposit exists: `{"data": {"xchain_hash_id": "...", "nonce": N, ...}}`
     /// - No deposit: `{"data": null}`
     async fn verify_terra_deposit(&self, approval: &PendingApproval) -> Result<VerificationResult> {
         debug!(
-            hash = %bytes32_to_hex(&approval.withdraw_hash),
+            hash = %bytes32_to_hex(&approval.xchain_hash_id),
             nonce = approval.nonce,
             "Querying Terra source chain for deposit"
         );
 
         // Use the DepositHash query which only needs the deposit hash.
-        // QueryMsg::DepositHash { deposit_hash: Binary } → Option<DepositInfoResponse>
+        // QueryMsg::DepositHash { xchain_hash_id: Binary } → Option<DepositInfoResponse>
         let query = serde_json::json!({
-            "deposit_hash": {
-                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(approval.withdraw_hash)
+            "xchain_hash_id": {
+                "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode(approval.xchain_hash_id)
             }
         });
 
@@ -429,8 +430,8 @@ impl ApprovalVerifier {
                     warn!(
                         status = %status,
                         body = %body,
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
-                        "Terra deposit_hash query returned error status"
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        "Terra xchain_hash_id query returned error status"
                     );
                     // For contract query errors (400/500), the query format may be wrong
                     // or the contract state is inconsistent. Return Pending for transient
@@ -446,7 +447,7 @@ impl ApprovalVerifier {
                 // - non-null means deposit exists → verify parameters
                 if data.is_null() {
                     info!(
-                        hash = %bytes32_to_hex(&approval.withdraw_hash),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
                         "No deposit found on Terra source chain"
                     );
                     return Ok(VerificationResult::Invalid {
@@ -459,7 +460,7 @@ impl ApprovalVerifier {
                 if let Some(dep_nonce) = deposit_nonce {
                     if dep_nonce != approval.nonce {
                         info!(
-                            hash = %bytes32_to_hex(&approval.withdraw_hash),
+                            hash = %bytes32_to_hex(&approval.xchain_hash_id),
                             expected_nonce = approval.nonce,
                             actual_nonce = dep_nonce,
                             "Deposit exists on Terra but nonce doesn't match"
@@ -479,7 +480,7 @@ impl ApprovalVerifier {
                     if let Ok(deposit_amount) = amount_str.parse::<u128>() {
                         if deposit_amount != approval.amount {
                             info!(
-                                hash = %bytes32_to_hex(&approval.withdraw_hash),
+                                hash = %bytes32_to_hex(&approval.xchain_hash_id),
                                 expected_amount = approval.amount,
                                 actual_amount = deposit_amount,
                                 "Deposit exists on Terra but amount doesn't match"
@@ -495,7 +496,7 @@ impl ApprovalVerifier {
                 }
 
                 info!(
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     nonce = approval.nonce,
                     "Deposit verified on Terra source chain"
                 );
@@ -504,7 +505,7 @@ impl ApprovalVerifier {
             Err(e) => {
                 warn!(
                     error = %e,
-                    hash = %bytes32_to_hex(&approval.withdraw_hash),
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
                     "Failed to query Terra deposit - will retry"
                 );
                 Ok(VerificationResult::Pending)
@@ -563,6 +564,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)]
     fn test_chain_id_matching_legacy() {
         let verifier = ApprovalVerifier::new(
             "http://localhost:8545",
@@ -639,28 +641,28 @@ mod tests {
         );
     }
 
-    /// Test that the Terra deposit_hash query JSON is correctly formatted.
+    /// Test that the Terra xchain_hash_id query JSON is correctly formatted.
     ///
     /// The DepositHash query uses the simpler format:
-    ///   {"deposit_hash": {"deposit_hash": "<base64-encoded-hash>"}}
+    ///   {"xchain_hash_id": {"xchain_hash_id": "<base64-encoded-hash>"}}
     ///
     /// Previously, the code used a malformed VerifyDeposit query with only 3 of 6
     /// required fields, causing the Terra contract to reject it. The error handler
     /// returned Pending (retry), creating an infinite loop that prevented fraud detection.
     #[test]
-    fn test_terra_deposit_hash_query_format() {
-        let deposit_hash = [0xABu8; 32];
+    fn test_terra_xchain_hash_id_query_format() {
+        let xchain_hash_id = [0xABu8; 32];
         let query = serde_json::json!({
-            "deposit_hash": {
-                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(deposit_hash)
+            "xchain_hash_id": {
+                "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode(xchain_hash_id)
             }
         });
 
         // Verify the query structure
         let query_str = serde_json::to_string(&query).unwrap();
         assert!(
-            query_str.contains("deposit_hash"),
-            "Query should contain deposit_hash key"
+            query_str.contains("xchain_hash_id"),
+            "Query should contain xchain_hash_id key"
         );
         assert!(
             !query_str.contains("verify_deposit"),
@@ -676,8 +678,8 @@ mod tests {
         );
 
         // Verify base64 encoding is correct
-        let expected_b64 = base64::engine::general_purpose::STANDARD.encode(deposit_hash);
-        let actual_b64 = query["deposit_hash"]["deposit_hash"].as_str().unwrap();
+        let expected_b64 = base64::engine::general_purpose::STANDARD.encode(xchain_hash_id);
+        let actual_b64 = query["xchain_hash_id"]["xchain_hash_id"].as_str().unwrap();
         assert_eq!(actual_b64, expected_b64, "Base64 encoding should match");
     }
 
@@ -700,7 +702,7 @@ mod tests {
         // Simulate a successful DepositHash response
         let response_json: serde_json::Value = serde_json::json!({
             "data": {
-                "deposit_hash": "AAAA",
+                "xchain_hash_id": "AAAA",
                 "src_account": "AAAC",
                 "dest_token_address": "AAAD",
                 "dest_account": "AAAE",
@@ -731,7 +733,7 @@ mod tests {
     fn test_terra_nonce_mismatch_detection() {
         let response_json: serde_json::Value = serde_json::json!({
             "data": {
-                "deposit_hash": "AAAA",
+                "xchain_hash_id": "AAAA",
                 "amount": "1000000",
                 "nonce": 42
             }
@@ -759,7 +761,7 @@ mod tests {
     /// itself is inconsistent, regardless of chain ID configuration.
     #[tokio::test]
     async fn test_unknown_chain_returns_pending_not_invalid() {
-        use crate::hash::compute_transfer_hash;
+        use crate::hash::compute_xchain_hash_id;
 
         let verifier = ApprovalVerifier::new_v2(
             "http://localhost:8545",
@@ -781,7 +783,7 @@ mod tests {
         let amount: u128 = 1000;
         let nonce: u64 = 1;
 
-        let valid_hash = compute_transfer_hash(
+        let valid_hash = compute_xchain_hash_id(
             &unknown_chain,
             &dest_chain,
             &src_account,
@@ -792,7 +794,7 @@ mod tests {
         );
 
         let approval = PendingApproval {
-            withdraw_hash: valid_hash,
+            xchain_hash_id: valid_hash,
             src_chain_id: unknown_chain,
             dest_chain_id: dest_chain,
             src_account,
@@ -843,7 +845,7 @@ mod tests {
 
         // Approval with zeroed hash that won't match computed hash
         let approval = PendingApproval {
-            withdraw_hash: [0u8; 32],
+            xchain_hash_id: [0u8; 32],
             src_chain_id: [0, 0, 0, 0xFF],
             dest_chain_id: [0, 0, 0, 1],
             src_account: [0u8; 32],

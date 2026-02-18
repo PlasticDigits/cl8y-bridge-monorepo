@@ -313,14 +313,14 @@ impl EvmUser {
         rpc_url: &str,
         chain_id: u64,
         bridge_address: Address,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<FixedBytes<32>> {
         use crate::evm::contracts::Bridge;
 
         let signer = self.create_signer(rpc_url, chain_id)?;
         let bridge = Bridge::new(bridge_address, signer.provider());
 
-        let call = bridge.withdrawExecuteUnlock(FixedBytes(withdraw_hash));
+        let call = bridge.withdrawExecuteUnlock(FixedBytes(xchain_hash_id));
         let pending_tx = call
             .send()
             .await
@@ -343,14 +343,14 @@ impl EvmUser {
         rpc_url: &str,
         chain_id: u64,
         bridge_address: Address,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<FixedBytes<32>> {
         use crate::evm::contracts::Bridge;
 
         let signer = self.create_signer(rpc_url, chain_id)?;
         let bridge = Bridge::new(bridge_address, signer.provider());
 
-        let call = bridge.withdrawExecuteMint(FixedBytes(withdraw_hash));
+        let call = bridge.withdrawExecuteMint(FixedBytes(xchain_hash_id));
         let pending_tx = call
             .send()
             .await
@@ -450,7 +450,7 @@ impl EvmUser {
         rpc_url: &str,
         chain_id: u64,
         bridge_address: Address,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<PendingWithdrawInfo> {
         use crate::evm::contracts::Bridge;
 
@@ -458,7 +458,7 @@ impl EvmUser {
         let bridge = Bridge::new(bridge_address, signer.provider());
 
         let result = bridge
-            .getPendingWithdraw(FixedBytes(withdraw_hash))
+            .getPendingWithdraw(FixedBytes(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;

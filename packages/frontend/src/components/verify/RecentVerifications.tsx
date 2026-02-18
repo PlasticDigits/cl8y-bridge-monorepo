@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { HashStatus } from '../../types/transfer'
 
 const STORAGE_KEY = 'cl8y-bridge-verifications'
@@ -47,10 +48,13 @@ export function RecentVerifications({ limit = DEFAULT_LIMIT }: { limit?: number 
             key={item.hash}
             className="flex items-center justify-between border-2 border-white/20 bg-[#161616] p-3"
           >
-            <code className="flex-1 truncate font-mono text-xs text-gray-300">
+            <Link
+              to={`/verify?hash=${encodeURIComponent(item.hash)}`}
+              className="flex-1 truncate font-mono text-xs text-cyan-300 hover:text-cyan-200 hover:underline"
+            >
               {item.hash.slice(0, 18)}…{item.hash.slice(-10)}
-            </code>
-            <span className="ml-2 text-xs text-gray-400">
+            </Link>
+            <span className="ml-2 shrink-0 text-xs text-gray-400">
               {new Date(item.timestamp).toLocaleString()}
             </span>
           </div>

@@ -11,7 +11,7 @@
  */
 
 import type { Hex } from 'viem'
-import { computeTransferHash } from './hashVerification'
+import { computeXchainHashId } from './hashVerification'
 import { getEvmClient } from './evmClient'
 import { queryEvmDeposit } from './evmBridgeQueries'
 import { queryTerraDeposit } from './terraBridgeQueries'
@@ -69,7 +69,7 @@ export async function detectAndGetFix(
   const wsChainBytes4 = bytes32ToBytes4(dest.destChain)
 
   // Correct hash = hash(actual_src=W, actual_dest=claimed_src, accounts, token, amount, nonce)
-  const correctHash = computeTransferHash(
+  const correctHash = computeXchainHashId(
     dest.destChain, // actual source = chain where WS was submitted
     dest.srcChain,  // actual destination = what was wrongly claimed as source
     dest.srcAccount,

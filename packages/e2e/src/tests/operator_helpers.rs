@@ -680,7 +680,7 @@ pub async fn poll_terra_for_approval(
                         if withdrawals.len() == page_limit as usize {
                             if let Some(last) = withdrawals.last() {
                                 start_after = last
-                                    .get("withdraw_hash")
+                                    .get("xchain_hash_id")
                                     .and_then(|h| h.as_str())
                                     .map(|s| s.to_string());
                                 continue; // fetch next page
@@ -1235,14 +1235,14 @@ pub async fn wait_for_batch_approvals(
 /// Check if an approval has timed out (past its deadline)
 pub async fn is_approval_timed_out(
     config: &E2eConfig,
-    withdraw_hash: B256,
+    xchain_hash_id: B256,
     deadline_seconds: u64,
 ) -> Result<bool> {
     let client = reqwest::Client::new();
 
     let sel = selector("pendingWithdraws(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let call_data = format!("0x{}{}", sel, xchain_hash_id_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())

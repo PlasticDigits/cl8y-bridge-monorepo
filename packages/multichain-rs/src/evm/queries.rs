@@ -129,11 +129,11 @@ impl EvmQueryClient {
     /// Get pending withdrawal info
     pub async fn get_pending_withdraw(
         &self,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<PendingWithdrawInfo> {
         let bridge = Bridge::new(self.bridge_address, &self.provider);
         let result = bridge
-            .getPendingWithdraw(FixedBytes(withdraw_hash))
+            .getPendingWithdraw(FixedBytes(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;

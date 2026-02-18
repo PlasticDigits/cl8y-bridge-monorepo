@@ -61,7 +61,7 @@ describe('parseTerraLockReceipt', () => {
     expect(result!.sender).toBe('terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v')
   })
 
-  it('should extract deposit_hash from events', async () => {
+  it('should extract xchain_hash_id from events', async () => {
     const mockHash = '0x2ddcbf1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
     global.fetch = vi.fn().mockResolvedValueOnce(
       mockOkFetch(
@@ -70,14 +70,14 @@ describe('parseTerraLockReceipt', () => {
           { key: 'nonce', value: '5' },
           { key: 'amount', value: '1000000' },
           { key: 'token', value: 'uluna' },
-          { key: 'deposit_hash', value: mockHash },
+          { key: 'xchain_hash_id', value: mockHash },
         ]),
       ),
     )
 
     const result = await parseTerraLockReceipt('ABC123', MOCK_LCD_URL, NO_RETRY)
     expect(result).not.toBeNull()
-    expect(result!.depositHash).toBe(mockHash)
+    expect(result!.xchainHashId).toBe(mockHash)
   })
 
   it('should extract dest_token_address from events', async () => {
@@ -90,7 +90,7 @@ describe('parseTerraLockReceipt', () => {
           { key: 'amount', value: '500000' },
           { key: 'token', value: 'uluna' },
           { key: 'dest_token_address', value: mockDestToken },
-          { key: 'deposit_hash', value: '0xaabbccdd' },
+          { key: 'xchain_hash_id', value: '0xaabbccdd' },
         ]),
       ),
     )
@@ -98,10 +98,10 @@ describe('parseTerraLockReceipt', () => {
     const result = await parseTerraLockReceipt('ABC123', MOCK_LCD_URL, NO_RETRY)
     expect(result).not.toBeNull()
     expect(result!.destTokenAddress).toBe(mockDestToken)
-    expect(result!.depositHash).toBe('0xaabbccdd')
+    expect(result!.xchainHashId).toBe('0xaabbccdd')
   })
 
-  it('should return undefined for deposit_hash and dest_token_address when not in events', async () => {
+  it('should return undefined for xchain_hash_id and dest_token_address when not in events', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       mockOkFetch(
         mockLcdResponse([
@@ -116,7 +116,7 @@ describe('parseTerraLockReceipt', () => {
     const result = await parseTerraLockReceipt('ABC123', MOCK_LCD_URL, NO_RETRY)
     expect(result).not.toBeNull()
     expect(result!.nonce).toBe(0)
-    expect(result!.depositHash).toBeUndefined()
+    expect(result!.xchainHashId).toBeUndefined()
     expect(result!.destTokenAddress).toBeUndefined()
   })
 
@@ -146,7 +146,7 @@ describe('parseTerraLockReceipt', () => {
   it('should handle base64-encoded attributes', async () => {
     const nonceKeyB64 = btoa('nonce')
     const nonceValB64 = btoa('5')
-    const hashKeyB64 = btoa('deposit_hash')
+    const hashKeyB64 = btoa('xchain_hash_id')
     const hashValB64 = btoa('0xdeadbeef')
     const destTokenKeyB64 = btoa('dest_token_address')
     const destTokenValB64 = btoa('0x0000000000000000000000001234567890abcdef1234567890abcdef12345678')
@@ -168,7 +168,7 @@ describe('parseTerraLockReceipt', () => {
     expect(result).not.toBeNull()
     expect(result!.nonce).toBe(5)
     expect(result!.amount).toBe('999')
-    expect(result!.depositHash).toBe('0xdeadbeef')
+    expect(result!.xchainHashId).toBe('0xdeadbeef')
     expect(result!.destTokenAddress).toBe(
       '0x0000000000000000000000001234567890abcdef1234567890abcdef12345678',
     )

@@ -1,8 +1,8 @@
 /**
  * Hash Verification Service
  *
- * Computes transfer hashes matching HashLib.computeTransferHash (Solidity) and
- * multichain-rs compute_transfer_hash (Rust). Used for cross-chain verification.
+ * Computes transfer hashes matching HashLib.computeXchainHashId (Solidity) and
+ * multichain-rs compute_xchain_hash_id (Rust). Used for cross-chain verification.
  *
  * V2 Format: keccak256(abi.encode(
  *   bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
@@ -54,7 +54,7 @@ export function keccak256Uluna(): Hex {
 }
 
 /**
- * Compute transfer hash matching HashLib.computeTransferHash.
+ * Compute transfer hash matching HashLib.computeXchainHashId.
  *
  * @param srcChain - Source chain bytes4 as bytes32 (use chainIdToBytes32)
  * @param destChain - Dest chain bytes4 as bytes32
@@ -64,7 +64,7 @@ export function keccak256Uluna(): Hex {
  * @param amount - Transfer amount
  * @param nonce - Deposit nonce
  */
-export function computeTransferHash(
+export function computeXchainHashId(
   srcChain: Hex,
   destChain: Hex,
   srcAccount: Hex,
@@ -84,7 +84,7 @@ export function computeTransferHash(
  * Compute transfer hash from EVM DepositRecord fields.
  * Call with thisChainId (source) and record from getDeposit(hash).
  */
-export function computeTransferHashFromDeposit(
+export function computeXchainHashIdFromDeposit(
   thisChainId: number,
   destChain: Hex,
   srcAccount: Hex,
@@ -94,14 +94,14 @@ export function computeTransferHashFromDeposit(
   nonce: bigint
 ): Hex {
   const srcChain = chainIdToBytes32(thisChainId)
-  return computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
+  return computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
 }
 
 /**
  * Compute transfer hash from EVM PendingWithdraw fields.
  * Call with thisChainId (dest) and withdraw from getPendingWithdraw(hash).
  */
-export function computeTransferHashFromWithdraw(
+export function computeXchainHashIdFromWithdraw(
   srcChain: Hex,
   thisChainId: number,
   srcAccount: Hex,
@@ -111,7 +111,7 @@ export function computeTransferHashFromWithdraw(
   nonce: bigint
 ): Hex {
   const destChain = chainIdToBytes32(thisChainId)
-  return computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
+  return computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
 }
 
 /**
@@ -121,7 +121,7 @@ export function normalizeHash(hash: string): Hex {
   const trimmed = hash.trim().toLowerCase()
   if (/^0x[a-f0-9]{64}$/.test(trimmed)) return trimmed as Hex
   if (/^[a-f0-9]{64}$/.test(trimmed)) return (`0x${trimmed}` as Hex)
-  throw new Error('Invalid transfer hash format (expected 64 hex chars)')
+  throw new Error('Invalid XChain Hash ID format (expected 64 hex chars)')
 }
 
 /**

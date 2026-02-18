@@ -24,10 +24,10 @@ use std::time::{Duration, Instant};
 
 ### 1. test_withdraw_hash_computation
 
-Verify that Rust's compute_withdraw_hash function produces correct results by computing a hash and verifying the parameters are ABI-encoded correctly.
+Verify that Rust's compute_xchain_hash_id function produces correct results by computing a hash and verifying the parameters are ABI-encoded correctly.
 
 Implementation requirements:
-- Use `super::helpers::compute_withdraw_hash` function
+- Use `super::helpers::compute_xchain_hash_id` function
 - Create test parameters: src_chain_key (B256), token (Address), to (Address), dest_account (B256), amount (U256), nonce (u64)
 - Compute the hash and verify it's non-zero
 - Verify the hash changes when parameters change (determinism check)
@@ -48,7 +48,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     let nonce = 1u64;
 
     // Compute hash using helper
-    let hash1 = super::helpers::compute_withdraw_hash(
+    let hash1 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         token,
         to,
@@ -63,7 +63,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     }
 
     // Verify hash changes with different nonce (determinism)
-    let hash2 = super::helpers::compute_withdraw_hash(
+    let hash2 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         token,
         to,
@@ -81,7 +81,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     }
 
     // Verify hash is stable (same params = same hash)
-    let hash3 = super::helpers::compute_withdraw_hash(
+    let hash3 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         token,
         to,

@@ -697,7 +697,7 @@ sequenceDiagram
     
     rect rgb(255, 235, 238)
         Note over User,Guard: Guard Checks
-        User->>Router: withdraw{value: fee}(withdrawHash)
+        User->>Router: withdraw{value: fee}(xchainHashId)
         Router->>Guard: checkAccount(msg.sender)
         Router->>Guard: checkAccount(w.to)
         Router->>Guard: checkWithdraw(token, amount, sender)
@@ -705,11 +705,11 @@ sequenceDiagram
     
     rect rgb(232, 245, 233)
         Note over Router,Token: Bridge Execution
-        Router->>Bridge: getWithdrawApproval(withdrawHash)
+        Router->>Bridge: getWithdrawApproval(xchainHashId)
         Bridge-->>Router: approval (deductFromAmount=false)
         Router->>Router: Verify msg.value >= fee
         
-        Router->>Bridge: withdraw{value: msg.value}(withdrawHash)
+        Router->>Bridge: withdraw{value: msg.value}(xchainHashId)
         Bridge->>Bridge: Verify approval is executable
         Bridge->>Bridge: Verify delay has elapsed
         Bridge->>Bridge: Mark approval as executed
@@ -759,23 +759,23 @@ sequenceDiagram
     Note over User,WETH: Phase 2: Native Withdrawal
     
     rect rgb(232, 245, 233)
-        User->>Router: withdrawNative(withdrawHash)
+        User->>Router: withdrawNative(xchainHashId)
         Note right of User: No msg.value needed (fee from amount)
         
         Router->>Guard: checkAccount(msg.sender)
         Router->>Guard: checkAccount(beneficiary)
         Router->>Guard: checkWithdraw(WETH, amount, sender)
         
-        Router->>Bridge: getWithdrawFromHash(withdrawHash)
+        Router->>Bridge: getWithdrawFromHash(xchainHashId)
         Bridge-->>Router: w (token=WETH, to=Router)
         Router->>Router: Verify w.token == wrappedNative
         Router->>Router: Verify w.to == router
         
-        Router->>Bridge: getWithdrawApproval(withdrawHash)
+        Router->>Bridge: getWithdrawApproval(xchainHashId)
         Bridge-->>Router: approval (deductFromAmount=true)
         Router->>Router: Verify fee <= amount
         
-        Router->>Bridge: withdraw(withdrawHash)
+        Router->>Bridge: withdraw(xchainHashId)
         Bridge->>LU: unlock(router, WETH, amount)
         LU->>WETH: transfer(router, amount)
         WETH-->>LU: ✓ WETH to Router

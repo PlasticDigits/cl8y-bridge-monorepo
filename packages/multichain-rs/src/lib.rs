@@ -50,15 +50,15 @@ pub use address_codec::{
 };
 
 pub use hash::{
-    address_to_bytes32, bytes32_to_address, bytes32_to_hex, bytes4_to_hex, compute_deposit_hash,
-    compute_transfer_hash, compute_withdraw_hash, keccak256,
+    address_to_bytes32, bytes32_to_address, bytes32_to_hex, bytes4_to_hex, compute_xchain_hash_id,
+    keccak256,
 };
 
 pub use discovery::{additional_chains, discover_chains, DiscoveredChain, KnownChain};
 pub use multi_evm::{validate_rpc_url, EvmChainConfig, MultiEvmConfig};
 pub use types::{
     ChainId, ChainRegistration, EvmAddress, FeeCalculator, FeeParams, OperatorGasConfig, Status,
-    TokenDestination, TokenRegistration, TokenType, WithdrawHash,
+    TokenDestination, TokenRegistration, TokenType, XchainHashId,
 };
 pub use verification::{
     build_source_endpoints, route_verification, verify_evm_deposit, verify_terra_deposit,

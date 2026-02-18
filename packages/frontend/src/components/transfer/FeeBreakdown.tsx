@@ -1,14 +1,14 @@
 import { BRIDGE_CONFIG } from '../../utils/constants'
-import { TokenLogo } from '../ui'
+import { TokenDisplay } from '../ui'
 
 export interface FeeBreakdownProps {
   receiveAmount: string
-  /** Display symbol (from tokenlist or shortened address), not raw token id */
+  /** Display symbol when known (avoids async lookup) */
   symbol?: string
-  /** Token id for logo lookup when symbol does not resolve to a known logo */
+  /** Token id (denom, CW20 addr, or EVM addr) for logo + symbol resolution */
   tokenId?: string
-  /** Address for blockie when no logo (terra1... or 0x...) */
-  addressForBlockie?: string
+  /** Destination chain id - enables EVM on-chain symbol fetch when token is 0x... */
+  destChain?: string
   /** Explorer URL for token on destination chain - links token, not source */
   tokenExplorerUrl?: string
 }
@@ -17,14 +17,14 @@ export function FeeBreakdown({
   receiveAmount,
   symbol = 'LUNC',
   tokenId,
-  addressForBlockie,
+  destChain,
   tokenExplorerUrl,
 }: FeeBreakdownProps) {
   const tokenContent = (
-    <>
-      <TokenLogo symbol={symbol} tokenId={tokenId} addressForBlockie={addressForBlockie} size={16} />
-      {receiveAmount} {symbol}
-    </>
+    <span className="inline-flex items-center gap-1.5">
+      {receiveAmount}{' '}
+      <TokenDisplay tokenId={tokenId} symbol={symbol} sourceChain={destChain} size={16} />
+    </span>
   )
 
   return (

@@ -18,20 +18,22 @@ interface TokenDestMappingResponse {
 
 /**
  * Convert bytes4 hex (e.g. 0x00000003) to base64 Binary for CosmWasm.
+ * Uses browser-native APIs (no Node.js Buffer).
  */
 function bytes4ToBase64(bytes4Hex: string): string {
   const clean = bytes4Hex.replace(/^0x/, '').toLowerCase()
   if (clean.length !== 8) throw new Error('bytes4 must be 8 hex chars')
-  const bytes = Buffer.from(clean, 'hex')
-  return bytes.toString('base64')
+  const arr = new Uint8Array(clean.match(/.{2}/g)!.map((b) => parseInt(b, 16)))
+  return btoa(String.fromCharCode(...arr))
 }
 
 /**
  * Decode base64 Binary to hex (32 bytes -> 0x...).
+ * Uses browser-native APIs (no Node.js Buffer).
  */
 function base64ToHex(b64: string): string {
-  const bytes = Buffer.from(b64, 'base64')
-  return '0x' + bytes.toString('hex')
+  const raw = atob(b64)
+  return '0x' + Array.from(raw, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
 }
 
 /**

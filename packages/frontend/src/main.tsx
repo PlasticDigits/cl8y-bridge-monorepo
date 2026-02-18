@@ -29,7 +29,7 @@ function App() {
             }
           />
           <Route
-            path="/transfer/:transferHash"
+            path="/transfer/:xchainHashId"
             element={
               <Suspense fallback={<PageFallback />}>
                 <TransferStatusPage />

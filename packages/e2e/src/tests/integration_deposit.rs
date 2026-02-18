@@ -254,7 +254,7 @@ pub async fn test_evm_to_terra_with_verification(
         Ok(approval) => {
             info!(
                 "Cross-chain approval confirmed on EVM: 0x{}",
-                hex::encode(&approval.withdraw_hash.as_slice()[..8])
+                hex::encode(&approval.xchain_hash_id.as_slice()[..8])
             );
         }
         Err(e) => {

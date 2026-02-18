@@ -51,6 +51,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'evm',
       name: 'Ethereum',
       rpcUrl: import.meta.env.VITE_ETH_RPC_URL || 'https://eth.llamarpc.com',
+      rpcFallbacks: ['https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com'],
       bridgeAddress: import.meta.env.VITE_ETH_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000001',
     },
@@ -59,6 +60,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'evm',
       name: 'BSC Testnet',
       rpcUrl: 'https://data-seed-prebsc-1-s1.binance.org:8545',
+      rpcFallbacks: ['https://data-seed-prebsc-2-s1.binance.org:8545'],
       bridgeAddress: import.meta.env.VITE_BSC_TESTNET_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000061', // 97 = 0x61
     },
@@ -90,6 +92,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'evm',
       name: 'Ethereum',
       rpcUrl: import.meta.env.VITE_ETH_RPC_URL || 'https://eth.llamarpc.com',
+      rpcFallbacks: ['https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com'],
       bridgeAddress: import.meta.env.VITE_ETH_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000001',
     },
@@ -98,6 +101,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'evm',
       name: 'BNB Chain',
       rpcUrl: 'https://bsc-dataseed1.binance.org',
+      rpcFallbacks: ['https://bsc-dataseed2.binance.org', 'https://rpc.ankr.com/bsc'],
       bridgeAddress: import.meta.env.VITE_BSC_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000038', // 56 = 0x38
     },
@@ -106,6 +110,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'evm',
       name: 'opBNB',
       rpcUrl: 'https://opbnb-mainnet-rpc.bnbchain.org',
+      rpcFallbacks: ['https://opbnb-rpc.publicnode.com'],
       bridgeAddress: import.meta.env.VITE_OPBNB_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x000000cc', // 204 = 0xcc
     },

@@ -32,7 +32,7 @@ The response is iterated once (`watcher.rs:570-648`) with no continuation.
 Replace the single query with a loop that pages through all pending withdrawals until the contract returns fewer results than the page size.
 
 - Build the first query with `{"pending_withdrawals": {"limit": 50}}`.
-- On each response, if the result array length equals the page size, extract the last `withdraw_hash` and issue a follow-up query: `{"pending_withdrawals": {"limit": 50, "start_after": "<last_hash_b64>"}}`.
+- On each response, if the result array length equals the page size, extract the last `xchain_hash_id` and issue a follow-up query: `{"pending_withdrawals": {"limit": 50, "start_after": "<last_hash_b64>"}}`.
 - Continue until the response contains fewer than `limit` entries.
 - Cap the total number of pages per poll cycle at a configurable maximum (default 20, i.e., 1000 approvals) to bound poll duration. Log a warning if the cap is reached.
 
@@ -172,7 +172,7 @@ In `submit_cancel` (`src/watcher.rs:793-809`), when `evm_client.can_cancel()` re
 Err(e) => {
     warn!(
         error = %e,
-        hash = %bytes32_to_hex(&withdraw_hash),
+        hash = %bytes32_to_hex(&xchain_hash_id),
         "Failed to check can_cancel on EVM, will try anyway"
     );
     true // Try anyway
@@ -201,7 +201,7 @@ Implement as a simple loop inside `submit_cancel` (no new async machinery needed
 let mut can_cancel_evm = false;
 let mut last_err = None;
 for attempt in 0..=self.config.evm_precheck_max_retries {
-    match self.evm_client.can_cancel(withdraw_hash).await {
+    match self.evm_client.can_cancel(xchain_hash_id).await {
         Ok(can) => { can_cancel_evm = can; break; }
         Err(e) => {
             last_err = Some(e);

@@ -1,7 +1,7 @@
 /**
  * Transfer Status Page
  *
- * Route: /transfer/:transferHash
+ * Route: /transfer/:xchainHashId
  *
  * Shows a stepper UI tracking the full V2 bridge transfer lifecycle:
  *   1. Deposit (confirmed on source chain)
@@ -24,10 +24,10 @@ import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
-import { formatDuration } from '../utils/format'
+import { formatCountdownMmSs } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
-import { computeTransferHash, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
-import { isValidTransferHash, normalizeTransferHash } from '../utils/validation'
+import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
+import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
@@ -134,22 +134,22 @@ function TransferDetails({ transfer }: { transfer: TransferRecord }) {
   const [copied, setCopied] = useState(false)
 
   const copyHash = useCallback(() => {
-    if (transfer.transferHash) {
-      navigator.clipboard.writeText(transfer.transferHash)
+    if (transfer.xchainHashId) {
+      navigator.clipboard.writeText(transfer.xchainHashId)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
-  }, [transfer.transferHash])
+  }, [transfer.xchainHashId])
 
   return (
     <div className="space-y-3 text-sm">
-      {/* Transfer hash */}
-      {transfer.transferHash && (
+      {/* XChain Hash ID */}
+      {transfer.xchainHashId && (
         <div>
-          <p className="text-xs uppercase tracking-wide text-gray-400 mb-1">Transfer Hash</p>
+          <p className="text-xs uppercase tracking-wide text-gray-400 mb-1">XChain Hash ID</p>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate font-mono text-xs text-gray-200 bg-black/40 border border-gray-700 px-2 py-1">
-              {transfer.transferHash}
+              {transfer.xchainHashId}
             </code>
             <button
               type="button"
@@ -238,7 +238,7 @@ function buildTransferFromLookup(
     status: 'confirmed',
     txHash: '', // Not available from on-chain lookup
     timestamp: Date.now(),
-    transferHash: hash,
+    xchainHashId: hash,
     lifecycle,
     srcAccount: source?.srcAccount,
     destAccount: source?.destAccount,
@@ -248,47 +248,76 @@ function buildTransferFromLookup(
 }
 
 export default function TransferStatusPage() {
-  const { transferHash } = useParams<{ transferHash: string }>()
-  const { getTransferByHash, updateTransferRecord } = useTransferStore()
+  const { xchainHashId } = useParams<{ xchainHashId: string }>()
+  const { getTransferByXchainHashId, updateTransferRecord } = useTransferStore()
   const { lookup, source, sourceChain, dest, destChain, loading: lookupLoading } = useMultiChainLookup()
 
   const [transfer, setTransfer] = useState<TransferRecord | null>(null)
 
   // Try to find the transfer by hash in store; otherwise reset for lookup
   useEffect(() => {
-    if (!transferHash) return
-    const found = getTransferByHash(transferHash)
+    if (!xchainHashId) return
+    const found = getTransferByXchainHashId(xchainHashId)
     setTransfer(found || null)
-  }, [transferHash, getTransferByHash])
+  }, [xchainHashId, getTransferByXchainHashId])
 
   // Lookup on chain for any valid hash (needed for synthetic transfer when not in store,
   // and for broken-transfer detection when transfer is in store)
   useEffect(() => {
-    if (!transferHash) return
-    if (!isValidTransferHash(transferHash)) return
-    lookup(normalizeTransferHash(transferHash) as `0x${string}`)
-  }, [transferHash, lookup])
+    if (!xchainHashId) return
+    if (!isValidXchainHashId(xchainHashId)) return
+    lookup(normalizeXchainHashId(xchainHashId) as `0x${string}`)
+  }, [xchainHashId, lookup])
 
   // Build transfer from lookup when we have chain data and no store match
   useEffect(() => {
-    if (!transferHash) return
-    if (getTransferByHash(transferHash)) return
+    if (!xchainHashId) return
+    if (getTransferByXchainHashId(xchainHashId)) return
     if (lookupLoading || (!source && !dest)) return
     const synthetic = buildTransferFromLookup(
-      normalizeTransferHash(transferHash),
+      normalizeXchainHashId(xchainHashId),
       source,
       sourceChain,
       dest,
       destChain
     )
     setTransfer(synthetic)
-  }, [transferHash, source, sourceChain, dest, destChain, lookupLoading, getTransferByHash])
+  }, [xchainHashId, source, sourceChain, dest, destChain, lookupLoading, getTransferByXchainHashId])
+
+  // Sync stale localStorage lifecycle with on-chain data.
+  // When the on-chain lookup shows a more advanced lifecycle than what's stored,
+  // update the stored record. Handles the case where the user left the page
+  // before the TransferStatusPage polling could update the lifecycle.
+  useEffect(() => {
+    if (!xchainHashId || lookupLoading) return
+    const stored = getTransferByXchainHashId(xchainHashId)
+    if (!stored) return
+
+    const onChainLifecycle: TransferLifecycle | undefined = dest?.executed
+      ? 'executed'
+      : dest?.approved
+      ? 'approved'
+      : dest
+      ? 'hash-submitted'
+      : undefined
+
+    if (!onChainLifecycle) return
+
+    const ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
+    const storedIdx = ORDER.indexOf(stored.lifecycle || 'deposited')
+    const chainIdx = ORDER.indexOf(onChainLifecycle)
+
+    if (chainIdx > storedIdx) {
+      updateTransferRecord(stored.id, { lifecycle: onChainLifecycle })
+      setTransfer((prev) => prev ? { ...prev, lifecycle: onChainLifecycle } : null)
+    }
+  }, [xchainHashId, dest, lookupLoading, getTransferByXchainHashId, updateTransferRecord])
 
   // Listen for store updates
   useEffect(() => {
     const handler = () => {
-      if (!transferHash) return
-      const found = getTransferByHash(transferHash)
+      if (!xchainHashId) return
+      const found = getTransferByXchainHashId(xchainHashId)
       if (found) setTransfer(found)
     }
     window.addEventListener('cl8y-transfer-updated', handler)
@@ -297,7 +326,7 @@ export default function TransferStatusPage() {
       window.removeEventListener('cl8y-transfer-updated', handler)
       window.removeEventListener('cl8y-transfer-recorded', handler)
     }
-  }, [transferHash, getTransferByHash])
+  }, [xchainHashId, getTransferByXchainHashId])
 
   // --- Terra nonce resolution ---
   // For terra-to-evm transfers that lack a depositNonce, parse it from LCD.
@@ -372,7 +401,7 @@ export default function TransferStatusPage() {
             tokenB32 = '0x' + '0'.repeat(64)
           }
 
-          computedHash = computeTransferHash(
+          computedHash = computeXchainHashId(
             srcChainB32 as `0x${string}`,
             destChainB32 as `0x${string}`,
             srcAccB32 as `0x${string}`,
@@ -396,7 +425,7 @@ export default function TransferStatusPage() {
       updateTransferRecord(transfer.id, {
         depositNonce: parsed.nonce,
         ...(parsed.amount ? { amount: parsed.amount } : {}),
-        ...(computedHash ? { transferHash: computedHash } : {}),
+        ...(computedHash ? { xchainHashId: computedHash } : {}),
       })
       setNonceStatus('resolved')
     }).catch((err) => {
@@ -412,11 +441,44 @@ export default function TransferStatusPage() {
     blockReason: autoBlockReason,
     canAutoSubmit,
     triggerSubmit,
+    resetForRetry,
   } = useAutoWithdrawSubmit(transfer)
 
+  // Detect: hash-submitted in localStorage but not on destination chain (tx reverted/lost).
+  // Suppress when auto-submit is actively processing (submit just succeeded, polling will catch up).
+  const autoSubmitActive =
+    autoPhase === 'submitting-hash' ||
+    autoPhase === 'waiting-approval' ||
+    autoPhase === 'waiting-execution' ||
+    autoPhase === 'switching-chain' ||
+    autoPhase === 'complete'
+  const hashSubmittedButMissing =
+    transfer?.lifecycle === 'hash-submitted' &&
+    !lookupLoading &&
+    source != null &&
+    dest == null &&
+    !autoSubmitActive
+
+  const [retryingHash, setRetryingHash] = useState(false)
+
+  const handleRetryHashSubmission = useCallback(() => {
+    if (!transfer) return
+    setRetryingHash(true)
+    resetForRetry()
+    updateTransferRecord(transfer.id, { lifecycle: 'deposited' })
+    setTransfer((prev) => prev ? { ...prev, lifecycle: 'deposited' } : null)
+    // Re-trigger on-chain lookup after a short delay to pick up the new submission
+    setTimeout(() => {
+      setRetryingHash(false)
+      if (xchainHashId && isValidXchainHashId(xchainHashId)) {
+        lookup(normalizeXchainHashId(xchainHashId) as `0x${string}`)
+      }
+    }, 3000)
+  }, [transfer, resetForRetry, updateTransferRecord, xchainHashId, lookup])
+
   // --- Broken transfer detection (dest exists, source null → wrong chain submitted) ---
-  const normalizedHash = transferHash && isValidTransferHash(transferHash)
-    ? (normalizeTransferHash(transferHash) as `0x${string}`)
+  const normalizedHash = xchainHashId && isValidXchainHashId(xchainHashId)
+    ? (normalizeXchainHashId(xchainHashId) as `0x${string}`)
     : undefined
   const { isBroken, fix, loading: fixLoading, error: fixError, retry: retryFixDetection } = useBrokenTransferFix(
     normalizedHash,
@@ -441,7 +503,12 @@ export default function TransferStatusPage() {
       const { fixParams, correctHash, correctDestChain } = fix
 
       if (fixParams.destType === 'evm') {
-        const destChainId = (correctDestChain.chainId as number) ?? 31337
+        if (typeof correctDestChain.chainId !== 'number') {
+          setFixSubmitError('Cannot determine destination chain ID for fix')
+          setFixSubmitting(false)
+          return
+        }
+        const destChainId = correctDestChain.chainId
         if (evmChain?.id !== destChainId) {
           await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
         }
@@ -465,7 +532,7 @@ export default function TransferStatusPage() {
 
         if (txHash && transfer.id) {
           const updates = {
-            transferHash: correctHash,
+            xchainHashId: correctHash,
             withdrawSubmitTxHash: txHash,
             lifecycle: 'hash-submitted' as const,
             sourceChain: fix.wrongChainKey,
@@ -492,7 +559,7 @@ export default function TransferStatusPage() {
 
         if (terraTxHash && transfer.id) {
           const updates = {
-            transferHash: correctHash,
+            xchainHashId: correctHash,
             withdrawSubmitTxHash: terraTxHash,
             lifecycle: 'hash-submitted' as const,
             sourceChain: fix.wrongChainKey,
@@ -518,13 +585,13 @@ export default function TransferStatusPage() {
   const isFailed = transfer?.lifecycle === 'failed'
 
   const cancelWindowRemaining = useApprovalCountdown(
-    transfer?.transferHash as `0x${string}` | undefined,
+    transfer?.xchainHashId as `0x${string}` | undefined,
     transfer?.destChain,
     transfer?.lifecycle === 'approved'
   )
 
   if (!transfer) {
-    const isValidHash = transferHash && isValidTransferHash(transferHash)
+    const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)
     const isLookingUp = isValidHash && lookupLoading
 
     return (
@@ -536,10 +603,10 @@ export default function TransferStatusPage() {
           <p className="text-sm text-gray-400">
             {isLookingUp
               ? 'Querying chains for this hash.'
-              : transferHash
+              : xchainHashId
               ? (
                 <>
-                  No transfer found with hash: <code className="text-xs break-all">{transferHash}</code>
+                  No transfer found with hash: <code className="text-xs break-all">{xchainHashId}</code>
                 </>
               )
               : 'No hash provided.'}
@@ -603,7 +670,7 @@ export default function TransferStatusPage() {
                 {autoError || 'The withdrawSubmit transaction was rejected.'}
               </p>
               <p className="text-red-400/60 text-xs mt-1">
-                This usually means the transfer hash is invalid or was computed with incorrect parameters.
+                This usually means the XChain Hash ID is invalid or was computed with incorrect parameters.
                 The hash may need to be recomputed from the original deposit receipt.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -729,7 +796,29 @@ export default function TransferStatusPage() {
                   )}
                 </div>
               )}
-              {(!isBroken || !fix) && (
+              {(!isBroken || !fix) && hashSubmittedButMissing && (
+                <div className="mt-2 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
+                    Hash Not Found on Destination
+                  </p>
+                  <p className="text-red-400/80 text-xs mt-1">
+                    The deposit exists on the source chain, but the hash submission transaction
+                    was not confirmed on the destination chain. The transaction may have reverted
+                    or was lost when you navigated away.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2 items-center">
+                    <button
+                      type="button"
+                      onClick={handleRetryHashSubmission}
+                      disabled={retryingHash}
+                      className="btn-primary text-xs"
+                    >
+                      {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {(!isBroken || !fix) && !hashSubmittedButMissing && (
                 <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
                   <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
                     Waiting for Operator Approval
@@ -755,11 +844,15 @@ export default function TransferStatusPage() {
               </p>
               <p className="text-blue-400/70 text-xs mt-1">
                 Approved. Waiting for the cancel window to expire before tokens are released.
-                {cancelWindowRemaining != null && cancelWindowRemaining > 0 && (
-                  <span className="ml-1 font-mono font-semibold tabular-nums text-cyan-300">
-                    ({formatDuration(cancelWindowRemaining)} remaining)
+                {cancelWindowRemaining != null && cancelWindowRemaining > 0 ? (
+                  <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                    {formatCountdownMmSs(cancelWindowRemaining)} remaining
                   </span>
-                )}
+                ) : cancelWindowRemaining != null && cancelWindowRemaining <= 0 ? (
+                  <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                    Executing…
+                  </span>
+                ) : null}
               </p>
             </div>
           )}
@@ -791,7 +884,7 @@ export default function TransferStatusPage() {
       </div>
 
       {/* Manual flow info */}
-      {transfer.transferHash && transfer.lifecycle === 'deposited' && (
+      {transfer.xchainHashId && transfer.lifecycle === 'deposited' && (
         <div className="shell-panel-strong">
           <h3 className="mb-2 text-sm font-semibold text-white uppercase tracking-wide">
             Manual Flow
@@ -799,7 +892,7 @@ export default function TransferStatusPage() {
           <p className="text-xs text-gray-400 mb-3">
             If auto-submit did not trigger, you can manually submit the hash on the destination
             chain. Use the{' '}
-            <Link to={`/verify?hash=${encodeURIComponent(transfer.transferHash)}`} className="text-[#b8ff3d] hover:underline">
+            <Link to={`/verify?hash=${encodeURIComponent(transfer.xchainHashId)}`} className="text-[#b8ff3d] hover:underline">
               Verify page
             </Link>{' '}
             to submit it.
@@ -815,9 +908,9 @@ export default function TransferStatusPage() {
         <Link to="/history" className="btn-muted flex-1 justify-center py-2">
           View History
         </Link>
-        {transfer.transferHash && (
+        {transfer.xchainHashId && (
           <Link
-            to={`/verify?hash=${encodeURIComponent(transfer.transferHash)}`}
+            to={`/verify?hash=${encodeURIComponent(transfer.xchainHashId)}`}
             className="btn-muted flex-1 justify-center py-2"
           >
             Verify Hash

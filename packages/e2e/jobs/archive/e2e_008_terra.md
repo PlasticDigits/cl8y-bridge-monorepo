@@ -164,7 +164,7 @@ pub struct TxResult {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PendingApproval {
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     pub recipient: String,
     pub amount: String,
     pub created_at: u64,

@@ -25,6 +25,7 @@ export interface BridgeChainConfig {
   type: 'evm' | 'cosmos'
   name: string
   rpcUrl: string
+  rpcFallbacks?: string[]
   lcdUrl?: string
   lcdFallbacks?: string[]
   bridgeAddress: string

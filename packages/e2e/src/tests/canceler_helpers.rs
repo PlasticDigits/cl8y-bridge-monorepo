@@ -80,7 +80,7 @@ pub struct FraudulentApprovalResult {
     /// The transaction hash
     pub tx_hash: B256,
     /// The computed withdraw hash (for querying approval status)
-    pub withdraw_hash: B256,
+    pub xchain_hash_id: B256,
 }
 
 /// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
@@ -92,7 +92,7 @@ pub struct FraudulentApprovalResult {
 /// and `token` must be a registered token. The fraud aspect comes from using a nonce
 /// that has no matching deposit on the source chain.
 ///
-/// The withdrawHash is extracted from the WithdrawSubmit event log (topics[1])
+/// The xchainHashId is extracted from the WithdrawSubmit event log (topics[1])
 /// rather than computed locally, ensuring it always matches the contract.
 pub async fn create_fraudulent_approval(
     config: &E2eConfig,
@@ -178,7 +178,7 @@ pub async fn create_fraudulent_approval(
     let submit_tx = B256::from_slice(&hex::decode(submit_tx_hex.trim_start_matches("0x"))?);
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Extract withdrawHash from WithdrawSubmit event log (indexed topics[1])
+    // Extract xchainHashId from WithdrawSubmit event log (indexed topics[1])
     let receipt_response = client
         .post(config.evm.rpc_url.as_str())
         .json(&serde_json::json!({
@@ -209,13 +209,13 @@ pub async fn create_fraudulent_approval(
         ));
     }
 
-    // Parse WithdrawSubmit event: topics[0] = event sig, topics[1] = withdrawHash (indexed)
+    // Parse WithdrawSubmit event: topics[0] = event sig, topics[1] = xchainHashId (indexed)
     let logs = receipt
         .get("logs")
         .and_then(|l| l.as_array())
         .ok_or_else(|| eyre::eyre!("No logs in withdrawSubmit receipt"))?;
 
-    let withdraw_hash = logs
+    let xchain_hash_id = logs
         .iter()
         .find_map(|log| {
             let topics = log.get("topics")?.as_array()?;
@@ -228,12 +228,12 @@ pub async fn create_fraudulent_approval(
             }
             None
         })
-        .ok_or_else(|| eyre::eyre!("Could not extract withdrawHash from WithdrawSubmit event"))?;
+        .ok_or_else(|| eyre::eyre!("Could not extract xchainHashId from WithdrawSubmit event"))?;
 
     // --- Step 2: withdrawApprove ---
     let approve_sel = selector("withdrawApprove(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let approve_data = format!("0x{}{}", approve_sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let approve_data = format!("0x{}{}", approve_sel, xchain_hash_id_hex);
 
     let response2 = client
         .post(config.evm.rpc_url.as_str())
@@ -263,32 +263,32 @@ pub async fn create_fraudulent_approval(
 
     let approve_tx = B256::from_slice(&hex::decode(approve_tx_hex.trim_start_matches("0x"))?);
     info!(
-        "Fraudulent approval transaction: 0x{}, withdrawHash: 0x{}",
+        "Fraudulent approval transaction: 0x{}, xchainHashId: 0x{}",
         hex::encode(approve_tx),
-        hex::encode(withdraw_hash)
+        hex::encode(xchain_hash_id)
     );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok(FraudulentApprovalResult {
         tx_hash: approve_tx,
-        withdraw_hash,
+        xchain_hash_id,
     })
 }
 
 /// Check if a withdrawal was cancelled by querying pendingWithdraws(bytes32)
 ///
 /// PendingWithdraw has 13 fields, cancelled is at slot 11 (offset 352).
-pub async fn is_approval_cancelled(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<bool> {
+pub async fn is_approval_cancelled(config: &E2eConfig, xchain_hash_id: B256) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
     let sel = selector("pendingWithdraws(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let call_data = format!("0x{}{}", sel, xchain_hash_id_hex);
 
     debug!(
-        "Checking approval status for withdrawHash=0x{}",
-        hex::encode(&withdraw_hash.as_slice()[..8])
+        "Checking approval status for xchainHashId=0x{}",
+        hex::encode(&xchain_hash_id.as_slice()[..8])
     );
 
     let response = client
@@ -389,13 +389,13 @@ pub async fn check_canceler_health() -> bool {
 /// Cancel an approval directly via contract call (requires CANCELER_ROLE)
 pub async fn cancel_approval_directly(
     config: &E2eConfig,
-    withdraw_hash: B256,
+    xchain_hash_id: B256,
 ) -> eyre::Result<B256> {
     let client = reqwest::Client::new();
 
     let sel = selector("withdrawCancel(bytes32)");
-    let withdraw_hash_hex = hex::encode(withdraw_hash.as_slice());
-    let call_data = format!("0x{}{}", sel, withdraw_hash_hex);
+    let xchain_hash_id_hex = hex::encode(xchain_hash_id.as_slice());
+    let call_data = format!("0x{}{}", sel, xchain_hash_id_hex);
 
     let response = client
         .post(config.evm.rpc_url.as_str())
@@ -430,11 +430,14 @@ pub async fn cancel_approval_directly(
 }
 
 /// Try to execute withdrawal (should fail for cancelled approvals)
-pub async fn try_execute_withdrawal(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<bool> {
+pub async fn try_execute_withdrawal(
+    config: &E2eConfig,
+    xchain_hash_id: B256,
+) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
     let sel = selector("withdrawExecuteUnlock(bytes32)");
-    let hash_hex = hex::encode(withdraw_hash);
+    let hash_hex = hex::encode(xchain_hash_id);
     let call_data = format!("0x{}{}", sel, hash_hex);
 
     let response = client

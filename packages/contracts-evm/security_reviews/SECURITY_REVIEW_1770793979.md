@@ -97,7 +97,7 @@ The function-level NatSpec previously said execution was allowed at an inclusive
 
 ### Remediation (Implemented)
 
-NatSpec updated to: "Execution is allowed only when block.timestamp > approvedAt + cancelWindow (exclusive boundary)." Also added `@param` tags for `w` and `withdrawHash`.
+NatSpec updated to: "Execution is allowed only when block.timestamp > approvedAt + cancelWindow (exclusive boundary)." Also added `@param` tags for `w` and `xchainHashId`.
 
 ---
 

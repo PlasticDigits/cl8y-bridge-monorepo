@@ -43,7 +43,7 @@ CREATE TABLE approvals (
     src_chain_key BYTEA NOT NULL,
     nonce BIGINT NOT NULL,
     dest_chain_id BIGINT NOT NULL,
-    withdraw_hash BYTEA NOT NULL,
+    xchain_hash_id BYTEA NOT NULL,
     token VARCHAR(42) NOT NULL,
     recipient VARCHAR(42) NOT NULL,
     amount NUMERIC(78, 0) NOT NULL,

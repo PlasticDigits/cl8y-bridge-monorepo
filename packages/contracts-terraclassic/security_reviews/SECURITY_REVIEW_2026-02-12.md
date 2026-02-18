@@ -62,7 +62,7 @@ The bridge relies on correct mappings in `TOKEN_SRC_MAPPINGS` (for withdrawals) 
 - **Analysis:**
     - **Outgoing:** `OUTGOING_NONCE` increments monotonically.
     - **Incoming:** `WithdrawSubmit` checks `PENDING_WITHDRAWS` for existing hash. `WithdrawApprove` updates `WITHDRAW_NONCE_USED`.
-- **Note:** `WITHDRAW_NONCE_USED` is set but not strictly checked within the *contract's* submit/approve flow to block execution (relies on Operator off-chain check or `WithdrawAlreadySubmitted`). However, since `withdraw_hash` includes the nonce, a duplicate submission with the same nonce/amount is blocked by `WithdrawAlreadySubmitted`. A submission with same nonce but different amount requires Operator rejection (which is standard federated behavior).
+- **Note:** `WITHDRAW_NONCE_USED` is set but not strictly checked within the *contract's* submit/approve flow to block execution (relies on Operator off-chain check or `WithdrawAlreadySubmitted`). However, since `xchain_hash_id` includes the nonce, a duplicate submission with the same nonce/amount is blocked by `WithdrawAlreadySubmitted`. A submission with same nonce but different amount requires Operator rejection (which is standard federated behavior).
 
 ### 2.3 Code Quality & Best Practices
 - **Funds Validation:** `execute_deposit_native` strictly enforces `info.funds.len() == 1`, preventing confusion with multiple token sends.

@@ -16,7 +16,7 @@ use cw20::{Cw20ExecuteMsg, Cw20QueryMsg};
 
 use crate::error::ContractError;
 use crate::hash::{
-    bytes32_to_hex, compute_transfer_hash, encode_terra_address, encode_token_address,
+    bytes32_to_hex, compute_xchain_hash_id, encode_terra_address, encode_token_address,
 };
 use crate::state::DEFAULT_WITHDRAW_DELAY;
 use crate::state::{
@@ -127,7 +127,7 @@ pub fn execute_withdraw_submit(
     }
 
     // Compute withdraw hash (same hash format as the deposit on source chain)
-    let withdraw_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain_bytes,
         &dest_chain,
         &src_account_bytes,
@@ -139,7 +139,7 @@ pub fn execute_withdraw_submit(
 
     // Check not already submitted
     if PENDING_WITHDRAWS
-        .may_load(deps.storage, &withdraw_hash)?
+        .may_load(deps.storage, &xchain_hash_id)?
         .is_some()
     {
         return Err(ContractError::WithdrawAlreadySubmitted);
@@ -168,11 +168,11 @@ pub fn execute_withdraw_submit(
         cancelled: false,
         executed: false,
     };
-    PENDING_WITHDRAWS.save(deps.storage, &withdraw_hash, &pending)?;
+    PENDING_WITHDRAWS.save(deps.storage, &xchain_hash_id, &pending)?;
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_submit")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&withdraw_hash))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&xchain_hash_id))
         .add_attribute("token", token)
         .add_attribute("recipient", recipient.to_string())
         .add_attribute("amount", amount.to_string())
@@ -188,7 +188,7 @@ pub fn execute_withdraw_approve(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -200,7 +200,7 @@ pub fn execute_withdraw_approve(
         return Err(ContractError::UnauthorizedOperator);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
 
     let mut pending = PENDING_WITHDRAWS
         .may_load(deps.storage, &hash_bytes)?
@@ -234,7 +234,7 @@ pub fn execute_withdraw_approve(
     Ok(Response::new()
         .add_messages(messages)
         .add_attribute("action", "withdraw_approve")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes)))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes)))
 }
 
 // ============================================================================
@@ -247,7 +247,7 @@ pub fn execute_withdraw_cancel(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> Result<Response, ContractError> {
     // Verify caller is canceler only (not operator or admin)
     let is_canceler = CANCELERS
@@ -257,7 +257,7 @@ pub fn execute_withdraw_cancel(
         return Err(ContractError::NotCanceler);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
 
     let mut pending = PENDING_WITHDRAWS
         .may_load(deps.storage, &hash_bytes)?
@@ -284,7 +284,7 @@ pub fn execute_withdraw_cancel(
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_cancel")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes))
         .add_attribute("cancelled_by", info.sender.to_string()))
 }
 
@@ -297,7 +297,7 @@ pub fn execute_withdraw_uncancel(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -308,7 +308,7 @@ pub fn execute_withdraw_uncancel(
         return Err(ContractError::UnauthorizedOperator);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
 
     let mut pending = PENDING_WITHDRAWS
         .may_load(deps.storage, &hash_bytes)?
@@ -328,7 +328,7 @@ pub fn execute_withdraw_uncancel(
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_uncancel")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes))
         .add_attribute("new_approved_at", env.block.time.seconds().to_string()))
 }
 
@@ -341,14 +341,14 @@ pub fn execute_withdraw_execute_unlock(
     deps: DepsMut,
     env: Env,
     _info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if config.paused {
         return Err(ContractError::BridgePaused);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
     let cancel_window = WITHDRAW_DELAY
         .may_load(deps.storage)?
         .unwrap_or(DEFAULT_WITHDRAW_DELAY);
@@ -425,7 +425,7 @@ pub fn execute_withdraw_execute_unlock(
     Ok(Response::new()
         .add_messages(messages)
         .add_attribute("action", "withdraw_execute_unlock")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes))
         .add_attribute("recipient", pending.recipient.to_string())
         .add_attribute("token", pending.token)
         .add_attribute("amount", payout_amount.to_string()))
@@ -440,14 +440,14 @@ pub fn execute_withdraw_execute_mint(
     deps: DepsMut,
     env: Env,
     _info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if config.paused {
         return Err(ContractError::BridgePaused);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
     let cancel_window = WITHDRAW_DELAY
         .may_load(deps.storage)?
         .unwrap_or(DEFAULT_WITHDRAW_DELAY);
@@ -498,7 +498,7 @@ pub fn execute_withdraw_execute_mint(
     Ok(Response::new()
         .add_messages(messages)
         .add_attribute("action", "withdraw_execute_mint")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes))
         .add_attribute("recipient", pending.recipient.to_string())
         .add_attribute("token", pending.token)
         .add_attribute("amount", payout_amount.to_string()))
@@ -509,12 +509,12 @@ pub fn execute_withdraw_execute_mint(
 // ============================================================================
 
 /// Parse a 32-byte hash from Binary input.
-fn parse_hash(withdraw_hash: &Binary) -> Result<[u8; 32], ContractError> {
-    withdraw_hash
+fn parse_hash(xchain_hash_id: &Binary) -> Result<[u8; 32], ContractError> {
+    xchain_hash_id
         .to_vec()
         .try_into()
         .map_err(|_| ContractError::InvalidHashLength {
-            got: withdraw_hash.len(),
+            got: xchain_hash_id.len(),
         })
 }
 
@@ -702,7 +702,7 @@ fn query_token_supply(
 pub fn execute_admin_fix_pending_decimals(
     deps: DepsMut,
     info: MessageInfo,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
     src_decimals: u8,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -710,7 +710,7 @@ pub fn execute_admin_fix_pending_decimals(
         return Err(ContractError::Unauthorized);
     }
 
-    let hash_bytes = parse_hash(&withdraw_hash)?;
+    let hash_bytes = parse_hash(&xchain_hash_id)?;
 
     let mut pending = PENDING_WITHDRAWS
         .may_load(deps.storage, &hash_bytes)?
@@ -726,7 +726,7 @@ pub fn execute_admin_fix_pending_decimals(
 
     Ok(Response::new()
         .add_attribute("action", "admin_fix_pending_decimals")
-        .add_attribute("withdraw_hash", bytes32_to_hex(&hash_bytes))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&hash_bytes))
         .add_attribute("old_src_decimals", old_src_decimals.to_string())
         .add_attribute("new_src_decimals", src_decimals.to_string()))
 }

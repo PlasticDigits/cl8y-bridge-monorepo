@@ -152,7 +152,7 @@ contract HashLibTest is Test {
     // V2 Transfer Hash Tests (7-field unified)
     // ============================================================================
 
-    function test_ComputeTransferHash() public pure {
+    function test_ComputeXchainHashId() public pure {
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
         bytes32 srcAccount = bytes32(uint256(uint160(0xdEad000000000000000000000000000000000000)));
@@ -161,15 +161,15 @@ contract HashLibTest is Test {
         uint256 amount = 1e18;
         uint64 nonce = 123;
 
-        bytes32 hash1 = HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        bytes32 hash1 = HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
         // Verify it's deterministic
-        bytes32 hash2 = HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        bytes32 hash2 = HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
         assertEq(hash1, hash2, "Transfer hash should be deterministic");
 
         // Different nonce should give different hash
         bytes32 differentHash =
-            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce + 1);
+            HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce + 1);
         assertTrue(hash1 != differentHash, "Different nonce should give different hash");
     }
 
@@ -183,8 +183,8 @@ contract HashLibTest is Test {
         uint256 amount = 1e18;
         uint64 nonce = 42;
 
-        bytes32 hashA = HashLib.computeTransferHash(srcChain, destChain, srcAccountA, destAccount, token, amount, nonce);
-        bytes32 hashB = HashLib.computeTransferHash(srcChain, destChain, srcAccountB, destAccount, token, amount, nonce);
+        bytes32 hashA = HashLib.computeXchainHashId(srcChain, destChain, srcAccountA, destAccount, token, amount, nonce);
+        bytes32 hashB = HashLib.computeXchainHashId(srcChain, destChain, srcAccountB, destAccount, token, amount, nonce);
 
         assertTrue(hashA != hashB, "Different srcAccounts must produce different hashes");
     }
@@ -201,14 +201,14 @@ contract HashLibTest is Test {
         uint64 nonce = 42;
 
         // Deposit side (computed on source chain)
-        bytes32 depositHash =
-            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        bytes32 xchainHashIdA =
+            HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
         // Withdraw side (computed on dest chain with same params)
-        bytes32 withdrawHash =
-            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        bytes32 xchainHashIdB =
+            HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
-        assertEq(depositHash, withdrawHash, "Deposit and withdraw hash must match for cross-chain verification");
+        assertEq(xchainHashIdA, xchainHashIdB, "Deposit and withdraw hash must match for cross-chain verification");
     }
 
     // ============================================================================
@@ -265,7 +265,7 @@ contract HashLibTest is Test {
     // ============================================================================
 
     /// @notice Test V2 transfer hash with known parameters matching Rust tests.
-    /// The expected hash value is computed by the Rust compute_transfer_hash function
+    /// The expected hash value is computed by the Rust compute_xchain_hash_id function
     /// with identical parameters. If this test fails, hashes won't match cross-chain
     /// and the operator will never approve withdrawals.
     function test_TransferHash_CrossChainParity_Vector1() public pure {
@@ -281,7 +281,7 @@ contract HashLibTest is Test {
         uint256 amount = 995000;
         uint64 nonce = 1;
 
-        bytes32 hash = HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        bytes32 hash = HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
 
         // Verify it's non-zero (sanity)
         assertTrue(hash != bytes32(0), "Hash should not be zero");
@@ -372,16 +372,16 @@ contract HashLibTest is Test {
     bytes32 constant ULUNA_TOKEN = 0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da;
 
     /// @notice Test EVM→Terra transfer hash with native uluna, cross-chain parity with Rust.
-    /// The expected hash value is computed by Rust multichain-rs compute_transfer_hash with
+    /// The expected hash value is computed by Rust multichain-rs compute_xchain_hash_id with
     /// identical parameters. If this fails, hashes won't match and operator won't approve.
     function test_TransferHash_EvmToTerra_Uluna_CrossChainParity() public pure {
         bytes4 srcChain = bytes4(uint32(1)); // EVM
         bytes4 destChain = bytes4(uint32(2)); // Terra
 
         bytes32 hash =
-            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+            HashLib.computeXchainHashId(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
 
-        // Must match Rust: compute_transfer_hash([0,0,0,1], [0,0,0,2], evm_addr, terra_addr, keccak256("uluna"), 1_000_000, 1)
+        // Must match Rust: compute_xchain_hash_id([0,0,0,1], [0,0,0,2], evm_addr, terra_addr, keccak256("uluna"), 1_000_000, 1)
         assertEq(
             hash,
             0xfae09dfb97ff9f54f146b78d461f05956b8e57714dc1ff756f4b293720c22336,
@@ -395,7 +395,7 @@ contract HashLibTest is Test {
         bytes4 destChain = bytes4(uint32(1)); // EVM
 
         bytes32 hash =
-            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+            HashLib.computeXchainHashId(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
 
         // Must match Rust output
         assertEq(
@@ -410,7 +410,7 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(1)); // EVM
         bytes4 destChain = bytes4(uint32(2)); // Terra
 
-        bytes32 hash = HashLib.computeTransferHash(
+        bytes32 hash = HashLib.computeXchainHashId(
             srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
         );
 
@@ -427,7 +427,7 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(2)); // Terra
         bytes4 destChain = bytes4(uint32(1)); // EVM
 
-        bytes32 hash = HashLib.computeTransferHash(
+        bytes32 hash = HashLib.computeXchainHashId(
             srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
         );
 
@@ -448,9 +448,9 @@ contract HashLibTest is Test {
         bytes32 destAccount = bytes32(uint256(uint160(0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB)));
 
         bytes32 hashUluna =
-            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, ULUNA_TOKEN, 1_000_000, 1);
+            HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, ULUNA_TOKEN, 1_000_000, 1);
         bytes32 hashCw20 =
-            HashLib.computeTransferHash(srcChain, destChain, srcAccount, destAccount, CW20_TOKEN_BYTES32, 1_000_000, 1);
+            HashLib.computeXchainHashId(srcChain, destChain, srcAccount, destAccount, CW20_TOKEN_BYTES32, 1_000_000, 1);
 
         assertTrue(
             hashUluna != hashCw20,
@@ -479,9 +479,9 @@ contract HashLibTest is Test {
         bytes4 terraChain = bytes4(uint32(2));
 
         bytes32 evmToTerra =
-            HashLib.computeTransferHash(evmChain, terraChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+            HashLib.computeXchainHashId(evmChain, terraChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
         bytes32 terraToEvm =
-            HashLib.computeTransferHash(terraChain, evmChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
+            HashLib.computeXchainHashId(terraChain, evmChain, TERRA_ACCOUNT, EVM_ACCOUNT, ULUNA_TOKEN, 1_000_000, 1);
 
         assertTrue(evmToTerra != terraToEvm, "EVM->Terra and Terra->EVM must produce different hashes");
     }
@@ -491,10 +491,10 @@ contract HashLibTest is Test {
         bytes4 evmChain = bytes4(uint32(1));
         bytes4 terraChain = bytes4(uint32(2));
 
-        bytes32 evmToTerra = HashLib.computeTransferHash(
+        bytes32 evmToTerra = HashLib.computeXchainHashId(
             evmChain, terraChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
         );
-        bytes32 terraToEvm = HashLib.computeTransferHash(
+        bytes32 terraToEvm = HashLib.computeXchainHashId(
             terraChain, evmChain, TERRA_ACCOUNT, EVM_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 1
         );
 
@@ -509,7 +509,7 @@ contract HashLibTest is Test {
     //   Withdraw side (dest chain):  hash(srcChain, destChain, depositor, recipient, destToken, amount, nonce)
     //
     // The `token` field is always the DESTINATION token address.
-    // These tests verify deposit_hash == withdraw_hash and match Rust output.
+    // These tests verify deposit-side == withdraw-side xchainHashId and match Rust output.
     // ============================================================================
 
     /// @notice Additional test addresses
@@ -524,16 +524,16 @@ contract HashLibTest is Test {
         bytes4 destChain = bytes4(uint32(56));
 
         // Deposit hash (computed on source chain 1)
-        bytes32 depositHash =
-            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
+        bytes32 xchainHashIdA =
+            HashLib.computeXchainHashId(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
 
         // Withdraw hash (computed on dest chain 56 - same params)
-        bytes32 withdrawHash =
-            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
+        bytes32 xchainHashIdB =
+            HashLib.computeXchainHashId(srcChain, destChain, EVM_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_A, 1e18, 42);
 
-        assertEq(depositHash, withdrawHash, "EVM->EVM ERC20: deposit must equal withdraw");
+        assertEq(xchainHashIdA, xchainHashIdB, "EVM->EVM ERC20: deposit must equal withdraw");
         assertEq(
-            depositHash,
+            xchainHashIdA,
             0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54,
             "Must match Rust multichain-rs output"
         );
@@ -545,15 +545,15 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
 
-        bytes32 depositHash =
-            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
+        bytes32 xchainHashIdA =
+            HashLib.computeXchainHashId(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
 
-        bytes32 withdrawHash =
-            HashLib.computeTransferHash(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
+        bytes32 xchainHashIdB =
+            HashLib.computeXchainHashId(srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, ULUNA_TOKEN, 995_000, 1);
 
-        assertEq(depositHash, withdrawHash, "EVM->Terra native: deposit must equal withdraw");
+        assertEq(xchainHashIdA, xchainHashIdB, "EVM->Terra native: deposit must equal withdraw");
         assertEq(
-            depositHash,
+            xchainHashIdA,
             0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453,
             "Must match Rust multichain-rs output"
         );
@@ -565,17 +565,17 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(1));
         bytes4 destChain = bytes4(uint32(2));
 
-        bytes32 depositHash = HashLib.computeTransferHash(
+        bytes32 xchainHashIdA = HashLib.computeXchainHashId(
             srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 5
         );
 
-        bytes32 withdrawHash = HashLib.computeTransferHash(
+        bytes32 xchainHashIdB = HashLib.computeXchainHashId(
             srcChain, destChain, EVM_ACCOUNT, TERRA_ACCOUNT, CW20_TOKEN_BYTES32, 1_000_000, 5
         );
 
-        assertEq(depositHash, withdrawHash, "EVM->Terra CW20: deposit must equal withdraw");
+        assertEq(xchainHashIdA, xchainHashIdB, "EVM->Terra CW20: deposit must equal withdraw");
         assertEq(
-            depositHash,
+            xchainHashIdA,
             0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b,
             "Must match Rust multichain-rs output"
         );
@@ -587,15 +587,15 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(2)); // Terra
         bytes4 destChain = bytes4(uint32(1)); // EVM
 
-        bytes32 depositHash =
-            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
+        bytes32 xchainHashIdA =
+            HashLib.computeXchainHashId(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
 
-        bytes32 withdrawHash =
-            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
+        bytes32 xchainHashIdB =
+            HashLib.computeXchainHashId(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT, ERC20_TOKEN_A, 500_000, 3);
 
-        assertEq(depositHash, withdrawHash, "Terra->EVM native->ERC20: deposit must equal withdraw");
+        assertEq(xchainHashIdA, xchainHashIdB, "Terra->EVM native->ERC20: deposit must equal withdraw");
         assertEq(
-            depositHash,
+            xchainHashIdA,
             0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438,
             "Must match Rust multichain-rs output"
         );
@@ -607,15 +607,15 @@ contract HashLibTest is Test {
         bytes4 srcChain = bytes4(uint32(2)); // Terra
         bytes4 destChain = bytes4(uint32(1)); // EVM
 
-        bytes32 depositHash =
-            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
+        bytes32 xchainHashIdA =
+            HashLib.computeXchainHashId(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
 
-        bytes32 withdrawHash =
-            HashLib.computeTransferHash(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
+        bytes32 xchainHashIdB =
+            HashLib.computeXchainHashId(srcChain, destChain, TERRA_ACCOUNT, EVM_ACCOUNT_B, ERC20_TOKEN_B, 2_500_000, 7);
 
-        assertEq(depositHash, withdrawHash, "Terra->EVM CW20->ERC20: deposit must equal withdraw");
+        assertEq(xchainHashIdA, xchainHashIdB, "Terra->EVM CW20->ERC20: deposit must equal withdraw");
         assertEq(
-            depositHash,
+            xchainHashIdA,
             0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab,
             "Must match Rust multichain-rs output"
         );

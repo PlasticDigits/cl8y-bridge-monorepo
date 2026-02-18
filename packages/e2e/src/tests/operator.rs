@@ -7,14 +7,14 @@ use crate::services::find_project_root;
 use crate::{E2eConfig, ServiceManager, TestResult};
 use std::time::{Duration, Instant};
 
-/// Verify that Rust's compute_withdraw_hash function produces correct results
+/// Verify that Rust's compute_xchain_hash_id function produces correct results
 /// by computing a hash and verifying the parameters are ABI-encoded correctly.
 ///
 /// The hash is computed as: keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce))
 /// where destChainKey = keccak256(abi.encode("EVM", bytes32(chainId)))
-pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
+pub async fn test_xchain_hash_id_computation(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
-    let name = "withdraw_hash_computation";
+    let name = "xchain_hash_id_computation";
 
     use alloy::primitives::{B256, U256};
 
@@ -27,7 +27,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     let nonce = 1u64;
 
     // Compute hash using helper
-    let hash1 = super::helpers::compute_withdraw_hash(
+    let hash1 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         dest_chain_id,
         token,
@@ -42,7 +42,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     }
 
     // Verify hash changes with different nonce (determinism)
-    let hash2 = super::helpers::compute_withdraw_hash(
+    let hash2 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         dest_chain_id,
         token,
@@ -60,7 +60,7 @@ pub async fn test_withdraw_hash_computation(config: &E2eConfig) -> TestResult {
     }
 
     // Verify hash is stable (same params = same hash)
-    let hash3 = super::helpers::compute_withdraw_hash(
+    let hash3 = super::helpers::compute_xchain_hash_id(
         src_chain_key,
         dest_chain_id,
         token,

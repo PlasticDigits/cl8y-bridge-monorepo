@@ -7,6 +7,7 @@
 import { useQueries } from '@tanstack/react-query'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { bytes32ToAddress } from '../services/evm/tokenRegistry'
+import { CONTRACTS, DEFAULT_NETWORK } from '../utils/constants'
 
 export interface SourceChainTokenMappings {
   /** Map terra token id -> evm address on source chain. Only tokens with a mapping. */
@@ -28,9 +29,10 @@ export function useSourceChainTokenMappings(
   const tokens = (registryTokens ?? []).filter(
     (t) => t.enabled !== false && t.evm_token_address
   )
+  const terraBridge = CONTRACTS[DEFAULT_NETWORK].terraBridge
   const queries = useQueries({
     queries: tokens.map((t) => ({
-      queryKey: ['tokenDestMapping', t.token, sourceChainBytes4],
+      queryKey: ['tokenDestMapping', terraBridge, t.token, sourceChainBytes4],
       queryFn: async () => {
         if (!t.token || !sourceChainBytes4) return null
         const hex = await queryTokenDestMapping(t.token, sourceChainBytes4)
@@ -44,6 +46,13 @@ export function useSourceChainTokenMappings(
 
   const mappings: Record<string, string> = {}
   let isLoading = false
+
+  // If enabled but upstream registryTokens haven't loaded yet, we're still
+  // waiting — report loading so callers don't use fallback addresses.
+  if (enabled && !registryTokens) {
+    isLoading = true
+  }
+
   tokens.forEach((t, i) => {
     const q = queries[i]
     if (q?.isLoading) isLoading = true

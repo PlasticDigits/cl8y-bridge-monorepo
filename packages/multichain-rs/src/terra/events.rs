@@ -132,7 +132,7 @@ impl TerraDepositEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerraWithdrawSubmitEvent {
     /// Withdraw hash (32 bytes, base64)
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     /// Source chain ID
     pub src_chain: ChainId,
     /// Token
@@ -165,7 +165,7 @@ impl TerraWithdrawSubmitEvent {
         chain_bytes.copy_from_slice(&src_chain_bytes);
 
         Some(TerraWithdrawSubmitEvent {
-            withdraw_hash: event.get("withdraw_hash")?.clone(),
+            xchain_hash_id: event.get("xchain_hash_id")?.clone(),
             src_chain: ChainId::from_bytes(chain_bytes),
             token: event.get("token")?.clone(),
             amount: event.get("amount")?.parse().ok()?,
@@ -180,7 +180,7 @@ impl TerraWithdrawSubmitEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerraWithdrawApproveEvent {
     /// Withdraw hash (32 bytes, base64)
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     /// Transaction hash
     pub tx_hash: String,
     /// Block height
@@ -195,7 +195,7 @@ impl TerraWithdrawApproveEvent {
         }
 
         Some(TerraWithdrawApproveEvent {
-            withdraw_hash: event.get("withdraw_hash")?.clone(),
+            xchain_hash_id: event.get("xchain_hash_id")?.clone(),
             tx_hash,
             height,
         })
@@ -206,7 +206,7 @@ impl TerraWithdrawApproveEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerraWithdrawCancelEvent {
     /// Withdraw hash (32 bytes, base64)
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     /// Canceler address
     pub canceler: String,
     /// Transaction hash
@@ -223,7 +223,7 @@ impl TerraWithdrawCancelEvent {
         }
 
         Some(TerraWithdrawCancelEvent {
-            withdraw_hash: event.get("withdraw_hash")?.clone(),
+            xchain_hash_id: event.get("xchain_hash_id")?.clone(),
             canceler: event.get("canceler")?.clone(),
             tx_hash,
             height,
@@ -235,7 +235,7 @@ impl TerraWithdrawCancelEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerraWithdrawExecuteEvent {
     /// Withdraw hash (32 bytes, base64)
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
     /// Recipient address
     pub recipient: String,
     /// Amount withdrawn
@@ -254,7 +254,7 @@ impl TerraWithdrawExecuteEvent {
         }
 
         Some(TerraWithdrawExecuteEvent {
-            withdraw_hash: event.get("withdraw_hash")?.clone(),
+            xchain_hash_id: event.get("xchain_hash_id")?.clone(),
             recipient: event.get("recipient")?.clone(),
             amount: event.get("amount")?.parse().ok()?,
             tx_hash,

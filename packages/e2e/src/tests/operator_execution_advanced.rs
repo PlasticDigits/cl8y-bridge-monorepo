@@ -648,7 +648,7 @@ pub async fn test_operator_evm_to_evm_withdrawal(
     let mut withdrawal_executed = false;
 
     while poll_start.elapsed() < WITHDRAWAL_EXECUTION_TIMEOUT {
-        if let Ok(true) = verify_withdrawal_executed(config, approval.withdraw_hash).await {
+        if let Ok(true) = verify_withdrawal_executed(config, approval.xchain_hash_id).await {
             withdrawal_executed = true;
             break;
         }
@@ -866,7 +866,7 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         approval.nonce,
         approval.recipient,
         approval.token,
-        hex::encode(&approval.withdraw_hash.as_slice()[..8])
+        hex::encode(&approval.xchain_hash_id.as_slice()[..8])
     );
 
     // Get initial balance of the actual recipient (before withdrawal executes)
@@ -900,7 +900,7 @@ pub async fn test_operator_terra_to_evm_withdrawal(
     let mut withdrawal_executed = false;
 
     while poll_start.elapsed() < WITHDRAWAL_EXECUTION_TIMEOUT {
-        if let Ok(true) = verify_withdrawal_executed(config, approval.withdraw_hash).await {
+        if let Ok(true) = verify_withdrawal_executed(config, approval.xchain_hash_id).await {
             info!("Terra-to-EVM withdrawal executed");
             withdrawal_executed = true;
             break;
@@ -1029,7 +1029,7 @@ pub async fn test_operator_approval_timeout_handling(
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Check if withdrawal was executed (operator should execute timed-out approvals)
-    if let Ok(true) = verify_withdrawal_executed(config, approval.withdraw_hash).await {
+    if let Ok(true) = verify_withdrawal_executed(config, approval.xchain_hash_id).await {
         info!("Operator executed timed-out approval correctly");
         TestResult::pass(name, start.elapsed())
     } else {

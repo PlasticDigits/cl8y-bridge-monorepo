@@ -9,6 +9,7 @@ import {
   parseAmount,
   formatRate,
   formatDuration,
+  formatCountdownMmSs,
   formatAddress,
   formatPercent,
   formatTimestamp,
@@ -201,6 +202,23 @@ describe('formatDuration', () => {
   it('handles complex durations', () => {
     // 1 day, 2 hours, 30 minutes = 86400 + 7200 + 1800 = 95400
     expect(formatDuration(95400)).toBe('1d 2h 30m')
+  })
+})
+
+describe('formatCountdownMmSs', () => {
+  it('returns "0:00" for negative values', () => {
+    expect(formatCountdownMmSs(-1)).toBe('0:00')
+    expect(formatCountdownMmSs(-100)).toBe('0:00')
+  })
+
+  it('formats mm:ss with zero-padded seconds', () => {
+    expect(formatCountdownMmSs(0)).toBe('0:00')
+    expect(formatCountdownMmSs(9)).toBe('0:09')
+    expect(formatCountdownMmSs(59)).toBe('0:59')
+    expect(formatCountdownMmSs(60)).toBe('1:00')
+    expect(formatCountdownMmSs(90)).toBe('1:30')
+    expect(formatCountdownMmSs(150)).toBe('2:30')
+    expect(formatCountdownMmSs(3661)).toBe('61:01')
   })
 })
 

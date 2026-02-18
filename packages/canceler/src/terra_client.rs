@@ -35,7 +35,7 @@ pub struct WithdrawCancelMsg {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WithdrawCancelInner {
-    pub withdraw_hash: String,
+    pub xchain_hash_id: String,
 }
 
 /// Account info from LCD
@@ -156,19 +156,19 @@ impl TerraClient {
     }
 
     /// Cancel a pending withdrawal on Terra (V2: WithdrawCancel)
-    pub async fn cancel_withdraw_approval(&self, withdraw_hash: [u8; 32]) -> Result<String> {
+    pub async fn cancel_withdraw_approval(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
         // Build the cancel message — matches ExecuteMsg::WithdrawCancel
         let msg = WithdrawCancelMsg {
             withdraw_cancel: WithdrawCancelInner {
-                withdraw_hash: base64::Engine::encode(
+                xchain_hash_id: base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
-                    withdraw_hash,
+                    xchain_hash_id,
                 ),
             },
         };
 
         info!(
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             contract = %self.contract_address,
             "Submitting WithdrawCancel to Terra"
         );
@@ -242,7 +242,7 @@ impl TerraClient {
 
         info!(
             tx_hash = %tx_hash,
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             "Approval successfully cancelled on Terra"
         );
 
@@ -306,13 +306,13 @@ impl TerraClient {
     }
 
     /// Check if a withdrawal can be cancelled (V2: QueryMsg::PendingWithdraw)
-    pub async fn can_cancel(&self, withdraw_hash: [u8; 32]) -> Result<bool> {
-        // Query matches QueryMsg::PendingWithdraw { withdraw_hash: Binary }
+    pub async fn can_cancel(&self, xchain_hash_id: [u8; 32]) -> Result<bool> {
+        // Query matches QueryMsg::PendingWithdraw { xchain_hash_id: Binary }
         let query = serde_json::json!({
             "pending_withdraw": {
-                "withdraw_hash": base64::Engine::encode(
+                "xchain_hash_id": base64::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
-                    withdraw_hash,
+                    xchain_hash_id,
                 )
             }
         });
@@ -328,7 +328,7 @@ impl TerraClient {
         );
 
         debug!(
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             url = %url,
             "Querying Terra pending withdrawal for cancellability"
         );
@@ -345,7 +345,7 @@ impl TerraClient {
                 let cancellable = exists && approved && !cancelled && !executed;
 
                 debug!(
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                     exists, approved, cancelled, executed, cancellable,
                     "Terra withdrawal cancellability check result"
                 );
@@ -356,7 +356,7 @@ impl TerraClient {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 warn!(
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                     status = %status,
                     body = %body,
                     "Terra pending_withdraw query failed"
@@ -365,7 +365,7 @@ impl TerraClient {
             }
             Err(e) => {
                 warn!(
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                     error = %e,
                     "Could not query Terra pending withdrawal"
                 );

@@ -567,7 +567,7 @@ pub async fn test_operator_live_withdrawal_execution(
         Ok(a) => {
             info!(
                 "Found approval: hash=0x{}, nonce={}",
-                hex::encode(&a.withdraw_hash.as_slice()[..8]),
+                hex::encode(&a.xchain_hash_id.as_slice()[..8]),
                 a.nonce
             );
             a
@@ -619,11 +619,11 @@ pub async fn test_operator_live_withdrawal_execution(
     let max_poll_interval = Duration::from_secs(5);
 
     while poll_start.elapsed() < withdrawal_timeout {
-        match verify_withdrawal_executed(config, approval.withdraw_hash).await {
+        match verify_withdrawal_executed(config, approval.xchain_hash_id).await {
             Ok(true) => {
                 info!(
                     "Withdrawal executed: hash=0x{}",
-                    hex::encode(&approval.withdraw_hash.as_slice()[..8])
+                    hex::encode(&approval.xchain_hash_id.as_slice()[..8])
                 );
                 withdrawal_executed = true;
                 break;
@@ -1032,7 +1032,7 @@ pub async fn test_operator_terra_lcd_diagnostic(
                     if !unapproved.is_empty() {
                         for entry in &unapproved {
                             let nonce = entry["nonce"].as_u64().unwrap_or(0);
-                            let hash = entry["withdraw_hash"].as_str().unwrap_or("?");
+                            let hash = entry["xchain_hash_id"].as_str().unwrap_or("?");
                             let amount = entry["amount"].as_str().unwrap_or("?");
                             info!(
                                 "  Unapproved: nonce={}, amount={}, hash={}",
@@ -1193,7 +1193,7 @@ mod tests {
     /// different source addresses. Missing srcAccount causes hash mismatches
     /// between the EVM deposit hash and Terra withdraw hash.
     #[test]
-    fn test_transfer_hash_includes_src_account() {
+    fn test_xchain_hash_id_includes_src_account() {
         // Two deposits with different source accounts but same everything else
         let src_chain: [u8; 4] = [0, 0, 0, 1]; // EVM
         let dest_chain: [u8; 4] = [0, 0, 0, 2]; // Terra
@@ -1209,7 +1209,7 @@ mod tests {
         let amount = 995_000u128; // post-fee amount
         let nonce = 1u64;
 
-        let hash_a = compute_test_transfer_hash(
+        let hash_a = compute_test_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account_a,
@@ -1219,7 +1219,7 @@ mod tests {
             nonce,
         );
 
-        let hash_b = compute_test_transfer_hash(
+        let hash_b = compute_test_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account_b,
@@ -1241,7 +1241,7 @@ mod tests {
     /// The EVM Bridge deducts fees on deposit and stores `netAmount` in the hash.
     /// If the Terra WithdrawSubmit uses the gross amount instead, the hashes won't match.
     #[test]
-    fn test_transfer_hash_uses_net_amount() {
+    fn test_xchain_hash_id_uses_net_amount() {
         let src_chain: [u8; 4] = [0, 0, 0, 1];
         let dest_chain: [u8; 4] = [0, 0, 0, 2];
         let src_account = [0u8; 32];
@@ -1252,7 +1252,7 @@ mod tests {
         let fee = 5_000u128; // 50 bps
         let net_amount = gross_amount - fee; // 995_000
 
-        let hash_gross = compute_test_transfer_hash(
+        let hash_gross = compute_test_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -1262,7 +1262,7 @@ mod tests {
             1,
         );
 
-        let hash_net = compute_test_transfer_hash(
+        let hash_net = compute_test_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -1368,8 +1368,8 @@ mod tests {
         );
     }
 
-    /// Helper: compute a V2 transfer hash (mirrors HashLib.computeTransferHash)
-    fn compute_test_transfer_hash(
+    /// Helper: compute a V2 cross-chain hash ID (mirrors HashLib.computeXchainHashId)
+    fn compute_test_xchain_hash_id(
         src_chain: &[u8; 4],
         dest_chain: &[u8; 4],
         src_account: &[u8; 32],

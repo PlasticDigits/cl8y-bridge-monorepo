@@ -56,7 +56,7 @@ interface IBridge {
 
     /// @notice Emitted when user submits a withdrawal
     event WithdrawSubmit(
-        bytes32 indexed withdrawHash,
+        bytes32 indexed xchainHashId,
         bytes4 srcChain,
         bytes32 srcAccount,
         bytes32 destAccount,
@@ -67,16 +67,16 @@ interface IBridge {
     );
 
     /// @notice Emitted when operator approves a withdrawal
-    event WithdrawApprove(bytes32 indexed withdrawHash);
+    event WithdrawApprove(bytes32 indexed xchainHashId);
 
     /// @notice Emitted when canceler cancels a withdrawal
-    event WithdrawCancel(bytes32 indexed withdrawHash, address canceler);
+    event WithdrawCancel(bytes32 indexed xchainHashId, address canceler);
 
     /// @notice Emitted when operator uncancels a withdrawal
-    event WithdrawUncancel(bytes32 indexed withdrawHash);
+    event WithdrawUncancel(bytes32 indexed xchainHashId);
 
     /// @notice Emitted when withdrawal is executed
-    event WithdrawExecute(bytes32 indexed withdrawHash, address recipient, uint256 amount);
+    event WithdrawExecute(bytes32 indexed xchainHashId, address recipient, uint256 amount);
 
     /// @notice Emitted when fee is collected
     event FeeCollected(address indexed token, uint256 amount, address recipient);
@@ -174,24 +174,24 @@ interface IBridge {
     ) external payable;
 
     /// @notice Operator approves a pending withdrawal
-    /// @param withdrawHash The withdrawal hash
-    function withdrawApprove(bytes32 withdrawHash) external;
+    /// @param xchainHashId The withdrawal hash
+    function withdrawApprove(bytes32 xchainHashId) external;
 
     /// @notice Canceler cancels a pending withdrawal (within 5 min window)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawCancel(bytes32 withdrawHash) external;
+    /// @param xchainHashId The withdrawal hash
+    function withdrawCancel(bytes32 xchainHashId) external;
 
     /// @notice Operator uncancels a cancelled withdrawal
-    /// @param withdrawHash The withdrawal hash
-    function withdrawUncancel(bytes32 withdrawHash) external;
+    /// @param xchainHashId The withdrawal hash
+    function withdrawUncancel(bytes32 xchainHashId) external;
 
     /// @notice Execute an approved withdrawal (unlock mode)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawExecuteUnlock(bytes32 withdrawHash) external;
+    /// @param xchainHashId The withdrawal hash
+    function withdrawExecuteUnlock(bytes32 xchainHashId) external;
 
     /// @notice Execute an approved withdrawal (mint mode)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawExecuteMint(bytes32 withdrawHash) external;
+    /// @param xchainHashId The withdrawal hash
+    function withdrawExecuteMint(bytes32 xchainHashId) external;
 
     // ============================================================================
     // Fee Methods
@@ -237,9 +237,9 @@ interface IBridge {
     // ============================================================================
 
     /// @notice Get pending withdrawal info
-    /// @param withdrawHash The withdrawal hash
+    /// @param xchainHashId The withdrawal hash
     /// @return withdraw The pending withdrawal data
-    function getPendingWithdraw(bytes32 withdrawHash) external view returns (PendingWithdraw memory withdraw);
+    function getPendingWithdraw(bytes32 xchainHashId) external view returns (PendingWithdraw memory withdraw);
 
     /// @notice Get the cancel window duration
     /// @return duration The cancel window in seconds

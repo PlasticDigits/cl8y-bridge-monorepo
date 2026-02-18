@@ -3,11 +3,10 @@ import { Link } from 'react-router-dom'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 import { formatAmount, formatCompact } from '../utils/format'
 import { DECIMALS } from '../utils/constants'
-import { TokenLogo } from './ui'
-import { getTokenDisplaySymbol } from '../utils/tokenLogos'
+import { TokenDisplay } from './ui'
 import { getChainDisplayInfo } from '../utils/bridgeChains'
 import { isIconImagePath } from '../utils/chainlist'
-import { isAddressLike, shortenAddress } from '../utils/shortenAddress'
+import { shortenAddress } from '../utils/shortenAddress'
 import { TransferStatusBadge } from './transfer/TransferStatusBadge'
 
 const STORAGE_KEY = 'cl8y-bridge-transactions'
@@ -110,17 +109,6 @@ function formatTokenAmount(tx: TransferRecord): { compact: string; full: string 
   }
 }
 
-function getTokenDisplay(tx: TransferRecord): { symbol: string; tokenId?: string; addressForBlockie?: string } {
-  const tokenId = tx.token?.trim()
-  if (!tokenId) return { symbol: 'LUNC' }
-  const symbol = getTokenDisplaySymbol(tokenId)
-  return {
-    symbol: isAddressLike(symbol) ? shortenAddress(symbol) : symbol,
-    tokenId,
-    addressForBlockie: isAddressLike(tokenId) ? tokenId : undefined,
-  }
-}
-
 export function TransactionHistory() {
   const [transactions, setTransactions] = useState<TransferRecord[]>([])
 
@@ -173,9 +161,8 @@ export function TransactionHistory() {
           const explorerUrl = getExplorerUrl(tx.sourceChain, tx.txHash)
           const lifecycle = tx.lifecycle || (tx.status === 'confirmed' ? 'deposited' : undefined)
           const needsSubmit = lifecycle === 'deposited'
-          const statusLink = tx.transferHash
+          const statusLink = tx.xchainHashId
           const amount = formatTokenAmount(tx)
-          const tokenDisplay = getTokenDisplay(tx)
           const srcChain = getChainDisplayInfo(tx.sourceChain)
           const dstChain = getChainDisplayInfo(tx.destChain)
           const srcChainLogo = getChainLogoPath(tx.sourceChain)
@@ -189,14 +176,14 @@ export function TransactionHistory() {
             >
               <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <TokenLogo
-                    symbol={tokenDisplay.symbol}
-                    tokenId={tokenDisplay.tokenId}
-                    addressForBlockie={tokenDisplay.addressForBlockie}
-                    size={20}
-                  />
-                  <span className="text-sm font-semibold text-white">
-                    {amount.compact} {tokenDisplay.symbol}
+                  <span className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                    {amount.compact}{' '}
+                    <TokenDisplay
+                      tokenId={tx.token}
+                      symbol={tx.tokenSymbol}
+                      sourceChain={tx.sourceChain}
+                      size={20}
+                    />
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -215,7 +202,13 @@ export function TransactionHistory() {
               </div>
 
               <p className="mb-1 text-[11px] text-gray-400">
-                {amount.full} {tokenDisplay.symbol}
+                {amount.full}{' '}
+                <TokenDisplay
+                  tokenId={tx.token}
+                  symbol={tx.tokenSymbol}
+                  sourceChain={tx.sourceChain}
+                  size={14}
+                />
               </p>
 
               <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">

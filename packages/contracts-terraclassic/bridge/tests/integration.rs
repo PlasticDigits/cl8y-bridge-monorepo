@@ -202,15 +202,15 @@ fn submit_withdraw(
         .unwrap();
 
     // Extract withdraw hash from attributes
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
+        .expect("xchain_hash_id attribute not found");
 
-    let hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap(); // Remove 0x prefix
+    let hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap(); // Remove 0x prefix
     Binary::from(hash_bytes)
 }
 
@@ -241,7 +241,7 @@ fn test_withdraw_submit_creates_pending() {
     let (mut app, contract_addr, _operator, user) = setup();
 
     // Amount in source chain (EVM) decimals: 1 token = 1e18
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -254,7 +254,10 @@ fn test_withdraw_submit_creates_pending() {
     // Query the pending withdrawal
     let pending: PendingWithdrawResponse = app
         .wrap()
-        .query_wasm_smart(&contract_addr, &QueryMsg::PendingWithdraw { withdraw_hash })
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::PendingWithdraw { xchain_hash_id },
+        )
         .unwrap();
 
     assert!(pending.exists);
@@ -311,7 +314,7 @@ fn test_withdraw_submit_rejects_duplicate() {
 fn test_withdraw_approve_requires_operator() {
     let (mut app, contract_addr, _operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -326,7 +329,7 @@ fn test_withdraw_approve_requires_operator() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -338,7 +341,7 @@ fn test_withdraw_approve_requires_operator() {
 fn test_withdraw_approve_sets_approved() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -353,7 +356,7 @@ fn test_withdraw_approve_sets_approved() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -365,7 +368,7 @@ fn test_withdraw_approve_sets_approved() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -384,7 +387,7 @@ fn test_withdraw_cancel_within_window() {
     let (mut app, contract_addr, operator, user) = setup();
     let canceler = Addr::unchecked("terra1canceler");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -399,7 +402,7 @@ fn test_withdraw_cancel_within_window() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -410,7 +413,7 @@ fn test_withdraw_cancel_within_window() {
         canceler.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -420,7 +423,10 @@ fn test_withdraw_cancel_within_window() {
     // Query — should be cancelled (stored for auditing)
     let pending: PendingWithdrawResponse = app
         .wrap()
-        .query_wasm_smart(&contract_addr, &QueryMsg::PendingWithdraw { withdraw_hash })
+        .query_wasm_smart(
+            &contract_addr,
+            &QueryMsg::PendingWithdraw { xchain_hash_id },
+        )
         .unwrap();
 
     assert!(pending.cancelled);
@@ -431,7 +437,7 @@ fn test_withdraw_cancel_after_window_fails() {
     let (mut app, contract_addr, operator, user) = setup();
     let canceler = Addr::unchecked("terra1canceler");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -446,7 +452,7 @@ fn test_withdraw_cancel_after_window_fails() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -462,7 +468,7 @@ fn test_withdraw_cancel_after_window_fails() {
         canceler.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -480,7 +486,7 @@ fn test_withdraw_cancel_after_window_fails() {
 fn test_withdraw_cancel_requires_canceler_role() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -495,7 +501,7 @@ fn test_withdraw_cancel_requires_canceler_role() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -507,7 +513,7 @@ fn test_withdraw_cancel_requires_canceler_role() {
         random,
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -519,7 +525,7 @@ fn test_withdraw_cancel_requires_canceler_role() {
 fn test_withdraw_cancel_operator_rejected() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -533,7 +539,7 @@ fn test_withdraw_cancel_operator_rejected() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -544,7 +550,7 @@ fn test_withdraw_cancel_operator_rejected() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -563,7 +569,7 @@ fn test_withdraw_cancel_admin_rejected() {
     let (mut app, contract_addr, operator, user) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -577,7 +583,7 @@ fn test_withdraw_cancel_admin_rejected() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -588,7 +594,7 @@ fn test_withdraw_cancel_admin_rejected() {
         admin.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -605,7 +611,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
     let (mut app, contract_addr, operator, user) = setup();
     let canceler = Addr::unchecked("terra1canceler");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -620,7 +626,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -630,7 +636,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
         canceler.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -646,7 +652,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawUncancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -658,7 +664,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
         .query_wasm_smart(
             &contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -682,7 +688,7 @@ fn test_withdraw_uncancel_restores_and_resets_window() {
 fn test_execute_unlock_before_window_fails() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -697,7 +703,7 @@ fn test_execute_unlock_before_window_fails() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -708,7 +714,7 @@ fn test_execute_unlock_before_window_fails() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -727,7 +733,7 @@ fn test_execute_unlock_after_window_insufficient_liquidity() {
     let (mut app, contract_addr, operator, user) = setup();
     let admin = Addr::unchecked("terra1admin");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -742,7 +748,7 @@ fn test_execute_unlock_after_window_insufficient_liquidity() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -771,7 +777,7 @@ fn test_execute_unlock_after_window_insufficient_liquidity() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -790,7 +796,7 @@ fn test_cancelled_withdraw_cannot_execute() {
     let (mut app, contract_addr, operator, user) = setup();
     let canceler = Addr::unchecked("terra1canceler");
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -805,7 +811,7 @@ fn test_cancelled_withdraw_cannot_execute() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -815,7 +821,7 @@ fn test_cancelled_withdraw_cannot_execute() {
         canceler.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawCancel {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -831,7 +837,7 @@ fn test_cancelled_withdraw_cannot_execute() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -889,7 +895,7 @@ fn test_rate_limit_configuration() {
 // ============================================================================
 
 #[test]
-fn test_lock_stores_deposit_hash() {
+fn test_lock_stores_xchain_hash_id() {
     let (mut app, contract_addr, _operator, user) = setup();
 
     // 32-byte dest_account (EVM address, left-padded)
@@ -911,15 +917,18 @@ fn test_lock_stores_deposit_hash() {
 
     assert!(res.is_ok(), "DepositNative failed: {:?}", res.err());
 
-    // Check that deposit_hash attribute is emitted
+    // Check that xchain_hash_id attribute is emitted
     let res = res.unwrap();
-    let deposit_hash = res
+    let xchain_hash_id = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "deposit_hash");
+        .find(|a| a.key == "xchain_hash_id");
 
-    assert!(deposit_hash.is_some(), "deposit_hash attribute not found");
+    assert!(
+        xchain_hash_id.is_some(),
+        "xchain_hash_id attribute not found"
+    );
 
     // Check that dest_token_address attribute is emitted and matches the registered EVM token
     let dest_token_attr = res
@@ -1800,7 +1809,7 @@ fn test_rate_limit_per_transaction_exceeded() {
     .unwrap();
 
     // Submit withdraw for 2e18 (18 decimals) → 2e6 (6 decimals) payout, exceeds 1e6 limit
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -1814,7 +1823,7 @@ fn test_rate_limit_per_transaction_exceeded() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -1828,7 +1837,7 @@ fn test_rate_limit_per_transaction_exceeded() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -1888,7 +1897,7 @@ fn test_rate_limit_per_period_exceeded() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: hash1.clone(),
+            xchain_hash_id: hash1.clone(),
         },
         &[],
     )
@@ -1900,7 +1909,7 @@ fn test_rate_limit_per_period_exceeded() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: hash1.clone(),
+            xchain_hash_id: hash1.clone(),
         },
         &[],
     )
@@ -1920,7 +1929,7 @@ fn test_rate_limit_per_period_exceeded() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: hash2.clone(),
+            xchain_hash_id: hash2.clone(),
         },
         &[],
     )
@@ -1933,7 +1942,7 @@ fn test_rate_limit_per_period_exceeded() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: hash2.clone(),
+            xchain_hash_id: hash2.clone(),
         },
         &[],
     );
@@ -1955,7 +1964,7 @@ fn test_rate_limit_per_period_exceeded() {
 fn test_execute_mint_rejects_lock_unlock_token() {
     let (mut app, contract_addr, operator, user) = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut app,
         &user,
         &contract_addr,
@@ -1969,7 +1978,7 @@ fn test_execute_mint_rejects_lock_unlock_token() {
         operator.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     )
@@ -1984,7 +1993,7 @@ fn test_execute_mint_rejects_lock_unlock_token() {
         user.clone(),
         contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteMint {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );

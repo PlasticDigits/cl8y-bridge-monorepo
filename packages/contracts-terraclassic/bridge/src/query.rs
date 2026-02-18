@@ -9,9 +9,7 @@ use crate::fee_manager::{
     calculate_fee, calculate_fee_from_bps, get_effective_fee_bps, get_fee_type, has_custom_fee,
     FeeConfig, FEE_CONFIG,
 };
-use crate::hash::compute_transfer_hash;
-#[allow(deprecated)]
-use crate::hash::compute_transfer_id;
+use crate::hash::compute_xchain_hash_id;
 use crate::msg::{
     AccountFeeResponse, AllowedCw20CodeIdsResponse, CalculateFeeResponse, CancelersResponse,
     ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse, DepositInfoResponse,
@@ -313,9 +311,9 @@ pub fn query_simulate_bridge(
 pub fn query_pending_withdraw(
     deps: Deps,
     env: Env,
-    withdraw_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> StdResult<PendingWithdrawResponse> {
-    let hash_bytes: [u8; 32] = withdraw_hash
+    let hash_bytes: [u8; 32] = xchain_hash_id
         .to_vec()
         .try_into()
         .map_err(|_| StdError::generic_err("Invalid hash length"))?;
@@ -390,7 +388,7 @@ pub fn query_pending_withdrawals(
             };
 
             Ok(PendingWithdrawalEntry {
-                withdraw_hash: Binary::from(hash),
+                xchain_hash_id: Binary::from(hash),
                 src_chain: Binary::from(w.src_chain.to_vec()),
                 src_account: Binary::from(w.src_account.to_vec()),
                 dest_account: Binary::from(w.dest_account.to_vec()),
@@ -414,42 +412,8 @@ pub fn query_pending_withdrawals(
     Ok(PendingWithdrawalsResponse { withdrawals })
 }
 
-/// Compute a withdraw hash from parameters (V1 legacy 6-field format).
-#[allow(deprecated)]
-pub fn query_compute_withdraw_hash(
-    src_chain_key: Binary,
-    dest_chain_key: Binary,
-    dest_token_address: Binary,
-    dest_account: Binary,
-    amount: Uint128,
-    nonce: u64,
-) -> StdResult<ComputeHashResponse> {
-    let src: [u8; 32] = src_chain_key
-        .to_vec()
-        .try_into()
-        .map_err(|_| StdError::generic_err("Invalid src_chain_key length"))?;
-    let dest: [u8; 32] = dest_chain_key
-        .to_vec()
-        .try_into()
-        .map_err(|_| StdError::generic_err("Invalid dest_chain_key length"))?;
-    let token: [u8; 32] = dest_token_address
-        .to_vec()
-        .try_into()
-        .map_err(|_| StdError::generic_err("Invalid dest_token_address length"))?;
-    let account: [u8; 32] = dest_account
-        .to_vec()
-        .try_into()
-        .map_err(|_| StdError::generic_err("Invalid dest_account length"))?;
-
-    let hash = compute_transfer_id(&src, &dest, &token, &account, amount.u128(), nonce);
-
-    Ok(ComputeHashResponse {
-        hash: Binary::from(hash.to_vec()),
-    })
-}
-
-/// Compute a unified V2 transfer hash from 7-field parameters.
-pub fn query_compute_transfer_hash(
+/// Compute a unified V2 cross-chain hash ID from 7-field parameters.
+pub fn query_compute_xchain_hash_id(
     src_chain: Binary,
     dest_chain: Binary,
     src_account: Binary,
@@ -479,7 +443,7 @@ pub fn query_compute_transfer_hash(
         .try_into()
         .map_err(|_| StdError::generic_err("Invalid token length"))?;
 
-    let hash = compute_transfer_hash(
+    let hash = compute_xchain_hash_id(
         &src_chain_bytes,
         &dest_chain_bytes,
         &src_account_bytes,
@@ -499,11 +463,11 @@ pub fn query_compute_transfer_hash(
 // ============================================================================
 
 /// Query a deposit by hash.
-pub fn query_deposit_hash(
+pub fn query_xchain_hash_id(
     deps: Deps,
-    deposit_hash: Binary,
+    xchain_hash_id: Binary,
 ) -> StdResult<Option<DepositInfoResponse>> {
-    let hash_bytes: [u8; 32] = deposit_hash
+    let hash_bytes: [u8; 32] = xchain_hash_id
         .to_vec()
         .try_into()
         .map_err(|_| StdError::generic_err("Invalid hash length"))?;
@@ -511,7 +475,7 @@ pub fn query_deposit_hash(
     let deposit = DEPOSIT_HASHES.may_load(deps.storage, &hash_bytes)?;
 
     Ok(deposit.map(|d| DepositInfoResponse {
-        deposit_hash: Binary::from(hash_bytes.to_vec()),
+        xchain_hash_id: Binary::from(hash_bytes.to_vec()),
         src_chain: Binary::from(d.src_chain.to_vec()),
         dest_chain: Binary::from(d.dest_chain.to_vec()),
         src_account: Binary::from(d.src_account.to_vec()),
@@ -531,7 +495,7 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
         Some(hash_bytes) => {
             let deposit = DEPOSIT_HASHES.may_load(deps.storage, &hash_bytes)?;
             Ok(deposit.map(|d| DepositInfoResponse {
-                deposit_hash: Binary::from(hash_bytes.to_vec()),
+                xchain_hash_id: Binary::from(hash_bytes.to_vec()),
                 src_chain: Binary::from(d.src_chain.to_vec()),
                 dest_chain: Binary::from(d.dest_chain.to_vec()),
                 src_account: Binary::from(d.src_account.to_vec()),
@@ -549,13 +513,13 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
 /// Verify a deposit against provided parameters.
 pub fn query_verify_deposit(
     deps: Deps,
-    deposit_hash: Binary,
+    xchain_hash_id: Binary,
     dest_token_address: Binary,
     dest_account: Binary,
     amount: Uint128,
     nonce: u64,
 ) -> StdResult<VerifyDepositResponse> {
-    let hash_bytes: [u8; 32] = deposit_hash
+    let hash_bytes: [u8; 32] = xchain_hash_id
         .to_vec()
         .try_into()
         .map_err(|_| StdError::generic_err("Invalid hash length"))?;
@@ -576,7 +540,7 @@ pub fn query_verify_deposit(
                 exists: true,
                 matches,
                 deposit: Some(DepositInfoResponse {
-                    deposit_hash: Binary::from(hash_bytes.to_vec()),
+                    xchain_hash_id: Binary::from(hash_bytes.to_vec()),
                     src_chain: Binary::from(d.src_chain.to_vec()),
                     dest_chain: Binary::from(d.dest_chain.to_vec()),
                     src_account: Binary::from(d.src_account.to_vec()),

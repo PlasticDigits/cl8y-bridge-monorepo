@@ -76,7 +76,7 @@ impl DepositEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawSubmitEvent {
     /// Withdraw hash (unique identifier)
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Source chain ID
     pub src_chain: ChainId,
     /// Token address on this chain
@@ -99,7 +99,7 @@ impl WithdrawSubmitEvent {
     /// Create from alloy log data
     #[allow(clippy::too_many_arguments)]
     pub fn from_log(
-        withdraw_hash: FixedBytes<32>,
+        xchain_hash_id: FixedBytes<32>,
         src_chain: FixedBytes<4>,
         token: Address,
         amount: U256,
@@ -110,7 +110,7 @@ impl WithdrawSubmitEvent {
         log_index: u64,
     ) -> Self {
         Self {
-            withdraw_hash: withdraw_hash.0,
+            xchain_hash_id: xchain_hash_id.0,
             src_chain: ChainId::from_bytes(src_chain.0),
             token: EvmAddress(token.0 .0),
             amount: amount.try_into().unwrap_or_else(|_| {
@@ -133,7 +133,7 @@ impl WithdrawSubmitEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawApproveEvent {
     /// Withdraw hash
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Block number
     pub block_number: u64,
     /// Transaction hash
@@ -145,13 +145,13 @@ pub struct WithdrawApproveEvent {
 impl WithdrawApproveEvent {
     /// Create from alloy log data
     pub fn from_log(
-        withdraw_hash: FixedBytes<32>,
+        xchain_hash_id: FixedBytes<32>,
         block_number: u64,
         tx_hash: FixedBytes<32>,
         log_index: u64,
     ) -> Self {
         Self {
-            withdraw_hash: withdraw_hash.0,
+            xchain_hash_id: xchain_hash_id.0,
             block_number,
             tx_hash: tx_hash.0,
             log_index,
@@ -163,7 +163,7 @@ impl WithdrawApproveEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawCancelEvent {
     /// Withdraw hash
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Canceler address
     pub canceler: EvmAddress,
     /// Block number
@@ -177,14 +177,14 @@ pub struct WithdrawCancelEvent {
 impl WithdrawCancelEvent {
     /// Create from alloy log data
     pub fn from_log(
-        withdraw_hash: FixedBytes<32>,
+        xchain_hash_id: FixedBytes<32>,
         canceler: Address,
         block_number: u64,
         tx_hash: FixedBytes<32>,
         log_index: u64,
     ) -> Self {
         Self {
-            withdraw_hash: withdraw_hash.0,
+            xchain_hash_id: xchain_hash_id.0,
             canceler: EvmAddress(canceler.0 .0),
             block_number,
             tx_hash: tx_hash.0,
@@ -197,7 +197,7 @@ impl WithdrawCancelEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawExecuteEvent {
     /// Withdraw hash
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Recipient address
     pub recipient: EvmAddress,
     /// Amount withdrawn
@@ -213,7 +213,7 @@ pub struct WithdrawExecuteEvent {
 impl WithdrawExecuteEvent {
     /// Create from alloy log data
     pub fn from_log(
-        withdraw_hash: FixedBytes<32>,
+        xchain_hash_id: FixedBytes<32>,
         recipient: Address,
         amount: U256,
         block_number: u64,
@@ -221,7 +221,7 @@ impl WithdrawExecuteEvent {
         log_index: u64,
     ) -> Self {
         Self {
-            withdraw_hash: withdraw_hash.0,
+            xchain_hash_id: xchain_hash_id.0,
             recipient: EvmAddress(recipient.0 .0),
             amount: amount.try_into().unwrap_or_else(|_| {
                 warn!(amount = %amount, "WithdrawExecute amount exceeds u128::MAX, clamping");
@@ -263,7 +263,7 @@ pub struct DepositRequestEventV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawApprovedEventV1 {
     /// Withdraw hash
-    pub withdraw_hash: [u8; 32],
+    pub xchain_hash_id: [u8; 32],
     /// Source chain key
     pub src_chain_key: [u8; 32],
     /// Token address

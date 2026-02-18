@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom'
 import { useTransferHistory } from '../../hooks/useTransferHistory'
+import { useTransferStatusRefresh } from '../../hooks/useTransferStatusRefresh'
 import { formatAmount } from '../../utils/format'
 import { DECIMALS } from '../../utils/constants'
 import { TransferStatusBadge } from './TransferStatusBadge'
 import { getExplorerTxUrl } from '../../lib/chains'
 import type { TransferRecord, TransferLifecycle } from '../../types/transfer'
-import { TokenLogo, Badge } from '../ui'
+import { TokenDisplay, Badge } from '../ui'
 
 export interface RecentTransfersProps {
   limit?: number
@@ -18,12 +19,14 @@ function formatTime(timestamp: number) {
 export function RecentTransfers({ limit = 5 }: RecentTransfersProps) {
   const { transfers } = useTransferHistory(limit)
 
+  useTransferStatusRefresh(transfers)
+
   if (transfers.length === 0) return null
 
   return (
     <div className="mx-auto max-w-[520px] space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Recent Transfers</h3>
-      <div className="space-y-1.5">
+      <div className="max-h-[600px] space-y-1.5 overflow-y-auto pr-1">
         {transfers.slice(0, limit).map((tx) => (
           <RecentTransferItem key={tx.id} tx={tx} />
         ))}
@@ -42,15 +45,16 @@ const lifecycleBadgeConfig: Record<TransferLifecycle, { label: string; variant: 
 
 function RecentTransferItem({ tx }: { tx: TransferRecord }) {
   const explorerUrl = tx.txHash ? getExplorerTxUrl(tx.sourceChain, tx.txHash) : null
+  const decimals = tx.srcDecimals ?? DECIMALS.LUNC
 
   // Prefer full transfer hash (links to status page); fallback to tx hash + explorer
   const idEl =
-    tx.transferHash ? (
+    tx.xchainHashId ? (
       <Link
-        to={`/transfer/${tx.transferHash}`}
+        to={`/transfer/${tx.xchainHashId}`}
         className="block break-all text-xs font-mono font-medium text-cyan-300 transition-colors hover:text-cyan-200"
       >
-        {tx.transferHash}
+        {tx.xchainHashId}
       </Link>
     ) : tx.txHash ? (
       explorerUrl ? (
@@ -83,7 +87,7 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
   )
 
   // Show warning banner for transfers stuck at 'deposited' that need action
-  const needsAction = lifecycle === 'deposited' && tx.transferHash
+  const needsAction = lifecycle === 'deposited' && tx.xchainHashId
   const isFailed = lifecycle === 'failed'
 
   return (
@@ -91,9 +95,14 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
       isFailed ? 'border-red-700/60' : needsAction ? 'border-yellow-700/60' : 'border-white/20'
     }`}>
       <div className="flex flex-wrap items-center gap-2">
-        <TokenLogo symbol="LUNC" size={18} />
-        <span className="text-sm font-semibold text-white">
-          {formatAmount(tx.amount, DECIMALS.LUNC)} LUNC
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-white">
+          {formatAmount(tx.amount, decimals)}{' '}
+          <TokenDisplay
+            tokenId={tx.token}
+            symbol={tx.tokenSymbol}
+            sourceChain={tx.sourceChain}
+            size={18}
+          />
         </span>
         {statusBadge}
       </div>
@@ -107,7 +116,7 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
             Hash submission required — click to continue
           </p>
           <Link
-            to={`/transfer/${tx.transferHash}`}
+            to={`/transfer/${tx.xchainHashId}`}
             className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-[#b8ff3d] hover:text-[#d5ff7f]"
           >
             Continue →
@@ -119,9 +128,9 @@ function RecentTransferItem({ tx }: { tx: TransferRecord }) {
           <p className="text-[11px] text-red-400">
             Transfer failed — click to view details
           </p>
-          {tx.transferHash && (
+          {tx.xchainHashId && (
             <Link
-              to={`/transfer/${tx.transferHash}`}
+              to={`/transfer/${tx.xchainHashId}`}
               className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-red-400 hover:text-red-300"
             >
               Details →

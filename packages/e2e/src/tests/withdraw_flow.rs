@@ -5,7 +5,7 @@ use alloy::primitives::{Address, B256, U256};
 use std::time::{Duration, Instant};
 
 use super::helpers::{
-    check_evm_connection, compute_withdraw_hash, is_approval_cancelled, query_cancel_window,
+    check_evm_connection, compute_xchain_hash_id, is_approval_cancelled, query_cancel_window,
     selector, verify_tx_success,
 };
 use crate::transfer_helpers::verify_withdrawal_executed;
@@ -23,12 +23,12 @@ struct PendingWithdrawInfo {
 async fn execute_withdraw_op(
     config: &E2eConfig,
     selector: &str,
-    withdraw_hash: Option<B256>,
+    xchain_hash_id: Option<B256>,
     params: Option<&str>,
     value: Option<u128>,
 ) -> eyre::Result<B256> {
     let client = reqwest::Client::new();
-    let call_data = match (withdraw_hash, params) {
+    let call_data = match (xchain_hash_id, params) {
         (Some(hash), None) => format!("{}{}", selector, hex::encode(hash.as_slice())),
         (None, Some(p)) => format!("{}{}", selector, p),
         _ => return Err(eyre::eyre!("Invalid parameters")),
@@ -104,23 +104,23 @@ async fn execute_withdraw_submit(
     execute_withdraw_op(config, &sel, None, Some(&params), Some(operator_gas)).await
 }
 
-async fn execute_withdraw_approve(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<B256> {
+async fn execute_withdraw_approve(config: &E2eConfig, xchain_hash_id: B256) -> eyre::Result<B256> {
     let sel = format!("0x{}", selector("withdrawApprove(bytes32)"));
-    execute_withdraw_op(config, &sel, Some(withdraw_hash), None, None).await
+    execute_withdraw_op(config, &sel, Some(xchain_hash_id), None, None).await
 }
 
-async fn execute_withdraw_cancel(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<B256> {
+async fn execute_withdraw_cancel(config: &E2eConfig, xchain_hash_id: B256) -> eyre::Result<B256> {
     let sel = format!("0x{}", selector("withdrawCancel(bytes32)"));
-    execute_withdraw_op(config, &sel, Some(withdraw_hash), None, None).await
+    execute_withdraw_op(config, &sel, Some(xchain_hash_id), None, None).await
 }
 
 async fn query_pending_withdraw(
     config: &E2eConfig,
-    withdraw_hash: B256,
+    xchain_hash_id: B256,
 ) -> eyre::Result<PendingWithdrawInfo> {
     let client = reqwest::Client::new();
     let sel = selector("pendingWithdraws(bytes32)");
-    let call_data = format!("0x{}{}", sel, hex::encode(withdraw_hash.as_slice()));
+    let call_data = format!("0x{}{}", sel, hex::encode(xchain_hash_id.as_slice()));
 
     let body: serde_json::Value = client
         .post(config.evm.rpc_url.as_str())
@@ -181,7 +181,7 @@ fn setup_test_params(
     let amount = 1_000_000u128;
     let src_chain_key = B256::from_slice(&src_chain);
     let dest_account_b256 = B256::from(dest_account);
-    let withdraw_hash = compute_withdraw_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         src_chain_key,
         config.evm.chain_id,
         token,
@@ -191,7 +191,7 @@ fn setup_test_params(
     );
 
     Ok((
-        withdraw_hash,
+        xchain_hash_id,
         token,
         amount,
         src_chain,
@@ -208,7 +208,7 @@ pub async fn test_withdraw_submit(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "EVM connection failed", start.elapsed());
     }
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 1) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -229,7 +229,7 @@ pub async fn test_withdraw_submit(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    let info = match query_pending_withdraw(config, withdraw_hash).await {
+    let info = match query_pending_withdraw(config, xchain_hash_id).await {
         Ok(i) => i,
         Err(e) => return TestResult::fail(name, &format!("Query failed: {}", e), start.elapsed()),
     };
@@ -249,7 +249,7 @@ pub async fn test_withdraw_approve(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "EVM connection failed", start.elapsed());
     }
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 2) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -270,11 +270,11 @@ pub async fn test_withdraw_approve(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    if let Err(e) = execute_withdraw_approve(config, withdraw_hash).await {
+    if let Err(e) = execute_withdraw_approve(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Approve failed: {}", e), start.elapsed());
     }
 
-    let info = match query_pending_withdraw(config, withdraw_hash).await {
+    let info = match query_pending_withdraw(config, xchain_hash_id).await {
         Ok(i) => i,
         Err(e) => return TestResult::fail(name, &format!("Query failed: {}", e), start.elapsed()),
     };
@@ -294,7 +294,7 @@ pub async fn test_withdraw_cancel_during_window(config: &E2eConfig) -> TestResul
         return TestResult::fail(name, "EVM connection failed", start.elapsed());
     }
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 3) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -315,20 +315,20 @@ pub async fn test_withdraw_cancel_during_window(config: &E2eConfig) -> TestResul
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    if let Err(e) = execute_withdraw_approve(config, withdraw_hash).await {
+    if let Err(e) = execute_withdraw_approve(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Approve failed: {}", e), start.elapsed());
     }
 
-    let _ = execute_withdraw_cancel(config, withdraw_hash).await;
+    let _ = execute_withdraw_cancel(config, xchain_hash_id).await;
 
-    let info = query_pending_withdraw(config, withdraw_hash).await.ok();
+    let info = query_pending_withdraw(config, xchain_hash_id).await.ok();
     if let Some(info) = info {
         if info.cancelled {
             return TestResult::pass(name, start.elapsed());
         }
     }
 
-    if is_approval_cancelled(config, withdraw_hash)
+    if is_approval_cancelled(config, xchain_hash_id)
         .await
         .unwrap_or(false)
     {
@@ -346,7 +346,7 @@ pub async fn test_withdraw_uncancel(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "EVM connection failed", start.elapsed());
     }
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 4) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -367,21 +367,21 @@ pub async fn test_withdraw_uncancel(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    if let Err(e) = execute_withdraw_approve(config, withdraw_hash).await {
+    if let Err(e) = execute_withdraw_approve(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Approve failed: {}", e), start.elapsed());
     }
 
-    if let Err(e) = query_pending_withdraw(config, withdraw_hash).await {
+    if let Err(e) = query_pending_withdraw(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Query failed: {}", e), start.elapsed());
     }
 
     TestResult::pass(name, start.elapsed())
 }
 
-async fn execute_withdraw_unlock(config: &E2eConfig, withdraw_hash: B256) -> eyre::Result<()> {
+async fn execute_withdraw_unlock(config: &E2eConfig, xchain_hash_id: B256) -> eyre::Result<()> {
     let client = reqwest::Client::new();
     let sel = selector("withdrawExecuteUnlock(bytes32)");
-    let call_data = format!("0x{}{}", sel, hex::encode(withdraw_hash.as_slice()));
+    let call_data = format!("0x{}{}", sel, hex::encode(xchain_hash_id.as_slice()));
 
     let body: serde_json::Value = client
         .post(config.evm.rpc_url.as_str())
@@ -425,7 +425,7 @@ pub async fn test_withdraw_execute_after_window(config: &E2eConfig) -> TestResul
 
     let withdraw_delay = query_cancel_window(config).await.unwrap_or(300);
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 5) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -446,7 +446,7 @@ pub async fn test_withdraw_execute_after_window(config: &E2eConfig) -> TestResul
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    if let Err(e) = execute_withdraw_approve(config, withdraw_hash).await {
+    if let Err(e) = execute_withdraw_approve(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Approve failed: {}", e), start.elapsed());
     }
 
@@ -454,16 +454,16 @@ pub async fn test_withdraw_execute_after_window(config: &E2eConfig) -> TestResul
     let _ = anvil.increase_time(withdraw_delay + 310).await;
     let _ = anvil.mine_block().await;
 
-    let _ = execute_withdraw_unlock(config, withdraw_hash).await;
+    let _ = execute_withdraw_unlock(config, xchain_hash_id).await;
 
-    if verify_withdrawal_executed(config, withdraw_hash)
+    if verify_withdrawal_executed(config, xchain_hash_id)
         .await
         .unwrap_or(false)
     {
         return TestResult::pass(name, start.elapsed());
     }
 
-    if let Ok(info) = query_pending_withdraw(config, withdraw_hash).await {
+    if let Ok(info) = query_pending_withdraw(config, xchain_hash_id).await {
         if info.executed {
             return TestResult::pass(name, start.elapsed());
         }
@@ -482,7 +482,7 @@ pub async fn test_full_withdraw_cycle(config: &E2eConfig) -> TestResult {
 
     let withdraw_delay = query_cancel_window(config).await.unwrap_or(300);
 
-    let (withdraw_hash, token, amount, src_chain, src_account, dest_account) =
+    let (xchain_hash_id, token, amount, src_chain, src_account, dest_account) =
         match setup_test_params(config, 6) {
             Ok(p) => p,
             Err(e) => return TestResult::skip(name, &format!("Setup failed: {}", e)),
@@ -503,7 +503,7 @@ pub async fn test_full_withdraw_cycle(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, &format!("Submit failed: {}", e), start.elapsed());
     }
 
-    let info = match query_pending_withdraw(config, withdraw_hash).await {
+    let info = match query_pending_withdraw(config, xchain_hash_id).await {
         Ok(i) => i,
         Err(e) => return TestResult::fail(name, &format!("Query failed: {}", e), start.elapsed()),
     };
@@ -511,11 +511,11 @@ pub async fn test_full_withdraw_cycle(config: &E2eConfig) -> TestResult {
         return TestResult::fail(name, "PendingWithdraw not created", start.elapsed());
     }
 
-    if let Err(e) = execute_withdraw_approve(config, withdraw_hash).await {
+    if let Err(e) = execute_withdraw_approve(config, xchain_hash_id).await {
         return TestResult::fail(name, &format!("Approve failed: {}", e), start.elapsed());
     }
 
-    let info = match query_pending_withdraw(config, withdraw_hash).await {
+    let info = match query_pending_withdraw(config, xchain_hash_id).await {
         Ok(i) => i,
         Err(e) => return TestResult::fail(name, &format!("Query failed: {}", e), start.elapsed()),
     };
@@ -527,16 +527,16 @@ pub async fn test_full_withdraw_cycle(config: &E2eConfig) -> TestResult {
     let _ = anvil.increase_time(withdraw_delay + 310).await;
     let _ = anvil.mine_block().await;
 
-    let _ = execute_withdraw_unlock(config, withdraw_hash).await;
+    let _ = execute_withdraw_unlock(config, xchain_hash_id).await;
 
-    if verify_withdrawal_executed(config, withdraw_hash)
+    if verify_withdrawal_executed(config, xchain_hash_id)
         .await
         .unwrap_or(false)
     {
         return TestResult::pass(name, start.elapsed());
     }
 
-    if let Ok(info) = query_pending_withdraw(config, withdraw_hash).await {
+    if let Ok(info) = query_pending_withdraw(config, xchain_hash_id).await {
         if info.executed {
             return TestResult::pass(name, start.elapsed());
         }

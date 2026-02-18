@@ -130,7 +130,7 @@ This document provides a full security review of the contracts-evm package. The 
 
 ### 3.3 Hash Consistency
 
-- `HashLib.computeTransferHash` used consistently on deposit and withdraw.
+- `HashLib.computeXchainHashId` used consistently on deposit and withdraw.
 - Correct alignment for cross-chain matching (srcChain, destChain, srcAccount, destAccount, token, amount, nonce).
 
 ---

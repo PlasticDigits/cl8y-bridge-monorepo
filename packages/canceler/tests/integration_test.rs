@@ -488,7 +488,7 @@ mod pending_approval_tests {
         let nonce: u64 = 42;
 
         let approval = PendingApproval {
-            withdraw_hash: [0xCC; 32], // placeholder
+            xchain_hash_id: [0xCC; 32], // placeholder
             src_chain_id: src_chain,
             dest_chain_id: this_chain_id,
             src_account,
@@ -528,7 +528,7 @@ mod pending_approval_tests {
     fn test_pending_approval_from_terra_json() {
         // Simulate parsing Terra withdrawal JSON (as CancelerWatcher does)
         let withdrawal_json = serde_json::json!({
-            "withdraw_hash": base64::engine::general_purpose::STANDARD.encode([0xDD; 32]),
+            "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode([0xDD; 32]),
             "src_chain": base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0, 1]),
             "dest_chain": base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0, 2]),
             "token": base64::engine::general_purpose::STANDARD.encode([0xEE; 32]),
@@ -580,7 +580,7 @@ mod pending_approval_tests {
         let dest_token = parse_bytes32(&withdrawal_json["token"]);
 
         let approval = PendingApproval {
-            withdraw_hash: parse_bytes32(&withdrawal_json["withdraw_hash"]),
+            xchain_hash_id: parse_bytes32(&withdrawal_json["xchain_hash_id"]),
             src_chain_id,
             dest_chain_id,
             src_account,
@@ -631,7 +631,7 @@ mod pending_approval_tests {
     /// through PendingApproval into hash computation.
     #[test]
     fn test_hash_verification_with_correct_fields() {
-        use canceler::hash::compute_transfer_hash;
+        use canceler::hash::compute_xchain_hash_id;
 
         let src_chain: [u8; 4] = [0, 0, 0, 1]; // EVM
         let dest_chain: [u8; 4] = [0, 0, 0, 2]; // Terra
@@ -647,7 +647,7 @@ mod pending_approval_tests {
         let nonce: u64 = 42;
 
         // Compute the expected hash
-        let expected_hash = compute_transfer_hash(
+        let expected_hash = compute_xchain_hash_id(
             &src_chain,
             &dest_chain,
             &src_account,
@@ -659,7 +659,7 @@ mod pending_approval_tests {
 
         // Create PendingApproval with the computed hash
         let approval = PendingApproval {
-            withdraw_hash: expected_hash,
+            xchain_hash_id: expected_hash,
             src_chain_id: src_chain,
             dest_chain_id: dest_chain,
             src_account,
@@ -672,7 +672,7 @@ mod pending_approval_tests {
         };
 
         // Recompute and verify
-        let recomputed = compute_transfer_hash(
+        let recomputed = compute_xchain_hash_id(
             &approval.src_chain_id,
             &approval.dest_chain_id,
             &approval.src_account,
@@ -683,13 +683,13 @@ mod pending_approval_tests {
         );
 
         assert_eq!(
-            recomputed, approval.withdraw_hash,
-            "Hash recomputed from PendingApproval fields must match the original withdraw_hash"
+            recomputed, approval.xchain_hash_id,
+            "Hash recomputed from PendingApproval fields must match the original xchain_hash_id"
         );
 
         // Also verify the hash is non-zero
         assert_ne!(
-            approval.withdraw_hash, [0u8; 32],
+            approval.xchain_hash_id, [0u8; 32],
             "Hash should be non-zero for non-zero inputs"
         );
     }

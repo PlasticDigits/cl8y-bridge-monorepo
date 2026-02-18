@@ -456,14 +456,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Encode source account and compute unified transfer hash
+        // Encode source account and compute unified cross-chain hash ID
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 depositHash = HashLib.computeTransferHash(
+        bytes32 xchainHashId = HashLib.computeXchainHashId(
             thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
         );
 
         // Store deposit record
-        deposits[depositHash] = DepositRecord({
+        deposits[xchainHashId] = DepositRecord({
             destChain: destChain,
             srcAccount: srcAccount,
             destAccount: destAccount,
@@ -513,14 +513,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Encode source account and compute unified transfer hash
+        // Encode source account and compute unified cross-chain hash ID
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 depositHash = HashLib.computeTransferHash(
+        bytes32 xchainHashId = HashLib.computeXchainHashId(
             thisChainId, destChain, srcAccount, destAccount, destToken, netAmount, currentNonce
         );
 
         // Store deposit record
-        deposits[depositHash] = DepositRecord({
+        deposits[xchainHashId] = DepositRecord({
             destChain: destChain,
             srcAccount: srcAccount,
             destAccount: destAccount,
@@ -570,14 +570,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Get current nonce and increment
         uint64 currentNonce = depositNonce++;
 
-        // Encode source account and compute unified transfer hash
+        // Encode source account and compute unified cross-chain hash ID
         bytes32 srcAccount = HashLib.addressToBytes32(msg.sender);
-        bytes32 depositHash = HashLib.computeTransferHash(
+        bytes32 xchainHashId = HashLib.computeXchainHashId(
             thisChainId, destChain, srcAccount, destAccount, destToken, burnAmount, currentNonce
         );
 
         // Store deposit record
-        deposits[depositHash] = DepositRecord({
+        deposits[xchainHashId] = DepositRecord({
             destChain: destChain,
             srcAccount: srcAccount,
             destAccount: destAccount,
@@ -615,14 +615,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (!chainRegistry.isChainRegistered(srcChain)) revert ChainNotRegistered(srcChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
 
-        // Compute unified transfer hash (same hash as deposit on source chain)
-        bytes32 withdrawHash = HashLib.computeTransferHash(
+        // Compute unified cross-chain hash ID (same hash as deposit on source chain)
+        bytes32 xchainHashId = HashLib.computeXchainHashId(
             srcChain, thisChainId, srcAccount, destAccount, HashLib.addressToBytes32(token), amount, nonce
         );
 
         // Ensure not already submitted
-        if (pendingWithdraws[withdrawHash].submittedAt != 0) {
-            revert WithdrawAlreadyExecuted(withdrawHash);
+        if (pendingWithdraws[xchainHashId].submittedAt != 0) {
+            revert WithdrawAlreadyExecuted(xchainHashId);
         }
 
         // Decode recipient from destAccount
@@ -632,7 +632,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         uint8 localDecimals = _getTokenDecimals(token);
 
         // Store pending withdrawal
-        pendingWithdraws[withdrawHash] = PendingWithdraw({
+        pendingWithdraws[xchainHashId] = PendingWithdraw({
             srcChain: srcChain,
             srcAccount: srcAccount,
             destAccount: destAccount,
@@ -650,17 +650,17 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             executed: false
         });
 
-        emit WithdrawSubmit(withdrawHash, srcChain, srcAccount, destAccount, token, amount, nonce, msg.value);
+        emit WithdrawSubmit(xchainHashId, srcChain, srcAccount, destAccount, token, amount, nonce, msg.value);
     }
 
     /// @notice Operator approves a pending withdrawal
-    /// @param withdrawHash The withdrawal hash
-    function withdrawApprove(bytes32 withdrawHash) external onlyOperator nonReentrant {
-        PendingWithdraw storage w = pendingWithdraws[withdrawHash];
+    /// @param xchainHashId The withdrawal hash
+    function withdrawApprove(bytes32 xchainHashId) external onlyOperator nonReentrant {
+        PendingWithdraw storage w = pendingWithdraws[xchainHashId];
 
-        if (w.submittedAt == 0) revert WithdrawNotFound(withdrawHash);
-        if (w.executed) revert WithdrawAlreadyExecuted(withdrawHash);
-        if (w.approved) revert WithdrawAlreadyExecuted(withdrawHash); // Already approved
+        if (w.submittedAt == 0) revert WithdrawNotFound(xchainHashId);
+        if (w.executed) revert WithdrawAlreadyExecuted(xchainHashId);
+        if (w.approved) revert WithdrawAlreadyExecuted(xchainHashId); // Already approved
 
         w.approved = true;
         w.approvedAt = block.timestamp;
@@ -671,17 +671,17 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             if (!success) revert OperatorGasTransferFailed();
         }
 
-        emit WithdrawApprove(withdrawHash);
+        emit WithdrawApprove(xchainHashId);
     }
 
     /// @notice Canceler cancels a pending withdrawal (within 5 min window)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawCancel(bytes32 withdrawHash) external onlyCanceler nonReentrant {
-        PendingWithdraw storage w = pendingWithdraws[withdrawHash];
+    /// @param xchainHashId The withdrawal hash
+    function withdrawCancel(bytes32 xchainHashId) external onlyCanceler nonReentrant {
+        PendingWithdraw storage w = pendingWithdraws[xchainHashId];
 
-        if (w.submittedAt == 0) revert WithdrawNotFound(withdrawHash);
-        if (w.executed) revert WithdrawAlreadyExecuted(withdrawHash);
-        if (!w.approved) revert WithdrawNotApproved(withdrawHash);
+        if (w.submittedAt == 0) revert WithdrawNotFound(xchainHashId);
+        if (w.executed) revert WithdrawAlreadyExecuted(xchainHashId);
+        if (!w.approved) revert WithdrawNotApproved(xchainHashId);
 
         // Check we're within cancel window
         uint256 windowEnd = w.approvedAt + cancelWindow;
@@ -689,31 +689,31 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         w.cancelled = true;
 
-        emit WithdrawCancel(withdrawHash, msg.sender);
+        emit WithdrawCancel(xchainHashId, msg.sender);
     }
 
     /// @notice Operator uncancels a cancelled withdrawal
-    /// @param withdrawHash The withdrawal hash
-    function withdrawUncancel(bytes32 withdrawHash) external onlyOperator nonReentrant {
-        PendingWithdraw storage w = pendingWithdraws[withdrawHash];
+    /// @param xchainHashId The withdrawal hash
+    function withdrawUncancel(bytes32 xchainHashId) external onlyOperator nonReentrant {
+        PendingWithdraw storage w = pendingWithdraws[xchainHashId];
 
-        if (w.submittedAt == 0) revert WithdrawNotFound(withdrawHash);
-        if (w.executed) revert WithdrawAlreadyExecuted(withdrawHash);
-        if (!w.cancelled) revert WithdrawNotFound(withdrawHash); // Not cancelled
+        if (w.submittedAt == 0) revert WithdrawNotFound(xchainHashId);
+        if (w.executed) revert WithdrawAlreadyExecuted(xchainHashId);
+        if (!w.cancelled) revert WithdrawNotFound(xchainHashId); // Not cancelled
 
         w.cancelled = false;
         // Reset approval time to restart cancel window
         w.approvedAt = block.timestamp;
 
-        emit WithdrawUncancel(withdrawHash);
+        emit WithdrawUncancel(xchainHashId);
     }
 
     /// @notice Execute an approved withdrawal (unlock mode)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawExecuteUnlock(bytes32 withdrawHash) external whenNotPaused nonReentrant {
-        PendingWithdraw storage w = pendingWithdraws[withdrawHash];
+    /// @param xchainHashId The withdrawal hash
+    function withdrawExecuteUnlock(bytes32 xchainHashId) external whenNotPaused nonReentrant {
+        PendingWithdraw storage w = pendingWithdraws[xchainHashId];
 
-        _validateWithdrawExecution(w, withdrawHash);
+        _validateWithdrawExecution(w, xchainHashId);
 
         // Validate token type
         if (tokenRegistry.getTokenType(w.token) != ITokenRegistry.TokenType.LockUnlock) {
@@ -732,15 +732,15 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Unlock tokens to recipient
         lockUnlock.unlock(w.recipient, w.token, normalizedAmount);
 
-        emit WithdrawExecute(withdrawHash, w.recipient, normalizedAmount);
+        emit WithdrawExecute(xchainHashId, w.recipient, normalizedAmount);
     }
 
     /// @notice Execute an approved withdrawal (mint mode)
-    /// @param withdrawHash The withdrawal hash
-    function withdrawExecuteMint(bytes32 withdrawHash) external whenNotPaused nonReentrant {
-        PendingWithdraw storage w = pendingWithdraws[withdrawHash];
+    /// @param xchainHashId The withdrawal hash
+    function withdrawExecuteMint(bytes32 xchainHashId) external whenNotPaused nonReentrant {
+        PendingWithdraw storage w = pendingWithdraws[xchainHashId];
 
-        _validateWithdrawExecution(w, withdrawHash);
+        _validateWithdrawExecution(w, xchainHashId);
 
         // Validate token type
         if (tokenRegistry.getTokenType(w.token) != ITokenRegistry.TokenType.MintBurn) {
@@ -759,18 +759,18 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Mint tokens to recipient
         mintBurn.mint(w.recipient, w.token, normalizedAmount);
 
-        emit WithdrawExecute(withdrawHash, w.recipient, normalizedAmount);
+        emit WithdrawExecute(xchainHashId, w.recipient, normalizedAmount);
     }
 
     /// @notice Internal validation for withdrawal execution
     /// @param w Pending withdrawal storage reference
-    /// @param withdrawHash Withdrawal hash for error reporting
+    /// @param xchainHashId Withdrawal hash for error reporting
     /// @dev Execution is allowed only when block.timestamp > approvedAt + cancelWindow (exclusive boundary).
-    function _validateWithdrawExecution(PendingWithdraw storage w, bytes32 withdrawHash) internal view {
-        if (w.submittedAt == 0) revert WithdrawNotFound(withdrawHash);
-        if (w.executed) revert WithdrawAlreadyExecuted(withdrawHash);
-        if (!w.approved) revert WithdrawNotApproved(withdrawHash);
-        if (w.cancelled) revert WithdrawCancelled(withdrawHash);
+    function _validateWithdrawExecution(PendingWithdraw storage w, bytes32 xchainHashId) internal view {
+        if (w.submittedAt == 0) revert WithdrawNotFound(xchainHashId);
+        if (w.executed) revert WithdrawAlreadyExecuted(xchainHashId);
+        if (!w.approved) revert WithdrawNotApproved(xchainHashId);
+        if (w.cancelled) revert WithdrawCancelled(xchainHashId);
 
         // Check cancel window has passed (exclusive: execute allowed only when timestamp > windowEnd)
         uint256 windowEnd = w.approvedAt + cancelWindow;
@@ -831,10 +831,10 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     // ============================================================================
 
     /// @notice Get pending withdrawal info
-    /// @param withdrawHash The withdrawal hash
+    /// @param xchainHashId The withdrawal hash
     /// @return withdraw The pending withdrawal data
-    function getPendingWithdraw(bytes32 withdrawHash) external view returns (PendingWithdraw memory withdraw) {
-        return pendingWithdraws[withdrawHash];
+    function getPendingWithdraw(bytes32 xchainHashId) external view returns (PendingWithdraw memory withdraw) {
+        return pendingWithdraws[xchainHashId];
     }
 
     /// @notice Get the cancel window duration
@@ -856,10 +856,10 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     }
 
     /// @notice Get deposit record by hash
-    /// @param depositHash The deposit hash
+    /// @param xchainHashId The deposit hash
     /// @return record The deposit record
-    function getDeposit(bytes32 depositHash) external view returns (DepositRecord memory record) {
-        return deposits[depositHash];
+    function getDeposit(bytes32 xchainHashId) external view returns (DepositRecord memory record) {
+        return deposits[xchainHashId];
     }
 
     // ============================================================================

@@ -103,9 +103,9 @@ pub async fn test_fraud_detection_full(
     {
         Ok(result) => {
             info!(
-                "Fraudulent approval created: tx=0x{}, withdrawHash=0x{}",
+                "Fraudulent approval created: tx=0x{}, xchainHashId=0x{}",
                 hex::encode(result.tx_hash),
-                hex::encode(&result.withdraw_hash.as_slice()[..8])
+                hex::encode(&result.xchain_hash_id.as_slice()[..8])
             );
             result
         }
@@ -128,7 +128,7 @@ pub async fn test_fraud_detection_full(
         tokio::time::sleep(Duration::from_secs(15)).await;
 
         // Step 5: Check if approval was cancelled
-        match is_approval_cancelled(config, fraud_result.withdraw_hash).await {
+        match is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
             Ok(true) => {
                 info!("Fraudulent approval was cancelled successfully");
             }

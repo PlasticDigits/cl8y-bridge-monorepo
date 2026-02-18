@@ -9,7 +9,7 @@
 //! 1. Given a withdraw hash and source chain ID, determine the source chain type
 //! 2. Route to the correct verification method:
 //!    - EVM source → query `getDeposit(hash)` on the source chain's bridge
-//!    - Terra source → query `deposit_hash` on Terra LCD
+//!    - Terra source → query `xchain_hash_id` on Terra LCD
 //! 3. Return whether the deposit exists
 
 #![allow(dead_code)]
@@ -30,7 +30,7 @@ sol! {
     #[sol(rpc)]
     contract Bridge {
         /// Get deposit record by hash (V2 DepositRecord struct)
-        function getDeposit(bytes32 depositHash) external view returns (
+        function getDeposit(bytes32 xchainHashId) external view returns (
             bytes4 destChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -89,7 +89,7 @@ pub fn build_source_endpoints(
 pub async fn verify_evm_deposit(
     rpc_url: &str,
     bridge_address: &str,
-    deposit_hash: &[u8; 32],
+    xchain_hash_id: &[u8; 32],
 ) -> Result<bool> {
     let provider = ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
@@ -97,13 +97,13 @@ pub async fn verify_evm_deposit(
         Address::from_str(bridge_address).wrap_err("Invalid bridge address for verification")?;
 
     let contract = Bridge::new(address, &provider);
-    let hash_fixed = FixedBytes::from(*deposit_hash);
+    let hash_fixed = FixedBytes::from(*xchain_hash_id);
 
     match contract.getDeposit(hash_fixed).call().await {
         Ok(deposit) => {
             if deposit.timestamp.is_zero() {
                 debug!(
-                    hash = %bytes32_to_hex(deposit_hash),
+                    hash = %bytes32_to_hex(xchain_hash_id),
                     rpc = rpc_url,
                     "No deposit found on source EVM chain (timestamp=0)"
                 );
@@ -111,7 +111,7 @@ pub async fn verify_evm_deposit(
             }
 
             info!(
-                hash = %bytes32_to_hex(deposit_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 nonce = deposit.nonce,
                 amount = %deposit.amount,
                 dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
@@ -123,7 +123,7 @@ pub async fn verify_evm_deposit(
         Err(e) => {
             warn!(
                 error = %e,
-                hash = %bytes32_to_hex(deposit_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 rpc = rpc_url,
                 "Failed to query getDeposit on source EVM chain"
             );
@@ -136,7 +136,7 @@ pub async fn verify_evm_deposit(
 // Terra Deposit Verification
 // ============================================================================
 
-/// Verify a deposit exists on Terra by querying the bridge's `deposit_hash` query.
+/// Verify a deposit exists on Terra by querying the bridge's `xchain_hash_id` query.
 ///
 /// Returns `true` if the query returns a non-null `data` field.
 /// Returns `false` if the deposit doesn't exist.
@@ -144,13 +144,13 @@ pub async fn verify_evm_deposit(
 pub async fn verify_terra_deposit(
     lcd_url: &str,
     bridge_address: &str,
-    deposit_hash: &[u8; 32],
+    xchain_hash_id: &[u8; 32],
 ) -> Result<bool> {
     use base64::Engine;
 
     let query = serde_json::json!({
-        "deposit_hash": {
-            "deposit_hash": base64::engine::general_purpose::STANDARD.encode(deposit_hash)
+        "xchain_hash_id": {
+            "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode(xchain_hash_id)
         }
     });
     let query_b64 = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&query)?);
@@ -183,14 +183,14 @@ pub async fn verify_terra_deposit(
 
     if exists {
         info!(
-            hash = %bytes32_to_hex(deposit_hash),
+            hash = %bytes32_to_hex(xchain_hash_id),
             nonce = body["data"]["nonce"].as_u64().unwrap_or_default(),
             amount = body["data"]["amount"].as_str().unwrap_or("?"),
             "Terra deposit verified on source chain"
         );
     } else {
         debug!(
-            hash = %bytes32_to_hex(deposit_hash),
+            hash = %bytes32_to_hex(xchain_hash_id),
             "Terra deposit not found on source chain"
         );
     }
@@ -211,7 +211,7 @@ pub fn terra_deposit_exists_in_response(body: &serde_json::Value) -> bool {
 ///
 /// # Arguments
 /// - `src_chain_id` — 4-byte V2 chain ID of the source chain
-/// - `deposit_hash` — the transfer hash to verify
+/// - `xchain_hash_id` — the transfer hash to verify
 /// - `evm_endpoints` — map of V2 chain ID → EVM verification parameters
 /// - `terra_chain_id` — V2 chain ID of the Terra chain (if configured)
 /// - `terra_lcd_url` — Terra LCD URL (if configured)
@@ -220,7 +220,7 @@ pub fn terra_deposit_exists_in_response(body: &serde_json::Value) -> bool {
 /// Returns `Ok(true)` if deposit exists, `Ok(false)` if not found or unknown chain.
 pub async fn route_verification(
     src_chain_id: &[u8; 4],
-    deposit_hash: &[u8; 32],
+    xchain_hash_id: &[u8; 32],
     evm_endpoints: &HashMap<[u8; 4], SourceChainEndpoint>,
     terra_chain_id: Option<&ChainId>,
     terra_lcd_url: Option<&str>,
@@ -235,18 +235,18 @@ pub async fn route_verification(
             let bridge = terra_bridge_address.ok_or_else(|| {
                 eyre!("Terra bridge address not configured for Terra-source verification")
             })?;
-            return verify_terra_deposit(lcd_url, bridge, deposit_hash).await;
+            return verify_terra_deposit(lcd_url, bridge, xchain_hash_id).await;
         }
     }
 
     // Check if source is a known EVM chain
     if let Some(endpoint) = evm_endpoints.get(src_chain_id) {
-        return verify_evm_deposit(&endpoint.rpc_url, &endpoint.bridge_address, deposit_hash).await;
+        return verify_evm_deposit(&endpoint.rpc_url, &endpoint.bridge_address, xchain_hash_id).await;
     }
 
     // Unknown source chain: fail closed
     warn!(
-        hash = %bytes32_to_hex(deposit_hash),
+        hash = %bytes32_to_hex(xchain_hash_id),
         src_chain = %format!("0x{}", hex::encode(src_chain_id)),
         known_evm_chains = evm_endpoints.len(),
         "Unknown source chain ID — refusing to verify (fail closed). \
@@ -270,7 +270,7 @@ mod tests {
             "data": {
                 "nonce": 1,
                 "amount": "1000000",
-                "deposit_hash": "abc123"
+                "xchain_hash_id": "abc123"
             }
         });
         assert!(terra_deposit_exists_in_response(&body));

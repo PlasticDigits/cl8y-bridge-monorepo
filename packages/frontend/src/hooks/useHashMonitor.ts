@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { fetchAllTransferHashes, type MonitorHashEntry } from '../services/hashMonitor'
+import { fetchAllXchainHashIds, type MonitorHashEntry } from '../services/hashMonitor'
 import { getVerificationRecords } from '../components/verify/RecentVerifications'
 import type { HashStatus } from '../types/transfer'
 
@@ -79,7 +79,7 @@ export function useHashMonitor() {
     setLoading(true)
     setError(null)
     try {
-      const entries = await fetchAllTransferHashes()
+      const entries = await fetchAllXchainHashIds()
       const merged = mergeWithVerificationRecords(entries)
       setRecords(merged)
     } catch (err) {

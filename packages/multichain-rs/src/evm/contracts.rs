@@ -37,19 +37,19 @@ sol! {
         function withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals) external payable;
 
         /// Operator approves a pending withdrawal
-        function withdrawApprove(bytes32 withdrawHash) external;
+        function withdrawApprove(bytes32 xchainHashId) external;
 
         /// Canceler cancels a pending withdrawal (within cancel window)
-        function withdrawCancel(bytes32 withdrawHash) external;
+        function withdrawCancel(bytes32 xchainHashId) external;
 
         /// Operator uncancels a cancelled withdrawal
-        function withdrawUncancel(bytes32 withdrawHash) external;
+        function withdrawUncancel(bytes32 xchainHashId) external;
 
         /// Execute an approved withdrawal (unlock mode) - anyone can call after window
-        function withdrawExecuteUnlock(bytes32 withdrawHash) external;
+        function withdrawExecuteUnlock(bytes32 xchainHashId) external;
 
         /// Execute an approved withdrawal (mint mode) - anyone can call after window
-        function withdrawExecuteMint(bytes32 withdrawHash) external;
+        function withdrawExecuteMint(bytes32 xchainHashId) external;
 
         // ========================================================================
         // Fee Management
@@ -90,7 +90,7 @@ sol! {
         ///
         /// IMPORTANT: Must match the Solidity PendingWithdraw struct exactly,
         /// including `destAccount` between `srcAccount` and `token`.
-        function getPendingWithdraw(bytes32 withdrawHash) external view returns (
+        function getPendingWithdraw(bytes32 xchainHashId) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -109,7 +109,7 @@ sol! {
         );
 
         /// Get deposit record by hash (returns zero struct if not found)
-        function getDeposit(bytes32 depositHash) external view returns (
+        function getDeposit(bytes32 xchainHashId) external view returns (
             bytes4 destChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -157,7 +157,7 @@ sol! {
         /// Withdraw submit - user initiates withdrawal
         /// Includes srcAccount and destAccount for full traceability
         event WithdrawSubmit(
-            bytes32 indexed withdrawHash,
+            bytes32 indexed xchainHashId,
             bytes4 srcChain,
             bytes32 srcAccount,
             bytes32 destAccount,
@@ -168,16 +168,16 @@ sol! {
         );
 
         /// Withdraw approve - operator approves
-        event WithdrawApprove(bytes32 indexed withdrawHash);
+        event WithdrawApprove(bytes32 indexed xchainHashId);
 
         /// Withdraw cancel - canceler cancels
-        event WithdrawCancel(bytes32 indexed withdrawHash, address canceler);
+        event WithdrawCancel(bytes32 indexed xchainHashId, address canceler);
 
         /// Withdraw uncancel - operator uncancels
-        event WithdrawUncancel(bytes32 indexed withdrawHash);
+        event WithdrawUncancel(bytes32 indexed xchainHashId);
 
         /// Withdraw execute - withdrawal completed
-        event WithdrawExecute(bytes32 indexed withdrawHash, address recipient, uint256 amount);
+        event WithdrawExecute(bytes32 indexed xchainHashId, address recipient, uint256 amount);
 
         /// Fee collected
         event FeeCollected(address indexed token, uint256 amount, address recipient);
@@ -219,19 +219,19 @@ sol! {
         ) external;
 
         /// Cancel a previously approved withdrawal
-        function cancelWithdrawApproval(bytes32 withdrawHash) external;
+        function cancelWithdrawApproval(bytes32 xchainHashId) external;
 
         /// Re-enable a cancelled approval (admin only)
-        function reenableWithdrawApproval(bytes32 withdrawHash) external;
+        function reenableWithdrawApproval(bytes32 xchainHashId) external;
 
         /// Execute a withdrawal (requires approval and delay elapsed)
-        function withdraw(bytes32 withdrawHash) external payable;
+        function withdraw(bytes32 xchainHashId) external payable;
 
         /// Query the withdraw delay in seconds
         function withdrawDelay() external view returns (uint256);
 
         /// Get approval info for a given withdraw hash
-        function getWithdrawApproval(bytes32 withdrawHash) external view returns (
+        function getWithdrawApproval(bytes32 xchainHashId) external view returns (
             uint256 fee,
             address feeRecipient,
             uint64 approvedAt,
@@ -242,7 +242,7 @@ sol! {
         );
 
         /// Get stored withdraw data for a hash
-        function getWithdrawFromHash(bytes32 withdrawHash) external view returns (
+        function getWithdrawFromHash(bytes32 xchainHashId) external view returns (
             bytes32 srcChainKey,
             address token,
             bytes32 destAccount,
@@ -265,7 +265,7 @@ sol! {
         );
 
         event WithdrawApproved(
-            bytes32 indexed withdrawHash,
+            bytes32 indexed xchainHashId,
             bytes32 indexed srcChainKey,
             address indexed token,
             address to,
@@ -276,7 +276,7 @@ sol! {
             bool deductFromAmount
         );
 
-        event WithdrawApprovalCancelled(bytes32 indexed withdrawHash);
+        event WithdrawApprovalCancelled(bytes32 indexed xchainHashId);
 
         event WithdrawRequest(
             bytes32 indexed srcChainKey,

@@ -145,7 +145,7 @@ export async function skipAnvilTime(rpcUrl: string, seconds: number): Promise<vo
  * @param rpcUrl - EVM RPC endpoint
  * @param contractAddress - Bridge contract address
  * @param eventTopic - keccak256 of the event signature
- * @param indexedTopic - Optional indexed parameter (e.g. withdrawHash)
+ * @param indexedTopic - Optional indexed parameter (e.g. xchainHashId)
  * @param timeoutMs - Timeout in milliseconds
  */
 export async function pollForEvent(

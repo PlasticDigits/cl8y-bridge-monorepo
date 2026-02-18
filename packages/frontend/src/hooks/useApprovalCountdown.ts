@@ -19,7 +19,7 @@ import type { BridgeChainConfig } from '../types/chain'
 const POLL_INTERVAL_MS = 1000
 
 export function useApprovalCountdown(
-  transferHash: Hex | undefined,
+  xchainHashId: Hex | undefined,
   destChainDisplayName: string | undefined,
   enabled: boolean
 ) {
@@ -32,16 +32,16 @@ export function useApprovalCountdown(
     : undefined
 
   const { data: remainingSeconds } = useQuery({
-    queryKey: ['approvalCountdown', transferHash, destChainKey],
+    queryKey: ['approvalCountdown', xchainHashId, destChainKey],
     queryFn: async (): Promise<number | undefined> => {
-      if (!transferHash || !destChainConfig?.bridgeAddress) return undefined
+      if (!xchainHashId || !destChainConfig?.bridgeAddress) return undefined
 
       if (destChainConfig.type === 'evm') {
         const client = getEvmClient(destChainConfig)
         const result = await queryEvmPendingWithdraw(
           client,
           destChainConfig.bridgeAddress as `0x${string}`,
-          transferHash,
+          xchainHashId,
           destChainConfig.chainId as number
         )
         return result?.cancelWindowRemaining
@@ -53,7 +53,7 @@ export function useApprovalCountdown(
         const result = await queryTerraPendingWithdraw(
           lcdUrls,
           destChainConfig.bridgeAddress,
-          transferHash,
+          xchainHashId,
           destChainConfig
         )
         return result?.cancelWindowRemaining
@@ -61,7 +61,7 @@ export function useApprovalCountdown(
 
       return undefined
     },
-    enabled: enabled && !!transferHash && !!destChainConfig?.bridgeAddress,
+    enabled: enabled && !!xchainHashId && !!destChainConfig?.bridgeAddress,
     refetchInterval: POLL_INTERVAL_MS,
   })
 

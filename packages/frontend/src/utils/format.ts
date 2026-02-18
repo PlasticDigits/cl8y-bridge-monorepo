@@ -133,6 +133,19 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format duration in seconds as mm:ss for countdown timers.
+ * Updates visibly every second (e.g. "02:30", "01:05", "00:09").
+ */
+export function formatCountdownMmSs(seconds: number): string {
+  if (seconds < 0) return '0:00';
+
+  const totalSecs = Math.floor(seconds);
+  const m = Math.floor(totalSecs / 60);
+  const s = totalSecs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/**
  * Format an address for display (truncated)
  */
 export function formatAddress(address: string, chars: number = 8): string {

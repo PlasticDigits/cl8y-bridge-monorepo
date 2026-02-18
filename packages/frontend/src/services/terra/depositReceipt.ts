@@ -20,7 +20,7 @@ export interface ParsedTerraLockEvent {
   recipient: string      // recipient address on destination chain
   sender: string         // sender's Terra address
   /** The deposit hash computed and stored by the Terra contract (bytes32 hex) */
-  depositHash?: string
+  xchainHashId?: string
   /** The destination token address the Terra contract used in the hash (bytes32 hex) */
   destTokenAddress?: string
 }
@@ -123,7 +123,7 @@ async function attemptParse(
     let destChainId: number | undefined
     let recipient: string | undefined
     let sender: string | undefined
-    let depositHash: string | undefined
+    let xchainHashId: string | undefined
     let destTokenAddress: string | undefined
     const foundKeys: string[] = []
 
@@ -160,8 +160,8 @@ async function attemptParse(
             case '_contract_address':
               if (key === 'sender') sender = value
               break
-            case 'deposit_hash':
-              depositHash = value
+            case 'xchain_hash_id':
+              xchainHashId = value
               break
             case 'dest_token_address':
               destTokenAddress = value
@@ -224,13 +224,13 @@ async function attemptParse(
       destChainId: destChainId || 0,
       recipient: recipient || '',
       sender: sender || '',
-      depositHash,
+      xchainHashId,
       destTokenAddress,
     }
 
     console.info(
       `${tag} Parsed tx ${txHash}: nonce=${nonce}, amount=${amount}, ` +
-      `depositHash=${depositHash?.slice(0, 18) ?? 'none'}..., ` +
+      `xchainHashId=${xchainHashId?.slice(0, 18) ?? 'none'}..., ` +
       `destToken=${destTokenAddress?.slice(0, 18) ?? 'none'}..., ` +
       `token=${token}, sender=${sender?.slice(0, 12)}...`
     )

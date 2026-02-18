@@ -93,7 +93,16 @@ start_canceler() {
         binary="$CANCELER_DIR/target/release/cl8y-canceler"
     fi
 
-    # Source environment if .env exists
+    # Source environment: .env.e2e.local first (E2E contract addresses), then .env
+    if [ -f "$PROJECT_ROOT/.env.e2e.local" ]; then
+        set -a
+        source "$PROJECT_ROOT/.env.e2e.local"
+        set +a
+        # Map VITE_ prefixed vars to the names the canceler expects
+        [ -n "${VITE_EVM_BRIDGE_ADDRESS:-}" ] && export EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-$VITE_EVM_BRIDGE_ADDRESS}"
+        [ -n "${VITE_TERRA_BRIDGE_ADDRESS:-}" ] && export TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-$VITE_TERRA_BRIDGE_ADDRESS}"
+        [ -n "${VITE_EVM1_BRIDGE_ADDRESS:-}" ] && export EVM1_BRIDGE_ADDRESS="${EVM1_BRIDGE_ADDRESS:-$VITE_EVM1_BRIDGE_ADDRESS}"
+    fi
     if [ -f "$PROJECT_ROOT/.env" ]; then
         set -a
         source "$PROJECT_ROOT/.env"
@@ -121,8 +130,9 @@ start_canceler() {
     
     # Set canceler ID and health port based on instance ID
     export CANCELER_ID="${CANCELER_ID:-canceler-$id}"
-    # Use different health ports for different instances (9090, 9091, etc.)
-    local base_health_port="${HEALTH_PORT_BASE:-9090}"
+    # Use different health ports for different instances (9099, 9100, etc.)
+    # Base 9099 avoids LocalTerra gRPC (9090), gRPC-web (9091), and operator API (9092)
+    local base_health_port="${HEALTH_PORT_BASE:-9099}"
     export HEALTH_PORT=$((base_health_port + id - 1))
     
     # Use different keys for different instances if provided

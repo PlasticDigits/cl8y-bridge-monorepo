@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useHashVerification } from '../hooks/useHashVerification'
 import { useTransferStore } from '../stores/transfer'
 import {
@@ -11,10 +11,11 @@ import {
   recordVerification,
   recordVerificationResult,
 } from '../components/verify'
-import { isValidTransferHash, normalizeTransferHash } from '../utils/validation'
+import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
 
 export default function HashVerificationPage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const hashFromUrl = searchParams.get('hash')?.trim() || null
   const {
     verify,
@@ -31,7 +32,7 @@ export default function HashVerificationPage() {
     failedChains,
   } = useHashVerification()
 
-  const { getTransferByHash } = useTransferStore()
+  const { getTransferByXchainHashId } = useTransferStore()
 
   const handleSearch = async (hash: string) => {
     recordVerification(hash)
@@ -53,21 +54,21 @@ export default function HashVerificationPage() {
   }, [inputHash, loading, source, dest, sourceChain, destChain, status, matches, error, dest?.cancelled])
 
   const handleSelectHash = (hash: string) => {
-    verify(hash)
+    navigate(`/verify?hash=${encodeURIComponent(hash)}`, { replace: true })
   }
 
   // Auto-verify when navigating with ?hash= in URL (e.g. from transfer status page)
   useEffect(() => {
     if (!hashFromUrl || loading) return
     if (inputHash && inputHash.toLowerCase() === hashFromUrl.toLowerCase()) return // already verified
-    if (!isValidTransferHash(hashFromUrl)) return
-    const normalized = normalizeTransferHash(hashFromUrl)
+    if (!isValidXchainHashId(hashFromUrl)) return
+    const normalized = normalizeXchainHashId(hashFromUrl)
     recordVerification(normalized)
     verify(normalized)
   }, [hashFromUrl])
 
   // Check if this hash has a local transfer record that needs submission
-  const localTransfer = inputHash ? getTransferByHash(inputHash) : null
+  const localTransfer = inputHash ? getTransferByXchainHashId(inputHash) : null
   const needsSubmit = localTransfer?.lifecycle === 'deposited'
   // dest is null means no PendingWithdraw found on dest chain => not submitted
   const notSubmittedOnChain = inputHash && !loading && source && !dest
@@ -82,7 +83,7 @@ export default function HashVerificationPage() {
         <div className="relative z-10">
         <h2 className="mb-2 text-xl font-semibold text-white">Hash Verification</h2>
         <p className="mb-4 text-xs uppercase tracking-wide text-gray-300">
-          Enter a transfer hash (64 hex chars) to verify and match source/destination data across chains.
+          Enter an XChain Hash ID (64 hex chars) to verify and match source/destination data across chains.
         </p>
         <HashSearchBar
           onSearch={handleSearch}

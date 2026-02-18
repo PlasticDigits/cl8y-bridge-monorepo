@@ -76,7 +76,11 @@ export const LCD_CONFIG = {
 // Default network - change based on environment
 export const DEFAULT_NETWORK = (import.meta.env.VITE_NETWORK || 'local') as keyof typeof NETWORKS;
 
-// Contract addresses per network
+// Contract addresses per network.
+// WARNING: These are the PRIMARY (single-chain) bridge addresses. Do NOT use
+// CONTRACTS[*].evmBridge as a fallback for multi-chain operations — each chain
+// has its own bridge address configured in BRIDGE_CHAINS. Using this as a
+// fallback silently routes transactions to the wrong bridge.
 export const CONTRACTS = {
   local: {
     terraBridge: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',

@@ -80,7 +80,7 @@ describe('HashComparisonPanel', () => {
         error={null}
       />
     )
-    expect(screen.getByText(/Enter a transfer hash/)).toBeInTheDocument()
+    expect(screen.getByText(/Enter an XChain Hash ID/)).toBeInTheDocument()
   })
 
   it('should render source and dest cards when both present', () => {

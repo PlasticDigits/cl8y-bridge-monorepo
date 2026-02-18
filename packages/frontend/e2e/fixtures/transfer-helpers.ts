@@ -77,9 +77,9 @@ export function withdrawSubmitViaCast(params: {
 
 /**
  * Compute the keccak256 transfer hash via `cast keccak`.
- * Matches Bridge.sol _computeWithdrawHash logic.
+ * Matches Bridge.sol _computeXchainHashId logic.
  */
-export function computeWithdrawHashViaCast(params: {
+export function computeXchainHashIdViaCast(params: {
   srcChain: string       // bytes4
   destChain: string      // bytes4
   srcAccount: string     // bytes32
@@ -212,12 +212,12 @@ export function getDepositNonceFromReceipt(rpcUrl: string, txHash: string): numb
 }
 
 /**
- * Poll for operator approval of a withdraw hash.
+ * Poll for operator approval of an xchain hash id.
  */
 export async function pollForApproval(
   rpcUrl: string,
   bridgeAddress: string,
-  withdrawHash: string,
+  xchainHashId: string,
   timeoutMs: number = 60_000
 ): Promise<boolean> {
   const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
@@ -231,7 +231,7 @@ export async function pollForApproval(
           `--rpc-url ${rpcUrl}`,
           bridgeAddress,
           '"getPendingWithdraw(bytes32)"',
-          withdrawHash,
+          xchainHashId,
         ].join(' '),
         { encoding: 'utf8', timeout: 10_000, env: castEnv }
       ).trim()
@@ -257,12 +257,12 @@ export async function pollForApproval(
 }
 
 /**
- * Poll for operator execution (tokens released) of a withdraw hash.
+ * Poll for operator execution (tokens released) of an xchain hash id.
  */
 export async function pollForExecution(
   rpcUrl: string,
   bridgeAddress: string,
-  withdrawHash: string,
+  xchainHashId: string,
   timeoutMs: number = 60_000
 ): Promise<boolean> {
   const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
@@ -277,7 +277,7 @@ export async function pollForExecution(
           `--rpc-url ${rpcUrl}`,
           bridgeAddress,
           '"getPendingWithdraw(bytes32)"',
-          withdrawHash,
+          xchainHashId,
         ].join(' '),
         { encoding: 'utf8', timeout: 10_000, env: castEnv }
       ).trim()
@@ -346,7 +346,7 @@ export function withdrawExecuteViaCast(params: {
   rpcUrl: string
   bridgeAddress: string
   privateKey: string
-  withdrawHash: string
+  xchainHashId: string
 }): string {
   const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
   const result = execSync(
@@ -357,7 +357,7 @@ export function withdrawExecuteViaCast(params: {
       '--confirmations 1',
       params.bridgeAddress,
       '"withdrawExecuteUnlock(bytes32)"',
-      params.withdrawHash,
+      params.xchainHashId,
     ].join(' '),
     { encoding: 'utf8', timeout: 30_000, env: castEnv }
   )

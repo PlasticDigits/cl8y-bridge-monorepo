@@ -161,15 +161,15 @@ impl TerraQueryClient {
     /// Get pending withdrawal information
     pub async fn get_pending_withdraw(
         &self,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<PendingWithdrawResponse> {
         use base64::Engine;
-        let hash_b64 = base64::engine::general_purpose::STANDARD.encode(withdraw_hash);
+        let hash_b64 = base64::engine::general_purpose::STANDARD.encode(xchain_hash_id);
 
         self.query_contract(
             &self.bridge_address,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: hash_b64,
+                xchain_hash_id: hash_b64,
             },
         )
         .await
@@ -177,7 +177,7 @@ impl TerraQueryClient {
 
     /// Compute transfer hash via on-chain query (V2 unified 7-field)
     #[allow(clippy::too_many_arguments)]
-    pub async fn compute_transfer_hash_v2(
+    pub async fn compute_xchain_hash_id_v2(
         &self,
         src_chain: &ChainId,
         dest_chain: &ChainId,
@@ -193,7 +193,7 @@ impl TerraQueryClient {
         let response: serde_json::Value = self
             .query_contract(
                 &self.bridge_address,
-                &QueryMsg::ComputeTransferHash {
+                &QueryMsg::ComputeXchainHashId {
                     src_chain: encoder.encode(src_chain.as_bytes()),
                     dest_chain: encoder.encode(dest_chain.as_bytes()),
                     src_account: encoder.encode(src_account),
@@ -206,10 +206,9 @@ impl TerraQueryClient {
             .await?;
 
         let hash_b64 = response
-            .get("transfer_hash")
-            .or_else(|| response.get("withdraw_hash"))
+            .get("xchain_hash_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| eyre!("Missing transfer_hash in response"))?;
+            .ok_or_else(|| eyre!("Missing xchain_hash_id in response"))?;
 
         let hash_bytes = encoder
             .decode(hash_b64)

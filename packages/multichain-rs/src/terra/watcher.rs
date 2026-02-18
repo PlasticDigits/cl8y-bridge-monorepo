@@ -440,7 +440,7 @@ impl TerraEventWatcher {
     /// Wait for a WithdrawCancel event by withdraw hash (base64)
     pub async fn wait_for_withdraw_cancel(
         &self,
-        withdraw_hash_b64: &str,
+        xchain_hash_id_b64: &str,
         timeout: Duration,
     ) -> Result<TerraWithdrawCancelEvent> {
         let start = std::time::Instant::now();
@@ -455,7 +455,7 @@ impl TerraEventWatcher {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == withdraw_hash_b64 {
+                    if event.xchain_hash_id == xchain_hash_id_b64 {
                         return Ok(event);
                     }
                 }
@@ -475,7 +475,7 @@ impl TerraEventWatcher {
     /// Wait for a WithdrawApprove event by withdraw hash (base64)
     pub async fn wait_for_withdraw_approve(
         &self,
-        withdraw_hash_b64: &str,
+        xchain_hash_id_b64: &str,
         timeout: Duration,
     ) -> Result<TerraWithdrawApproveEvent> {
         let start = std::time::Instant::now();
@@ -490,7 +490,7 @@ impl TerraEventWatcher {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == withdraw_hash_b64 {
+                    if event.xchain_hash_id == xchain_hash_id_b64 {
                         return Ok(event);
                     }
                 }
@@ -510,7 +510,7 @@ impl TerraEventWatcher {
     /// Wait for a WithdrawExecute event by withdraw hash (base64)
     pub async fn wait_for_withdraw_execute(
         &self,
-        withdraw_hash_b64: &str,
+        xchain_hash_id_b64: &str,
         timeout: Duration,
     ) -> Result<TerraWithdrawExecuteEvent> {
         let start = std::time::Instant::now();
@@ -525,7 +525,7 @@ impl TerraEventWatcher {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == withdraw_hash_b64 {
+                    if event.xchain_hash_id == xchain_hash_id_b64 {
                         return Ok(event);
                     }
                 }

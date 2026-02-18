@@ -34,7 +34,7 @@ describe('terraBridgeQueries', () => {
       expect(result).toBeNull()
     })
 
-    it('should return null when response has no deposit_hash', async () => {
+    it('should return null when response has no xchain_hash_id', async () => {
       vi.mocked(lcdClient.queryContract).mockResolvedValue({})
       const result = await queryTerraDeposit(lcdUrls, 'terra1bridge', hash, terraConfig)
       expect(result).toBeNull()
@@ -51,7 +51,7 @@ describe('terraBridgeQueries', () => {
       const bytes32Base64 = btoa(String.fromCharCode(...new Array(32).fill(1)))
 
       vi.mocked(lcdClient.queryContract).mockResolvedValue({
-        deposit_hash: bytes32Base64,
+        xchain_hash_id: bytes32Base64,
         src_account: bytes32Base64,
         dest_token_address: bytes32Base64,
         dest_account: bytes32Base64,
@@ -75,8 +75,8 @@ describe('terraBridgeQueries', () => {
         lcdUrls,
         'terra1bridge',
         expect.objectContaining({
-          deposit_hash: expect.objectContaining({
-            deposit_hash: expect.any(String),
+          xchain_hash_id: expect.objectContaining({
+            xchain_hash_id: expect.any(String),
           }),
         })
       )

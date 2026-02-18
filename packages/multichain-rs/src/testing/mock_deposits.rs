@@ -3,7 +3,7 @@
 //! Utilities for creating test deposit scenarios and generating expected hashes.
 
 use crate::{
-    compute_transfer_hash,
+    compute_xchain_hash_id,
     types::{ChainId, EvmAddress},
 };
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ impl MockDeposit {
 
     /// Compute the unified transfer hash (same for deposit and withdraw)
     pub fn compute_hash(&self) -> [u8; 32] {
-        compute_transfer_hash(
+        compute_xchain_hash_id(
             self.src_chain.as_bytes(),
             self.dest_chain.as_bytes(),
             &self.src_account,
@@ -63,7 +63,7 @@ impl MockDeposit {
     }
 
     /// Compute the withdraw hash (same as deposit hash for cross-chain matching)
-    pub fn compute_withdraw_hash(&self) -> [u8; 32] {
+    pub fn compute_xchain_hash_id(&self) -> [u8; 32] {
         self.compute_hash()
     }
 }
@@ -197,7 +197,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mock_deposit_hash() {
+    fn test_mock_xchain_hash_id() {
         let deposit = MockDepositBuilder::new()
             .src_chain(1)
             .dest_chain(2)

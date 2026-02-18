@@ -25,20 +25,20 @@ import { keccak256, toBytes } from 'viem'
 
 // Terra contract query message types
 interface TerraDepositHashQuery {
-  deposit_hash: {
-    deposit_hash: string // base64-encoded 32-byte hash
+  xchain_hash_id: {
+    xchain_hash_id: string // base64-encoded 32-byte hash
   }
 }
 
 interface TerraPendingWithdrawQuery {
   pending_withdraw: {
-    withdraw_hash: string // base64-encoded 32-byte hash
+    xchain_hash_id: string // base64-encoded 32-byte hash
   }
 }
 
 // Terra contract response types (from LCD JSON)
 interface TerraDepositInfoResponse {
-  deposit_hash: string // base64 Binary
+  xchain_hash_id: string // base64 Binary
   src_chain: string // base64 Binary (4 bytes)
   dest_chain: string // base64 Binary (4 bytes)
   src_account: string // base64 Binary (32 bytes)
@@ -82,8 +82,8 @@ export async function queryTerraDeposit(
     const hashBase64 = hexToBase64(hash)
 
     const query: TerraDepositHashQuery = {
-      deposit_hash: {
-        deposit_hash: hashBase64,
+      xchain_hash_id: {
+        xchain_hash_id: hashBase64,
       },
     }
 
@@ -93,7 +93,7 @@ export async function queryTerraDeposit(
       query
     )
 
-    if (!response || !response.deposit_hash) {
+    if (!response || !response.xchain_hash_id) {
       return null
     }
 
@@ -152,7 +152,7 @@ export async function queryTerraPendingWithdraw(
 
     const query: TerraPendingWithdrawQuery = {
       pending_withdraw: {
-        withdraw_hash: hashBase64,
+        xchain_hash_id: hashBase64,
       },
     }
 

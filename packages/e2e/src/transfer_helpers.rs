@@ -228,7 +228,7 @@ pub async fn poll_for_approval(
                     nonce = deposit_nonce,
                     attempt = attempt,
                     elapsed_secs = start.elapsed().as_secs(),
-                    hash = hex::encode(&approval.withdraw_hash.as_slice()[..8]),
+                    hash = hex::encode(&approval.xchain_hash_id.as_slice()[..8]),
                     "Found EVM approval"
                 );
                 return Ok(approval);
@@ -319,7 +319,7 @@ pub async fn poll_for_approval_on_chain(
                     nonce = deposit_nonce,
                     attempt = attempt,
                     elapsed_secs = start.elapsed().as_secs(),
-                    hash = hex::encode(&approval.withdraw_hash.as_slice()[..8]),
+                    hash = hex::encode(&approval.xchain_hash_id.as_slice()[..8]),
                     bridge = %bridge_address,
                     "Found EVM approval on chain"
                 );
@@ -368,19 +368,19 @@ pub async fn poll_for_approval_on_chain(
 ///
 /// # Arguments
 /// * `config` - E2E configuration
-/// * `withdraw_hash` - The withdrawal hash to check
+/// * `xchain_hash_id` - The withdrawal hash to check
 /// * `timeout` - Maximum time to wait
 ///
 /// # Returns
 /// * `true` if withdrawal is ready, error if timeout
 pub async fn poll_for_withdrawal_ready(
     config: &E2eConfig,
-    withdraw_hash: B256,
+    xchain_hash_id: B256,
     timeout: Duration,
 ) -> Result<bool> {
     info!(
         "Polling for withdrawal ready: 0x{} (timeout: {:?})",
-        hex::encode(withdraw_hash),
+        hex::encode(xchain_hash_id),
         timeout
     );
 
@@ -388,18 +388,18 @@ pub async fn poll_for_withdrawal_ready(
     let interval = Duration::from_secs(5);
 
     while start.elapsed() < timeout {
-        match is_withdrawal_ready(config, withdraw_hash).await {
+        match is_withdrawal_ready(config, xchain_hash_id).await {
             Ok(true) => {
                 info!(
                     "Withdrawal 0x{} is ready for execution",
-                    hex::encode(withdraw_hash)
+                    hex::encode(xchain_hash_id)
                 );
                 return Ok(true);
             }
             Ok(false) => {
                 debug!(
                     "Withdrawal 0x{} not ready yet...",
-                    hex::encode(&withdraw_hash.as_slice()[..8])
+                    hex::encode(&xchain_hash_id.as_slice()[..8])
                 );
             }
             Err(e) => {
@@ -451,7 +451,7 @@ pub async fn skip_withdrawal_delay(config: &E2eConfig, extra_seconds: u64) -> Re
 #[derive(Debug, Clone)]
 pub struct ApprovalInfo {
     /// The withdraw hash for this approval
-    pub withdraw_hash: B256,
+    pub xchain_hash_id: B256,
     /// Source chain key
     pub src_chain_key: B256,
     /// Token address
@@ -472,7 +472,7 @@ pub struct ApprovalInfo {
 
 /// Query approval by deposit nonce (V2)
 ///
-/// V2 WithdrawApprove(bytes32 indexed withdrawHash) only emits the hash as a topic.
+/// V2 WithdrawApprove(bytes32 indexed xchainHashId) only emits the hash as a topic.
 /// To find an approval matching a given nonce, we:
 /// 1. Query all WithdrawApprove events
 /// 2. For each event, call getPendingWithdraw(hash) to get the nonce and details
@@ -480,7 +480,7 @@ pub struct ApprovalInfo {
 async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Option<ApprovalInfo>> {
     let client = reqwest::Client::new();
 
-    // V2 WithdrawApprove event: only has indexed withdrawHash
+    // V2 WithdrawApprove event: only has indexed xchainHashId
     let approval_topic =
         "0x".to_string() + &hex::encode(alloy::primitives::keccak256(b"WithdrawApprove(bytes32)"));
 
@@ -512,18 +512,18 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                 continue;
             }
 
-            // topic[1] = withdrawHash
+            // topic[1] = xchainHashId
             let hash_hex = topics[1].as_str().unwrap_or("").trim_start_matches("0x");
             let hash_bytes = hex::decode(hash_hex).unwrap_or_default();
             if hash_bytes.len() != 32 {
                 continue;
             }
 
-            let withdraw_hash = B256::from_slice(&hash_bytes);
+            let xchain_hash_id = B256::from_slice(&hash_bytes);
 
             // Query getPendingWithdraw to get the details for this hash
             let selector = selector("getPendingWithdraw(bytes32)");
-            let call_data = format!("0x{}{}", selector, hex::encode(withdraw_hash.as_slice()));
+            let call_data = format!("0x{}{}", selector, hex::encode(xchain_hash_id.as_slice()));
 
             let pw_response = client
                 .post(config.evm.rpc_url.as_str())
@@ -569,7 +569,7 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                     let src_chain_raw = &result_bytes[0..4];
                     let submitted_at = U256::from_be_slice(&result_bytes[320..352]);
                     debug!(
-                        hash = %format!("0x{}", hex::encode(withdraw_hash.as_slice())),
+                        hash = %format!("0x{}", hex::encode(xchain_hash_id.as_slice())),
                         nonce = pw_nonce,
                         src_chain = %format!("0x{}", hex::encode(src_chain_raw)),
                         submitted_at = %submitted_at,
@@ -590,7 +590,7 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
                     let executed = result_bytes[479] != 0;
 
                     return Ok(Some(ApprovalInfo {
-                        withdraw_hash,
+                        xchain_hash_id,
                         src_chain_key,
                         token,
                         recipient,
@@ -664,11 +664,11 @@ async fn query_approval_by_nonce_on_chain(
                 continue;
             }
 
-            let withdraw_hash = B256::from_slice(&hash_bytes);
+            let xchain_hash_id = B256::from_slice(&hash_bytes);
 
             // Query getPendingWithdraw on this chain's bridge
             let sel = selector("getPendingWithdraw(bytes32)");
-            let call_data = format!("0x{}{}", sel, hex::encode(withdraw_hash.as_slice()));
+            let call_data = format!("0x{}{}", sel, hex::encode(xchain_hash_id.as_slice()));
 
             let pw_response = client
                 .post(rpc_url)
@@ -703,7 +703,7 @@ async fn query_approval_by_nonce_on_chain(
                     let executed = result_bytes[479] != 0;
 
                     return Ok(Some(ApprovalInfo {
-                        withdraw_hash,
+                        xchain_hash_id,
                         src_chain_key,
                         token,
                         recipient,
@@ -825,7 +825,7 @@ async fn dump_approval_diagnostics(config: &E2eConfig, target_nonce: u64) {
 
 /// Query ALL WithdrawApprove events from the EVM bridge (V2, for diagnostics)
 ///
-/// V2 WithdrawApprove(bytes32 indexed withdrawHash) only has the hash.
+/// V2 WithdrawApprove(bytes32 indexed xchainHashId) only has the hash.
 /// We query getPendingWithdraw for each to get details.
 async fn query_all_approval_events(config: &E2eConfig) -> Result<Vec<ApprovalInfo>> {
     let client = reqwest::Client::new();
@@ -861,17 +861,17 @@ async fn query_all_approval_events(config: &E2eConfig) -> Result<Vec<ApprovalInf
                 continue;
             }
 
-            // topic[1] = withdrawHash
+            // topic[1] = xchainHashId
             let hash_hex = topics[1].as_str().unwrap_or("").trim_start_matches("0x");
             let hash_bytes = hex::decode(hash_hex).unwrap_or_default();
             if hash_bytes.len() != 32 {
                 continue;
             }
-            let withdraw_hash = B256::from_slice(&hash_bytes);
+            let xchain_hash_id = B256::from_slice(&hash_bytes);
 
             // Query getPendingWithdraw for full details
             let sel = selector("getPendingWithdraw(bytes32)");
-            let call_data = format!("0x{}{}", sel, hex::encode(withdraw_hash.as_slice()));
+            let call_data = format!("0x{}{}", sel, hex::encode(xchain_hash_id.as_slice()));
 
             let pw_resp = client
                 .post(config.evm.rpc_url.as_str())
@@ -903,7 +903,7 @@ async fn query_all_approval_events(config: &E2eConfig) -> Result<Vec<ApprovalInf
                 let executed = result_bytes[479] != 0;
 
                 results.push(ApprovalInfo {
-                    withdraw_hash,
+                    xchain_hash_id,
                     src_chain_key: B256::from_slice(&result_bytes[0..32]),
                     token,
                     recipient,
@@ -988,12 +988,12 @@ fn derive_operator_url(config: &E2eConfig, path: &str) -> String {
 }
 
 /// Check if a withdrawal is ready to execute (delay passed)
-async fn is_withdrawal_ready(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
+async fn is_withdrawal_ready(config: &E2eConfig, xchain_hash_id: B256) -> Result<bool> {
     let client = reqwest::Client::new();
 
     // Query isWithdrawReady(bytes32) function
     let sel = selector("isWithdrawReady(bytes32)");
-    let hash_hex = hex::encode(withdraw_hash);
+    let hash_hex = hex::encode(xchain_hash_id);
 
     let call_data = format!("0x{}{}", sel, hash_hex);
 
@@ -1055,10 +1055,10 @@ async fn query_cancel_window_seconds(config: &E2eConfig) -> Result<u64> {
 /// Verify a withdrawal was executed
 ///
 /// Checks for the V2 WithdrawExecute event:
-///   WithdrawExecute(bytes32 indexed withdrawHash, address recipient, uint256 amount)
+///   WithdrawExecute(bytes32 indexed xchainHashId, address recipient, uint256 amount)
 ///
 /// NOTE: V1 used `Withdraw(bytes32,address,address,uint256)` which no longer exists.
-pub async fn verify_withdrawal_executed(config: &E2eConfig, withdraw_hash: B256) -> Result<bool> {
+pub async fn verify_withdrawal_executed(config: &E2eConfig, xchain_hash_id: B256) -> Result<bool> {
     let client = reqwest::Client::new();
 
     // V2 WithdrawExecute event topic
@@ -1076,7 +1076,7 @@ pub async fn verify_withdrawal_executed(config: &E2eConfig, withdraw_hash: B256)
                 "fromBlock": "0x0",
                 "toBlock": "latest",
                 "address": format!("{}", config.evm.contracts.bridge),
-                "topics": [withdraw_topic, format!("0x{}", hex::encode(withdraw_hash))]
+                "topics": [withdraw_topic, format!("0x{}", hex::encode(xchain_hash_id))]
             }],
             "id": 1
         }))
@@ -1089,7 +1089,7 @@ pub async fn verify_withdrawal_executed(config: &E2eConfig, withdraw_hash: B256)
         if !logs.is_empty() {
             info!(
                 "Withdrawal 0x{} was executed",
-                hex::encode(&withdraw_hash.as_slice()[..8])
+                hex::encode(&xchain_hash_id.as_slice()[..8])
             );
             return Ok(true);
         }

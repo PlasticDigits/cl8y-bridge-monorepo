@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { HashStatus } from '../../types/transfer'
 import { sounds } from '../../lib/sounds'
 import { useHashMonitor, type HashMonitorRecord } from '../../hooks/useHashMonitor'
@@ -158,7 +159,13 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
                     }}
                   >
                     <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs text-gray-300">
-                      {r.hash.startsWith('0x') ? r.hash.slice(0, 18) + '…' + r.hash.slice(-10) : r.hash.slice(0, 16) + '…'}
+                      <Link
+                        to={`/verify?hash=${encodeURIComponent(r.hash)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-cyan-300 hover:text-cyan-200 hover:underline"
+                      >
+                        {r.hash.startsWith('0x') ? r.hash.slice(0, 18) + '…' + r.hash.slice(-10) : r.hash.slice(0, 16) + '…'}
+                      </Link>
                     </td>
                     <td className="px-3 py-2">
                       <StatusBadge status={r.status ?? 'unknown'} />

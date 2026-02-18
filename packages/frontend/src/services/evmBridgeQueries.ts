@@ -15,7 +15,7 @@ export const BRIDGE_VIEW_ABI = [
     name: 'getDeposit',
     type: 'function',
     stateMutability: 'view',
-    inputs: [{ name: 'depositHash', type: 'bytes32' }],
+    inputs: [{ name: 'xchainHashId', type: 'bytes32' }],
     outputs: [
       {
         name: '',
@@ -37,7 +37,7 @@ export const BRIDGE_VIEW_ABI = [
     name: 'getPendingWithdraw',
     type: 'function',
     stateMutability: 'view',
-    inputs: [{ name: 'withdrawHash', type: 'bytes32' }],
+    inputs: [{ name: 'xchainHashId', type: 'bytes32' }],
     outputs: [
       {
         name: '',

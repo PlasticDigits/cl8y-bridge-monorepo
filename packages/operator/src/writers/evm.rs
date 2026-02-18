@@ -7,7 +7,7 @@
 //!
 //! In V2, the withdrawal flow is user-initiated:
 //! 1. User calls `withdrawSubmit` on destination chain
-//! 2. Operator calls `withdrawApprove(withdrawHash)` to approve
+//! 2. Operator calls `withdrawApprove(xchainHashId)` to approve
 //! 3. After cancel window, anyone can call `withdrawExecuteUnlock/Mint`
 //!
 //! The operator only needs to approve pending withdrawals, not create them.
@@ -30,14 +30,14 @@ use tracing::{debug, error, info, warn};
 use crate::config::{EvmConfig, FeeConfig, TerraConfig};
 use crate::contracts::evm_bridge::{Bridge, TokenRegistry};
 use crate::db::{self, EvmDeposit, NewApproval, TerraDeposit};
-use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_transfer_hash};
+use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_xchain_hash_id};
 use crate::types::{ChainId, EvmAddress};
 
 /// Pending approval tracking for auto-execution
 #[derive(Debug, Clone)]
 struct PendingExecution {
-    /// The withdraw hash
-    withdraw_hash: [u8; 32],
+    /// The cross-chain hash identifier
+    xchain_hash_id: [u8; 32],
     /// When the approval was submitted
     approved_at: Instant,
     /// The delay required before execution
@@ -64,8 +64,8 @@ pub struct EvmWriter {
     terra_lcd_url: Option<String>,
     /// Terra bridge address for Terra-source deposit verification
     terra_bridge_address: Option<String>,
-    /// Terra V2 4-byte chain ID (defaults to 0x00000002)
-    terra_chain_id: ChainId,
+    /// Terra V2 4-byte chain ID (None when Terra is not configured)
+    terra_chain_id: Option<ChainId>,
     signer: PrivateKeySigner,
     default_fee_bps: u32,
     fee_recipient: Address,
@@ -151,14 +151,14 @@ impl EvmWriter {
             "EVM writer initialized (V2)"
         );
 
-        // Query cancel window from V2 contract
+        // Query cancel window from V2 contract — fail if unreachable (cannot start safely)
         let cancel_window = Self::query_cancel_window(&evm_config.rpc_url, bridge_address)
             .await
-            .unwrap_or(300);
+            .wrap_err("Failed to query cancel window from bridge — cannot start safely")?;
 
         let terra_lcd_url = terra_config.map(|t| t.lcd_url.clone());
         let terra_bridge_address = terra_config.map(|t| t.bridge_address.clone());
-        let terra_chain_id = if let Some(tc) = terra_config {
+        let terra_chain_id: Option<ChainId> = if let Some(tc) = terra_config {
             // Prefer TERRA_THIS_CHAIN_ID when explicitly set (e.g. TERRA_THIS_CHAIN_ID=2).
             // ChainRegistry can return 0 or wrong values; explicit config takes precedence.
             if let Some(id) = tc.this_chain_id {
@@ -166,7 +166,7 @@ impl EvmWriter {
                     terra_v2_chain_id = %format!("0x{:08x}", id),
                     "EVM writer: using TERRA_THIS_CHAIN_ID from config"
                 );
-                ChainId::from_u32(id)
+                Some(ChainId::from_u32(id))
             } else {
                 // Auto-discover Terra V2 chain ID from ChainRegistry
                 let identifier = format!("terraclassic_{}", tc.chain_id);
@@ -196,7 +196,7 @@ impl EvmWriter {
                                 terra_v2_chain_id = %format!("0x{}", hex::encode(cid.as_bytes())),
                                 "EVM writer: queried Terra V2 chain ID from ChainRegistry"
                             );
-                            cid
+                            Some(cid)
                         }
                         Ok(_cid) => {
                             warn!(
@@ -235,8 +235,8 @@ impl EvmWriter {
                 }
             }
         } else {
-            // No Terra config — use a placeholder; Terra paths won't be reached
-            ChainId::from_u32(0)
+            // No Terra config — Terra verification paths won't be reached
+            None
         };
 
         info!(delay_seconds = cancel_window, "EVM cancel window");
@@ -359,16 +359,16 @@ impl EvmWriter {
         }
 
         for (event, _log) in &logs {
-            let withdraw_hash: [u8; 32] = event.withdrawHash.0;
+            let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
 
             // Skip if already approved by us
-            if self.approved_hashes.contains_key(&withdraw_hash) {
+            if self.approved_hashes.contains_key(&xchain_hash_id) {
                 continue;
             }
 
             // Query full withdrawal details
             let pending = match contract
-                .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+                .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
                 .call()
                 .await
             {
@@ -376,7 +376,7 @@ impl EvmWriter {
                 Err(e) => {
                     warn!(
                         error = %e,
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         "Failed to query getPendingWithdraw, skipping"
                     );
                     continue;
@@ -385,7 +385,7 @@ impl EvmWriter {
 
             // Skip already-approved, cancelled, or executed withdrawals
             if pending.approved {
-                self.approved_hashes.insert(withdraw_hash, Instant::now());
+                self.approved_hashes.insert(xchain_hash_id, Instant::now());
                 continue;
             }
             if pending.cancelled || pending.executed {
@@ -400,7 +400,7 @@ impl EvmWriter {
             });
 
             info!(
-                hash = %bytes32_to_hex(&withdraw_hash),
+                hash = %bytes32_to_hex(&xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                 nonce = nonce,
                 amount = amount,
@@ -410,16 +410,16 @@ impl EvmWriter {
 
             // Verify deposit on the source chain using getDeposit(hash)
             // For both Terra→EVM and EVM→EVM, the deposit hash = withdraw hash
-            // because both use the same 7-field compute_transfer_hash.
+            // because both use the same 7-field compute_xchain_hash_id.
             let deposit_verified = match self
-                .verify_deposit_on_source(&withdraw_hash, &src_chain_id)
+                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id)
                 .await
             {
                 Ok(verified) => verified,
                 Err(e) => {
                     warn!(
                         error = %e,
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                         "Failed to verify deposit on source chain, will retry"
                     );
@@ -429,7 +429,7 @@ impl EvmWriter {
 
             if !deposit_verified {
                 debug!(
-                    hash = %bytes32_to_hex(&withdraw_hash),
+                    hash = %bytes32_to_hex(&xchain_hash_id),
                     src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                     "No verified deposit found on source chain, skipping (will retry next cycle)"
                 );
@@ -438,27 +438,27 @@ impl EvmWriter {
 
             // Deposit verified — submit withdrawApprove
             info!(
-                hash = %bytes32_to_hex(&withdraw_hash),
+                hash = %bytes32_to_hex(&xchain_hash_id),
                 nonce = nonce,
                 "Deposit verified on source chain, submitting withdrawApprove"
             );
 
-            match self.submit_withdraw_approve(&withdraw_hash).await {
+            match self.submit_withdraw_approve(&xchain_hash_id).await {
                 Ok(tx_hash) => {
                     info!(
                         tx_hash = %tx_hash,
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         nonce = nonce,
                         "WithdrawApprove submitted successfully"
                     );
 
-                    self.approved_hashes.insert(withdraw_hash, Instant::now());
+                    self.approved_hashes.insert(xchain_hash_id, Instant::now());
 
                     // Track for auto-execution after cancel window
                     self.pending_executions.insert(
-                        withdraw_hash,
+                        xchain_hash_id,
                         PendingExecution {
-                            withdraw_hash,
+                            xchain_hash_id,
                             approved_at: Instant::now(),
                             delay_seconds: self.cancel_window,
                             attempts: 0,
@@ -475,7 +475,7 @@ impl EvmWriter {
                 Err(e) => {
                     warn!(
                         error = %e,
-                        hash = %bytes32_to_hex(&withdraw_hash),
+                        hash = %bytes32_to_hex(&xchain_hash_id),
                         "Failed to submit withdrawApprove, will retry next cycle"
                     );
                 }
@@ -497,18 +497,22 @@ impl EvmWriter {
     /// - Unknown source → **fail closed** (refuse to approve)
     async fn verify_deposit_on_source(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         src_chain_id: &[u8; 4],
     ) -> Result<bool> {
         // Terra-source withdrawals are verified on Terra bridge storage.
-        if src_chain_id == self.terra_chain_id.as_bytes() {
+        if self
+            .terra_chain_id
+            .as_ref()
+            .is_some_and(|id| src_chain_id == id.as_bytes())
+        {
             debug!(
-                hash = %bytes32_to_hex(withdraw_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                terra_chain = %format!("0x{}", hex::encode(self.terra_chain_id.as_bytes())),
+                terra_chain = %format!("0x{}", hex::encode(self.terra_chain_id.as_ref().unwrap().as_bytes())),
                 "Routing source deposit verification to Terra bridge"
             );
-            return self.verify_terra_deposit(withdraw_hash).await;
+            return self.verify_terra_deposit(xchain_hash_id).await;
         }
 
         // Determine which RPC/bridge to use for EVM-source verification.
@@ -527,7 +531,7 @@ impl EvmWriter {
         } else {
             // Unknown source chain: fail closed — refuse to approve
             warn!(
-                hash = %bytes32_to_hex(withdraw_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                 known_chains = self.source_chain_endpoints.len(),
                 "Unknown source chain ID — refusing to approve (fail closed). \
@@ -536,7 +540,7 @@ impl EvmWriter {
             return Ok(false);
         };
 
-        self.verify_evm_deposit_on_chain(rpc_url, bridge_address, withdraw_hash)
+        self.verify_evm_deposit_on_chain(rpc_url, bridge_address, xchain_hash_id)
             .await
     }
 
@@ -547,27 +551,38 @@ impl EvmWriter {
         &self,
         rpc_url: &str,
         bridge_address: Address,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
     ) -> Result<bool> {
         let provider = ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         let contract = Bridge::new(bridge_address, &provider);
 
-        let deposit_hash = FixedBytes::from(*withdraw_hash);
-        match contract.getDeposit(deposit_hash).call().await {
+        let hash_fixed = FixedBytes::from(*xchain_hash_id);
+        match contract.getDeposit(hash_fixed).call().await {
             Ok(deposit) => {
                 // timestamp == 0 means no deposit record
                 if deposit.timestamp.is_zero() {
                     debug!(
-                        hash = %bytes32_to_hex(withdraw_hash),
+                        hash = %bytes32_to_hex(xchain_hash_id),
                         rpc = rpc_url,
                         "No deposit found on source chain (timestamp=0)"
                     );
                     return Ok(false);
                 }
 
+                // Defense in depth: verify the deposit's destChain matches this chain
+                if deposit.destChain.0 != *self.this_chain_id.as_bytes() {
+                    warn!(
+                        hash = %bytes32_to_hex(xchain_hash_id),
+                        deposit_dest = %format!("0x{}", hex::encode(deposit.destChain.0)),
+                        this_chain = %format!("0x{}", hex::encode(self.this_chain_id.as_bytes())),
+                        "Deposit destChain does not match this chain — rejecting"
+                    );
+                    return Ok(false);
+                }
+
                 info!(
-                    hash = %bytes32_to_hex(withdraw_hash),
+                    hash = %bytes32_to_hex(xchain_hash_id),
                     nonce = deposit.nonce,
                     amount = %deposit.amount,
                     dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
@@ -579,7 +594,7 @@ impl EvmWriter {
             Err(e) => {
                 warn!(
                     error = %e,
-                    hash = %bytes32_to_hex(withdraw_hash),
+                    hash = %bytes32_to_hex(xchain_hash_id),
                     rpc = rpc_url,
                     "Failed to query getDeposit on source chain"
                 );
@@ -628,7 +643,11 @@ impl EvmWriter {
         }
 
         // Try Terra deposits (Terra→EVM)
-        if src_chain_id == self.terra_chain_id.as_bytes() {
+        if self
+            .terra_chain_id
+            .as_ref()
+            .is_some_and(|id| src_chain_id == id.as_bytes())
+        {
             match db::find_terra_deposit_id_by_nonce(&self.db, nonce as i64).await {
                 Ok(Some(deposit_id)) => {
                     if let Err(e) =
@@ -665,8 +684,8 @@ impl EvmWriter {
         }
     }
 
-    /// Verify Terra-source deposit exists by querying Terra `deposit_hash`.
-    async fn verify_terra_deposit(&self, withdraw_hash: &[u8; 32]) -> Result<bool> {
+    /// Verify Terra-source deposit exists by querying Terra `xchain_hash_id`.
+    async fn verify_terra_deposit(&self, xchain_hash_id: &[u8; 32]) -> Result<bool> {
         let lcd_url = self
             .terra_lcd_url
             .as_ref()
@@ -676,8 +695,8 @@ impl EvmWriter {
         })?;
 
         let query = serde_json::json!({
-            "deposit_hash": {
-                "deposit_hash": base64::engine::general_purpose::STANDARD.encode(withdraw_hash)
+            "xchain_hash_id": {
+                "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode(xchain_hash_id)
             }
         });
         let query_b64 =
@@ -709,14 +728,14 @@ impl EvmWriter {
         let exists = Self::terra_deposit_exists_in_query(&body);
         if exists {
             info!(
-                hash = %bytes32_to_hex(withdraw_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 nonce = body["data"]["nonce"].as_u64().unwrap_or_default(),
                 amount = body["data"]["amount"].as_str().unwrap_or("?"),
                 "Terra deposit verified on source chain"
             );
         } else {
             info!(
-                hash = %bytes32_to_hex(withdraw_hash),
+                hash = %bytes32_to_hex(xchain_hash_id),
                 "Terra deposit not found on source chain for withdraw hash"
             );
         }
@@ -729,7 +748,7 @@ impl EvmWriter {
     }
 
     /// Submit a withdrawApprove transaction
-    async fn submit_withdraw_approve(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
+    async fn submit_withdraw_approve(&self, xchain_hash_id: &[u8; 32]) -> Result<String> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
@@ -737,9 +756,9 @@ impl EvmWriter {
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         let contract = Bridge::new(self.bridge_address, &provider);
-        let withdraw_hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+        let xchain_hash_id_fixed: FixedBytes<32> = FixedBytes::from(*xchain_hash_id);
 
-        let call = contract.withdrawApprove(withdraw_hash_fixed);
+        let call = contract.withdrawApprove(xchain_hash_id_fixed);
 
         let pending_tx = call
             .send()
@@ -774,7 +793,7 @@ impl EvmWriter {
                 match self.submit_execute_withdraw(*hash).await {
                     Ok(tx_hash) => {
                         info!(
-                            withdraw_hash = %bytes32_to_hex(hash),
+                            xchain_hash_id = %bytes32_to_hex(hash),
                             tx_hash = %tx_hash,
                             "Successfully executed EVM withdrawal"
                         );
@@ -782,7 +801,7 @@ impl EvmWriter {
                     }
                     Err(e) => {
                         warn!(
-                            withdraw_hash = %bytes32_to_hex(hash),
+                            xchain_hash_id = %bytes32_to_hex(hash),
                             error = %e,
                             attempt = pending.attempts + 1,
                             "Failed to execute EVM withdrawal, will retry"
@@ -803,7 +822,9 @@ impl EvmWriter {
     /// Process a single Terra deposit
     async fn process_deposit(&mut self, deposit: &TerraDeposit) -> Result<()> {
         // Source chain is Terra Classic — use the V2 chain ID (auto-discovered from ChainRegistry at startup)
-        let src_chain_id = self.terra_chain_id;
+        let src_chain_id = self
+            .terra_chain_id
+            .ok_or_else(|| eyre!("Terra chain ID not configured — cannot process Terra deposit"))?;
 
         debug!(
             deposit_id = deposit.id,
@@ -861,7 +882,7 @@ impl EvmWriter {
         let dest_account = address_to_bytes32(&recipient.0);
 
         // Compute unified transfer hash using V2 format (7-field)
-        let withdraw_hash = compute_transfer_hash(
+        let xchain_hash_id = compute_xchain_hash_id(
             src_chain_id.as_bytes(),
             self.this_chain_id.as_bytes(),
             &src_account,
@@ -879,7 +900,7 @@ impl EvmWriter {
             src_chain_key: src_chain_id.as_bytes().to_vec(),
             nonce: deposit.nonce,
             dest_chain_id: self.this_chain_id.to_u32() as i64,
-            withdraw_hash: withdraw_hash.to_vec(),
+            xchain_hash_id: xchain_hash_id.to_vec(),
             token: token_for_approval,
             recipient: recipient_for_approval,
             amount: deposit.amount.clone(),
@@ -897,22 +918,22 @@ impl EvmWriter {
 
         // Submit to EVM
         match self
-            .submit_approval(deposit, &src_chain_id, &withdraw_hash)
+            .submit_approval(deposit, &src_chain_id, &xchain_hash_id)
             .await
         {
             Ok(tx_hash) => {
                 info!(
                     approval_id = approval_id,
                     tx_hash = %tx_hash,
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                     "Submitted approval transaction"
                 );
 
                 // Track for auto-execution
                 self.pending_executions.insert(
-                    withdraw_hash,
+                    xchain_hash_id,
                     PendingExecution {
-                        withdraw_hash,
+                        xchain_hash_id,
                         approved_at: Instant::now(),
                         delay_seconds: self.cancel_window,
                         attempts: 0,
@@ -949,7 +970,7 @@ impl EvmWriter {
         &self,
         deposit: &TerraDeposit,
         _src_chain_id: &ChainId,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
     ) -> Result<String> {
         // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
@@ -958,20 +979,20 @@ impl EvmWriter {
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
-        let withdraw_hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+        let xchain_hash_id_fixed: FixedBytes<32> = FixedBytes::from(*xchain_hash_id);
 
         // Create V2 contract instance
         let contract = Bridge::new(self.bridge_address, &provider);
 
         // Pre-flight: verify the withdrawal has been submitted
         let pending = contract
-            .getPendingWithdraw(withdraw_hash_fixed)
+            .getPendingWithdraw(xchain_hash_id_fixed)
             .call()
             .await
             .map_err(|e| {
                 eyre!(
                     "Pre-flight getPendingWithdraw failed for {}: {}",
-                    bytes32_to_hex(withdraw_hash),
+                    bytes32_to_hex(xchain_hash_id),
                     e
                 )
             })?;
@@ -986,14 +1007,14 @@ impl EvmWriter {
 
         if pending.approved {
             info!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 "Withdrawal already approved, skipping"
             );
             return Err(eyre!("Already approved"));
         }
 
         info!(
-            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
             submitted_at = %pending.submittedAt,
             nonce = pending.nonce,
             amount = %pending.amount,
@@ -1001,12 +1022,12 @@ impl EvmWriter {
         );
 
         debug!(
-            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
             nonce = deposit.nonce,
             "Submitting withdrawApprove (V2)"
         );
 
-        let call = contract.withdrawApprove(withdraw_hash_fixed);
+        let call = contract.withdrawApprove(xchain_hash_id_fixed);
 
         // Send transaction
         let pending_tx = call
@@ -1034,7 +1055,7 @@ impl EvmWriter {
     ///
     /// In V2, we call withdrawExecuteUnlock for lock/unlock tokens
     /// or withdrawExecuteMint for mintable tokens.
-    async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
+    async fn submit_execute_withdraw(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
         // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
@@ -1046,7 +1067,7 @@ impl EvmWriter {
 
         // Query pending withdrawal — validate it exists and is ready for execution
         let pending = contract
-            .getPendingWithdraw(FixedBytes::from(withdraw_hash))
+            .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;
@@ -1055,19 +1076,19 @@ impl EvmWriter {
         if pending.submittedAt.is_zero() {
             return Err(eyre!(
                 "Withdrawal {} not found (submittedAt is zero)",
-                bytes32_to_hex(&withdraw_hash)
+                bytes32_to_hex(&xchain_hash_id)
             ));
         }
         if pending.executed {
             return Err(eyre!(
                 "Withdrawal {} already executed",
-                bytes32_to_hex(&withdraw_hash)
+                bytes32_to_hex(&xchain_hash_id)
             ));
         }
         if pending.cancelled {
             return Err(eyre!(
                 "Withdrawal {} was cancelled",
-                bytes32_to_hex(&withdraw_hash)
+                bytes32_to_hex(&xchain_hash_id)
             ));
         }
 
@@ -1092,7 +1113,7 @@ impl EvmWriter {
         let use_mint = token_type == 1;
 
         debug!(
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             token = %token_addr,
             token_type = token_type,
             mode = if use_mint { "mint" } else { "unlock" },
@@ -1101,12 +1122,12 @@ impl EvmWriter {
 
         let pending_tx = if use_mint {
             contract
-                .withdrawExecuteMint(FixedBytes::from(withdraw_hash))
+                .withdrawExecuteMint(FixedBytes::from(xchain_hash_id))
                 .send()
                 .await
         } else {
             contract
-                .withdrawExecuteUnlock(FixedBytes::from(withdraw_hash))
+                .withdrawExecuteUnlock(FixedBytes::from(xchain_hash_id))
                 .send()
                 .await
         }
@@ -1267,7 +1288,7 @@ impl EvmWriter {
             .map_err(|_| eyre!("Invalid amount: {}", deposit.amount))?;
 
         // Compute the unified transfer hash (7-field V2 format)
-        let withdraw_hash = compute_transfer_hash(
+        let xchain_hash_id = compute_xchain_hash_id(
             src_chain_id.as_bytes(),
             self.this_chain_id.as_bytes(),
             &src_account,
@@ -1293,7 +1314,7 @@ impl EvmWriter {
             src_chain_key: src_chain_id.as_bytes().to_vec(),
             nonce: deposit.nonce,
             dest_chain_id: self.this_chain_id.to_u32() as i64,
-            withdraw_hash: withdraw_hash.to_vec(),
+            xchain_hash_id: xchain_hash_id.to_vec(),
             token: token_hex,
             recipient: recipient_hex,
             amount: deposit.amount.clone(),
@@ -1307,25 +1328,25 @@ impl EvmWriter {
             approval_id = approval_id,
             nonce = deposit.nonce,
             src_chain_id = %src_chain_id,
-            withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             "Created approval for EVM→EVM deposit"
         );
 
         // Submit withdrawApprove on this (destination) EVM chain
-        match self.submit_evm_to_evm_approval(&withdraw_hash).await {
+        match self.submit_evm_to_evm_approval(&xchain_hash_id).await {
             Ok(tx_hash) => {
                 info!(
                     approval_id = approval_id,
                     tx_hash = %tx_hash,
-                    withdraw_hash = %bytes32_to_hex(&withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
                     "Submitted EVM→EVM approval transaction"
                 );
 
                 // Track for auto-execution after cancel window
                 self.pending_executions.insert(
-                    withdraw_hash,
+                    xchain_hash_id,
                     PendingExecution {
-                        withdraw_hash,
+                        xchain_hash_id,
                         approved_at: Instant::now(),
                         delay_seconds: self.cancel_window,
                         attempts: 0,
@@ -1353,7 +1374,7 @@ impl EvmWriter {
     /// Pre-flight: checks that `withdrawSubmit` has already been called for
     /// this hash (i.e., `submittedAt != 0`). If not, the approval would revert
     /// on-chain, so we bail early with a retriable error.
-    async fn submit_evm_to_evm_approval(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
+    async fn submit_evm_to_evm_approval(&self, xchain_hash_id: &[u8; 32]) -> Result<String> {
         // Build provider with signer and recommended fillers (gas, nonce, fees)
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
@@ -1361,19 +1382,19 @@ impl EvmWriter {
             .wallet(wallet)
             .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
-        let withdraw_hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+        let xchain_hash_id_fixed: FixedBytes<32> = FixedBytes::from(*xchain_hash_id);
 
         let contract = Bridge::new(self.bridge_address, &provider);
 
         // Pre-flight: verify the withdrawal has been submitted by the user
         let pending = contract
-            .getPendingWithdraw(withdraw_hash_fixed)
+            .getPendingWithdraw(xchain_hash_id_fixed)
             .call()
             .await
             .map_err(|e| {
                 eyre!(
                     "Pre-flight getPendingWithdraw failed for {}: {}",
-                    bytes32_to_hex(withdraw_hash),
+                    bytes32_to_hex(xchain_hash_id),
                     e
                 )
             })?;
@@ -1382,27 +1403,27 @@ impl EvmWriter {
             return Err(eyre!(
                 "WithdrawSubmit not yet called for {} (submittedAt=0). \
                  User must call withdrawSubmit before operator can approve.",
-                bytes32_to_hex(withdraw_hash)
+                bytes32_to_hex(xchain_hash_id)
             ));
         }
 
         if pending.approved {
             info!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 "Withdrawal already approved, skipping"
             );
             return Err(eyre!("Already approved"));
         }
 
         info!(
-            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
             submitted_at = %pending.submittedAt,
             nonce = pending.nonce,
             amount = %pending.amount,
             "Pre-flight passed: withdrawal exists, submitting withdrawApprove"
         );
 
-        let call = contract.withdrawApprove(withdraw_hash_fixed);
+        let call = contract.withdrawApprove(xchain_hash_id_fixed);
 
         let pending_tx = call
             .send()
@@ -1481,12 +1502,12 @@ mod tests {
 
     #[test]
     fn test_terra_deposit_exists_in_query_with_full_deposit_record() {
-        // Real-world response from Terra bridge deposit_hash query
+        // Real-world response from Terra bridge xchain_hash_id query
         let body = serde_json::json!({
             "data": {
                 "nonce": 0,
                 "amount": "995000",
-                "deposit_hash": "de2e967d5bfeea4a57a752a561b70d241ef3ef8474a48901f92b0648cfb002f7",
+                "xchain_hash_id": "de2e967d5bfeea4a57a752a561b70d241ef3ef8474a48901f92b0648cfb002f7",
                 "deposited_at": "1770716032132606174",
                 "dest_account": "AAAAAAAAAAAAAAAA85/W5RqtiPb0zmq4gnJ5z/+5ImY=",
                 "dest_token_address": "AAAAAAAAAAAAAAAACzBr+RXE1kX/WW5Rj68/lmm5cBY=",
@@ -1539,24 +1560,24 @@ mod tests {
         );
     }
 
-    /// Verify hash-matching invariant: the withdraw_hash on EVM must match
-    /// the deposit_hash on the source chain. The operator does NOT recompute
+    /// Verify hash-matching invariant: the xchain_hash_id on EVM must match
+    /// the xchain_hash_id on the source chain. The operator does NOT recompute
     /// hashes — it verifies by looking up the hash directly.
     #[test]
     fn test_hash_matching_is_identity() {
-        // In V2, deposit_hash on source == withdraw_hash on destination.
-        // Both are computed from the same 7-field compute_transfer_hash.
+        // In V2, xchain_hash_id on source == xchain_hash_id on destination.
+        // Both are computed from the same 7-field compute_xchain_hash_id.
         // The operator only needs to verify the hash exists, not recompute it.
-        let deposit_hash: [u8; 32] = [
+        let xchain_hash_id: [u8; 32] = [
             0xde, 0x2e, 0x96, 0x7d, 0x5b, 0xfe, 0xea, 0x4a, 0x57, 0xa7, 0x52, 0xa5, 0x61, 0xb7,
             0x0d, 0x24, 0x1e, 0xf3, 0xef, 0x84, 0x74, 0xa4, 0x89, 0x01, 0xf9, 0x2b, 0x06, 0x48,
             0xcf, 0xb0, 0x02, 0xf7,
         ];
-        let withdraw_hash = deposit_hash; // Identity — same hash
+        let xchain_hash_id = xchain_hash_id; // Identity — same hash
 
         assert_eq!(
-            deposit_hash, withdraw_hash,
-            "V2 invariant: deposit_hash == withdraw_hash (no recomputation)"
+            xchain_hash_id, xchain_hash_id,
+            "V2 invariant: xchain_hash_id == xchain_hash_id (no recomputation)"
         );
     }
 }

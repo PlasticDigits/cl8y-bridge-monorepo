@@ -127,7 +127,7 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(database::test_hash_parity(config).await);
 
     // Hash Parity & Operator Integration (5) - IMPLEMENTED in operator.rs
-    results.push(operator::test_withdraw_hash_computation(config).await);
+    results.push(operator::test_xchain_hash_id_computation(config).await);
     results.push(operator::test_operator_startup(config).await);
     results.push(operator::test_operator_deposit_detection(config).await);
     results.push(operator::test_operator_approval_creation(config).await);

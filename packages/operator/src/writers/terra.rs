@@ -34,8 +34,8 @@ use crate::types::ChainId;
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PendingExecution {
-    /// The withdraw hash
-    withdraw_hash: [u8; 32],
+    /// The cross-chain hash identifier
+    xchain_hash_id: [u8; 32],
     /// When the approval was submitted
     approved_at: Instant,
     /// The delay required before execution
@@ -132,11 +132,13 @@ impl TerraWriter {
             }
         };
 
-        // Query cancel window from contract
+        // Query cancel window from contract — fail if unreachable (cannot start safely)
         let cancel_window =
             Self::query_cancel_window(&client, &terra_config.lcd_url, &terra_config.bridge_address)
                 .await
-                .unwrap_or(60);
+                .wrap_err(
+                    "Failed to query cancel window from Terra bridge — cannot start safely",
+                )?;
 
         info!(
             delay_seconds = cancel_window,
@@ -316,7 +318,7 @@ impl TerraWriter {
                 // Only process unapproved, non-cancelled, non-executed entries
                 if approved || cancelled || executed {
                     // Track the hash for pagination cursor
-                    if let Some(h) = entry["withdraw_hash"].as_str() {
+                    if let Some(h) = entry["xchain_hash_id"].as_str() {
                         last_hash = Some(h.to_string());
                     }
                     debug!(
@@ -329,14 +331,14 @@ impl TerraWriter {
                     continue;
                 }
 
-                // Extract withdraw_hash (base64 encoded)
-                let hash_b64 = match entry["withdraw_hash"].as_str() {
+                // Extract xchain_hash_id (base64 encoded)
+                let hash_b64 = match entry["xchain_hash_id"].as_str() {
                     Some(h) => h,
                     None => {
                         warn!(
                             nonce = nonce,
                             entry = %serde_json::to_string(entry).unwrap_or_default(),
-                            "Withdrawal entry missing withdraw_hash field"
+                            "Withdrawal entry missing xchain_hash_id field"
                         );
                         continue;
                     }
@@ -358,7 +360,7 @@ impl TerraWriter {
                             hash_b64 = hash_b64,
                             decoded_len = b.len(),
                             nonce = nonce,
-                            "Invalid withdraw_hash: decoded to {} bytes (expected 32)",
+                            "Invalid xchain_hash_id: decoded to {} bytes (expected 32)",
                             b.len()
                         );
                         continue;
@@ -368,7 +370,7 @@ impl TerraWriter {
                             hash_b64 = hash_b64,
                             nonce = nonce,
                             error = %e,
-                            "Failed to base64-decode withdraw_hash"
+                            "Failed to base64-decode xchain_hash_id"
                         );
                         continue;
                     }
@@ -378,7 +380,7 @@ impl TerraWriter {
                 if self.approved_hashes.contains_key(&hash_bytes) {
                     total_skipped_already_approved += 1;
                     debug!(
-                        withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                        xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                         nonce = nonce,
                         "Skipping already-approved hash (in cache)"
                     );
@@ -386,20 +388,30 @@ impl TerraWriter {
                 }
 
                 // Extract src_chain from the withdrawal entry (V2 4-byte chain ID, base64)
-                let src_chain_id: [u8; 4] = entry["src_chain"]
+                let src_chain_id: [u8; 4] = match entry["src_chain"]
                     .as_str()
                     .and_then(|b64| {
                         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).ok()
                     })
                     .and_then(|b| b.try_into().ok())
-                    .unwrap_or([0u8; 4]);
+                {
+                    Some(id) => id,
+                    None => {
+                        warn!(
+                            xchain_hash_id = %bytes32_to_hex(&hash_bytes),
+                            raw = ?entry["src_chain"],
+                            "Skipping withdrawal: failed to parse src_chain bytes4"
+                        );
+                        continue;
+                    }
+                };
 
                 // Log the entry details for debugging
                 let amount = entry["amount"].as_str().unwrap_or("?");
                 let token = entry["token"].as_str().unwrap_or("?");
                 let recipient = entry["recipient"].as_str().unwrap_or("?");
                 info!(
-                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                    xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                     src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                     nonce = nonce,
                     amount = amount,
@@ -413,7 +425,7 @@ impl TerraWriter {
                     Ok(true) => {
                         // Deposit verified — approve on Terra
                         info!(
-                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
                             src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                             "EVM deposit verified, submitting WithdrawApprove on Terra"
@@ -424,7 +436,7 @@ impl TerraWriter {
                                 total_approved += 1;
                                 info!(
                                     tx_hash = %tx_hash,
-                                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                                    xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                                     nonce = nonce,
                                     "WithdrawApprove submitted successfully on Terra"
                                 );
@@ -483,7 +495,7 @@ impl TerraWriter {
                                 self.pending_executions.insert(
                                     hash_bytes,
                                     PendingExecution {
-                                        withdraw_hash: hash_bytes,
+                                        xchain_hash_id: hash_bytes,
                                         approved_at: Instant::now(),
                                         delay_seconds: self.cancel_window,
                                         attempts: 0,
@@ -495,7 +507,7 @@ impl TerraWriter {
                             }
                             Err(e) => {
                                 warn!(
-                                    withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                                    xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                                     nonce = nonce,
                                     error = %e,
                                     operator_address = %self.terra_client.address,
@@ -512,7 +524,7 @@ impl TerraWriter {
                         total_no_evm_deposit += 1;
                         // Log at info level (not debug) to make it visible
                         info!(
-                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
                             src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                             known_evm_chains = self.source_chain_endpoints.len(),
@@ -525,7 +537,7 @@ impl TerraWriter {
                     Err(e) => {
                         total_evm_errors += 1;
                         warn!(
-                            withdraw_hash = %bytes32_to_hex(&hash_bytes),
+                            xchain_hash_id = %bytes32_to_hex(&hash_bytes),
                             nonce = nonce,
                             error = %e,
                             src_chain = %format!("0x{}", hex::encode(src_chain_id)),
@@ -577,7 +589,7 @@ impl TerraWriter {
     /// source chain indicated by `src_chain_id`.
     async fn verify_evm_deposit(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         src_chain_id: &[u8; 4],
     ) -> Result<bool> {
         let src_chain_hex = format!("0x{}", hex::encode(src_chain_id));
@@ -585,7 +597,7 @@ impl TerraWriter {
         // Try the specific source chain first (preferred — O(1) routing)
         if let Some((rpc_url, bridge_address)) = self.source_chain_endpoints.get(src_chain_id) {
             debug!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %src_chain_hex,
                 evm_rpc = %rpc_url,
                 evm_bridge = %bridge_address,
@@ -593,14 +605,14 @@ impl TerraWriter {
             );
 
             return self
-                .verify_evm_deposit_on_chain(rpc_url, *bridge_address, withdraw_hash)
+                .verify_evm_deposit_on_chain(rpc_url, *bridge_address, xchain_hash_id)
                 .await;
         }
 
         // Unknown source chain ID: do not probe arbitrary chains.
         // Cross-chain verification must be keyed strictly by V2 src_chain_id.
         warn!(
-            withdraw_hash = %bytes32_to_hex(withdraw_hash),
+            xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
             src_chain = %src_chain_hex,
             known_chains = self.source_chain_endpoints.len(),
             "Source chain not found in endpoints map; skipping verification for this entry"
@@ -615,19 +627,19 @@ impl TerraWriter {
         &self,
         rpc_url: &str,
         bridge_address: Address,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
     ) -> Result<bool> {
         let provider =
             ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
 
         let contract = EvmBridge::new(bridge_address, &provider);
-        let hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);
+        let hash_fixed: FixedBytes<32> = FixedBytes::from(*xchain_hash_id);
 
         let result = match contract.getDeposit(hash_fixed).call().await {
             Ok(r) => r,
             Err(e) => {
                 warn!(
-                    withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                    xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                     error = %e,
                     evm_rpc = rpc_url,
                     evm_bridge = %bridge_address,
@@ -643,8 +655,19 @@ impl TerraWriter {
         let exists = result.timestamp != alloy::primitives::U256::ZERO;
 
         if exists {
+            // Defense in depth: verify the deposit's destChain matches this chain
+            if result.destChain.0 != *self.this_chain_id.as_bytes() {
+                warn!(
+                    xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                    deposit_dest = %format!("0x{}", hex::encode(result.destChain.0)),
+                    this_chain = %format!("0x{}", hex::encode(self.this_chain_id.as_bytes())),
+                    "Deposit destChain does not match this chain — rejecting"
+                );
+                return Ok(false);
+            }
+
             info!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 nonce = result.nonce,
                 token = %result.token,
                 amount = %result.amount,
@@ -655,7 +678,7 @@ impl TerraWriter {
             );
         } else {
             debug!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 evm_bridge = %bridge_address,
                 evm_rpc = rpc_url,
                 "EVM deposit not found on this chain (zero timestamp)"
@@ -670,8 +693,8 @@ impl TerraWriter {
     // ========================================================================
 
     /// Submit WithdrawApprove(hash) on Terra
-    async fn submit_approve(&self, withdraw_hash: &[u8; 32]) -> Result<String> {
-        let msg = build_withdraw_approve_msg_v2(*withdraw_hash);
+    async fn submit_approve(&self, xchain_hash_id: &[u8; 32]) -> Result<String> {
+        let msg = build_withdraw_approve_msg_v2(*xchain_hash_id);
 
         let msg_json = serde_json::to_string(&msg)?;
         debug!(msg = %msg_json, "WithdrawApprove message (V2)");
@@ -686,8 +709,8 @@ impl TerraWriter {
     }
 
     /// Submit WithdrawExecuteUnlock on Terra (after cancel window)
-    async fn submit_execute_withdraw(&self, withdraw_hash: [u8; 32]) -> Result<String> {
-        let msg = build_withdraw_execute_unlock_msg_v2(withdraw_hash);
+    async fn submit_execute_withdraw(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
+        let msg = build_withdraw_execute_unlock_msg_v2(xchain_hash_id);
 
         let msg_json = serde_json::to_string(&msg)?;
         debug!(msg = %msg_json, "WithdrawExecuteUnlock message (V2)");
@@ -717,7 +740,7 @@ impl TerraWriter {
                 match self.submit_execute_withdraw(*hash).await {
                     Ok(tx_hash) => {
                         info!(
-                            withdraw_hash = %bytes32_to_hex(hash),
+                            xchain_hash_id = %bytes32_to_hex(hash),
                             tx_hash = %tx_hash,
                             "Successfully executed withdrawal"
                         );
@@ -725,7 +748,7 @@ impl TerraWriter {
                     }
                     Err(e) => {
                         warn!(
-                            withdraw_hash = %bytes32_to_hex(hash),
+                            xchain_hash_id = %bytes32_to_hex(hash),
                             error = %e,
                             attempt = pending.attempts + 1,
                             "Failed to execute withdrawal, will retry"
@@ -747,9 +770,10 @@ impl TerraWriter {
     // ========================================================================
 
     /// Query the cancel window from the contract (V2)
+    /// Terra contract uses WithdrawDelay {} -> delay_seconds
     async fn query_cancel_window(client: &Client, lcd_url: &str, contract: &str) -> Result<u64> {
         let query = serde_json::json!({
-            "cancel_window": {}
+            "withdraw_delay": {}
         });
 
         let query_b64 = base64::Engine::encode(

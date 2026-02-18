@@ -92,7 +92,7 @@ pub enum ExecuteMsg {
     /// Starts the cancel window timer. Operator receives the gas tip.
     WithdrawApprove {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
     },
 
     /// Cancel a pending withdrawal (within cancel window)
@@ -102,7 +102,7 @@ pub enum ExecuteMsg {
     /// Can only cancel after approval and within the cancel window.
     WithdrawCancel {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
     },
 
     /// Uncancel a cancelled withdrawal
@@ -112,7 +112,7 @@ pub enum ExecuteMsg {
     /// Restores a cancelled withdrawal and resets the cancel window timer.
     WithdrawUncancel {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
     },
 
     /// Execute withdrawal by unlocking tokens (LockUnlock mode)
@@ -122,7 +122,7 @@ pub enum ExecuteMsg {
     /// Releases locked tokens to the recipient.
     WithdrawExecuteUnlock {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
     },
 
     /// Execute withdrawal by minting tokens (MintBurn mode)
@@ -132,7 +132,7 @@ pub enum ExecuteMsg {
     /// Mints wrapped tokens to the recipient.
     WithdrawExecuteMint {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
     },
 
     // ========================================================================
@@ -356,7 +356,7 @@ pub enum ExecuteMsg {
     /// Only allowed on withdrawals that are approved but not yet executed.
     AdminFixPendingDecimals {
         /// The 32-byte withdraw hash
-        withdraw_hash: Binary,
+        xchain_hash_id: Binary,
         /// Corrected source chain decimals
         src_decimals: u8,
     },
@@ -462,7 +462,7 @@ pub enum QueryMsg {
     // ========================================================================
     /// Get pending withdrawal by hash
     #[returns(PendingWithdrawResponse)]
-    PendingWithdraw { withdraw_hash: Binary },
+    PendingWithdraw { xchain_hash_id: Binary },
 
     /// List pending withdrawals with cursor-based pagination
     ///
@@ -471,26 +471,15 @@ pub enum QueryMsg {
     /// Cancelers use this to find approved-but-not-executed entries to verify.
     #[returns(PendingWithdrawalsResponse)]
     PendingWithdrawals {
-        /// Cursor: the withdraw_hash of the last item from the previous page
+        /// Cursor: the xchain_hash_id of the last item from the previous page
         start_after: Option<Binary>,
         /// Max entries to return (default 10, max 30)
         limit: Option<u32>,
     },
 
-    /// Compute withdraw hash without storing (for verification) - V1 legacy
+    /// Compute unified cross-chain hash ID (V2 7-field)
     #[returns(ComputeHashResponse)]
-    ComputeWithdrawHash {
-        src_chain_key: Binary,
-        dest_chain_key: Binary,
-        dest_token_address: Binary,
-        dest_account: Binary,
-        amount: Uint128,
-        nonce: u64,
-    },
-
-    /// Compute unified transfer hash (V2 7-field)
-    #[returns(ComputeHashResponse)]
-    ComputeTransferHash {
+    ComputeXchainHashId {
         /// Source chain ID (4 bytes)
         src_chain: Binary,
         /// Destination chain ID (4 bytes)
@@ -509,7 +498,7 @@ pub enum QueryMsg {
 
     /// Get deposit info by hash
     #[returns(Option<DepositInfoResponse>)]
-    DepositHash { deposit_hash: Binary },
+    XchainHashId { xchain_hash_id: Binary },
 
     /// Get deposit info by nonce (convenience lookup)
     #[returns(Option<DepositInfoResponse>)]
@@ -518,7 +507,7 @@ pub enum QueryMsg {
     /// Verify deposit hash matches expected parameters
     #[returns(VerifyDepositResponse)]
     VerifyDeposit {
-        deposit_hash: Binary,
+        xchain_hash_id: Binary,
         dest_token_address: Binary,
         dest_account: Binary,
         amount: Uint128,
@@ -770,7 +759,7 @@ impl Default for PendingWithdrawResponse {
 #[cw_serde]
 pub struct PendingWithdrawalEntry {
     /// The 32-byte withdraw hash (key in storage)
-    pub withdraw_hash: Binary,
+    pub xchain_hash_id: Binary,
     pub src_chain: Binary,
     pub src_account: Binary,
     pub dest_account: Binary,
@@ -803,7 +792,7 @@ pub struct ComputeHashResponse {
 
 #[cw_serde]
 pub struct DepositInfoResponse {
-    pub deposit_hash: Binary,
+    pub xchain_hash_id: Binary,
     pub src_chain: Binary,
     pub dest_chain: Binary,
     pub src_account: Binary,

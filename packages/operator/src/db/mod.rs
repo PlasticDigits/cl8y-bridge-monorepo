@@ -318,7 +318,7 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
         src_chain_key = %hex::encode(&approval.src_chain_key),
         nonce = approval.nonce,
         dest_chain_id = approval.dest_chain_id,
-        withdraw_hash = %hex::encode(&approval.withdraw_hash),
+        xchain_hash_id = %hex::encode(&approval.xchain_hash_id),
         token = %approval.token,
         recipient = %approval.recipient,
         amount = %approval.amount,
@@ -338,11 +338,11 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
     // The upsert resets a failed approval to 'pending' with fresh data so it can be retried.
     let row = sqlx::query(
         r#"
-        INSERT INTO approvals (src_chain_key, nonce, dest_chain_id, withdraw_hash, token, recipient, 
+        INSERT INTO approvals (src_chain_key, nonce, dest_chain_id, xchain_hash_id, token, recipient, 
             amount, fee, fee_recipient, deduct_from_amount)
         VALUES ($1, $2, $3, $4, $5, $6, $7::NUMERIC, $8::NUMERIC, $9, $10)
         ON CONFLICT (src_chain_key, nonce, dest_chain_id) DO UPDATE SET
-            withdraw_hash = EXCLUDED.withdraw_hash,
+            xchain_hash_id = EXCLUDED.xchain_hash_id,
             token = EXCLUDED.token,
             recipient = EXCLUDED.recipient,
             amount = EXCLUDED.amount,
@@ -359,7 +359,7 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
     .bind(&approval.src_chain_key)
     .bind(approval.nonce)
     .bind(approval.dest_chain_id)
-    .bind(&approval.withdraw_hash)
+    .bind(&approval.xchain_hash_id)
     .bind(token)
     .bind(recipient)
     .bind(&approval.amount)
@@ -376,7 +376,7 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
             src_chain_key = %hex::encode(&approval.src_chain_key),
             nonce = approval.nonce,
             dest_chain_id = approval.dest_chain_id,
-            withdraw_hash_len = approval.withdraw_hash.len(),
+            xchain_hash_id_len = approval.xchain_hash_id.len(),
             token = %token,
             token_len = token.len(),
             recipient = %recipient,
@@ -390,11 +390,11 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
     .wrap_err_with(|| {
         format!(
             "Failed to insert approval (src_chain_key={}, nonce={}, dest_chain_id={}, \
-             withdraw_hash_len={}, token_len={}, recipient_len={})",
+             xchain_hash_id_len={}, token_len={}, recipient_len={})",
             hex::encode(&approval.src_chain_key),
             approval.nonce,
             approval.dest_chain_id,
-            approval.withdraw_hash.len(),
+            approval.xchain_hash_id.len(),
             token.len(),
             recipient.len(),
         )
@@ -404,7 +404,7 @@ pub async fn insert_approval(pool: &PgPool, approval: &NewApproval) -> Result<i6
 }
 
 /// SQL SELECT columns for Approval table (casting NUMERIC to TEXT)
-const APPROVAL_SELECT: &str = r#"id, src_chain_key, nonce, dest_chain_id, withdraw_hash, token, 
+const APPROVAL_SELECT: &str = r#"id, src_chain_key, nonce, dest_chain_id, xchain_hash_id, token, 
     recipient, amount::TEXT as amount, fee::TEXT as fee, fee_recipient, deduct_from_amount, 
     tx_hash, status, attempts, last_attempt_at, error_message, created_at, updated_at"#;
 

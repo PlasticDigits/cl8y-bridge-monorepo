@@ -10,7 +10,7 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::fee_manager::{calculate_fee, get_fee_type, FeeConfig, FEE_CONFIG};
-use crate::hash::{bytes32_to_hex, compute_transfer_hash, encode_terra_address, hex_to_bytes32};
+use crate::hash::{bytes32_to_hex, compute_xchain_hash_id, encode_terra_address, hex_to_bytes32};
 use crate::msg::ReceiveMsg;
 use crate::state::{
     BridgeTransaction, DepositInfo, TokenType, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
@@ -159,7 +159,7 @@ pub fn execute_deposit_native(
         deposited_at: env.block.time,
     };
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -169,8 +169,8 @@ pub fn execute_deposit_native(
         nonce,
     );
 
-    DEPOSIT_HASHES.save(deps.storage, &deposit_hash, &deposit_info)?;
-    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &deposit_hash)?;
+    DEPOSIT_HASHES.save(deps.storage, &xchain_hash_id, &deposit_info)?;
+    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &xchain_hash_id)?;
 
     // Update stats
     let mut stats = STATS.load(deps.storage)?;
@@ -203,7 +203,7 @@ pub fn execute_deposit_native(
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
-        .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&xchain_hash_id)))
 }
 
 /// Execute handler for receiving CW20 tokens to lock or burn
@@ -360,7 +360,7 @@ fn execute_deposit_cw20_lock(
         deposited_at: env.block.time,
     };
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -370,8 +370,8 @@ fn execute_deposit_cw20_lock(
         nonce,
     );
 
-    DEPOSIT_HASHES.save(deps.storage, &deposit_hash, &deposit_info)?;
-    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &deposit_hash)?;
+    DEPOSIT_HASHES.save(deps.storage, &xchain_hash_id, &deposit_info)?;
+    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &xchain_hash_id)?;
 
     // Update stats
     let mut stats = STATS.load(deps.storage)?;
@@ -405,7 +405,7 @@ fn execute_deposit_cw20_lock(
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
-        .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&xchain_hash_id)))
 }
 
 /// Internal handler for burning CW20 mintable tokens (MintBurn mode)
@@ -507,7 +507,7 @@ fn execute_deposit_cw20_burn(
         deposited_at: env.block.time,
     };
 
-    let deposit_hash = compute_transfer_hash(
+    let xchain_hash_id = compute_xchain_hash_id(
         &src_chain,
         &dest_chain,
         &src_account,
@@ -517,8 +517,8 @@ fn execute_deposit_cw20_burn(
         nonce,
     );
 
-    DEPOSIT_HASHES.save(deps.storage, &deposit_hash, &deposit_info)?;
-    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &deposit_hash)?;
+    DEPOSIT_HASHES.save(deps.storage, &xchain_hash_id, &deposit_info)?;
+    DEPOSIT_BY_NONCE.save(deps.storage, nonce, &xchain_hash_id)?;
 
     // Update stats
     let mut stats = STATS.load(deps.storage)?;
@@ -561,5 +561,5 @@ fn execute_deposit_cw20_burn(
         .add_attribute("fee_type", fee_type.as_str())
         .add_attribute("dest_chain", format!("0x{}", hex::encode(dest_chain_bytes)))
         .add_attribute("dest_token_address", bytes32_to_hex(&dest_token_address))
-        .add_attribute("deposit_hash", bytes32_to_hex(&deposit_hash)))
+        .add_attribute("xchain_hash_id", bytes32_to_hex(&xchain_hash_id)))
 }

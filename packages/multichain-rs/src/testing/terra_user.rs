@@ -221,11 +221,11 @@ impl TerraUser {
         lcd_url: &str,
         chain_id: &str,
         bridge_address: &str,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<String> {
         let signer = self.create_signer(lcd_url, chain_id)?;
 
-        let msg = crate::terra::contracts::build_withdraw_execute_unlock_msg_v2(withdraw_hash);
+        let msg = crate::terra::contracts::build_withdraw_execute_unlock_msg_v2(xchain_hash_id);
 
         let result = signer
             .sign_and_broadcast_execute(bridge_address, &msg, vec![])
@@ -247,11 +247,11 @@ impl TerraUser {
         lcd_url: &str,
         chain_id: &str,
         bridge_address: &str,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<String> {
         let signer = self.create_signer(lcd_url, chain_id)?;
 
-        let msg = crate::terra::contracts::build_withdraw_execute_mint_msg_v2(withdraw_hash);
+        let msg = crate::terra::contracts::build_withdraw_execute_mint_msg_v2(xchain_hash_id);
 
         let result = signer
             .sign_and_broadcast_execute(bridge_address, &msg, vec![])
@@ -290,10 +290,10 @@ impl TerraUser {
         &self,
         lcd_url: &str,
         bridge_address: &str,
-        withdraw_hash: [u8; 32],
+        xchain_hash_id: [u8; 32],
     ) -> Result<crate::terra::contracts::PendingWithdrawResponse> {
         let query_client = crate::terra::queries::TerraQueryClient::new(lcd_url, bridge_address);
-        query_client.get_pending_withdraw(withdraw_hash).await
+        query_client.get_pending_withdraw(xchain_hash_id).await
     }
 }
 

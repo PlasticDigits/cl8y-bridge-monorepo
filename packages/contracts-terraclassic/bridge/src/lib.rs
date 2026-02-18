@@ -34,4 +34,4 @@ pub mod state;
 pub use crate::address_codec::UniversalAddress;
 pub use crate::error::ContractError;
 pub use crate::fee_manager::{calculate_fee, FeeConfig};
-pub use crate::hash::{compute_transfer_hash, keccak256};
+pub use crate::hash::{compute_xchain_hash_id, keccak256};

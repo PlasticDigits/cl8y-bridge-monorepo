@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   isValidEvmAddress,
   isValidTerraAddress,
-  isValidTransferHash,
-  normalizeTransferHash,
+  isValidXchainHashId,
+  normalizeXchainHashId,
   isValidAmount,
 } from './validation'
 
@@ -35,25 +35,25 @@ describe('validation', () => {
     })
   })
 
-  describe('isValidTransferHash', () => {
+  describe('isValidXchainHashId', () => {
     it('accepts 0x-prefixed 64-char hex', () => {
-      expect(isValidTransferHash('0x' + 'a'.repeat(64))).toBe(true)
+      expect(isValidXchainHashId('0x' + 'a'.repeat(64))).toBe(true)
     })
     it('accepts unprefixed 64-char hex', () => {
-      expect(isValidTransferHash('a'.repeat(64))).toBe(true)
+      expect(isValidXchainHashId('a'.repeat(64))).toBe(true)
     })
     it('rejects short hash', () => {
-      expect(isValidTransferHash('0x1234')).toBe(false)
+      expect(isValidXchainHashId('0x1234')).toBe(false)
     })
   })
 
-  describe('normalizeTransferHash', () => {
+  describe('normalizeXchainHashId', () => {
     it('adds 0x to unprefixed hash', () => {
-      expect(normalizeTransferHash('a'.repeat(64))).toBe('0x' + 'a'.repeat(64))
+      expect(normalizeXchainHashId('a'.repeat(64))).toBe('0x' + 'a'.repeat(64))
     })
     it('leaves 0x-prefixed hash unchanged', () => {
       const h = '0x' + 'a'.repeat(64)
-      expect(normalizeTransferHash(h)).toBe(h)
+      expect(normalizeXchainHashId(h)).toBe(h)
     })
   })
 

@@ -4,8 +4,8 @@
 //! matches the deposit hash computed by the EVM contract for the same transfer.
 //!
 //! This is critical because the operator's approval flow depends on hash matching:
-//! 1. EVM stores deposit hash via `HashLib.computeTransferHash()`
-//! 2. Terra computes withdraw hash via `compute_transfer_hash()`
+//! 1. EVM stores deposit hash via `HashLib.computeXchainHashId()`
+//! 2. Terra computes withdraw hash via `compute_xchain_hash_id()`
 //! 3. Operator reads the hash from Terra's `pending_withdrawals` query
 //! 4. Operator calls EVM's `getDeposit(hash)` to verify
 //! 5. If the hashes don't match, the operator never finds the deposit and never approves
@@ -16,7 +16,7 @@
 use cosmwasm_std::{coins, Addr, Binary, Uint128};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
-use bridge::hash::{bytes32_to_hex, compute_transfer_hash, keccak256};
+use bridge::hash::{bytes32_to_hex, compute_xchain_hash_id, keccak256};
 use bridge::msg::{
     ExecuteMsg, InstantiateMsg, PendingWithdrawResponse, PendingWithdrawalsResponse, QueryMsg,
 };
@@ -165,14 +165,14 @@ fn setup_with_e2e_chain_ids() -> TestEnv {
 /// This verifies that:
 /// 1. WithdrawSubmit stores the hash correctly
 /// 2. The hash can be retrieved from pending_withdrawals
-/// 3. The hash matches what compute_transfer_hash produces with the SAME
+/// 3. The hash matches what compute_xchain_hash_id produces with the SAME
 ///    internal parameters the contract uses (including its encoding of dest_account)
 ///
 /// This is critical because the operator reads the hash from pending_withdrawals
 /// and uses it to query EVM's getDeposit(hash). If the contract stores a hash
-/// that doesn't match compute_transfer_hash, the whole flow breaks.
+/// that doesn't match compute_xchain_hash_id, the whole flow breaks.
 #[test]
-fn test_withdraw_hash_internal_consistency() {
+fn test_xchain_hash_id_internal_consistency() {
     let mut env = setup_with_e2e_chain_ids();
 
     // Parameters matching a realistic EVM deposit:
@@ -210,15 +210,15 @@ fn test_withdraw_hash_internal_consistency() {
         .unwrap();
 
     // Step 2: Extract the hash from the event
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found in WithdrawSubmit response");
+        .expect("xchain_hash_id attribute not found in WithdrawSubmit response");
 
-    let contract_hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap();
+    let contract_hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap();
 
     // Step 3: Query the pending withdrawal to get the stored parameters
     let pending: PendingWithdrawResponse = env
@@ -227,7 +227,7 @@ fn test_withdraw_hash_internal_consistency() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: Binary::from(contract_hash_bytes.clone()),
+                xchain_hash_id: Binary::from(contract_hash_bytes.clone()),
             },
         )
         .unwrap();
@@ -261,7 +261,7 @@ fn test_withdraw_hash_internal_consistency() {
 
     let token_hash = keccak256(b"uluna");
 
-    let recomputed_hash = compute_transfer_hash(
+    let recomputed_hash = compute_xchain_hash_id(
         &evm_chain_id,
         &terra_chain_id,
         &src_account,
@@ -337,7 +337,7 @@ fn test_uluna_token_encoding_matches_evm() {
 ///
 /// Simulates the operator's polling flow:
 /// 1. Query pending_withdrawals
-/// 2. Extract withdraw_hash (base64)
+/// 2. Extract xchain_hash_id (base64)
 /// 3. Decode to bytes
 /// 4. Verify it matches the expected hash
 #[test]
@@ -390,7 +390,7 @@ fn test_pending_withdrawals_hash_format_for_operator() {
     let entry = &result.withdrawals[0];
 
     // Verify the hash is in Binary format (which serializes as base64)
-    let hash_bytes = entry.withdraw_hash.as_slice();
+    let hash_bytes = entry.xchain_hash_id.as_slice();
     assert_eq!(
         hash_bytes.len(),
         32,
@@ -411,7 +411,7 @@ fn test_pending_withdrawals_hash_format_for_operator() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: entry.withdraw_hash.clone(),
+                xchain_hash_id: entry.xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -491,7 +491,7 @@ fn test_simulated_operator_approve_flow() {
         env.operator.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawApprove {
-            withdraw_hash: entry.withdraw_hash.clone(),
+            xchain_hash_id: entry.xchain_hash_id.clone(),
         },
         &[],
     );
@@ -509,7 +509,7 @@ fn test_simulated_operator_approve_flow() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: entry.withdraw_hash.clone(),
+                xchain_hash_id: entry.xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -532,8 +532,8 @@ fn test_simulated_operator_approve_flow() {
 /// - nonce = 1
 /// - token = "uluna"
 ///
-/// Verifies the hash computed by compute_transfer_hash in the contract
-/// matches the hash computed by compute_transfer_hash in multichain-rs.
+/// Verifies the hash computed by compute_xchain_hash_id in the contract
+/// matches the hash computed by compute_xchain_hash_id in multichain-rs.
 #[test]
 fn test_hash_parity_with_e2e_parameters() {
     let evm_chain: [u8; 4] = [0, 0, 0, 1];
@@ -558,7 +558,7 @@ fn test_hash_parity_with_e2e_parameters() {
     let nonce: u64 = 1;
 
     // Compute hash using the contract's function
-    let contract_hash = compute_transfer_hash(
+    let contract_hash = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src_account,
@@ -569,7 +569,7 @@ fn test_hash_parity_with_e2e_parameters() {
     );
 
     // Recompute with same params to verify determinism
-    let recomputed_hash = compute_transfer_hash(
+    let recomputed_hash = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src_account,
@@ -593,7 +593,7 @@ fn test_hash_parity_with_e2e_parameters() {
     assert_ne!(contract_hash, [0u8; 32], "Hash should not be all zeros");
 
     // Different nonce should produce different hash
-    let different_nonce_hash = compute_transfer_hash(
+    let different_nonce_hash = compute_xchain_hash_id(
         &evm_chain,
         &terra_chain,
         &src_account,
@@ -647,15 +647,15 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
         )
         .unwrap();
 
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
+        .expect("xchain_hash_id attribute not found");
 
-    let contract_hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap();
+    let contract_hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap();
     let mut contract_hash = [0u8; 32];
     contract_hash.copy_from_slice(&contract_hash_bytes);
 
@@ -666,7 +666,7 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: Binary::from(contract_hash_bytes.clone()),
+                xchain_hash_id: Binary::from(contract_hash_bytes.clone()),
             },
         )
         .unwrap();
@@ -675,7 +675,7 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
     let token = keccak256(b"uluna");
 
     // Recompute hash with terra_chain_id as dest_chain (matching the contract's THIS_CHAIN_ID)
-    let expected_hash = compute_transfer_hash(
+    let expected_hash = compute_xchain_hash_id(
         &evm_chain_id,
         &terra_chain_id,
         &src_account,
@@ -698,7 +698,7 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
 
     // Verify: using wrong dest_chain produces a DIFFERENT hash
     let wrong_chain: [u8; 4] = [0, 0, 0, 99];
-    let wrong_hash = compute_transfer_hash(
+    let wrong_hash = compute_xchain_hash_id(
         &evm_chain_id,
         &wrong_chain,
         &src_account,
@@ -720,7 +720,7 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
     );
 }
 
-/// Test that base64 encoding of the withdraw_hash from the query response
+/// Test that base64 encoding of the xchain_hash_id from the query response
 /// correctly round-trips through the operator's decode logic.
 ///
 /// The operator does:
@@ -730,7 +730,7 @@ fn test_withdraw_submit_uses_correct_dest_chain() {
 ///
 /// This test verifies the encoding is consistent.
 #[test]
-fn test_withdraw_hash_base64_roundtrip() {
+fn test_xchain_hash_id_base64_roundtrip() {
     let mut env = setup_with_e2e_chain_ids();
 
     let evm_chain_id: [u8; 4] = [0, 0, 0, 1];
@@ -760,9 +760,9 @@ fn test_withdraw_hash_base64_roundtrip() {
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash not found");
+        .expect("xchain_hash_id not found");
 
     let hash_from_event = hex::decode(&hash_hex[2..]).unwrap();
 
@@ -779,7 +779,7 @@ fn test_withdraw_hash_base64_roundtrip() {
         )
         .unwrap();
 
-    let hash_from_query = result.withdrawals[0].withdraw_hash.as_slice();
+    let hash_from_query = result.withdrawals[0].xchain_hash_id.as_slice();
 
     // Both should be the same bytes
     assert_eq!(
@@ -846,7 +846,7 @@ fn test_multiple_withdrawals_produce_unique_hashes() {
             .events
             .iter()
             .flat_map(|e| &e.attributes)
-            .find(|a| a.key == "withdraw_hash")
+            .find(|a| a.key == "xchain_hash_id")
             .map(|a| a.value.clone())
             .unwrap();
 

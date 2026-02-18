@@ -895,14 +895,14 @@ fn test_withdraw_submit_uses_src_decimals_from_mapping() {
         .unwrap();
 
     // Get the withdraw hash from the event
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
-    let hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap();
+        .expect("xchain_hash_id attribute not found");
+    let hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap();
 
     // Query the pending withdrawal and verify src_decimals
     let pending: bridge::msg::PendingWithdrawResponse = env
@@ -911,7 +911,7 @@ fn test_withdraw_submit_uses_src_decimals_from_mapping() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: Binary::from(hash_bytes),
+                xchain_hash_id: Binary::from(hash_bytes),
             },
         )
         .unwrap();

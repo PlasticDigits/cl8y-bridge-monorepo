@@ -56,7 +56,7 @@ export function HashComparisonPanel({
           className="mx-auto mb-4 max-h-[414px] max-w-[446px] w-2/3 object-contain opacity-80"
         />
         <p className="text-gray-400">
-          Enter a transfer hash and click Verify to look up source and destination data.
+          Enter an XChain Hash ID and click Verify to look up source and destination data.
         </p>
       </div>
     )

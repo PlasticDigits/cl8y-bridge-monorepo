@@ -409,7 +409,7 @@ impl<P: Provider> EvmEventWatcher<P> {
     /// Wait for a WithdrawSubmit event by withdraw hash
     pub async fn wait_for_withdraw_submit(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         timeout: Duration,
     ) -> Result<WithdrawSubmitEvent> {
         let start = std::time::Instant::now();
@@ -424,7 +424,7 @@ impl<P: Provider> EvmEventWatcher<P> {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == *withdraw_hash {
+                    if event.xchain_hash_id == *xchain_hash_id {
                         return Ok(event);
                     }
                 }
@@ -444,7 +444,7 @@ impl<P: Provider> EvmEventWatcher<P> {
     /// Wait for a WithdrawApprove event by withdraw hash
     pub async fn wait_for_withdraw_approve(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         timeout: Duration,
     ) -> Result<WithdrawApproveEvent> {
         let start = std::time::Instant::now();
@@ -459,7 +459,7 @@ impl<P: Provider> EvmEventWatcher<P> {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == *withdraw_hash {
+                    if event.xchain_hash_id == *xchain_hash_id {
                         return Ok(event);
                     }
                 }
@@ -479,7 +479,7 @@ impl<P: Provider> EvmEventWatcher<P> {
     /// Wait for a WithdrawCancel event by withdraw hash
     pub async fn wait_for_withdraw_cancel(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         timeout: Duration,
     ) -> Result<WithdrawCancelEvent> {
         let start = std::time::Instant::now();
@@ -494,7 +494,7 @@ impl<P: Provider> EvmEventWatcher<P> {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == *withdraw_hash {
+                    if event.xchain_hash_id == *xchain_hash_id {
                         return Ok(event);
                     }
                 }
@@ -514,7 +514,7 @@ impl<P: Provider> EvmEventWatcher<P> {
     /// Wait for a WithdrawExecute event by withdraw hash
     pub async fn wait_for_withdraw_execute(
         &self,
-        withdraw_hash: &[u8; 32],
+        xchain_hash_id: &[u8; 32],
         timeout: Duration,
     ) -> Result<WithdrawExecuteEvent> {
         let start = std::time::Instant::now();
@@ -529,7 +529,7 @@ impl<P: Provider> EvmEventWatcher<P> {
                     .await?;
 
                 for event in events {
-                    if event.withdraw_hash == *withdraw_hash {
+                    if event.xchain_hash_id == *xchain_hash_id {
                         return Ok(event);
                     }
                 }
@@ -616,7 +616,7 @@ pub fn parse_deposit_log(log: &alloy::rpc::types::Log) -> Option<DepositEvent> {
 
 /// Parse a V2 WithdrawSubmit event from a raw log
 ///
-/// Event: WithdrawSubmit(bytes32 indexed withdrawHash, bytes4 srcChain,
+/// Event: WithdrawSubmit(bytes32 indexed xchainHashId, bytes4 srcChain,
 ///                       bytes32 srcAccount, bytes32 destAccount,
 ///                       address token, uint256 amount, uint64 nonce,
 ///                       uint256 operatorGas)
@@ -639,8 +639,8 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     let tx_hash = log.transaction_hash?;
     let log_index = log.log_index?;
 
-    // topic[1] = withdrawHash (bytes32)
-    let withdraw_hash = topics[1];
+    // topic[1] = xchainHashId (bytes32)
+    let xchain_hash_id = topics[1];
 
     // V2 data has 7 non-indexed fields = 224 bytes
     let data = log.data().data.as_ref();
@@ -670,7 +670,7 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     let operator_gas = U256::from_be_slice(&data[192..224]);
 
     Some(WithdrawSubmitEvent::from_log(
-        FixedBytes(withdraw_hash.0),
+        FixedBytes(xchain_hash_id.0),
         FixedBytes(src_chain),
         token,
         amount,
@@ -684,7 +684,7 @@ pub fn parse_withdraw_submit_log(log: &alloy::rpc::types::Log) -> Option<Withdra
 
 /// Parse a V2 WithdrawApprove event from a raw log
 ///
-/// Event: WithdrawApprove(bytes32 indexed withdrawHash)
+/// Event: WithdrawApprove(bytes32 indexed xchainHashId)
 pub fn parse_withdraw_approve_log(log: &alloy::rpc::types::Log) -> Option<WithdrawApproveEvent> {
     let topics = log.topics();
     if topics.len() < 2 {
@@ -695,10 +695,10 @@ pub fn parse_withdraw_approve_log(log: &alloy::rpc::types::Log) -> Option<Withdr
     let tx_hash = log.transaction_hash?;
     let log_index = log.log_index?;
 
-    let withdraw_hash = topics[1];
+    let xchain_hash_id = topics[1];
 
     Some(WithdrawApproveEvent::from_log(
-        FixedBytes(withdraw_hash.0),
+        FixedBytes(xchain_hash_id.0),
         block_number,
         FixedBytes(tx_hash.0),
         log_index,
@@ -707,7 +707,7 @@ pub fn parse_withdraw_approve_log(log: &alloy::rpc::types::Log) -> Option<Withdr
 
 /// Parse a V2 WithdrawCancel event from a raw log
 ///
-/// Event: WithdrawCancel(bytes32 indexed withdrawHash, address canceler)
+/// Event: WithdrawCancel(bytes32 indexed xchainHashId, address canceler)
 pub fn parse_withdraw_cancel_log(log: &alloy::rpc::types::Log) -> Option<WithdrawCancelEvent> {
     let topics = log.topics();
     if topics.len() < 2 {
@@ -718,7 +718,7 @@ pub fn parse_withdraw_cancel_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     let tx_hash = log.transaction_hash?;
     let log_index = log.log_index?;
 
-    let withdraw_hash = topics[1];
+    let xchain_hash_id = topics[1];
 
     let data = log.data().data.as_ref();
     if data.len() < 32 {
@@ -729,7 +729,7 @@ pub fn parse_withdraw_cancel_log(log: &alloy::rpc::types::Log) -> Option<Withdra
     let canceler = Address::from(canceler_bytes);
 
     Some(WithdrawCancelEvent::from_log(
-        FixedBytes(withdraw_hash.0),
+        FixedBytes(xchain_hash_id.0),
         canceler,
         block_number,
         FixedBytes(tx_hash.0),
@@ -739,7 +739,7 @@ pub fn parse_withdraw_cancel_log(log: &alloy::rpc::types::Log) -> Option<Withdra
 
 /// Parse a V2 WithdrawExecute event from a raw log
 ///
-/// Event: WithdrawExecute(bytes32 indexed withdrawHash, address recipient, uint256 amount)
+/// Event: WithdrawExecute(bytes32 indexed xchainHashId, address recipient, uint256 amount)
 pub fn parse_withdraw_execute_log(log: &alloy::rpc::types::Log) -> Option<WithdrawExecuteEvent> {
     let topics = log.topics();
     if topics.len() < 2 {
@@ -750,7 +750,7 @@ pub fn parse_withdraw_execute_log(log: &alloy::rpc::types::Log) -> Option<Withdr
     let tx_hash = log.transaction_hash?;
     let log_index = log.log_index?;
 
-    let withdraw_hash = topics[1];
+    let xchain_hash_id = topics[1];
 
     let data = log.data().data.as_ref();
     if data.len() < 64 {
@@ -763,7 +763,7 @@ pub fn parse_withdraw_execute_log(log: &alloy::rpc::types::Log) -> Option<Withdr
     let amount = U256::from_be_slice(&data[32..64]);
 
     Some(WithdrawExecuteEvent::from_log(
-        FixedBytes(withdraw_hash.0),
+        FixedBytes(xchain_hash_id.0),
         recipient,
         amount,
         block_number,

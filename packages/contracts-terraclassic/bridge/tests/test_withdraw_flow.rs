@@ -206,15 +206,15 @@ fn submit_withdraw(
         )
         .unwrap();
 
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
-        .expect("withdraw_hash attribute not found");
+        .expect("xchain_hash_id attribute not found");
 
-    let hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap();
+    let hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap();
     Binary::from(hash_bytes)
 }
 
@@ -270,7 +270,7 @@ fn test_full_withdraw_cycle_with_liquidity() {
     assert!(locked.amount > Uint128::zero());
 
     // Submit withdraw: 1e18 in source decimals (EVM), normalizes to 1e6 in Terra
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000_000, // 1e18 (EVM decimals)
@@ -284,7 +284,7 @@ fn test_full_withdraw_cycle_with_liquidity() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -300,7 +300,7 @@ fn test_full_withdraw_cycle_with_liquidity() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -314,7 +314,7 @@ fn test_full_withdraw_cycle_with_liquidity() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -337,7 +337,7 @@ fn test_withdraw_decimal_normalization_18_to_6() {
     deposit_to_build_liquidity(&mut env, 10_000_000);
 
     // Submit 2e18 in EVM decimals → should normalize to 2e6 (2_000_000) uluna
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         2_000_000_000_000_000_000, // 2e18
@@ -352,7 +352,7 @@ fn test_withdraw_decimal_normalization_18_to_6() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -366,7 +366,7 @@ fn test_withdraw_decimal_normalization_18_to_6() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -380,7 +380,7 @@ fn test_withdraw_decimal_normalization_18_to_6() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -407,7 +407,7 @@ fn test_withdraw_18_decimal_quadrillion_quantity() {
     deposit_to_build_liquidity(&mut env, 10_000_000);
 
     // 1 quadrillion = 1e15 in 18-decimal raw units → normalizes to 1e3 (1000) in 6 decimals
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000u128, // 1e15
@@ -420,7 +420,7 @@ fn test_withdraw_18_decimal_quadrillion_quantity() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -434,7 +434,7 @@ fn test_withdraw_18_decimal_quadrillion_quantity() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -459,7 +459,7 @@ fn test_withdraw_18_decimal_large_quantity() {
     // Need 1e9 liquidity (after fee); deposit 1.5e9 to have enough
     deposit_to_build_liquidity(&mut env, 1_500_000_000);
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000_000_000u128, // 1e21 in raw (18 decimals)
@@ -472,7 +472,7 @@ fn test_withdraw_18_decimal_large_quantity() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -486,7 +486,7 @@ fn test_withdraw_18_decimal_large_quantity() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -512,7 +512,7 @@ fn test_cancel_uncancel_then_execute() {
     let mut env = setup();
     deposit_to_build_liquidity(&mut env, 5_000_000);
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 2, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 2, 0);
 
     // Approve
     env.app
@@ -520,7 +520,7 @@ fn test_cancel_uncancel_then_execute() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -532,7 +532,7 @@ fn test_cancel_uncancel_then_execute() {
             env.canceler.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawCancel {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -545,7 +545,7 @@ fn test_cancel_uncancel_then_execute() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -557,7 +557,7 @@ fn test_cancel_uncancel_then_execute() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawUncancel {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -573,7 +573,7 @@ fn test_cancel_uncancel_then_execute() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -588,7 +588,7 @@ fn test_cancel_uncancel_then_execute() {
 fn test_uncancel_resets_cancel_window() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 3, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 3, 0);
 
     // Approve
     env.app
@@ -596,7 +596,7 @@ fn test_uncancel_resets_cancel_window() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -613,7 +613,7 @@ fn test_uncancel_resets_cancel_window() {
             env.canceler.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawCancel {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -630,7 +630,7 @@ fn test_uncancel_resets_cancel_window() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawUncancel {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -643,7 +643,7 @@ fn test_uncancel_resets_cancel_window() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -663,7 +663,7 @@ fn test_double_execute_rejected() {
     let mut env = setup();
     deposit_to_build_liquidity(&mut env, 10_000_000);
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 4, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 4, 0);
 
     // Approve + wait
     env.app
@@ -671,7 +671,7 @@ fn test_double_execute_rejected() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -687,7 +687,7 @@ fn test_double_execute_rejected() {
             env.user.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawExecuteUnlock {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -698,7 +698,7 @@ fn test_double_execute_rejected() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -715,7 +715,7 @@ fn test_double_execute_rejected() {
 fn test_execute_without_approval_rejected() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 5, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 5, 0);
 
     // Skip approval, wait, try to execute
     env.app.update_block(|block| {
@@ -726,7 +726,7 @@ fn test_execute_without_approval_rejected() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -750,7 +750,7 @@ fn test_execute_nonexistent_hash_rejected() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: fake_hash,
+            xchain_hash_id: fake_hash,
         },
         &[],
     );
@@ -769,7 +769,7 @@ fn test_execute_while_paused_rejected() {
     let mut env = setup();
     deposit_to_build_liquidity(&mut env, 5_000_000);
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 6, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 6, 0);
 
     // Approve + wait
     env.app
@@ -777,7 +777,7 @@ fn test_execute_while_paused_rejected() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -802,7 +802,7 @@ fn test_execute_while_paused_rejected() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -897,7 +897,7 @@ fn test_submit_unsupported_token_rejected() {
 fn test_submit_with_operator_gas_tip() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000_000,
@@ -911,7 +911,7 @@ fn test_submit_with_operator_gas_tip() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -925,7 +925,7 @@ fn test_submit_with_operator_gas_tip() {
 fn test_operator_gas_transferred_on_approve() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000_000,
@@ -946,7 +946,7 @@ fn test_operator_gas_transferred_on_approve() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -974,7 +974,7 @@ fn test_anyone_can_execute_after_window() {
     let mut env = setup();
     deposit_to_build_liquidity(&mut env, 10_000_000);
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 9, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 9, 0);
 
     // Approve + wait
     env.app
@@ -982,7 +982,7 @@ fn test_anyone_can_execute_after_window() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -998,7 +998,7 @@ fn test_anyone_can_execute_after_window() {
         random.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -1073,15 +1073,15 @@ fn test_execute_unlock_wrong_token_type_rejected() {
         )
         .unwrap();
 
-    let withdraw_hash_hex = res
+    let xchain_hash_id_hex = res
         .events
         .iter()
         .flat_map(|e| &e.attributes)
-        .find(|a| a.key == "withdraw_hash")
+        .find(|a| a.key == "xchain_hash_id")
         .map(|a| a.value.clone())
         .unwrap();
-    let hash_bytes = hex::decode(&withdraw_hash_hex[2..]).unwrap();
-    let withdraw_hash = Binary::from(hash_bytes);
+    let hash_bytes = hex::decode(&xchain_hash_id_hex[2..]).unwrap();
+    let xchain_hash_id = Binary::from(hash_bytes);
 
     // Approve + wait
     env.app
@@ -1089,7 +1089,7 @@ fn test_execute_unlock_wrong_token_type_rejected() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -1104,7 +1104,7 @@ fn test_execute_unlock_wrong_token_type_rejected() {
         env.user.clone(),
         env.contract_addr.clone(),
         &ExecuteMsg::WithdrawExecuteUnlock {
-            withdraw_hash: withdraw_hash.clone(),
+            xchain_hash_id: xchain_hash_id.clone(),
         },
         &[],
     );
@@ -1126,7 +1126,7 @@ fn test_execute_unlock_wrong_token_type_rejected() {
 fn test_cancel_window_countdown() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 11, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 11, 0);
 
     // Before approval: cancel_window_remaining should be 0
     let pending: PendingWithdrawResponse = env
@@ -1135,7 +1135,7 @@ fn test_cancel_window_countdown() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -1147,7 +1147,7 @@ fn test_cancel_window_countdown() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -1160,7 +1160,7 @@ fn test_cancel_window_countdown() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -1177,7 +1177,7 @@ fn test_cancel_window_countdown() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -1194,7 +1194,7 @@ fn test_cancel_window_countdown() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -1251,7 +1251,7 @@ fn test_pending_withdrawals_returns_all() {
     let returned_hashes: Vec<Binary> = result
         .withdrawals
         .iter()
-        .map(|w| w.withdraw_hash.clone())
+        .map(|w| w.xchain_hash_id.clone())
         .collect();
     assert!(returned_hashes.contains(&hash1));
     assert!(returned_hashes.contains(&hash2));
@@ -1289,7 +1289,7 @@ fn test_pending_withdrawals_pagination_limit() {
     assert_eq!(page1.withdrawals.len(), 2);
 
     // Use the last hash as cursor for page 2
-    let cursor = page1.withdrawals.last().unwrap().withdraw_hash.clone();
+    let cursor = page1.withdrawals.last().unwrap().xchain_hash_id.clone();
     let page2: PendingWithdrawalsResponse = env
         .app
         .wrap()
@@ -1305,7 +1305,7 @@ fn test_pending_withdrawals_pagination_limit() {
     assert_eq!(page2.withdrawals.len(), 2);
 
     // Page 3 should have 1 remaining
-    let cursor2 = page2.withdrawals.last().unwrap().withdraw_hash.clone();
+    let cursor2 = page2.withdrawals.last().unwrap().xchain_hash_id.clone();
     let page3: PendingWithdrawalsResponse = env
         .app
         .wrap()
@@ -1329,10 +1329,10 @@ fn test_pending_withdrawals_pagination_limit() {
         .chain(page3.withdrawals.iter())
     {
         assert!(
-            !all_hashes.contains(&w.withdraw_hash),
+            !all_hashes.contains(&w.xchain_hash_id),
             "Duplicate hash found"
         );
-        all_hashes.push(w.withdraw_hash.clone());
+        all_hashes.push(w.xchain_hash_id.clone());
     }
     assert_eq!(all_hashes.len(), 5);
 }
@@ -1352,7 +1352,7 @@ fn test_pending_withdrawals_shows_approved_and_cancelled() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: hash1.clone(),
+                xchain_hash_id: hash1.clone(),
             },
             &[],
         )
@@ -1364,7 +1364,7 @@ fn test_pending_withdrawals_shows_approved_and_cancelled() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: hash3.clone(),
+                xchain_hash_id: hash3.clone(),
             },
             &[],
         )
@@ -1374,7 +1374,7 @@ fn test_pending_withdrawals_shows_approved_and_cancelled() {
             env.canceler.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawCancel {
-                withdraw_hash: hash3.clone(),
+                xchain_hash_id: hash3.clone(),
             },
             &[],
         )
@@ -1443,7 +1443,7 @@ fn test_pending_withdrawals_max_limit_capped() {
 fn test_pending_withdrawals_fields_match_single_query() {
     let mut env = setup();
 
-    let withdraw_hash = submit_withdraw(
+    let xchain_hash_id = submit_withdraw(
         &mut env,
         "uluna",
         1_000_000_000_000_000_000,
@@ -1457,7 +1457,7 @@ fn test_pending_withdrawals_fields_match_single_query() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -1470,7 +1470,7 @@ fn test_pending_withdrawals_fields_match_single_query() {
         .query_wasm_smart(
             &env.contract_addr,
             &QueryMsg::PendingWithdraw {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
         )
         .unwrap();
@@ -1492,7 +1492,7 @@ fn test_pending_withdrawals_fields_match_single_query() {
     let entry = &list.withdrawals[0];
 
     // Compare all fields
-    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert_eq!(entry.xchain_hash_id, xchain_hash_id);
     assert_eq!(entry.src_chain, single.src_chain);
     assert_eq!(entry.src_account, single.src_account);
     assert_eq!(entry.dest_account, single.dest_account);
@@ -1533,7 +1533,7 @@ fn test_v2_flow_submit_creates_unapproved_then_approve_updates() {
     let mut env = setup();
 
     // Step 1: Submit a withdrawal (user-initiated)
-    let withdraw_hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 500, 0);
+    let xchain_hash_id = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 500, 0);
 
     // Step 2: Query pending_withdrawals - entry should exist but NOT be approved
     let result: PendingWithdrawalsResponse = env
@@ -1555,7 +1555,7 @@ fn test_v2_flow_submit_creates_unapproved_then_approve_updates() {
     );
 
     let entry = &result.withdrawals[0];
-    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert_eq!(entry.xchain_hash_id, xchain_hash_id);
     assert_eq!(entry.nonce, 500);
     assert!(
         !entry.approved,
@@ -1578,7 +1578,7 @@ fn test_v2_flow_submit_creates_unapproved_then_approve_updates() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: withdraw_hash.clone(),
+                xchain_hash_id: xchain_hash_id.clone(),
             },
             &[],
         )
@@ -1599,7 +1599,7 @@ fn test_v2_flow_submit_creates_unapproved_then_approve_updates() {
 
     assert_eq!(result.withdrawals.len(), 1);
     let entry = &result.withdrawals[0];
-    assert_eq!(entry.withdraw_hash, withdraw_hash);
+    assert_eq!(entry.xchain_hash_id, xchain_hash_id);
     assert!(
         entry.approved,
         "Entry should be approved after WithdrawApprove"
@@ -1637,7 +1637,7 @@ fn test_v2_flow_mixed_approved_and_unapproved() {
             env.operator.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::WithdrawApprove {
-                withdraw_hash: hash1.clone(),
+                xchain_hash_id: hash1.clone(),
             },
             &[],
         )
@@ -1668,5 +1668,5 @@ fn test_v2_flow_mixed_approved_and_unapproved() {
     // The approved one should be nonce 600
     let approved_entry = result.withdrawals.iter().find(|w| w.approved).unwrap();
     assert_eq!(approved_entry.nonce, 600);
-    assert_eq!(approved_entry.withdraw_hash, hash1);
+    assert_eq!(approved_entry.xchain_hash_id, hash1);
 }

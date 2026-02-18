@@ -6,14 +6,14 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-  computeTransferHash,
+  computeXchainHashId,
   chainIdToBytes32,
   evmAddressToBytes32,
   tokenUlunaBytes32,
   keccak256Uluna,
   normalizeHash,
-  computeTransferHashFromDeposit,
-  computeTransferHashFromWithdraw,
+  computeXchainHashIdFromDeposit,
+  computeXchainHashIdFromWithdraw,
   base64ToHex,
   hexToBase64,
 } from './hashVerification'
@@ -70,7 +70,7 @@ describe('hashVerification', () => {
     })
   })
 
-  describe('computeTransferHash', () => {
+  describe('computeXchainHashId', () => {
     const srcChain = chainIdToBytes32(1)
     const destChain = chainIdToBytes32(2)
     const srcAccount = evmAddressToBytes32('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as `0x${string}`)
@@ -80,7 +80,7 @@ describe('hashVerification', () => {
     const nonce = BigInt(1)
 
     it('should produce 32-byte hash', () => {
-      const hash = computeTransferHash(
+      const hash = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -93,7 +93,7 @@ describe('hashVerification', () => {
     })
 
     it('should be deterministic', () => {
-      const h1 = computeTransferHash(
+      const h1 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -102,7 +102,7 @@ describe('hashVerification', () => {
         amount,
         nonce
       )
-      const h2 = computeTransferHash(
+      const h2 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -115,7 +115,7 @@ describe('hashVerification', () => {
     })
 
     it('should change when nonce changes', () => {
-      const h1 = computeTransferHash(
+      const h1 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -124,7 +124,7 @@ describe('hashVerification', () => {
         amount,
         BigInt(1)
       )
-      const h2 = computeTransferHash(
+      const h2 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -137,7 +137,7 @@ describe('hashVerification', () => {
     })
 
     it('should change when amount changes', () => {
-      const h1 = computeTransferHash(
+      const h1 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -146,7 +146,7 @@ describe('hashVerification', () => {
         BigInt(1000),
         nonce
       )
-      const h2 = computeTransferHash(
+      const h2 = computeXchainHashId(
         srcChain,
         destChain,
         srcAccount,
@@ -159,7 +159,7 @@ describe('hashVerification', () => {
     })
   })
 
-  describe('computeTransferHashFromDeposit / FromWithdraw', () => {
+  describe('computeXchainHashIdFromDeposit / FromWithdraw', () => {
     it('should produce matching hash for deposit and withdraw of same transfer', () => {
       // EVM chain 1 (source) -> Terra chain 2 (dest)
       const thisChainId = 1
@@ -173,7 +173,7 @@ describe('hashVerification', () => {
       const destChainBytes = chainIdToBytes32(destChainId)
       const srcChainBytes = chainIdToBytes32(thisChainId)
 
-      const depositHash = computeTransferHashFromDeposit(
+      const hashFromDeposit = computeXchainHashIdFromDeposit(
         thisChainId,
         destChainBytes,
         srcAccount,
@@ -183,7 +183,7 @@ describe('hashVerification', () => {
         nonce
       )
 
-      const withdrawHash = computeTransferHashFromWithdraw(
+      const hashFromWithdraw = computeXchainHashIdFromWithdraw(
         srcChainBytes,
         destChainId,
         srcAccount,
@@ -193,7 +193,7 @@ describe('hashVerification', () => {
         nonce
       )
 
-      expect(depositHash).toBe(withdrawHash)
+      expect(hashFromDeposit).toBe(hashFromWithdraw)
     })
   })
 
@@ -209,8 +209,8 @@ describe('hashVerification', () => {
     })
 
     it('should reject invalid format', () => {
-      expect(() => normalizeHash('short')).toThrow('Invalid transfer hash format')
-      expect(() => normalizeHash('0x123')).toThrow('Invalid transfer hash format')
+      expect(() => normalizeHash('short')).toThrow('Invalid XChain Hash ID format')
+      expect(() => normalizeHash('0x123')).toThrow('Invalid XChain Hash ID format')
     })
   })
 

@@ -32,7 +32,7 @@ import {
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
-import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
+import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
 import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
@@ -204,15 +204,29 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
     try {
       const destChainConfig = getDestChainConfig()
+      if (!destChainConfig) {
+        const msg = `Destination chain "${transfer.destChain}" not found in chain config`
+        console.error(`${LOG} ${msg}`)
+        setPhase('error')
+        setError(msg)
+        submittedRef.current = false
+        return
+      }
 
       if (transfer.direction === 'terra-to-evm' || transfer.direction === 'evm-to-evm') {
-        // Destination is EVM
-        const destChainId = (typeof destChainConfig?.chainId === 'number'
-          ? destChainConfig.chainId
-          : 31337) as number
+        // Destination is EVM — require a numeric chain ID
+        if (typeof destChainConfig.chainId !== 'number') {
+          const msg = `Destination chain "${transfer.destChain}" has no numeric chainId`
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const destChainId = destChainConfig.chainId
 
-        // For EVM->EVM, may need to switch chains
-        if (transfer.direction === 'evm-to-evm' && evmChain?.id !== destChainId) {
+        // Switch to destination chain if wallet is on a different chain
+        if (evmChain?.id !== destChainId) {
           setPhase('switching-chain')
           try {
             await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
@@ -228,12 +242,27 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
         setPhase('submitting-hash')
 
-        // Build params for EVM withdrawSubmit
-        const bridgeAddress = (destChainConfig?.bridgeAddress ||
-          CONTRACTS[DEFAULT_NETWORK].evmBridge) as Address
+        // Require bridge address from destination chain config — no single-bridge fallback
+        if (!destChainConfig.bridgeAddress) {
+          const msg = `No bridge address configured for destination chain "${transfer.destChain}"`
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const bridgeAddress = destChainConfig.bridgeAddress as Address
 
-        // V2 fix: use sourceChainIdBytes4 directly instead of parsing chain name as int
-        const srcChainBytes4 = (transfer.sourceChainIdBytes4 || '0x00000002') as Hex
+        // Require source chain bytes4 — no hardcoded fallback
+        if (!transfer.sourceChainIdBytes4) {
+          const msg = 'Transfer record missing source chain ID (sourceChainIdBytes4)'
+          console.error(`${LOG} ${msg}`, { transferId: transfer.id })
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const srcChainBytes4 = transfer.sourceChainIdBytes4 as Hex
 
         // V2 fix: if srcAccount is a Terra bech32 address, convert it properly
         let srcAccountHex = (transfer.srcAccount || '0x' + '0'.repeat(64)) as Hex
@@ -279,14 +308,21 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         // Destination is Terra
         setPhase('submitting-hash')
 
-        const bridgeAddress = CONTRACTS[DEFAULT_NETWORK].terraBridge
+        if (!destChainConfig.bridgeAddress) {
+          const msg = `No bridge address configured for destination chain "${transfer.destChain}"`
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const bridgeAddress = destChainConfig.bridgeAddress
 
-        // V2 fix: use sourceChainIdBytes4 to derive the bytes4 for src chain
+        // Require source chain bytes4 — no hardcoded fallback
         let srcChainBytes4Data: Uint8Array
         if (transfer.sourceChainIdBytes4) {
           srcChainBytes4Data = hexToUint8Array(transfer.sourceChainIdBytes4)
         } else {
-          // Fallback: try to determine from source chain config
           const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
           const chains = BRIDGE_CHAINS[tier]
           const srcConfig = chains[transfer.sourceChain]
@@ -295,7 +331,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           } else if (typeof srcConfig?.chainId === 'number') {
             srcChainBytes4Data = chainIdToBytes4(srcConfig.chainId)
           } else {
-            srcChainBytes4Data = chainIdToBytes4(31337)
+            const msg = 'Cannot determine source chain bytes4 for evm-to-terra transfer'
+            console.error(`${LOG} ${msg}`, { sourceChain: transfer.sourceChain })
+            setPhase('error')
+            setError(msg)
+            submittedRef.current = false
+            return
           }
         }
 
@@ -367,7 +408,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
     if (pollingRef.current) clearInterval(pollingRef.current)
 
     pollingRef.current = setInterval(async () => {
-      if (!transfer?.transferHash) return
+      if (!transfer?.xchainHashId) return
 
       const destChainConfig = getDestChainConfig()
       if (!destChainConfig || !destChainConfig.bridgeAddress) return
@@ -383,7 +424,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
             address: bridgeAddress,
             abi: BRIDGE_WITHDRAW_VIEW_ABI,
             functionName: 'getPendingWithdraw',
-            args: [transfer.transferHash as Hex],
+            args: [transfer.xchainHashId as Hex],
           }) as { submittedAt: bigint; approvedAt: bigint; approved: boolean; executed: boolean }
 
           if (result.executed) {
@@ -409,7 +450,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           const result = await queryTerraPendingWithdraw(
             lcdUrls,
             destChainConfig.bridgeAddress,
-            transfer.transferHash as Hex,
+            transfer.xchainHashId as Hex,
             destChainConfig
           )
 
@@ -452,11 +493,22 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
     }
   }, [transfer?.lifecycle, startPolling])
 
+  const resetForRetry = useCallback(() => {
+    submittedRef.current = false
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+    setPhase('idle')
+    setError(null)
+  }, [])
+
   return {
     phase,
     error,
     blockReason,
     canAutoSubmit: canAutoSubmit(),
     triggerSubmit,
+    resetForRetry,
   }
 }
