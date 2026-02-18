@@ -12,10 +12,12 @@ cache/
 out/
 packages/contracts-evm/bin/
 
-# Ignores development broadcast logs
-!/broadcast
+# Ignores Foundry broadcast logs (development deployment artifacts)
 **/broadcast/*/31337/
+**/broadcast/*/31338/
 **/broadcast/**/dry-run/
+**/broadcast/**/run-*.json
+**/broadcast/**/run-latest.json
 .operator.log
 
 # Coverage
