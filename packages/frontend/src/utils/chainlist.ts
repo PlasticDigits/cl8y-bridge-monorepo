@@ -28,13 +28,24 @@ const ID_TO_CHAINLIST: Record<string, string> = {
   terra: 'terraclassic',
 }
 
-/** Load chainlist (imported at build time) */
-import chainlistJson from '../../public/chains/chainlist.json'
+/** Cached chainlist loaded from public URL (keeps /chains/chainlist.json publicly available) */
+let chainlistData: ChainlistData | null = null
+let loadPromise: Promise<ChainlistData> | null = null
 
-const chainlistData: ChainlistData = chainlistJson as ChainlistData
+/** Load chainlist from public URL. Call once at app bootstrap. */
+export async function loadChainlist(): Promise<ChainlistData> {
+  if (chainlistData) return chainlistData
+  if (loadPromise) return loadPromise
+  loadPromise = fetch('/chains/chainlist.json').then((r) => r.json()) as Promise<ChainlistData>
+  chainlistData = await loadPromise
+  return chainlistData
+}
 
-/** Get chainlist data */
+/** Get chainlist data (must call loadChainlist() first, e.g. at app bootstrap) */
 export function getChainlist(): ChainlistData {
+  if (!chainlistData) {
+    throw new Error('Chainlist not loaded. Call loadChainlist() at app bootstrap.')
+  }
   return chainlistData
 }
 

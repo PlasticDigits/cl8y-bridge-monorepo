@@ -270,3 +270,24 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
 
   return { tokenA: tokens[0], tokenB: tokens[1], tokenC: tokens[2] }
 }
+
+/**
+ * Deploy a single CW20 KDEC token (6 decimals) on LocalTerra for decimal normalization testing.
+ * Reuses the latest stored CW20 code_id (must be called after deployThreeCw20Tokens).
+ */
+export function deployCw20KdecToken(): string {
+  const codeId = getLatestCodeId()
+  if (!codeId) {
+    console.warn('[deploy-terra] No CW20 code_id available for KDEC; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}kdec`
+  }
+
+  console.log(`[deploy-terra] Deploying CW20 KDEC token (6 decimals, code_id=${codeId})...`)
+  const addr = instantiateCw20Token(codeId, 'K Decimal Test', 'KDEC', 6, '1000000000000')
+  if (!addr) {
+    console.warn('[deploy-terra] Failed to deploy CW20 KDEC; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}kdec`
+  }
+  console.log(`[deploy-terra] CW20 KDEC deployed at: ${addr}`)
+  return addr
+}

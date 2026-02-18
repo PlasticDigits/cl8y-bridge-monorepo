@@ -6,6 +6,7 @@ import { WagmiProvider } from 'wagmi'
 import { config } from './lib/wagmi'
 import { Layout } from './components/Layout'
 import { validateEnv } from './utils/validateEnv'
+import { loadChainlist } from './utils/chainlist'
 import './index.css'
 
 validateEnv()
@@ -84,12 +85,16 @@ function PageFallback() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </WagmiProvider>
-  </React.StrictMode>,
-)
+async function init() {
+  await loadChainlist()
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
+      </WagmiProvider>
+    </React.StrictMode>,
+  )
+}
+init()

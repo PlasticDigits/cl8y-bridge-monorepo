@@ -76,14 +76,34 @@
   border-color: rgba(47, 91, 146, 0.58) !important;
 }
 
+:root[data-theme='light'] .bg-green-900\/25,
 :root[data-theme='light'] .bg-green-900\/30 {
   background-color: rgba(86, 151, 112, 0.2) !important;
 }
 
+:root[data-theme='light'] .text-green-300,
 :root[data-theme='light'] .text-green-400 {
   color: #1d6a3f !important;
 }
 
-:root[data-theme='light'] .border-green-700 {
+:root[data-theme='light'] .border-green-700,
+:root[data-theme='light'] .border-green-700\/60 {
   border-color: rgba(36, 112, 66, 0.62) !important;
+}
+
+/* StepIndicator DONE state – emerald success palette */
+:root[data-theme='light'] .border-emerald-600,
+:root[data-theme='light'] .border-emerald-600\/70 {
+  border-color: rgba(36, 112, 66, 0.7) !important;
+}
+:root[data-theme='light'] .bg-emerald-950\/40,
+:root[data-theme='light'] .bg-emerald-950\/50 {
+  background-color: rgba(86, 151, 112, 0.22) !important;
+}
+:root[data-theme='light'] .text-emerald-300,
+:root[data-theme='light'] .text-emerald-400 {
+  color: #1d6a3f !important;
+}
+:root[data-theme='light'] .bg-emerald-600 {
+  background-color: #22c55e !important;
 }

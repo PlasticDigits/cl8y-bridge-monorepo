@@ -129,6 +129,25 @@ export function deployLuncToken(rpcUrl: string): string {
 }
 
 /**
+ * Deploy KDEC (K Decimal Test) token with configurable decimals.
+ * Used for cross-chain decimal normalization testing: 18 on Anvil, 12 on Anvil1.
+ */
+export function deployKdecToken(rpcUrl: string, decimals: number): string {
+  console.log(`[deploy-evm] Deploying KDEC token (${decimals} decimals) to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployKdecToken.s.sol:DeployKdecToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    {
+      cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1', KDEC_DECIMALS: String(decimals) },
+    }
+  )
+  const match = output.match(/KDEC_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find KDEC_TOKEN_ADDRESS in deploy output')
+  console.log(`[deploy-evm] KDEC token (${decimals}d) deployed: ${match[1]}`)
+  return match[1]
+}
+
+/**
  * Register a chain on the EVM ChainRegistry using cast.
  * NOTE: ChainRegistry.registerChain(string identifier, bytes4 chainId) - identifier first!
  */

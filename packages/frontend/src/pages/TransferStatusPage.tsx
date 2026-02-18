@@ -24,6 +24,7 @@ import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
+import { useStepProgress } from '../hooks/useStepProgress'
 import { formatCountdownMmSs } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
@@ -49,7 +50,10 @@ const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'ap
 function getStepIndex(lifecycle?: TransferLifecycle): number {
   if (!lifecycle || lifecycle === 'failed') return 0
   const idx = LIFECYCLE_ORDER.indexOf(lifecycle)
-  return idx >= 0 ? idx : 0
+  if (idx < 0) return 0
+  // When executed (complete), use STEPS.length so the final step shows as DONE
+  if (lifecycle === 'executed') return STEPS.length
+  return idx
 }
 
 function StepIndicator({
@@ -66,23 +70,25 @@ function StepIndicator({
   const isDone = idx < currentIdx
   const isActive = idx === currentIdx
   const isError = isFailed && isActive
+  const progress = useStepProgress(step.key, isDone, isActive && !isError)
+
   const stateLabel = isDone ? 'DONE' : isError ? 'FAILED' : isActive ? 'ACTIVE' : 'UP NEXT'
   const squareTone = isDone
-    ? 'border-[#b8ff3d] bg-[#2a3518]'
+    ? 'border-emerald-600 bg-emerald-950/50'
     : isError
     ? 'border-red-600 bg-red-950/70'
     : isActive
     ? 'border-yellow-500 bg-yellow-950/70'
     : 'border-white/35 bg-[#111111]'
   const statePillTone = isDone
-    ? 'border-[#b8ff3d]/70 bg-[#2a3518] text-[#d5ff7f]'
+    ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300'
     : isError
     ? 'border-red-600/70 bg-red-900/40 text-red-300'
     : isActive
     ? 'border-yellow-600/80 bg-yellow-900/40 text-yellow-300'
     : 'border-white/25 bg-[#1c1c1c] text-gray-400'
-  const connectorTone = isDone ? 'bg-[#b8ff3d]' : isError ? 'bg-red-500' : 'bg-gray-600'
-  const arrowTone = isDone ? 'border-t-[#b8ff3d]' : isError ? 'border-t-red-500' : 'border-t-gray-500'
+  const connectorTone = isDone ? 'bg-emerald-600' : isError ? 'bg-red-500' : 'bg-gray-600'
+  const arrowTone = isDone ? 'border-t-emerald-600' : isError ? 'border-t-red-500' : 'border-t-gray-500'
   const iconSrc = isDone
     ? '/assets/status-success.png'
     : isError
@@ -91,8 +97,17 @@ function StepIndicator({
     ? '/assets/status-pending.png'
     : '/assets/status-canceled.png'
   const cardTone = isActive || isError ? 'border-white/70' : 'border-white/35'
-  const textTone = isDone ? 'text-[#b8ff3d]' : isError ? 'text-red-300' : isActive ? 'text-white' : 'text-gray-400'
+  const textTone = isDone ? 'text-emerald-400' : isError ? 'text-red-300' : isActive ? 'text-white' : 'text-gray-400'
   const descriptionTone = isDone || isActive || isError ? 'text-gray-300' : 'text-gray-500'
+
+  const barColor = isDone
+    ? 'bg-emerald-600'
+    : isError
+    ? 'bg-red-500'
+    : isActive
+    ? 'bg-yellow-500'
+    : 'bg-gray-700'
+  const showBar = isDone || isActive || isError
 
   return (
     <div className={`relative flex items-start gap-3 border-2 bg-[#161616] p-3 shadow-[3px_3px_0_#000] ${cardTone}`}>
@@ -112,7 +127,7 @@ function StepIndicator({
           </div>
         )}
       </div>
-      {/* Text */}
+      {/* Text + progress */}
       <div className="flex-1 pb-1">
         <p
           className={`mb-1 inline-flex border-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide shadow-[1px_1px_0_#000] ${statePillTone}`}
@@ -125,6 +140,18 @@ function StepIndicator({
         <p className={`text-xs ${descriptionTone}`}>
           {step.description}
         </p>
+        {showBar && (
+          <div className="mt-2 h-1.5 w-full overflow-hidden border border-white/15 bg-black/50">
+            <div
+              className={`relative h-full overflow-hidden transition-[width] duration-300 ease-out ${barColor}`}
+              style={{ width: `${Math.round(progress)}%` }}
+            >
+              {isActive && !isError && (
+                <div className="animate-progress-shimmer absolute inset-y-0 w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

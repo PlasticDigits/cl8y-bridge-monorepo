@@ -22,7 +22,7 @@ import { fileURLToPath } from 'url'
 import { waitForAllChains, areAllChainsHealthy } from './health'
 import { deployEvmContracts, fundLockUnlock, setCancelWindow, addCancelerEvm } from './deploy-evm'
 import { deployTerraBridge, addCancelerTerra } from './deploy-terra'
-import { deployAllTokens } from './deploy-tokens'
+import { deployAllTokens, KDEC_DECIMALS } from './deploy-tokens'
 import { registerAllTokens } from './register-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
 import { startOperator } from './operator'
@@ -147,6 +147,10 @@ export default async function setup(): Promise<void> {
     console.log('\n[setup] Funding LockUnlock contracts with test tokens...')
     const FUND_AMOUNT = '500000000000000000000000' // 500k tokens (18 decimals)
     const FUND_AMOUNT_LUNC = '500000000000' // 500k LUNC (6 decimals)
+    const kdecFundAmounts: Record<string, string> = {
+      anvil: (500_000n * 10n ** BigInt(KDEC_DECIMALS.anvil)).toString(),
+      anvil1: (500_000n * 10n ** BigInt(KDEC_DECIMALS.anvil1)).toString(),
+    }
     for (const [chain, rpc, lockUnlock, tokens] of [
       ['anvil', 'http://localhost:8545', anvilContracts.lockUnlockAddress, tokenAddresses.anvil],
       ['anvil1', 'http://localhost:8546', anvil1Contracts.lockUnlockAddress, tokenAddresses.anvil1],
@@ -164,6 +168,12 @@ export default async function setup(): Promise<void> {
         console.log(`[setup] Funded ${chain} LockUnlock with LUNC`)
       } catch (err) {
         console.warn(`[setup] Warning: failed to fund ${chain} LockUnlock with LUNC:`, err)
+      }
+      try {
+        fundLockUnlock(rpc, lockUnlock, tokens.kdec, kdecFundAmounts[chain])
+        console.log(`[setup] Funded ${chain} LockUnlock with KDEC`)
+      } catch (err) {
+        console.warn(`[setup] Warning: failed to fund ${chain} LockUnlock with KDEC:`, err)
       }
     }
 
@@ -215,17 +225,20 @@ export default async function setup(): Promise<void> {
       `ANVIL_TOKEN_B=${tokenAddresses.anvil.tokenB}`,
       `ANVIL_TOKEN_C=${tokenAddresses.anvil.tokenC}`,
       `ANVIL_LUNC=${tokenAddresses.anvil.lunc}`,
+      `ANVIL_KDEC=${tokenAddresses.anvil.kdec}`,
       '',
       '# Tokens on Anvil1',
       `ANVIL1_TOKEN_A=${tokenAddresses.anvil1.tokenA}`,
       `ANVIL1_TOKEN_B=${tokenAddresses.anvil1.tokenB}`,
       `ANVIL1_TOKEN_C=${tokenAddresses.anvil1.tokenC}`,
       `ANVIL1_LUNC=${tokenAddresses.anvil1.lunc}`,
+      `ANVIL1_KDEC=${tokenAddresses.anvil1.kdec}`,
       '',
       '# Tokens on Terra (empty = CW20 not deployed, use uluna for EVM<->Terra)',
       `TERRA_TOKEN_A=${isPlaceholderAddress(tokenAddresses.terra.tokenA) ? '' : tokenAddresses.terra.tokenA}`,
       `TERRA_TOKEN_B=${isPlaceholderAddress(tokenAddresses.terra.tokenB) ? '' : tokenAddresses.terra.tokenB}`,
       `TERRA_TOKEN_C=${isPlaceholderAddress(tokenAddresses.terra.tokenC) ? '' : tokenAddresses.terra.tokenC}`,
+      `TERRA_KDEC=${isPlaceholderAddress(tokenAddresses.terra.kdec) ? '' : tokenAddresses.terra.kdec}`,
       '',
       '# Network',
       'VITE_NETWORK=local',

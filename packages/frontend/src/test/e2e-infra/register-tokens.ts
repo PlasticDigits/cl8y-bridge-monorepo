@@ -5,6 +5,7 @@
 
 import { execSync } from 'child_process'
 import type { TokenAddresses } from './deploy-tokens'
+import { KDEC_DECIMALS } from './deploy-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
 
 const DEPLOYER_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
@@ -55,6 +56,7 @@ export function registerAllTokens(
     bridges.anvil.tokenRegistry,
     bridges.anvil.lockUnlock,
     tokens.anvil,
+    CHAIN_KEYS.anvil,
     [
       { chainKey: CHAIN_KEYS.terra, tokens: tokens.terra, decimals: 6 },
       { chainKey: CHAIN_KEYS.anvil1, tokens: tokens.anvil1, decimals: 18 },
@@ -68,6 +70,7 @@ export function registerAllTokens(
     bridges.anvil1.tokenRegistry,
     bridges.anvil1.lockUnlock,
     tokens.anvil1,
+    CHAIN_KEYS.anvil1,
     [
       { chainKey: CHAIN_KEYS.terra, tokens: tokens.terra, decimals: 6 },
       { chainKey: CHAIN_KEYS.anvil, tokens: tokens.anvil, decimals: 18 },
@@ -155,13 +158,21 @@ function addressToBytes32(addr: string): string {
   return '0x' + '0'.repeat(64)
 }
 
-type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string }
+type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
+
+/** Map V2 chain key → KDEC decimals on that chain */
+const KDEC_DECIMALS_BY_CHAIN: Record<string, number> = {
+  [CHAIN_KEYS.anvil]: KDEC_DECIMALS.anvil,   // 18
+  [CHAIN_KEYS.terra]: KDEC_DECIMALS.terra,    // 6
+  [CHAIN_KEYS.anvil1]: KDEC_DECIMALS.anvil1,  // 12
+}
 
 function registerEvmTokensForChain(
   rpcUrl: string,
   tokenRegistry: string,
   _lockUnlock: string,
   sourceTokens: EvmChainTokens,
+  thisChainKey: string,
   destinations: Array<{
     chainKey: string
     tokens: EvmChainTokens | TokenAddresses['terra']
@@ -176,19 +187,15 @@ function registerEvmTokensForChain(
   ]
 
   for (const [tokenAddr, tokenKey] of tokenPairs) {
-    // Register token with LockUnlock type (enum value 0)
     ensureTokenRegistered(rpcUrl, tokenRegistry, tokenAddr)
 
     for (const dest of destinations) {
       let destTokenBytes32: string
       let decimals: number
       if (dest.chainKey === CHAIN_KEYS.terra) {
-        // Map to the CW20 token address on Terra (keccak256 of CW20 addr).
-        // This ensures each EVM token gets its own incoming mapping on Terra
-        // with the correct src_decimals (18 for ERC20 tokens).
         const terraAddr = terraTokens[tokenKey]
         destTokenBytes32 = getKeccak256(terraAddr)
-        decimals = 6 // Terra CW20 tokens have 6 decimals
+        decimals = 6
       } else {
         destTokenBytes32 = addressToBytes32(dest.tokens[tokenKey])
         decimals = dest.decimals
@@ -199,10 +206,17 @@ function registerEvmTokensForChain(
         '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
         `${tokenAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
       )
+      const srcDecimals = dest.chainKey === CHAIN_KEYS.terra ? 6 : 18
+      castSend(
+        rpcUrl,
+        tokenRegistry,
+        '"setIncomingTokenMapping(bytes4,address,uint8)"',
+        `${dest.chainKey} ${tokenAddr} ${srcDecimals}`
+      )
     }
   }
 
-  // Register LUNC (uluna representation) - Terra maps to keccak uluna, EVM chains to lunc address
+  // LUNC (uluna representation)
   const luncAddr = sourceTokens.lunc
   ensureTokenRegistered(rpcUrl, tokenRegistry, luncAddr)
   for (const dest of destinations) {
@@ -210,14 +224,49 @@ function registerEvmTokensForChain(
       dest.chainKey === CHAIN_KEYS.terra
         ? getKeccak256Uluna()
         : addressToBytes32((dest.tokens as EvmChainTokens).lunc)
-    const decimals = 6 // LUNC has 6 decimals on all chains
+    const decimals = 6
     castSend(
       rpcUrl,
       tokenRegistry,
       '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
       `${luncAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
     )
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setIncomingTokenMapping(bytes4,address,uint8)"',
+      `${dest.chainKey} ${luncAddr} 6`
+    )
   }
+
+  // KDEC (decimal normalization test token) — different decimals per chain
+  const kdecAddr = sourceTokens.kdec
+  ensureTokenRegistered(rpcUrl, tokenRegistry, kdecAddr)
+  const thisKdecDecimals = KDEC_DECIMALS_BY_CHAIN[thisChainKey]
+  for (const dest of destinations) {
+    let destTokenBytes32: string
+    if (dest.chainKey === CHAIN_KEYS.terra) {
+      destTokenBytes32 = getKeccak256(terraTokens.kdec)
+    } else {
+      destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).kdec)
+    }
+    const destKdecDecimals = KDEC_DECIMALS_BY_CHAIN[dest.chainKey]
+    // Outgoing: local KDEC → dest chain (dest_decimals = KDEC decimals on dest)
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
+      `${kdecAddr} ${dest.chainKey} ${destTokenBytes32} ${destKdecDecimals}`
+    )
+    // Incoming: dest chain → local KDEC (srcDecimals = KDEC decimals on source/dest chain)
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setIncomingTokenMapping(bytes4,address,uint8)"',
+      `${dest.chainKey} ${kdecAddr} ${destKdecDecimals}`
+    )
+  }
+  console.log(`[register-tokens] Registered KDEC (${thisKdecDecimals}d) on ${rpcUrl} with cross-chain mappings`)
 }
 
 function isTokenRegistered(rpcUrl: string, tokenRegistry: string, token: string): boolean {
@@ -481,6 +530,93 @@ function registerTerraTokensForEvmChains(
       }
       try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
     }
+  }
+
+  // KDEC (decimal normalization test token) — 6 decimals on Terra, 18 on Anvil, 12 on Anvil1
+  const kdecAddr = tokens.terra.kdec
+  if (!isPlaceholderAddress(kdecAddr)) {
+    const kdecEvmToken = tokens.anvil.kdec.slice(2).toLowerCase().padStart(64, '0')
+    const addKdecMsg = JSON.stringify({
+      add_token: {
+        token: kdecAddr,
+        is_native: false,
+        token_type: 'lock_unlock',
+        evm_token_address: kdecEvmToken,
+        terra_decimals: KDEC_DECIMALS.terra,
+        evm_decimals: KDEC_DECIMALS.anvil,
+      },
+    })
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${addKdecMsg}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y 2>/dev/null`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log('[register-tokens] Added CW20 KDEC token to Terra bridge')
+    } catch (err) {
+      console.warn('[register-tokens] Failed to add KDEC:', (err as Error).message?.slice(0, 100))
+    }
+    try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+
+    // Set token_destination for KDEC → Anvil (18d) and Anvil1 (12d)
+    const kdecDestChains: Array<{ chainId: number[]; label: string; evmKdec: string; decimals: number }> = [
+      { chainId: [0x00, 0x00, 0x00, 0x01], label: 'Anvil', evmKdec: tokens.anvil.kdec, decimals: KDEC_DECIMALS.anvil },
+      { chainId: [0x00, 0x00, 0x00, 0x03], label: 'Anvil1', evmKdec: tokens.anvil1.kdec, decimals: KDEC_DECIMALS.anvil1 },
+    ]
+    for (const dest of kdecDestChains) {
+      const destChainB64 = Buffer.from(dest.chainId).toString('base64')
+      const destTokenHex = '0x' + dest.evmKdec.slice(2).toLowerCase().padStart(64, '0')
+      const setDestMsg = JSON.stringify({
+        set_token_destination: {
+          token: kdecAddr,
+          dest_chain: destChainB64,
+          dest_token: destTokenHex,
+          dest_decimals: dest.decimals,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y 2>/dev/null`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set KDEC token_destination -> ${dest.label} (${dest.decimals}d)`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set KDEC dest:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+
+    // Set incoming token mapping for KDEC from each EVM chain
+    const kdecSrcTokenHex = getKeccak256(kdecAddr)
+    const kdecSrcTokenB64 = Buffer.from(kdecSrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+    for (const dest of kdecDestChains) {
+      const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
+      const setIncomingMsg = JSON.stringify({
+        set_incoming_token_mapping: {
+          src_chain: evmChainIdB64,
+          src_token: kdecSrcTokenB64,
+          local_token: kdecAddr,
+          src_decimals: dest.decimals,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y 2>/dev/null`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set incoming KDEC mapping from ${dest.label} (src_decimals=${dest.decimals})`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set KDEC incoming mapping:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+  } else {
+    console.log('[register-tokens] Skipping KDEC on Terra (placeholder, not deployed)')
   }
 }
 

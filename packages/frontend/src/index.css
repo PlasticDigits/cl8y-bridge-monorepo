@@ -232,6 +232,19 @@ input[type='number'] {
   animation: spin 3s linear infinite;
 }
 
+@keyframes progress-shimmer {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 120%;
+  }
+}
+
+.animate-progress-shimmer {
+  animation: progress-shimmer 1.8s ease-in-out infinite;
+}
+
 /* Theme-aware utility overrides for existing Tailwind classes used across app */
 @layer utilities {
   .theme-hero-glow {
