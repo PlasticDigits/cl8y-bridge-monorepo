@@ -5,35 +5,45 @@ import { EvmWalletModal, TerraWalletModal } from './wallet'
 import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
 
-type ThemeOption = 'default' | 'sunset' | 'ocean' | 'retro' | 'frost' | 'skyblue'
+type ThemeMode = 'dark' | 'light'
+
+function getSystemTheme(): ThemeMode {
+  if (typeof window === 'undefined') return 'dark'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+function getInitialTheme(): ThemeMode {
+  const stored = window.localStorage.getItem('cl8y-theme')
+  if (stored === 'dark' || stored === 'light') return stored
+  if (stored === 'ocean') return 'dark'
+  if (stored === 'skyblue') return 'light'
+  return getSystemTheme()
+}
 
 export function Layout() {
   const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
   const { showWalletModal, setShowWalletModal } = useWalletStore()
-  const [theme, setTheme] = useState<ThemeOption>(() => {
-    const storedTheme = window.localStorage.getItem('cl8y-theme')
-    if (
-      storedTheme === 'sunset' ||
-      storedTheme === 'ocean' ||
-      storedTheme === 'retro' ||
-      storedTheme === 'frost' ||
-      storedTheme === 'skyblue'
-    ) {
-      return storedTheme
-    }
-    return 'default'
-  })
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
 
   useEffect(() => {
-    if (theme === 'default') {
-      document.documentElement.removeAttribute('data-theme')
-      window.localStorage.removeItem('cl8y-theme')
-      return
-    }
-
     document.documentElement.setAttribute('data-theme', theme)
-    window.localStorage.setItem('cl8y-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const handler = () => {
+      if (!window.localStorage.getItem('cl8y-theme')) {
+        setTheme(media.matches ? 'light' : 'dark')
+      }
+    }
+    media.addEventListener('change', handler)
+    return () => media.removeEventListener('change', handler)
+  }, [])
+
+  const setThemeAndPersist = (mode: ThemeMode) => {
+    setTheme(mode)
+    window.localStorage.setItem('cl8y-theme', mode)
+  }
 
   return (
     <div className="min-h-screen overflow-x-hidden">
@@ -54,21 +64,32 @@ export function Layout() {
       <footer className="border-t-2 border-white/25 py-6 text-slate-300 text-xs md:text-sm uppercase tracking-wider">
         <div className="mx-auto max-w-5xl px-4 flex flex-col gap-3 items-center justify-center md:flex-row md:justify-between">
           <p>CL8Y Bridge · Cross-chain transfers between any supported chains</p>
-          <label className="flex items-center gap-2">
-            <span>Theme</span>
-            <select
-              className="border border-white/50 bg-black/60 px-2 py-1 text-[11px] md:text-xs"
-              value={theme}
-              onChange={(event) => setTheme(event.target.value as ThemeOption)}
-            >
-              <option value="default">Default</option>
-              <option value="sunset">Sunset</option>
-              <option value="ocean">Ocean</option>
-              <option value="retro">Retro</option>
-              <option value="frost">Frost</option>
-              <option value="skyblue">Skyblue</option>
-            </select>
-          </label>
+          <div className="flex items-center gap-2" role="group" aria-label="Theme">
+            <div className="inline-flex border border-white/50 bg-black/60 p-0.5 rounded-sm">
+              <button
+                type="button"
+                aria-pressed={theme === 'dark'}
+                aria-label="Dark theme"
+                className={`px-2.5 py-1 text-[11px] md:text-xs uppercase tracking-wider transition-colors ${
+                  theme === 'dark' ? 'bg-white/20 text-inherit' : 'text-slate-400 hover:text-slate-300'
+                }`}
+                onClick={() => setThemeAndPersist('dark')}
+              >
+                Dark
+              </button>
+              <button
+                type="button"
+                aria-pressed={theme === 'light'}
+                aria-label="Light theme"
+                className={`px-2.5 py-1 text-[11px] md:text-xs uppercase tracking-wider transition-colors ${
+                  theme === 'light' ? 'bg-white/20 text-inherit' : 'text-slate-400 hover:text-slate-300'
+                }`}
+                onClick={() => setThemeAndPersist('light')}
+              >
+                Light
+              </button>
+            </div>
+          </div>
         </div>
       </footer>
 

@@ -15,6 +15,17 @@
     <meta name="twitter:title" content="CL8Y Bridge" />
     <meta name="twitter:description" content="Cross-chain transfers between any supported chains" />
     <meta name="twitter:image" content="/opengraph.png" />
+    <script>
+      (function() {
+        var s = localStorage.getItem('cl8y-theme');
+        if (s === 'ocean') s = 'dark';
+        if (s === 'skyblue') s = 'light';
+        if (s !== 'dark' && s !== 'light') {
+          s = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', s || 'dark');
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -12,7 +12,12 @@ export function NavBar() {
             <img
               src="/logo-header.png"
               alt="CL8Y Bridge"
-              className="h-10 xl:h-12 w-auto max-w-[150px] object-contain object-left group-hover:translate-x-[1px] group-hover:translate-y-[1px] transition-transform"
+              className="logo-for-dark h-10 xl:h-12 w-auto max-w-[150px] object-contain object-left group-hover:translate-x-[1px] group-hover:translate-y-[1px] transition-transform"
+            />
+            <img
+              src="/logo-header-light.png"
+              alt="CL8Y Bridge"
+              className="logo-for-light hidden h-10 xl:h-12 w-auto max-w-[150px] object-contain object-left group-hover:translate-x-[1px] group-hover:translate-y-[1px] transition-transform"
             />
           </NavLink>
         </div>

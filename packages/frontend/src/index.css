@@ -1,9 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
-@import './theme-sunset.css';
-@import './theme-ocean.css';
-@import './theme-retro.css';
-@import './theme-frost.css';
-@import './theme-skyblue.css';
+@import './theme-dark.css';
+@import './theme-light.css';
 
 @tailwind base;
 @tailwind components;
