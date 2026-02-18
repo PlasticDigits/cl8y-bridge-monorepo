@@ -87,10 +87,6 @@ pub struct TerraConfig {
     /// If not set, will be queried from contract or default to 4 (terraclassic_columbus-5)
     #[serde(default)]
     pub this_chain_id: Option<u32>,
-    /// Use V2 message format (user-initiated withdrawals)
-    /// Defaults to false for backward compatibility
-    #[serde(default)]
-    pub use_v2: Option<bool>,
 }
 
 /// Custom Debug that redacts mnemonic to prevent accidental log leakage.
@@ -104,7 +100,6 @@ impl fmt::Debug for TerraConfig {
             .field("mnemonic", &"<redacted>")
             .field("fee_recipient", &self.fee_recipient)
             .field("this_chain_id", &self.this_chain_id)
-            .field("use_v2", &self.use_v2)
             .finish()
     }
 }
@@ -212,7 +207,6 @@ impl Config {
             this_chain_id: env::var("TERRA_THIS_CHAIN_ID")
                 .ok()
                 .and_then(|v| v.parse().ok()),
-            use_v2: env::var("TERRA_USE_V2").ok().and_then(|v| v.parse().ok()),
         };
 
         let relayer = RelayerConfig {
@@ -375,7 +369,6 @@ mod tests {
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
                 fee_recipient: None,
                 this_chain_id: None,
-                use_v2: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,
@@ -431,7 +424,6 @@ mod tests {
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
                 fee_recipient: None,
                 this_chain_id: None,
-                use_v2: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,

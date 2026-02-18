@@ -2,7 +2,7 @@
  * E2E Test Infrastructure Setup
  *
  * Orchestrates the full setup sequence:
- * 1. Start Docker containers (anvil, anvil1, localterra)
+ * 1. Start Docker containers (anvil, anvil1, localterra, postgres)
  * 2. Wait for health checks
  * 3. Deploy EVM contracts to anvil and anvil1
  * 4. Deploy Terra bridge contract to localterra
@@ -97,7 +97,7 @@ export default async function setup(): Promise<void> {
       console.log('[setup] All chains already running, skipping docker compose up')
     } else {
       console.log('[setup] Starting Docker containers...')
-      execSync('docker compose up -d anvil anvil1 localterra', {
+      execSync('docker compose up -d anvil anvil1 localterra postgres', {
         cwd: ROOT_DIR,
         stdio: 'inherit',
       })

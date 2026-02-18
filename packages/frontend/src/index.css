@@ -1,4 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+/* Self-hosted fonts (no Google requests - latin subset for smaller bundle) */
+@import '@fontsource/chakra-petch/latin-500.css';
+@import '@fontsource/chakra-petch/latin-600.css';
+@import '@fontsource/chakra-petch/latin-700.css';
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
 @import './theme-dark.css';
 @import './theme-light.css';
 

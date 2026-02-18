@@ -857,33 +857,6 @@ pub fn execute_update_limits(
         .add_attribute("max_bridge_amount", config.max_bridge_amount.to_string()))
 }
 
-/// Update fee configuration (legacy, for backwards compatibility).
-pub fn execute_update_fees(
-    deps: DepsMut,
-    info: MessageInfo,
-    fee_bps: Option<u32>,
-    fee_collector: Option<String>,
-) -> Result<Response, ContractError> {
-    let mut config = CONFIG.load(deps.storage)?;
-    if info.sender != config.admin {
-        return Err(ContractError::Unauthorized);
-    }
-
-    if let Some(bps) = fee_bps {
-        config.fee_bps = bps;
-    }
-    if let Some(collector) = fee_collector {
-        config.fee_collector = deps.api.addr_validate(&collector)?;
-    }
-
-    CONFIG.save(deps.storage, &config)?;
-
-    Ok(Response::new()
-        .add_attribute("action", "update_fees")
-        .add_attribute("fee_bps", config.fee_bps.to_string())
-        .add_attribute("fee_collector", config.fee_collector.to_string()))
-}
-
 // ============================================================================
 // V2 Fee Configuration
 // ============================================================================

@@ -21,10 +21,9 @@ use crate::execute::{
     execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee, execute_set_fee_params,
     execute_set_incoming_token_mapping, execute_set_rate_limit, execute_set_token_destination,
     execute_set_withdraw_delay, execute_unpause, execute_unregister_chain, execute_update_chain,
-    execute_update_fees, execute_update_limits, execute_update_min_signatures,
-    execute_update_token, execute_withdraw_approve, execute_withdraw_cancel,
-    execute_withdraw_execute_mint, execute_withdraw_execute_unlock, execute_withdraw_submit,
-    execute_withdraw_uncancel,
+    execute_update_limits, execute_update_min_signatures, execute_update_token,
+    execute_withdraw_approve, execute_withdraw_cancel, execute_withdraw_execute_mint,
+    execute_withdraw_execute_unlock, execute_withdraw_submit, execute_withdraw_uncancel,
 };
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
@@ -32,11 +31,11 @@ use crate::query::{
     query_account_fee, query_allowed_cw20_code_ids, query_calculate_fee, query_cancelers,
     query_chain, query_chains, query_compute_xchain_hash_id, query_config, query_current_nonce,
     query_deposit_by_nonce, query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
-    query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_nonce_used,
-    query_operators, query_pending_admin, query_pending_withdraw, query_pending_withdrawals,
-    query_period_usage, query_rate_limit, query_simulate_bridge, query_stats, query_status,
-    query_this_chain_id, query_token, query_token_dest_mapping, query_token_type, query_tokens,
-    query_transaction, query_verify_deposit, query_withdraw_delay, query_xchain_hash_id,
+    query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_operators,
+    query_pending_admin, query_pending_withdraw, query_pending_withdrawals, query_period_usage,
+    query_rate_limit, query_simulate_bridge, query_stats, query_status, query_this_chain_id,
+    query_token, query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
+    query_verify_deposit, query_withdraw_delay, query_xchain_hash_id,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -301,10 +300,6 @@ pub fn execute(
             min_bridge_amount,
             max_bridge_amount,
         } => execute_update_limits(deps, info, min_bridge_amount, max_bridge_amount),
-        ExecuteMsg::UpdateFees {
-            fee_bps,
-            fee_collector,
-        } => execute_update_fees(deps, info, fee_bps, fee_collector),
         ExecuteMsg::SetFeeParams {
             standard_fee_bps,
             discounted_fee_bps,
@@ -365,7 +360,6 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             to_json_binary(&query_tokens(deps, start_after, limit)?)
         }
         QueryMsg::Operators {} => to_json_binary(&query_operators(deps)?),
-        QueryMsg::NonceUsed { nonce } => to_json_binary(&query_nonce_used(deps, nonce)?),
         QueryMsg::CurrentNonce {} => to_json_binary(&query_current_nonce(deps)?),
         QueryMsg::Transaction { nonce } => to_json_binary(&query_transaction(deps, nonce)?),
         QueryMsg::LockedBalance { token } => to_json_binary(&query_locked_balance(deps, token)?),

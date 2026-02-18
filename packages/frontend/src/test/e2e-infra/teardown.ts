@@ -2,7 +2,7 @@
  * E2E Test Infrastructure Teardown
  *
  * Cleans up all test infrastructure:
- * 1. Stop and remove Docker containers and volumes
+ * 1. Stop and remove Docker containers and volumes (anvil, anvil1, localterra, postgres)
  * 2. Delete .env.e2e.local
  * 3. Kill any orphaned processes
  */

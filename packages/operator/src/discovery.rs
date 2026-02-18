@@ -130,7 +130,6 @@ mod tests {
                 mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
                 fee_recipient: None,
                 this_chain_id: None,
-                use_v2: None,
             },
             relayer: RelayerConfig {
                 poll_interval_ms: 1000,

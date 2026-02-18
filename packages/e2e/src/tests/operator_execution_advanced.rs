@@ -21,6 +21,7 @@ use crate::transfer_helpers::{
 };
 use crate::{E2eConfig, TestResult};
 use alloy::primitives::{Address, U256};
+use sqlx::postgres::PgPoolOptions;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -765,6 +766,36 @@ pub async fn test_operator_terra_to_evm_withdrawal(
         );
     }
 
+    // Targeted regression guard: Terra watcher must ingest deposit_native into operator DB.
+    if let Err(e) = wait_for_terra_deposit_ingested(
+        &config.operator.database_url,
+        &tx_hash,
+        terra_nonce_before,
+        Duration::from_secs(30),
+    )
+    .await
+    {
+        return TestResult::fail(
+            name,
+            format!(
+                "Operator did not ingest Terra deposit into DB (tx_hash={}, nonce={}): {}",
+                tx_hash, terra_nonce_before, e
+            ),
+            start.elapsed(),
+        );
+    }
+
+    if let Err(e) = wait_for_operator_pending_deposit(config, Duration::from_secs(30)).await {
+        return TestResult::fail(
+            name,
+            format!(
+                "Operator /status never reported pending_deposits > 0 after Terra deposit: {}",
+                e
+            ),
+            start.elapsed(),
+        );
+    }
+
     // Use Terra's canonical stored amount (net after fee) for hash parity with source deposit.
     let terra_net_amount = match terra_client
         .get_terra_deposit_amount_by_nonce(&terra_bridge, terra_nonce_before)
@@ -924,6 +955,99 @@ pub async fn test_operator_terra_to_evm_withdrawal(
             terra_nonce_before
         );
         TestResult::pass(name, start.elapsed())
+    }
+}
+
+async fn wait_for_terra_deposit_ingested(
+    database_url: &str,
+    tx_hash: &str,
+    nonce: u64,
+    timeout: Duration,
+) -> Result<(), String> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await
+        .map_err(|e| format!("database connect failed: {}", e))?;
+
+    let start = Instant::now();
+    let expected_tx = tx_hash.to_uppercase();
+    loop {
+        let exists: bool = sqlx::query_scalar(
+            r#"SELECT EXISTS(
+                SELECT 1
+                FROM terra_deposits
+                WHERE UPPER(tx_hash) = $1 AND nonce = $2
+            )"#,
+        )
+        .bind(&expected_tx)
+        .bind(nonce as i64)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| format!("terra_deposits query failed: {}", e))?;
+
+        if exists {
+            return Ok(());
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(format!(
+                "timed out after {:?} waiting for row in terra_deposits",
+                timeout
+            ));
+        }
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn wait_for_operator_pending_deposit(
+    config: &E2eConfig,
+    timeout: Duration,
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("http client build failed: {}", e))?;
+
+    let operator_url = derive_operator_status_url(config);
+    let start = Instant::now();
+    loop {
+        let body: serde_json::Value = client
+            .get(&operator_url)
+            .send()
+            .await
+            .map_err(|e| format!("status request failed: {}", e))?
+            .json()
+            .await
+            .map_err(|e| format!("status response parse failed: {}", e))?;
+
+        if body
+            .get("queues")
+            .and_then(|v| v.get("pending_deposits"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            > 0
+        {
+            return Ok(());
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(format!(
+                "timed out after {:?} polling {}",
+                timeout, operator_url
+            ));
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+fn derive_operator_status_url(config: &E2eConfig) -> String {
+    if let Ok(url) = url::Url::parse(config.evm.rpc_url.as_str()) {
+        let host = url.host_str().unwrap_or("localhost");
+        format!("http://{}:9092/status", host)
+    } else {
+        "http://localhost:9092/status".to_string()
     }
 }
 

@@ -22,7 +22,7 @@ pub struct InstantiateMsg {
     pub admin: String,
     /// Initial operator addresses
     pub operators: Vec<String>,
-    /// Minimum number of operator signatures required (legacy compatibility)
+    /// Minimum number of operator signatures required
     pub min_signatures: u32,
     /// Minimum bridge amount (in smallest unit)
     pub min_bridge_amount: Uint128,
@@ -292,7 +292,7 @@ pub enum ExecuteMsg {
     /// Remove an operator
     RemoveOperator { operator: String },
 
-    /// Update minimum signatures required (legacy compatibility)
+    /// Update minimum signatures required
     UpdateMinSignatures { min_signatures: u32 },
 
     // ========================================================================
@@ -302,12 +302,6 @@ pub enum ExecuteMsg {
     UpdateLimits {
         min_bridge_amount: Option<Uint128>,
         max_bridge_amount: Option<Uint128>,
-    },
-
-    /// Update fee configuration (legacy - for backwards compatibility)
-    UpdateFees {
-        fee_bps: Option<u32>,
-        fee_collector: Option<String>,
     },
 
     /// Set V2 fee parameters (CL8Y discount support)
@@ -425,10 +419,6 @@ pub enum QueryMsg {
     /// Returns list of registered operators
     #[returns(OperatorsResponse)]
     Operators {},
-
-    /// Check if a nonce has been used (legacy)
-    #[returns(NonceUsedResponse)]
-    NonceUsed { nonce: u64 },
 
     /// Returns current outgoing nonce
     #[returns(NonceResponse)]
@@ -660,12 +650,6 @@ pub struct TokensResponse {
 pub struct OperatorsResponse {
     pub operators: Vec<Addr>,
     pub min_signatures: u32,
-}
-
-#[cw_serde]
-pub struct NonceUsedResponse {
-    pub nonce: u64,
-    pub used: bool,
 }
 
 #[cw_serde]

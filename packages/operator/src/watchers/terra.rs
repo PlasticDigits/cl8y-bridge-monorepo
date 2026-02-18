@@ -55,18 +55,16 @@ struct TokenInfo {
 
 /// Terra Classic transaction watcher for Lock/Deposit transactions
 ///
-/// ## Event Versions
+/// ## Event Format
 ///
-/// - **V1 (Legacy)**: `method=lock`, attributes: `nonce`, `sender`, `recipient`, `token`, `amount`, `dest_chain_id`
-/// - **V2 (New)**: `action=deposit`, attributes: `nonce`, `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `fee`
+/// V2 only: `action=deposit_native|deposit_cw20_lock|deposit_cw20_mintable_burn`,
+/// attributes include `nonce`, `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `fee`.
 pub struct TerraWatcher {
     rpc_client: HttpClient,
     lcd_url: String,
     bridge_address: String,
     chain_id: String,
     db: PgPool,
-    /// Use V2 event format (action=deposit instead of method=lock)
-    use_v2_events: bool,
 }
 
 impl TerraWatcher {
@@ -75,13 +73,10 @@ impl TerraWatcher {
         let url: Url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
         let rpc_client = HttpClient::new(url).wrap_err("Failed to create RPC client")?;
 
-        // Determine if using V2 events (default to false for backward compatibility)
-        let use_v2_events = config.use_v2.unwrap_or(false);
-
         tracing::info!(
             chain_id = %config.chain_id,
             bridge_address = %config.bridge_address,
-            use_v2_events = use_v2_events,
+            use_v2_events = true,
             "Terra watcher initialized"
         );
 
@@ -91,7 +86,6 @@ impl TerraWatcher {
             bridge_address: config.bridge_address.clone(),
             chain_id: config.chain_id.clone(),
             db,
-            use_v2_events,
         })
     }
 
@@ -179,7 +173,7 @@ impl TerraWatcher {
             .wrap_err("Failed to parse transaction response")?;
 
         for tx in response.tx_responses {
-            if let Some(mut deposit) = self.parse_lock_tx(&tx)? {
+            if let Some(mut deposit) = self.parse_deposit_tx_v2(&tx)? {
                 // Check if already exists
                 if !crate::db::terra_deposit_exists(&self.db, &deposit.tx_hash, deposit.nonce)
                     .await?
@@ -202,75 +196,12 @@ impl TerraWatcher {
         Ok(())
     }
 
-    /// Parse lock/deposit attributes from a transaction (V1 or V2)
-    fn parse_lock_tx(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
-        if self.use_v2_events {
-            self.parse_deposit_tx_v2(tx)
-        } else {
-            self.parse_lock_tx_v1(tx)
-        }
-    }
-
-    /// Parse lock attributes from a transaction (V1 - Legacy)
+    /// Parse deposit attributes from a transaction (V2).
     ///
-    /// Looks for events with `method=lock` or `method=lock_cw20`
-    fn parse_lock_tx_v1(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
-        // Find wasm events for our bridge contract
-        for event in &tx.events {
-            if event.type_str != "wasm" {
-                continue;
-            }
-
-            // Check if this is our bridge contract
-            let contract_addr = event
-                .attributes
-                .iter()
-                .find(|a| a.key == "_contract_address")
-                .map(|a| &a.value);
-
-            if contract_addr != Some(&self.bridge_address) {
-                continue;
-            }
-
-            // Check if this is a lock method (V1)
-            let method = event
-                .attributes
-                .iter()
-                .find(|a| a.key == "method")
-                .map(|a| a.value.as_str());
-
-            if method != Some("lock") && method != Some("lock_cw20") {
-                continue;
-            }
-
-            // Extract attributes (V1 format)
-            let nonce = extract_u64(&event.attributes, "nonce")?;
-            let sender = extract_string(&event.attributes, "sender")?;
-            let recipient = extract_string(&event.attributes, "recipient")?;
-            let token = extract_string(&event.attributes, "token")?;
-            let amount = extract_string(&event.attributes, "amount")?;
-            let dest_chain_id = extract_u64(&event.attributes, "dest_chain_id")?;
-
-            return Ok(Some(NewTerraDeposit {
-                tx_hash: tx.txhash.clone(),
-                nonce: nonce as i64,
-                sender,
-                recipient,
-                token,
-                amount,
-                dest_chain_id: dest_chain_id as i64,
-                block_height: tx.height,
-                evm_token_address: None, // Will be populated later
-            }));
-        }
-
-        Ok(None)
-    }
-
-    /// Parse deposit attributes from a transaction (V2)
-    ///
-    /// Looks for events with `action=deposit`
-    /// V2 event attributes: `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `nonce`, `fee`
+    /// Recognized actions:
+    /// - deposit_native
+    /// - deposit_cw20_lock
+    /// - deposit_cw20_mintable_burn
     fn parse_deposit_tx_v2(&self, tx: &TxResponse) -> Result<Option<NewTerraDeposit>> {
         // Find wasm events for our bridge contract
         for event in &tx.events {
@@ -289,14 +220,19 @@ impl TerraWatcher {
                 continue;
             }
 
-            // Check if this is a deposit action (V2)
+            // Check if this is a supported V2 deposit action.
             let action = event
                 .attributes
                 .iter()
                 .find(|a| a.key == "action")
                 .map(|a| a.value.as_str());
 
-            if action != Some("deposit") {
+            if !matches!(
+                action,
+                Some("deposit_native")
+                    | Some("deposit_cw20_lock")
+                    | Some("deposit_cw20_mintable_burn")
+            ) {
                 continue;
             }
 
@@ -306,7 +242,7 @@ impl TerraWatcher {
             let token = extract_string(&event.attributes, "token")?;
             let amount = extract_string(&event.attributes, "amount")?;
 
-            // V2 uses dest_chain (4-byte chain ID, possibly as base64 or hex)
+            // V2 uses dest_chain (4-byte chain ID, base64, hex, or 0x-prefixed hex)
             // and dest_account (32-byte universal address as base64)
             let dest_chain = extract_string(&event.attributes, "dest_chain")?;
             let dest_account = extract_string(&event.attributes, "dest_account")?;
@@ -338,6 +274,7 @@ impl TerraWatcher {
     /// The dest_chain can be:
     /// - Base64-encoded 4 bytes (e.g., "AAAAAQ==" for 0x00000001)
     /// - Hex string (e.g., "00000001")
+    /// - 0x-prefixed hex (e.g., "0x00000001")
     /// - Raw u32 as string (e.g., "1")
     fn parse_dest_chain_v2(&self, dest_chain: &str) -> Result<u64> {
         use base64::Engine;
@@ -355,8 +292,9 @@ impl TerraWatcher {
             }
         }
 
-        // Try hex decoding
-        if let Ok(bytes) = hex::decode(dest_chain) {
+        // Try hex decoding (supports optional 0x prefix)
+        let normalized_hex = dest_chain.strip_prefix("0x").unwrap_or(dest_chain);
+        if let Ok(bytes) = hex::decode(normalized_hex) {
             if bytes.len() == 4 {
                 let id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 return Ok(id as u64);
@@ -548,6 +486,93 @@ mod tests {
         assert_eq!(response.tx_responses.len(), 1);
         assert_eq!(response.tx_responses[0].height, 100);
         assert_eq!(response.tx_responses[0].events.len(), 1);
+    }
+
+    fn make_v2_deposit_event(action: &str, dest_chain: &str) -> Event {
+        Event {
+            type_str: "wasm".to_string(),
+            attributes: vec![
+                Attribute {
+                    key: "_contract_address".to_string(),
+                    value: "terra14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9ssrc8au"
+                        .to_string(),
+                },
+                Attribute {
+                    key: "action".to_string(),
+                    value: action.to_string(),
+                },
+                Attribute {
+                    key: "nonce".to_string(),
+                    value: "7".to_string(),
+                },
+                Attribute {
+                    key: "sender".to_string(),
+                    value: "terra1sender0000000000000000000000000000000".to_string(),
+                },
+                Attribute {
+                    key: "dest_chain".to_string(),
+                    value: dest_chain.to_string(),
+                },
+                Attribute {
+                    key: "dest_account".to_string(),
+                    value: "AAAAAAAAAAAAAAAA85/W5RqtiPb0zmq4gnJ5z/+5ImY=".to_string(),
+                },
+                Attribute {
+                    key: "token".to_string(),
+                    value: "uluna".to_string(),
+                },
+                Attribute {
+                    key: "amount".to_string(),
+                    value: "131340000".to_string(),
+                },
+                Attribute {
+                    key: "fee".to_string(),
+                    value: "660000".to_string(),
+                },
+            ],
+        }
+    }
+
+    fn watcher_for_parse_tests() -> TerraWatcher {
+        let url: Url = "http://localhost:26657".parse().unwrap();
+        TerraWatcher {
+            rpc_client: HttpClient::new(url).unwrap(),
+            lcd_url: "http://localhost:1317".to_string(),
+            bridge_address: "terra14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9ssrc8au"
+                .to_string(),
+            chain_id: "localterra".to_string(),
+            db: PgPool::connect_lazy("postgres://postgres:postgres@localhost:5432/postgres")
+                .unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_deposit_tx_v2_accepts_deposit_native_and_0x_chain() {
+        let watcher = watcher_for_parse_tests();
+        let tx = TxResponse {
+            txhash: "E1A8F959154E2917A565DE8FD89FC4A30D258C5CCFAC7C7EAC12D2508F4435D1".to_string(),
+            height: 2931,
+            events: vec![make_v2_deposit_event("deposit_native", "0x00000001")],
+        };
+
+        let parsed = watcher.parse_deposit_tx_v2(&tx).unwrap().unwrap();
+        assert_eq!(parsed.nonce, 7);
+        assert_eq!(parsed.dest_chain_id, 1);
+        assert_eq!(parsed.amount, "131340000");
+    }
+
+    #[tokio::test]
+    async fn test_parse_deposit_tx_v2_accepts_cw20_lock_action() {
+        let watcher = watcher_for_parse_tests();
+        let tx = TxResponse {
+            txhash: "ABCDEF".to_string(),
+            height: 1,
+            events: vec![make_v2_deposit_event("deposit_cw20_lock", "AAAAAQ==")],
+        };
+
+        let parsed = watcher.parse_deposit_tx_v2(&tx).unwrap().unwrap();
+        assert_eq!(parsed.nonce, 7);
+        assert_eq!(parsed.dest_chain_id, 1);
     }
 
     #[test]

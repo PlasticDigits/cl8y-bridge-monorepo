@@ -15,17 +15,17 @@ use crate::msg::{
     ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse, DepositInfoResponse,
     FeeConfigResponse, HasCustomFeeResponse, IncomingTokenMappingResponse,
     IncomingTokenMappingsResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
-    NonceUsedResponse, OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse,
-    PendingWithdrawalEntry, PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse,
-    SimulationResponse, StatsResponse, StatusResponse, ThisChainIdResponse,
-    TokenDestMappingResponse, TokenResponse, TokenTypeResponse, TokensResponse,
-    TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
+    OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
+    PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse, SimulationResponse,
+    StatsResponse, StatusResponse, ThisChainIdResponse, TokenDestMappingResponse, TokenResponse,
+    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
+    WithdrawDelayResponse,
 };
 use crate::state::{
     ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
     LOCKED_BALANCES, OPERATORS, OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS,
     RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS,
-    TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, TRANSACTIONS, USED_NONCES, WITHDRAW_DELAY,
+    TOKEN_DEST_MAPPINGS, TOKEN_SRC_MAPPINGS, TRANSACTIONS, WITHDRAW_DELAY,
 };
 
 // ============================================================================
@@ -201,12 +201,6 @@ pub fn query_operators(deps: Deps) -> StdResult<OperatorsResponse> {
 // ============================================================================
 // Nonce and Transaction Queries
 // ============================================================================
-
-/// Check if a nonce has been used.
-pub fn query_nonce_used(deps: Deps, nonce: u64) -> StdResult<NonceUsedResponse> {
-    let used = USED_NONCES.may_load(deps.storage, nonce)?.unwrap_or(false);
-    Ok(NonceUsedResponse { nonce, used })
-}
 
 /// Get the current outgoing nonce.
 pub fn query_current_nonce(deps: Deps) -> StdResult<NonceResponse> {

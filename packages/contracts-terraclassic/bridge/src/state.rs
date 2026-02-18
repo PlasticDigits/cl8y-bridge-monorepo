@@ -18,7 +18,7 @@ pub struct Config {
     pub admin: Addr,
     /// Whether the bridge is currently paused
     pub paused: bool,
-    /// Minimum number of operator signatures required (legacy, kept for compatibility)
+    /// Minimum number of operator signatures required
     pub min_signatures: u32,
     /// Legacy global minimum bridge amount (deprecated: per-token limits are used instead)
     pub min_bridge_amount: Uint128,
@@ -270,10 +270,6 @@ pub const TOKENS: Map<String, TokenConfig> = Map::new("tokens");
 
 /// Outgoing nonce counter (for lock transactions)
 pub const OUTGOING_NONCE: Item<u64> = Item::new("outgoing_nonce");
-
-/// Used incoming nonces (legacy - kept for compatibility, not used in v2.0)
-/// Key: nonce, Value: whether used
-pub const USED_NONCES: Map<u64, bool> = Map::new("used_nonces");
 
 /// Bridge transaction history
 /// Key: nonce, Value: BridgeTransaction
