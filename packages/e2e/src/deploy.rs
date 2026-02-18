@@ -649,6 +649,47 @@ pub async fn mint_test_tokens(
     Ok(())
 }
 
+/// Transfer ERC20 tokens from deployer to a recipient.
+///
+/// Uses `transfer(address,uint256)`. The deployer (from private_key) must hold
+/// sufficient balance. Used to pre-fund LockUnlock adapters on peer chains for
+/// EVM-to-EVM withdrawal execution.
+pub async fn transfer_erc20_tokens(
+    rpc_url: &str,
+    private_key: &str,
+    token: Address,
+    to: Address,
+    amount: u128,
+) -> Result<()> {
+    info!(
+        "Transferring {} tokens to LockUnlock adapter at {}",
+        amount, to
+    );
+
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            &format!("{}", token),
+            "transfer(address,uint256)",
+            &format!("{}", to),
+            &amount.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to transfer ERC20 tokens: {}", stderr));
+    }
+
+    info!("Transferred {} tokens to {}", amount, to);
+    Ok(())
+}
+
 /// Get ERC20 balance using cast
 pub async fn get_token_balance(rpc_url: &str, token: Address, account: Address) -> Result<u128> {
     let output = std::process::Command::new("cast")

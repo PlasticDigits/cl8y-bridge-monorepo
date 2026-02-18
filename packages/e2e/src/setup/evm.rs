@@ -587,6 +587,32 @@ impl E2eSetup {
         .await?;
 
         info!("Bidirectional EVM1↔EVM2 token mappings registered");
+
+        // Pre-fund LockUnlock adapter on EVM2 so withdrawExecuteUnlock can succeed.
+        // The operator approves withdrawals but execution requires the adapter to hold
+        // tokens to unlock. Transfer half the supply (500k * 10^18) for EVM1→EVM2 flows.
+        let unlock_amount = 500_000_000_000_000_000_000_000u128; // 500k tokens (18 decimals)
+        if let Err(e) = deploy::transfer_erc20_tokens(
+            rpc2,
+            &private_key,
+            token2,
+            deployed2.lock_unlock,
+            unlock_amount,
+        )
+        .await
+        {
+            warn!(
+                "Failed to pre-fund LockUnlock adapter on EVM2: {}. \
+                 EVM1→EVM2 withdrawal execution may fail.",
+                e
+            );
+        } else {
+            info!(
+                "Pre-funded LockUnlock adapter on EVM2 with {} tokens for withdrawal execution",
+                unlock_amount
+            );
+        }
+
         Ok(Some(token2))
     }
 
