@@ -12,6 +12,12 @@ import {
   chainIdToBytes32,
   terraAddressToBytes32,
 } from './hashVerification'
+
+/** Convert 4-byte base64 chain ID to bytes32 hex (left-aligned, same as EVM). */
+function bytes4Base64ToBytes32Hex(b64: string): Hex {
+  const hex = base64ToHex(b64)
+  return (`0x${hex.slice(2).padEnd(64, '0')}`) as Hex
+}
 import type { DepositData, PendingWithdrawData } from '../hooks/useTransferLookup'
 import type { BridgeChainConfig } from '../types/chain'
 import type { Hex } from 'viem'
@@ -33,6 +39,8 @@ interface TerraPendingWithdrawQuery {
 // Terra contract response types (from LCD JSON)
 interface TerraDepositInfoResponse {
   deposit_hash: string // base64 Binary
+  src_chain: string // base64 Binary (4 bytes)
+  dest_chain: string // base64 Binary (4 bytes)
   src_account: string // base64 Binary (32 bytes)
   dest_token_address: string // base64 Binary (32 bytes)
   dest_account: string // base64 Binary (32 bytes)
@@ -94,15 +102,17 @@ export async function queryTerraDeposit(
     const destAccountHex = base64ToHex(response.dest_account)
     const tokenHex = base64ToHex(response.dest_token_address)
 
-    // srcChain is Terra's bytes4 chain ID from config
-    const srcChainHex = terraChainConfig.bytes4ChainId
-      ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
-      : ('0x' + '0'.repeat(64)) as Hex
-
-    // destChain is not stored in the deposit record; derive from the deposit hash fields
-    // The deposit was found by hash, so we know it's valid. destChain will be filled
-    // from the pending withdraw record when both sides are available.
-    const destChainHex = ('0x' + '0'.repeat(64)) as Hex
+    // src_chain and dest_chain from contract (bytes4 base64). Fallback to config/zero for older deployments.
+    const srcChainHex =
+      response.src_chain != null
+        ? bytes4Base64ToBytes32Hex(response.src_chain)
+        : terraChainConfig.bytes4ChainId
+          ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
+          : ('0x' + '0'.repeat(64)) as Hex
+    const destChainHex =
+      response.dest_chain != null
+        ? bytes4Base64ToBytes32Hex(response.dest_chain)
+        : ('0x' + '0'.repeat(64)) as Hex
 
     const amount = BigInt(response.amount)
     const nonce = BigInt(response.nonce)

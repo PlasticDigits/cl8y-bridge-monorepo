@@ -804,6 +804,8 @@ pub struct ComputeHashResponse {
 #[cw_serde]
 pub struct DepositInfoResponse {
     pub deposit_hash: Binary,
+    pub src_chain: Binary,
+    pub dest_chain: Binary,
     pub src_account: Binary,
     pub dest_token_address: Binary,
     pub dest_account: Binary,

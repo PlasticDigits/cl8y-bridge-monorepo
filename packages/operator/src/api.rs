@@ -14,13 +14,13 @@ use axum::{
     Json, Router,
 };
 use eyre::Result;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use prometheus::{Encoder, TextEncoder};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::db;
 use crate::metrics;
@@ -131,7 +131,11 @@ pub async fn start_api_server(addr: SocketAddr, db: PgPool) -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // Use into_make_service_with_connect_info so Governor can extract peer IP
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

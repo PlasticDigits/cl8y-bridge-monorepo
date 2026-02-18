@@ -144,12 +144,12 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
             return; // Not a standard ERC20
         }
         if (supply > 0) {
-            uint256 minPerTx = supply / DEFAULT_MIN_DIVISOR;    // 0.0001%
-            uint256 maxPerTx = supply / DEFAULT_MAX_DIVISOR;    // 0.01%
+            uint256 minPerTx = supply / DEFAULT_MIN_DIVISOR; // 0.0001%
+            uint256 maxPerTx = supply / DEFAULT_MAX_DIVISOR; // 0.01%
             rateLimitConfigs[token] = RateLimitConfig({
                 minPerTransaction: minPerTx,
                 maxPerTransaction: maxPerTx,
-                maxPerPeriod: maxPerTx                          // 24h window = max per tx
+                maxPerPeriod: maxPerTx // 24h window = max per tx
             });
         }
         // If supply is 0, rateLimitConfigs stays zeroed (no limits)
@@ -298,9 +298,7 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
             revert TokenNotRegistered(token);
         }
         rateLimitConfigs[token] = RateLimitConfig({
-            minPerTransaction: minPerTransaction,
-            maxPerTransaction: maxPerTransaction,
-            maxPerPeriod: maxPerPeriod
+            minPerTransaction: minPerTransaction, maxPerTransaction: maxPerTransaction, maxPerPeriod: maxPerPeriod
         });
         emit RateLimitSet(token, minPerTransaction, maxPerTransaction, maxPerPeriod);
     }
@@ -387,7 +385,7 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         view
         returns (uint256 windowStart, uint256 used, uint256 maxPerPeriod)
     {
-        (, , maxPerPeriod) = _getEffectiveLimits(token);
+        (,, maxPerPeriod) = _getEffectiveLimits(token);
         if (maxPerPeriod == 0) return (0, 0, 0);
         RateLimitWindow storage win = _withdrawWindows[token];
         if (win.windowStart == 0) return (block.timestamp, 0, maxPerPeriod);
@@ -398,7 +396,9 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     }
 
     event RateLimitBridgeSet(address indexed bridge);
-    event RateLimitSet(address indexed token, uint256 minPerTransaction, uint256 maxPerTransaction, uint256 maxPerPeriod);
+    event RateLimitSet(
+        address indexed token, uint256 minPerTransaction, uint256 maxPerTransaction, uint256 maxPerPeriod
+    );
 
     // ============================================================================
     // View Functions

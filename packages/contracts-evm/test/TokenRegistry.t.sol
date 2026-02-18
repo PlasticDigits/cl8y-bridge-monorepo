@@ -436,9 +436,7 @@ contract TokenRegistryTest is Test {
         tokenRegistry.checkAndUpdateWithdrawRateLimit(token1, 500e18);
 
         vm.prank(bridgeAddr);
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenRegistry.RateLimitExceededPerTx.selector, 500e18, 600e18)
-        );
+        vm.expectRevert(abi.encodeWithSelector(TokenRegistry.RateLimitExceededPerTx.selector, 500e18, 600e18));
         tokenRegistry.checkAndUpdateWithdrawRateLimit(token1, 600e18);
     }
 

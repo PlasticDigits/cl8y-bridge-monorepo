@@ -512,6 +512,8 @@ pub fn query_deposit_hash(
 
     Ok(deposit.map(|d| DepositInfoResponse {
         deposit_hash: Binary::from(hash_bytes.to_vec()),
+        src_chain: Binary::from(d.src_chain.to_vec()),
+        dest_chain: Binary::from(d.dest_chain.to_vec()),
         src_account: Binary::from(d.src_account.to_vec()),
         dest_token_address: Binary::from(d.dest_token_address.to_vec()),
         dest_account: Binary::from(d.dest_account.to_vec()),
@@ -530,6 +532,8 @@ pub fn query_deposit_by_nonce(deps: Deps, nonce: u64) -> StdResult<Option<Deposi
             let deposit = DEPOSIT_HASHES.may_load(deps.storage, &hash_bytes)?;
             Ok(deposit.map(|d| DepositInfoResponse {
                 deposit_hash: Binary::from(hash_bytes.to_vec()),
+                src_chain: Binary::from(d.src_chain.to_vec()),
+                dest_chain: Binary::from(d.dest_chain.to_vec()),
                 src_account: Binary::from(d.src_account.to_vec()),
                 dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                 dest_account: Binary::from(d.dest_account.to_vec()),
@@ -573,6 +577,8 @@ pub fn query_verify_deposit(
                 matches,
                 deposit: Some(DepositInfoResponse {
                     deposit_hash: Binary::from(hash_bytes.to_vec()),
+                    src_chain: Binary::from(d.src_chain.to_vec()),
+                    dest_chain: Binary::from(d.dest_chain.to_vec()),
                     src_account: Binary::from(d.src_account.to_vec()),
                     dest_token_address: Binary::from(d.dest_token_address.to_vec()),
                     dest_account: Binary::from(d.dest_account.to_vec()),

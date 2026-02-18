@@ -389,11 +389,7 @@ impl TerraWriter {
                 let src_chain_id: [u8; 4] = entry["src_chain"]
                     .as_str()
                     .and_then(|b64| {
-                        base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            b64,
-                        )
-                        .ok()
+                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).ok()
                     })
                     .and_then(|b| b.try_into().ok())
                     .unwrap_or([0u8; 4]);
@@ -663,8 +659,8 @@ impl TerraWriter {
         bridge_address: Address,
         withdraw_hash: &[u8; 32],
     ) -> Result<bool> {
-        let provider = ProviderBuilder::new()
-            .on_http(rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
+        let provider =
+            ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
 
         let contract = EvmBridge::new(bridge_address, &provider);
         let hash_fixed: FixedBytes<32> = FixedBytes::from(*withdraw_hash);

@@ -186,7 +186,9 @@ impl EvmWriter {
                     .compute_identifier_hash(registry_addr, &identifier)
                     .await
                 {
-                    Ok(hash) => match query_client.get_chain_id_from_hash(registry_addr, hash).await
+                    Ok(hash) => match query_client
+                        .get_chain_id_from_hash(registry_addr, hash)
+                        .await
                     {
                         Ok(cid) if cid.to_u32() != 0 => {
                             info!(
@@ -196,7 +198,7 @@ impl EvmWriter {
                             );
                             cid
                         }
-                        Ok(cid) => {
+                        Ok(_cid) => {
                             warn!(
                                 identifier = %identifier,
                                 "ChainRegistry returned 0 for Terra; set TERRA_THIS_CHAIN_ID=2"

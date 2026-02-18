@@ -423,7 +423,7 @@ fn compute_default_limits(
         return (None, None);
     }
     let min = Some(supply / Uint128::new(1_000_000)); // 0.0001%
-    let max = Some(supply / Uint128::new(10_000));     // 0.01%
+    let max = Some(supply / Uint128::new(10_000)); // 0.01%
     (min, max)
 }
 
@@ -637,19 +637,12 @@ pub fn execute_set_incoming_token_mapping(
         TOKEN_SRC_MAPPINGS.may_load(deps.storage, (&src_chain_key, &src_token_key))?
     {
         if old_mapping.local_token != local_token {
-            SRC_MAPPING_OWNER.remove(
-                deps.storage,
-                (&src_chain_key, &old_mapping.local_token),
-            );
+            SRC_MAPPING_OWNER.remove(deps.storage, (&src_chain_key, &old_mapping.local_token));
         }
     }
 
     // Claim the local_token for this src_token on this chain
-    SRC_MAPPING_OWNER.save(
-        deps.storage,
-        (&src_chain_key, &local_token),
-        &src_token_key,
-    )?;
+    SRC_MAPPING_OWNER.save(deps.storage, (&src_chain_key, &local_token), &src_token_key)?;
 
     let mapping = TokenSrcMapping {
         local_token: local_token.clone(),
