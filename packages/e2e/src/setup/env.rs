@@ -80,7 +80,7 @@ impl E2eSetup {
         content.push_str(&format!("EVM_CHAIN_ID={}\n", self.config.evm.chain_id));
         content.push_str(&format!("TERRA_CHAIN_ID={}\n", self.config.terra.chain_id));
 
-        // Add secondary EVM chain (anvil1) if configured
+        // Add anvil1 EVM peer chain if configured
         if let Some(ref evm2) = self.config.evm2 {
             content.push_str(&format!("EVM2_RPC_URL={}\n", evm2.rpc_url));
             content.push_str(&format!("EVM2_CHAIN_ID={}\n", evm2.chain_id));

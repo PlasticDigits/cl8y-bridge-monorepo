@@ -608,9 +608,9 @@ impl E2eSetup {
         }
         on_step(SetupStep::RegisterTokens, true);
 
-        // Deploy to secondary EVM chain (anvil1) if configured
+        // Deploy to anvil1 EVM peer chain if configured
         if self.config.evm2.is_some() {
-            info!("=== Deploying to secondary EVM chain (anvil1) ===");
+            info!("=== Deploying to anvil1 EVM peer chain ===");
             match self.deploy_evm2_contracts().await {
                 Ok(deployed2) => {
                     // Update evm2 config with deployed addresses
@@ -666,7 +666,7 @@ impl E2eSetup {
                     info!("=== Secondary EVM chain setup complete ===");
                 }
                 Err(e) => {
-                    warn!("Failed to deploy to secondary EVM chain: {}", e);
+                    warn!("Failed to deploy to anvil1 EVM peer chain: {}", e);
                 }
             }
         }

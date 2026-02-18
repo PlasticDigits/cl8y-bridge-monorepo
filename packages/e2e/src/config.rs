@@ -13,7 +13,7 @@ use url::Url;
 #[derive(Debug, Clone, Default)]
 pub struct E2eConfig {
     pub evm: EvmConfig,
-    /// Secondary EVM chain (anvil1, V2 chain ID = 3)
+    /// Optional EVM peer chain config (anvil1 by default, V2 chain ID = 3)
     pub evm2: Option<EvmConfig>,
     pub terra: TerraConfig,
     pub docker: DockerConfig,
@@ -24,13 +24,13 @@ pub struct E2eConfig {
 impl E2eConfig {
     /// Load configuration from environment variables
     ///
-    /// The secondary EVM chain (`evm2`) is auto-configured by default because
+    /// The `evm2` peer chain is auto-configured by default because
     /// `anvil1` is always started by docker-compose. Contract addresses start
     /// as `Address::ZERO` and are populated during setup after forge deploys.
     ///
     /// To disable evm2, set `EVM2_DISABLED=1`.
     pub fn from_env() -> Result<Self> {
-        // Load secondary EVM config:
+        // Load `evm2` peer-chain config:
         // - If EVM2_RPC_URL is explicitly set, use that
         // - If EVM2_DISABLED is set, skip evm2
         // - Otherwise, auto-detect with defaults (anvil1 on port 8546)
@@ -46,7 +46,7 @@ impl E2eConfig {
         } else {
             // Auto-detect: anvil1 is always in docker-compose on port 8546.
             // Contract addresses start as ZERO and get populated during setup
-            // after forge script deploys to the secondary chain.
+            // after forge script deploys to the anvil1 peer chain.
             Some(EvmConfig {
                 rpc_url: Url::parse("http://localhost:8546")?,
                 chain_id: 31338,
@@ -122,13 +122,13 @@ impl EvmConfig {
         Ok(Self {
             rpc_url: Url::parse(&rpc_url)?,
             chain_id,
-            v2_chain_id: 1, // Default: primary chain is V2 ID 1
+            v2_chain_id: 1, // Default local mapping: anvil uses V2 ID 1
             private_key,
             contracts: EvmContracts::from_env()?,
         })
     }
 
-    /// Load from environment with a prefix (e.g., "EVM2" for the secondary chain)
+    /// Load from environment with a prefix (e.g., "EVM2" for the peer chain)
     pub fn from_env_with_prefix(prefix: &str) -> Result<Self> {
         let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
             .unwrap_or_else(|_| "http://localhost:8546".to_string());

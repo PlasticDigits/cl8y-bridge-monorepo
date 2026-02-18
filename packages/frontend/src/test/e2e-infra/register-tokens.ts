@@ -177,7 +177,7 @@ function registerEvmTokensForChain(
 
   for (const [tokenAddr, tokenKey] of tokenPairs) {
     // Register token with LockUnlock type (enum value 0)
-    castSend(rpcUrl, tokenRegistry, '"registerToken(address,uint8)"', `${tokenAddr} 0`)
+    ensureTokenRegistered(rpcUrl, tokenRegistry, tokenAddr)
 
     for (const dest of destinations) {
       let destTokenBytes32: string
@@ -204,7 +204,7 @@ function registerEvmTokensForChain(
 
   // Register LUNC (uluna representation) - Terra maps to keccak uluna, EVM chains to lunc address
   const luncAddr = sourceTokens.lunc
-  castSend(rpcUrl, tokenRegistry, '"registerToken(address,uint8)"', `${luncAddr} 0`)
+  ensureTokenRegistered(rpcUrl, tokenRegistry, luncAddr)
   for (const dest of destinations) {
     const destTokenBytes32 =
       dest.chainKey === CHAIN_KEYS.terra
@@ -218,6 +218,35 @@ function registerEvmTokensForChain(
       `${luncAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
     )
   }
+}
+
+function isTokenRegistered(rpcUrl: string, tokenRegistry: string, token: string): boolean {
+  try {
+    const result = execSync(
+      `cast call ${tokenRegistry} "isTokenRegistered(address)(bool)" ${token} --rpc-url ${rpcUrl}`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+    ).trim().toLowerCase()
+    return result === 'true'
+  } catch {
+    return false
+  }
+}
+
+function ensureTokenRegistered(rpcUrl: string, tokenRegistry: string, token: string): void {
+  if (isTokenRegistered(rpcUrl, tokenRegistry, token)) return
+
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    castSend(rpcUrl, tokenRegistry, '"registerToken(address,uint8)"', `${token} 0`)
+    if (isTokenRegistered(rpcUrl, tokenRegistry, token)) return
+    if (attempt < maxAttempts) {
+      try { execSync('sleep 1', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+  }
+
+  throw new Error(
+    `[register-tokens] Critical: token ${token} is not registered on ${rpcUrl} (registry ${tokenRegistry}) after ${maxAttempts} attempts`
+  )
 }
 
 function registerChainsOnTerra(terraBridgeAddress: string): void {

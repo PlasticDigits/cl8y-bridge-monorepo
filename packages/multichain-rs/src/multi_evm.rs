@@ -300,7 +300,7 @@ impl MultiEvmConfig {
 
 /// Load multi-EVM config from environment variables.
 ///
-/// Returns `None` if `EVM_CHAINS_COUNT` is not set or is 0 (single-EVM mode).
+/// Returns `None` if `EVM_CHAINS_COUNT` is not set or is 0 (no extra EVM peers configured).
 ///
 /// Required env vars per chain:
 /// - `EVM_CHAIN_{N}_CHAIN_ID` — native EVM chain ID

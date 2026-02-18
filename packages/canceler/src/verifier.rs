@@ -94,24 +94,20 @@ pub struct KnownEvmChain {
 
 /// Verifier for checking approvals against source chain (V2)
 ///
-/// Supports multi-EVM: when additional EVM chains are registered, the verifier
+/// Supports multi-EVM: when EVM chain peers are registered, the verifier
 /// routes deposit verification to the correct source chain's RPC/bridge based
 /// on the V2 chain ID in the approval.
 pub struct ApprovalVerifier {
     client: Client,
-    /// Primary EVM RPC URL (for the main monitored chain)
-    evm_rpc_url: String,
-    /// Primary EVM bridge address
-    evm_bridge_address: String,
     /// Terra LCD URL
     terra_lcd_url: String,
     /// Terra bridge contract address
     terra_bridge_address: String,
-    /// Primary EVM chain's 4-byte V2 chain ID
+    /// Configured EVM chain's 4-byte V2 chain ID.
     evm_chain_id: [u8; 4],
     /// Terra's 4-byte V2 chain ID
     terra_chain_id: [u8; 4],
-    /// All known EVM chains (including primary), keyed by V2 chain ID bytes.
+    /// All known EVM chains, keyed by V2 chain ID bytes.
     /// Used for multi-chain deposit verification routing.
     known_evm_chains: std::collections::HashMap<[u8; 4], KnownEvmChain>,
     /// C6: Counter for unknown source chain events (aids alerting)
@@ -170,7 +166,7 @@ impl ApprovalVerifier {
             "ApprovalVerifier initialized with V2 chain IDs"
         );
 
-        // Initialize known EVM chains with the primary chain
+        // Initialize known EVM chains with the configured chain.
         let mut known_evm_chains = std::collections::HashMap::new();
         known_evm_chains.insert(
             evm_v2_chain_id,
@@ -183,8 +179,6 @@ impl ApprovalVerifier {
 
         Self {
             client,
-            evm_rpc_url: evm_rpc_url.to_string(),
-            evm_bridge_address: evm_bridge_address.to_string(),
             terra_lcd_url: terra_lcd_url.to_string(),
             terra_bridge_address: terra_bridge_address.to_string(),
             evm_chain_id: evm_v2_chain_id,
@@ -272,16 +266,20 @@ impl ApprovalVerifier {
     /// Verify a deposit exists on EVM source chain (V2)
     ///
     /// Routes to the correct EVM chain based on the approval's `src_chain_id`.
-    /// Falls back to the primary chain if the source chain is unknown (backward compat).
     async fn verify_evm_deposit(&self, approval: &PendingApproval) -> Result<VerificationResult> {
         // Look up the source chain's RPC and bridge from known_evm_chains
-        let (rpc_url, bridge_addr_str) =
-            if let Some(chain) = self.known_evm_chains.get(&approval.src_chain_id) {
-                (chain.rpc_url.as_str(), chain.bridge_address.as_str())
-            } else {
-                // Fallback to primary chain (backward compatibility)
-                (self.evm_rpc_url.as_str(), self.evm_bridge_address.as_str())
-            };
+        let Some(chain) = self.known_evm_chains.get(&approval.src_chain_id) else {
+            // Do not route unknown source chains to another chain. That can
+            // create false negatives/positives in verification under N-chain routing.
+            warn!(
+                src_chain = %hex::encode(approval.src_chain_id),
+                known_chain_count = self.known_evm_chains.len(),
+                "Unknown EVM source chain in verifier routing; returning Pending"
+            );
+            return Ok(VerificationResult::Pending);
+        };
+        let rpc_url = chain.rpc_url.as_str();
+        let bridge_addr_str = chain.bridge_address.as_str();
 
         debug!(
             hash = %bytes32_to_hex(&approval.withdraw_hash),
@@ -514,7 +512,7 @@ impl ApprovalVerifier {
         }
     }
 
-    /// Register additional EVM chains for multi-chain verification routing.
+    /// Register EVM chain peers for multi-chain verification routing.
     ///
     /// Call this after construction with chains from `MultiEvmConfig`.
     pub fn register_evm_chains(&mut self, chains: Vec<KnownEvmChain>) {
@@ -523,7 +521,7 @@ impl ApprovalVerifier {
                 info!(
                     v2_chain_id = %hex::encode(chain.v2_chain_id),
                     rpc = %chain.rpc_url,
-                    "Registered additional EVM chain for verification"
+                    "Registered EVM chain peer for verification"
                 );
             }
             self.known_evm_chains.insert(chain.v2_chain_id, chain);
@@ -534,7 +532,7 @@ impl ApprovalVerifier {
         );
     }
 
-    /// Check if chain ID matches any known EVM chain (primary or multi-EVM)
+    /// Check if chain ID matches any known EVM chain.
     fn is_evm_chain(&self, id: &[u8; 4]) -> bool {
         self.known_evm_chains.contains_key(id)
     }

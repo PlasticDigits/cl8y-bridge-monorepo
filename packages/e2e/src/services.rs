@@ -503,7 +503,7 @@ impl ServiceManager {
         if let Some(evm2) = &config.evm2 {
             let operator_pk = format!("0x{}", hex::encode(operator_private_key.as_slice()));
             env.push(("EVM_CHAINS_COUNT".to_string(), "2".to_string()));
-            // Chain 1: primary chain (anvil)
+            // Chain 1: anvil
             env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil".to_string()));
             env.push((
                 "EVM_CHAIN_1_CHAIN_ID".to_string(),
@@ -522,7 +522,7 @@ impl ServiceManager {
                 format!("{}", config.evm.contracts.bridge),
             ));
             env.push(("EVM_CHAIN_1_FINALITY_BLOCKS".to_string(), "0".to_string()));
-            // Chain 2: secondary chain (anvil1)
+            // Chain 2: anvil1
             env.push(("EVM_CHAIN_2_NAME".to_string(), "anvil1".to_string()));
             env.push((
                 "EVM_CHAIN_2_CHAIN_ID".to_string(),
@@ -626,7 +626,7 @@ impl ServiceManager {
         if let Some(evm2) = &config.evm2 {
             let canceler_pk = format!("0x{}", hex::encode(canceler_private_key.as_slice()));
             env.push(("EVM_CHAINS_COUNT".to_string(), "2".to_string()));
-            // Chain 1: primary chain (anvil)
+            // Chain 1: anvil
             env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil".to_string()));
             env.push((
                 "EVM_CHAIN_1_CHAIN_ID".to_string(),
@@ -644,7 +644,7 @@ impl ServiceManager {
                 "EVM_CHAIN_1_BRIDGE_ADDRESS".to_string(),
                 format!("{}", config.evm.contracts.bridge),
             ));
-            // Chain 2: secondary chain (anvil1)
+            // Chain 2: anvil1
             env.push(("EVM_CHAIN_2_NAME".to_string(), "anvil1".to_string()));
             env.push((
                 "EVM_CHAIN_2_CHAIN_ID".to_string(),

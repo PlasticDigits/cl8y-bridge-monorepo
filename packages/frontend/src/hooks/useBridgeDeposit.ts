@@ -146,8 +146,11 @@ export function computeTerraChainBytes4(): Hex {
 }
 
 /**
- * Compute the destination chain bytes4 for an EVM chain.
- * Simply encodes the numeric chain ID as bytes4.
+ * Compute bytes4 from a native EVM chain ID.
+ *
+ * NOTE: Cross-chain bridge routing should use configured V2 chain IDs
+ * (`BRIDGE_CHAINS[*].bytes4ChainId`) rather than native IDs like 31337/31338.
+ * This helper is retained for compatibility/tests.
  */
 export function computeEvmChainBytes4(chainId: number): Hex {
   return encodeChainIdBytes4(chainId)
@@ -164,7 +167,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
 
   // V2: deposit directly on the Bridge contract.
   // If the caller provides a per-source-chain bridge address, use it;
-  // otherwise fall back to the default from CONTRACTS (primary EVM bridge).
+  // otherwise fall back to the default from CONTRACTS (base configured EVM bridge).
   const bridgeAddress = (params?.bridgeAddress || CONTRACTS[DEFAULT_NETWORK].evmBridge) as Address
 
   // Contract write hooks

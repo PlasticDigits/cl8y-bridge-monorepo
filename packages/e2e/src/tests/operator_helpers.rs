@@ -1048,7 +1048,7 @@ pub async fn submit_withdraw_on_evm(
 ///
 /// Unlike `submit_withdraw_on_evm()` which always targets `config.evm`, this function
 /// takes an explicit RPC URL and bridge address, allowing it to target any EVM chain
-/// (e.g., the secondary chain for EVM1→EVM2 transfers).
+/// (e.g., anvil1 for EVM1→EVM2 transfers).
 ///
 /// In V2, the user (or test) must call `withdrawSubmit` on the destination chain
 /// before the operator can approve it. This creates the PendingWithdraw entry.

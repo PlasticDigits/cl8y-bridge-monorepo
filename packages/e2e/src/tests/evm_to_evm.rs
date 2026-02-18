@@ -17,15 +17,15 @@ use super::helpers::{approve_erc20, execute_deposit, query_deposit_nonce, select
 /// Secondary EVM chain configuration for cross-EVM tests
 #[derive(Debug, Clone)]
 pub struct SecondaryEvmConfig {
-    /// RPC URL for secondary chain
+    /// RPC URL for anvil1 peer chain
     pub rpc_url: String,
-    /// Chain ID for secondary chain
+    /// Chain ID for anvil1 peer chain
     pub chain_id: u64,
-    /// Bridge address on secondary chain
+    /// Bridge address on anvil1 peer chain
     pub bridge: Address,
-    /// Token registry on secondary chain
+    /// Token registry on anvil1 peer chain
     pub token_registry: Address,
-    /// Chain registry on secondary chain
+    /// Chain registry on anvil1 peer chain
     pub chain_registry: Address,
 }
 
@@ -76,7 +76,7 @@ impl Default for EvmToEvmOptions {
 // EVM Chain Key Registration
 // ============================================================================
 
-/// Register a secondary EVM chain in the chain registry (V2)
+/// Register an EVM peer chain in the chain registry (V2)
 ///
 /// Uses registerChain("evm_{chain_id}") to register the chain.
 pub async fn register_evm_chain_key(
@@ -183,7 +183,7 @@ pub async fn register_mock_evm_chain(
 
 /// Test EVM → EVM deposit flow
 ///
-/// Tests depositing tokens on the primary EVM chain destined for a secondary EVM chain.
+/// Tests depositing tokens on anvil destined for anvil1.
 /// If `use_mock_chain` is true, uses a mock chain key instead of real secondary.
 pub async fn test_evm_to_evm_deposit(config: &E2eConfig, options: &EvmToEvmOptions) -> TestResult {
     let start = Instant::now();
@@ -451,11 +451,11 @@ pub async fn test_evm_chain_key_computation(_config: &E2eConfig) -> TestResult {
 // Real Multi-EVM Transfer Tests (using actual anvil1)
 // ============================================================================
 
-/// Test real EVM1→EVM2 deposit and operator relay using actual secondary chain.
+/// Test real EVM1→EVM2 deposit and operator relay using anvil1.
 ///
 /// Requires evm2 to be configured and deployed (setup must have run with
 /// multi-EVM enabled). Verifies:
-/// 1. Deposit on primary chain (anvil) with dest_chain = V2 ID 3
+/// 1. Deposit on anvil with dest_chain = V2 ID 3
 /// 2. Operator detects and creates approval on destination chain
 /// 3. Balance changes on both chains
 pub async fn test_real_evm1_to_evm2_transfer(
@@ -634,7 +634,7 @@ pub async fn test_real_evm1_to_evm2_transfer(
     TestResult::pass(name, start.elapsed())
 }
 
-/// Test return trip: EVM2→EVM1 transfer using actual secondary chain.
+/// Test return trip: EVM2→EVM1 transfer using anvil1.
 ///
 /// Deposits on anvil1 (chain2) destined for anvil (chain1).
 /// Requires evm2 to be configured with deployed contracts and test token.
@@ -652,7 +652,7 @@ pub async fn test_real_evm2_to_evm1_return_trip(
 
     let token2 = evm2.contracts.test_token;
     if token2 == Address::ZERO {
-        return TestResult::skip(name, "No test token on secondary chain");
+        return TestResult::skip(name, "No test token on anvil1 peer chain");
     }
 
     info!(

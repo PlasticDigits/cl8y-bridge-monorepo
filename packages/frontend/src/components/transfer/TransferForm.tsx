@@ -12,7 +12,6 @@ import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from '../../hooks/us
 import {
   useBridgeDeposit,
   computeTerraChainBytes4,
-  computeEvmChainBytes4,
   encodeTerraAddress,
   encodeEvmAddress,
 } from '../../hooks/useBridgeDeposit'
@@ -68,12 +67,6 @@ const TOKEN_CONFIGS: Record<string, { address: Address; lockUnlockAddress: Addre
         decimals: 18,
       }
     : undefined,
-}
-
-function getChainIdNumeric(chainId: string, chains: ChainInfo[]): number {
-  const c = chains.find((ch) => ch.id === chainId) ?? getChainById(chainId)
-  if (!c) return 31337
-  return typeof c.chainId === 'number' ? c.chainId : 31337
 }
 
 /** Derive the transfer direction from the selected source and dest chain types */
@@ -352,7 +345,7 @@ export function TransferForm() {
 
   // Derive source chain bridge address and native chain ID for multi-EVM support.
   // When the source is an EVM chain (e.g. anvil1), we must deposit on THAT chain's bridge,
-  // not the primary bridge. We also need the native chain ID for auto-switching.
+  // not a fixed base chain bridge. We also need the native chain ID for auto-switching.
   const sourceBridgeConfig = useMemo(() => {
     const tier = DEFAULT_NETWORK as NetworkTier
     const config = BRIDGE_CHAINS[tier][sourceChain]
@@ -872,7 +865,11 @@ export function TransferForm() {
       }
       // Use V2 chain ID from config (e.g. 1 for anvil, 3 for anvil1), NOT native chain ID
       const v2Bytes4 = destConfig?.bytes4ChainId
-      const destChainId = v2Bytes4 ? parseInt(v2Bytes4, 16) : getChainIdNumeric(destChain, allChains)
+      if (!v2Bytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        return
+      }
+      const destChainId = parseInt(v2Bytes4, 16)
       const amountMicro = parseAmount(amount, terraDecimals)
       await terraLock({ amountMicro, destChainId, recipientEvm: recipientAddr })
     } else if (direction === 'evm-to-terra') {
@@ -898,8 +895,14 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      // Use V2 bytes4 chain ID from config, NOT native chain ID
-      const destChainBytes4 = (destConfig?.bytes4ChainId as Hex) || computeEvmChainBytes4(getChainIdNumeric(destChain, allChains))
+      // Use V2 bytes4 chain ID from config only.
+      // Do NOT derive from native chain ID (e.g., 31337/31338), since cross-chain
+      // routing/hashing must use V2 IDs.
+      const destChainBytes4 = destConfig?.bytes4ChainId as Hex | undefined
+      if (!destChainBytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        return
+      }
       const destAccount = encodeEvmAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     }

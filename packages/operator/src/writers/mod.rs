@@ -1,5 +1,5 @@
 use alloy::primitives::Address;
-use eyre::{Result, WrapErr};
+use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -70,15 +70,17 @@ impl WriterManager {
         // routing to the correct RPC/bridge instead of always using its own.
         let mut source_chain_endpoints: HashMap<[u8; 4], (String, Address)> = HashMap::new();
 
-        // Add primary EVM chain (if V2 chain ID is configured)
-        if let Some(v2_id) = config.evm.this_chain_id {
-            let bridge = Address::from_str(&config.evm.bridge_address)
-                .wrap_err("Invalid primary EVM bridge address")?;
-            source_chain_endpoints.insert(
-                ChainId::from_u32(v2_id).0,
-                (config.evm.rpc_url.clone(), bridge),
-            );
-        }
+        // Add the configured EVM chain using its required V2 chain ID.
+        let v2_id = config
+            .evm
+            .this_chain_id
+            .ok_or_else(|| eyre!("EVM_THIS_CHAIN_ID is required for source-chain routing"))?;
+        let bridge = Address::from_str(&config.evm.bridge_address)
+            .wrap_err("Invalid configured EVM bridge address")?;
+        source_chain_endpoints.insert(
+            ChainId::from_u32(v2_id).0,
+            (config.evm.rpc_url.clone(), bridge),
+        );
 
         // Add multi-EVM chains
         if let Some(ref multi) = config.multi_evm {

@@ -284,7 +284,7 @@ pub async fn poll_for_approval(
 /// Poll for approval on a specific EVM chain (not necessarily the primary one).
 ///
 /// Used for EVM→EVM transfers where the approval happens on the destination chain,
-/// which may be different from the primary EVM chain in `config.evm`.
+/// which may be different from the base `config.evm` chain.
 ///
 /// # Arguments
 /// * `rpc_url` - RPC URL of the chain to poll
@@ -621,7 +621,7 @@ async fn query_approval_by_nonce(config: &E2eConfig, nonce: u64) -> Result<Optio
 
 /// Query approval by nonce on a specific chain (explicit RPC URL and bridge address).
 ///
-/// Same logic as `query_approval_by_nonce` but doesn't use the primary config.
+/// Same logic as `query_approval_by_nonce` but doesn't use the base config chain.
 async fn query_approval_by_nonce_on_chain(
     rpc_url: &str,
     bridge_address: Address,

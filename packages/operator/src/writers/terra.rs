@@ -571,10 +571,10 @@ impl TerraWriter {
     /// Verify that a deposit with the given hash exists on the correct EVM source chain.
     ///
     /// Routes verification to the EVM chain identified by `src_chain_id` (V2 4-byte ID)
-    /// from the pending withdrawal entry. If the source chain is not in
-    /// `source_chain_endpoints`, falls back to trying all known chains.
+    /// from the pending withdrawal entry.
     ///
-    /// Returns `true` if the deposit record has a non-zero timestamp on any chain.
+    /// Returns `true` only when the deposit record has a non-zero timestamp on the
+    /// source chain indicated by `src_chain_id`.
     async fn verify_evm_deposit(
         &self,
         withdraw_hash: &[u8; 32],
@@ -597,56 +597,14 @@ impl TerraWriter {
                 .await;
         }
 
-        // Source chain not in endpoints map — try all known chains as fallback.
-        // This handles the case where src_chain_id is zero or unrecognized.
+        // Unknown source chain ID: do not probe arbitrary chains.
+        // Cross-chain verification must be keyed strictly by V2 src_chain_id.
         warn!(
             withdraw_hash = %bytes32_to_hex(withdraw_hash),
             src_chain = %src_chain_hex,
             known_chains = self.source_chain_endpoints.len(),
-            "Source chain not found in endpoints map, trying all known EVM chains"
+            "Source chain not found in endpoints map; skipping verification for this entry"
         );
-
-        for (chain_id, (rpc_url, bridge_address)) in &self.source_chain_endpoints {
-            let chain_hex = format!("0x{}", hex::encode(chain_id));
-            debug!(
-                withdraw_hash = %bytes32_to_hex(withdraw_hash),
-                trying_chain = %chain_hex,
-                evm_rpc = %rpc_url,
-                "Trying fallback chain for deposit verification"
-            );
-
-            match self
-                .verify_evm_deposit_on_chain(rpc_url, *bridge_address, withdraw_hash)
-                .await
-            {
-                Ok(true) => {
-                    info!(
-                        withdraw_hash = %bytes32_to_hex(withdraw_hash),
-                        found_on_chain = %chain_hex,
-                        expected_src_chain = %src_chain_hex,
-                        "Deposit found on fallback chain (src_chain_id mismatch?)"
-                    );
-                    return Ok(true);
-                }
-                Ok(false) => continue,
-                Err(e) => {
-                    debug!(
-                        chain = %chain_hex,
-                        error = %e,
-                        "Fallback chain query failed, continuing"
-                    );
-                    continue;
-                }
-            }
-        }
-
-        info!(
-            withdraw_hash = %bytes32_to_hex(withdraw_hash),
-            src_chain = %src_chain_hex,
-            chains_checked = self.source_chain_endpoints.len(),
-            "EVM deposit NOT found on any known chain"
-        );
-
         Ok(false)
     }
 

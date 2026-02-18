@@ -352,10 +352,10 @@ impl E2eSetup {
         Ok(())
     }
 
-    /// Deploy contracts to the secondary EVM chain (anvil1)
+    /// Deploy contracts to the anvil1 EVM peer chain
     ///
     /// Uses THIS_V2_CHAIN_ID=3 and THIS_CHAIN_LABEL="anvil1" to ensure
-    /// a globally unique V2 chain ID separate from the primary chain.
+    /// a globally unique V2 chain ID distinct from anvil.
     pub async fn deploy_evm2_contracts(&self) -> Result<DeployedContracts> {
         let evm2 = self
             .config
@@ -364,7 +364,7 @@ impl E2eSetup {
             .ok_or_else(|| eyre!("evm2 config not set"))?;
 
         info!(
-            "Deploying EVM contracts to secondary chain (anvil1) at {}",
+            "Deploying EVM contracts to anvil1 peer chain at {}",
             evm2.rpc_url
         );
 
@@ -436,7 +436,7 @@ impl E2eSetup {
         })
     }
 
-    /// Grant roles on the secondary EVM chain (anvil1)
+    /// Grant roles on the anvil1 EVM peer chain
     pub async fn grant_roles_evm2(&self, deployed: &DeployedContracts) -> Result<()> {
         let evm2 = self
             .config
@@ -444,7 +444,7 @@ impl E2eSetup {
             .as_ref()
             .ok_or_else(|| eyre!("evm2 config not set"))?;
 
-        info!("Granting roles on secondary chain (anvil1)");
+        info!("Granting roles on anvil1 peer chain");
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let test_address = self.config.test_accounts.evm_address;
         let rpc_url = evm2.rpc_url.as_str();
@@ -465,11 +465,11 @@ impl E2eSetup {
         )
         .await;
 
-        info!("Roles granted on secondary chain");
+        info!("Roles granted on anvil1 peer chain");
         Ok(())
     }
 
-    /// Register cross-chain mappings between primary and secondary EVM chains.
+    /// Register cross-chain mappings between anvil and anvil1.
     ///
     /// On chain1's ChainRegistry: register chain2
     /// On chain2's ChainRegistry: register chain1 and Terra
@@ -490,7 +490,7 @@ impl E2eSetup {
 
         // Register chain2 (anvil1, V2=3) on chain1's ChainRegistry
         let chain2_id = ChainId4::from_slice(&evm2.v2_chain_id.to_be_bytes());
-        info!("Registering anvil1 on primary chain's ChainRegistry");
+        info!("Registering anvil1 on anvil ChainRegistry");
         let _ = chain_config::register_evm_chain_key(
             deployed1.chain_registry,
             evm2.chain_id,
@@ -502,7 +502,7 @@ impl E2eSetup {
 
         // Register chain1 (anvil, V2=1) on chain2's ChainRegistry
         let chain1_id = ChainId4::from_slice(&self.config.evm.v2_chain_id.to_be_bytes());
-        info!("Registering anvil on secondary chain's ChainRegistry");
+        info!("Registering anvil on anvil1 ChainRegistry");
         let _ = chain_config::register_evm_chain_key(
             deployed2.chain_registry,
             self.config.evm.chain_id,
@@ -513,7 +513,7 @@ impl E2eSetup {
         .await;
 
         // Register Terra on chain2's ChainRegistry
-        info!("Registering Terra on secondary chain's ChainRegistry");
+        info!("Registering Terra on anvil1 ChainRegistry");
         let terra_id = ChainId4::from_slice(&2u32.to_be_bytes());
         let _ = chain_config::register_cosmw_chain_key(
             deployed2.chain_registry,
@@ -528,7 +528,7 @@ impl E2eSetup {
         Ok(())
     }
 
-    /// Deploy and register a test token on the secondary EVM chain (anvil1)
+    /// Deploy and register a test token on the anvil1 EVM peer chain
     /// and set up cross-chain destination mappings between the two chains.
     pub async fn deploy_and_register_test_token_evm2(
         &self,
@@ -545,7 +545,7 @@ impl E2eSetup {
         let rpc2 = evm2.rpc_url.as_str();
 
         // Deploy test token on anvil1
-        info!("Deploying test token on secondary chain (anvil1)");
+        info!("Deploying test token on anvil1 peer chain");
         let token2 = match deploy::deploy_test_token_simple(
             &self.project_root,
             rpc2,
@@ -576,7 +576,7 @@ impl E2eSetup {
         )
         .await?;
 
-        // Add destination for chain1 (token maps to primary_test_token on chain1)
+        // Add destination for chain1 (token maps to chain1 test token)
         let chain1_id = ChainId4::from_slice(&self.config.evm.v2_chain_id.to_be_bytes());
         let mut dest_token = [0u8; 32];
         dest_token[12..32].copy_from_slice(primary_test_token.as_slice());
@@ -592,7 +592,7 @@ impl E2eSetup {
         )
         .await?;
 
-        // Also register the primary token -> chain2 mapping on chain1's TokenRegistry
+        // Also register the chain1 token -> chain2 mapping on chain1's TokenRegistry
         let rpc1 = self.config.evm.rpc_url.as_str();
         let chain2_id = ChainId4::from_slice(&evm2.v2_chain_id.to_be_bytes());
         let mut dest_token2 = [0u8; 32];

@@ -108,13 +108,13 @@ pub struct CancelerWatcher {
     verified_hashes: BoundedHashCache,
     /// Hashes we've cancelled (C3: bounded)
     cancelled_hashes: BoundedHashCache,
-    /// Last polled EVM block (primary chain)
+    /// Last polled EVM block for the configured base EVM endpoint.
     last_evm_block: u64,
     /// Last polled Terra height
     last_terra_height: u64,
     /// This chain's 4-byte chain ID
     this_chain_id: [u8; 4],
-    /// Additional EVM chains to poll (multi-EVM support)
+    /// Other configured EVM chain peers to poll (multi-EVM support).
     additional_evm_chains: Vec<EvmChainPollState>,
     /// Shared stats for health endpoint
     stats: SharedStats,
@@ -141,7 +141,7 @@ impl CancelerWatcher {
             terra_v2,
         );
 
-        // Register additional EVM chains from multi-EVM config for cross-chain verification
+        // Register configured EVM chain peers from multi-EVM config for cross-chain verification.
         if let Some(ref multi) = config.multi_evm {
             let additional_chains: Vec<crate::verifier::KnownEvmChain> = multi
                 .enabled_chains()
@@ -190,14 +190,14 @@ impl CancelerWatcher {
             s.canceler_id = config.canceler_id.clone();
         }
 
-        // Build additional chain poll states from multi-EVM config.
-        // The primary chain is polled via poll_evm_approvals(); additional chains
-        // are polled separately via poll_additional_evm_approvals().
+        // Build chain poll states from multi-EVM config.
+        // The configured base EVM endpoint is polled via poll_evm_approvals();
+        // other EVM peers are polled via poll_additional_evm_approvals().
         let additional_evm_chains: Vec<EvmChainPollState> =
             if let Some(ref multi) = config.multi_evm {
                 multi
                     .enabled_chains()
-                    .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip primary chain
+                    .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip the configured base chain (already polled)
                     .map(|c| EvmChainPollState {
                         v2_chain_id: c.this_chain_id.0,
                         name: c.name.clone(),
@@ -389,10 +389,10 @@ impl CancelerWatcher {
     async fn poll_approvals(&mut self) -> Result<()> {
         debug!("Polling for new approvals...");
 
-        // Poll primary EVM bridge for approvals
+        // Poll the configured base EVM bridge for approvals.
         self.poll_evm_approvals().await?;
 
-        // Poll additional EVM chains (multi-EVM support)
+        // Poll other configured EVM peers (multi-EVM support).
         if !self.additional_evm_chains.is_empty() {
             self.poll_additional_evm_approvals().await;
         }
@@ -631,7 +631,7 @@ impl CancelerWatcher {
         Ok(())
     }
 
-    /// Poll additional EVM chains for WithdrawApprove events (multi-EVM).
+    /// Poll configured EVM peers for WithdrawApprove events (multi-EVM).
     ///
     /// Collects pending approvals from all additional chains first, then
     /// processes them to avoid borrow-checker issues with `&mut self`.
@@ -1131,96 +1131,138 @@ impl CancelerWatcher {
     /// Submit cancel transaction to the appropriate chain (C4: EVM pre-check safety)
     async fn submit_cancel(&self, approval: &PendingApproval) -> Result<()> {
         let withdraw_hash = approval.withdraw_hash;
+        let dest_chain = approval.dest_chain_id;
 
         info!(
             hash = %bytes32_to_hex(&withdraw_hash),
-            canceler_address = %self.evm_client.address(),
+            dest_chain = %hex::encode(dest_chain),
             "Attempting to submit cancellation transaction"
         );
 
-        // C4: If circuit breaker is open, skip EVM cancel attempts
-        if self.evm_precheck_circuit_open.load(Ordering::Relaxed) {
-            debug!(
-                hash = %bytes32_to_hex(&withdraw_hash),
-                "EVM pre-check circuit breaker is OPEN — skipping EVM cancel path"
-            );
-        } else {
-            // C4: Retry can_cancel with exponential backoff; on error set can_cancel_evm = false
-            let mut can_cancel_evm = false;
-            let mut last_err = None;
-            for attempt in 0..=self.config.evm_precheck_max_retries {
-                match self.evm_client.can_cancel(withdraw_hash).await {
-                    Ok(can) => {
-                        can_cancel_evm = can;
-                        self.evm_precheck_consecutive_failures
-                            .store(0, Ordering::Relaxed);
-                        if self
-                            .evm_precheck_circuit_open
-                            .swap(false, Ordering::Relaxed)
-                        {
-                            info!(
+        // Route EVM cancellation by destination V2 chain ID.
+        // Base configured EVM chain uses the shared client + circuit breaker.
+        // Peer EVM chains use an on-demand client bound to that chain's RPC/bridge.
+        if dest_chain == self.this_chain_id {
+            // C4: If circuit breaker is open, skip EVM cancel attempts
+            if self.evm_precheck_circuit_open.load(Ordering::Relaxed) {
+                debug!(
+                    hash = %bytes32_to_hex(&withdraw_hash),
+                    "EVM pre-check circuit breaker is OPEN — skipping EVM cancel path"
+                );
+            } else {
+                // C4: Retry can_cancel with exponential backoff; on error set can_cancel_evm = false
+                let mut can_cancel_evm = false;
+                let mut last_err = None;
+                for attempt in 0..=self.config.evm_precheck_max_retries {
+                    match self.evm_client.can_cancel(withdraw_hash).await {
+                        Ok(can) => {
+                            can_cancel_evm = can;
+                            self.evm_precheck_consecutive_failures
+                                .store(0, Ordering::Relaxed);
+                            if self
+                                .evm_precheck_circuit_open
+                                .swap(false, Ordering::Relaxed)
+                            {
+                                info!(
+                                    hash = %bytes32_to_hex(&withdraw_hash),
+                                    "EVM pre-check circuit breaker CLOSED"
+                                );
+                            }
+                            debug!(
                                 hash = %bytes32_to_hex(&withdraw_hash),
-                                "EVM pre-check circuit breaker CLOSED"
+                                can_cancel = can,
+                                "Checked EVM can_cancel status on base configured chain"
+                            );
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = Some(e);
+                            if attempt < self.config.evm_precheck_max_retries {
+                                let delay_ms = 500 * 2u64.pow(attempt);
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(e) = last_err {
+                    let prev = self
+                        .evm_precheck_consecutive_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    let count = prev + 1;
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        consecutive_failures = count,
+                        "EVM can_cancel pre-check failed; skipping cancel attempt this cycle (will retry)"
+                    );
+                    if count >= self.config.evm_precheck_circuit_breaker_threshold {
+                        self.evm_precheck_circuit_open
+                            .store(true, Ordering::Relaxed);
+                        self.metrics.evm_precheck_circuit_breaker_trips_total.inc();
+                        error!(
+                            hash = %bytes32_to_hex(&withdraw_hash),
+                            threshold = self.config.evm_precheck_circuit_breaker_threshold,
+                            "EVM pre-check circuit breaker OPEN — skipping all EVM cancel attempts \
+                             until a successful pre-check"
+                        );
+                    }
+                }
+
+                if can_cancel_evm {
+                    info!(
+                        hash = %bytes32_to_hex(&withdraw_hash),
+                        canceler_address = %self.evm_client.address(),
+                        "Submitting withdrawCancel transaction to base configured EVM chain"
+                    );
+
+                    match self
+                        .evm_client
+                        .cancel_withdraw_approval(withdraw_hash)
+                        .await
+                    {
+                        Ok(tx_hash) => {
+                            info!(
+                                tx_hash = %tx_hash,
+                                hash = %bytes32_to_hex(&withdraw_hash),
+                                "EVM cancellation transaction SUCCEEDED"
+                            );
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                hash = %bytes32_to_hex(&withdraw_hash),
+                                canceler_address = %self.evm_client.address(),
+                                "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
                             );
                         }
-                        debug!(
-                            hash = %bytes32_to_hex(&withdraw_hash),
-                            can_cancel = can,
-                            "Checked EVM can_cancel status"
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        last_err = Some(e);
-                        if attempt < self.config.evm_precheck_max_retries {
-                            let delay_ms = 500 * 2u64.pow(attempt);
-                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        }
                     }
                 }
             }
-
-            if let Some(e) = last_err {
-                let prev = self
-                    .evm_precheck_consecutive_failures
-                    .fetch_add(1, Ordering::Relaxed);
-                let count = prev + 1;
-                warn!(
-                    error = %e,
-                    hash = %bytes32_to_hex(&withdraw_hash),
-                    consecutive_failures = count,
-                    "EVM can_cancel pre-check failed; skipping cancel attempt this cycle (will retry)"
-                );
-                if count >= self.config.evm_precheck_circuit_breaker_threshold {
-                    self.evm_precheck_circuit_open
-                        .store(true, Ordering::Relaxed);
-                    self.metrics.evm_precheck_circuit_breaker_trips_total.inc();
-                    error!(
-                        hash = %bytes32_to_hex(&withdraw_hash),
-                        threshold = self.config.evm_precheck_circuit_breaker_threshold,
-                        "EVM pre-check circuit breaker OPEN — skipping all EVM cancel attempts \
-                         until a successful pre-check"
-                    );
-                }
-            }
-
-            if can_cancel_evm {
+        } else if let Some(peer) = self
+            .additional_evm_chains
+            .iter()
+            .find(|c| c.v2_chain_id == dest_chain)
+        {
+            let peer_client = EvmClient::new(
+                &peer.rpc_url,
+                &peer.bridge_address,
+                &self.config.evm_private_key,
+            )?;
+            if peer_client.can_cancel(withdraw_hash).await.unwrap_or(false) {
                 info!(
                     hash = %bytes32_to_hex(&withdraw_hash),
-                    canceler_address = %self.evm_client.address(),
-                    "Submitting withdrawCancel transaction to EVM"
+                    chain = %peer.name,
+                    "Submitting withdrawCancel transaction to EVM peer chain"
                 );
-
-                match self
-                    .evm_client
-                    .cancel_withdraw_approval(withdraw_hash)
-                    .await
-                {
+                match peer_client.cancel_withdraw_approval(withdraw_hash).await {
                     Ok(tx_hash) => {
                         info!(
                             tx_hash = %tx_hash,
                             hash = %bytes32_to_hex(&withdraw_hash),
-                            "EVM cancellation transaction SUCCEEDED"
+                            chain = %peer.name,
+                            "EVM peer-chain cancellation transaction SUCCEEDED"
                         );
                         return Ok(());
                     }
@@ -1228,8 +1270,8 @@ impl CancelerWatcher {
                         warn!(
                             error = %e,
                             hash = %bytes32_to_hex(&withdraw_hash),
-                            canceler_address = %self.evm_client.address(),
-                            "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
+                            chain = %peer.name,
+                            "EVM peer-chain cancellation FAILED"
                         );
                     }
                 }

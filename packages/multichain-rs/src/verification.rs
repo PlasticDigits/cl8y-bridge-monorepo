@@ -58,7 +58,7 @@ pub struct SourceChainEndpoint {
     pub bridge_address: String,
 }
 
-/// Build source chain endpoints map from multi-EVM config and optional primary chain.
+/// Build source chain endpoints map from configured chain peers.
 ///
 /// The resulting map can be passed to `verify_deposit_on_source()` for routing.
 pub fn build_source_endpoints(
