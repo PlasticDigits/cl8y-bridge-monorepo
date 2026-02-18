@@ -17,6 +17,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::bounded_cache::{BoundedHashCache, BoundedPendingCache};
+
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -72,12 +74,12 @@ pub struct EvmWriter {
     db: PgPool,
     /// Cancel window in seconds (queried from contract)
     cancel_window: u64,
-    /// Pending approvals awaiting execution
-    pending_executions: HashMap<[u8; 32], PendingExecution>,
+    /// Pending approvals awaiting execution (bounded to prevent unbounded growth)
+    pending_executions: BoundedPendingCache<PendingExecution>,
     /// Last block polled for WithdrawSubmit events
     last_polled_block: u64,
-    /// Hashes already approved by this operator (avoid re-processing)
-    approved_hashes: HashMap<[u8; 32], Instant>,
+    /// Hashes already approved by this operator (bounded to prevent unbounded growth)
+    approved_hashes: BoundedHashCache,
     /// Source chain verification endpoints, keyed by V2 4-byte chain ID.
     /// Used for routing cross-chain deposit verification to the correct source chain RPC/bridge.
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
@@ -254,9 +256,15 @@ impl EvmWriter {
             fee_recipient,
             db,
             cancel_window,
-            pending_executions: HashMap::new(),
+            pending_executions: {
+                let cc = crate::bounded_cache::CacheConfig::from_env();
+                BoundedPendingCache::new(cc.pending_execution_size, cc.ttl_secs)
+            },
             last_polled_block: 0,
-            approved_hashes: HashMap::new(),
+            approved_hashes: {
+                let cc = crate::bounded_cache::CacheConfig::from_env();
+                BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
+            },
             source_chain_endpoints,
         })
     }
@@ -284,10 +292,6 @@ impl EvmWriter {
     pub async fn process_pending(&mut self) -> Result<()> {
         // First, check if any pending executions are ready
         self.process_pending_executions().await?;
-
-        // Clean up old approved hashes (older than 1 hour)
-        let cutoff = Instant::now() - std::time::Duration::from_secs(3600);
-        self.approved_hashes.retain(|_, t| *t > cutoff);
 
         // Poll for WithdrawSubmit events and approve verified ones
         self.poll_and_approve().await?;
@@ -385,7 +389,7 @@ impl EvmWriter {
 
             // Skip already-approved, cancelled, or executed withdrawals
             if pending.approved {
-                self.approved_hashes.insert(xchain_hash_id, Instant::now());
+                self.approved_hashes.insert(xchain_hash_id);
                 continue;
             }
             if pending.cancelled || pending.executed {
@@ -452,7 +456,7 @@ impl EvmWriter {
                         "WithdrawApprove submitted successfully"
                     );
 
-                    self.approved_hashes.insert(xchain_hash_id, Instant::now());
+                    self.approved_hashes.insert(xchain_hash_id);
 
                     // Track for auto-execution after cancel window
                     self.pending_executions.insert(
@@ -785,7 +789,7 @@ impl EvmWriter {
         let now = Instant::now();
         let mut to_remove = Vec::new();
 
-        for (hash, pending) in &self.pending_executions {
+        for (hash, pending) in self.pending_executions.iter() {
             let elapsed = now.duration_since(pending.approved_at);
 
             if elapsed.as_secs() >= pending.delay_seconds {

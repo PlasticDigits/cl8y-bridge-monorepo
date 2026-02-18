@@ -20,6 +20,12 @@ interface ITokenRegistry {
         uint8 destDecimals;
     }
 
+    /// @notice Incoming source token mapping (srcChain + localToken → srcDecimals)
+    struct TokenSrcMapping {
+        uint8 srcDecimals;
+        bool enabled;
+    }
+
     // ============================================================================
     // Events
     // ============================================================================
@@ -29,6 +35,9 @@ interface ITokenRegistry {
 
     /// @notice Emitted when a token destination is set
     event TokenDestinationSet(address indexed token, bytes4 indexed destChain, bytes32 destToken);
+
+    /// @notice Emitted when an incoming token mapping is set
+    event IncomingTokenMappingSet(bytes4 indexed srcChain, address indexed localToken, uint8 srcDecimals);
 
     /// @notice Emitted when a token type is updated
     event TokenTypeUpdated(address indexed token, TokenType oldType, TokenType newType);
@@ -48,6 +57,9 @@ interface ITokenRegistry {
 
     /// @notice Thrown when destination chain is not registered
     error DestChainNotRegistered(bytes4 destChain);
+
+    /// @notice Thrown when source chain has no incoming mapping for a token
+    error SrcTokenNotMapped(bytes4 srcChain, address localToken);
 
     /// @notice Thrown when destToken is zero (invalid mapping)
     error InvalidDestToken();
@@ -85,6 +97,12 @@ interface ITokenRegistry {
     function setTokenDestinationWithDecimals(address token, bytes4 destChain, bytes32 destToken, uint8 destDecimals)
         external;
 
+    /// @notice Set incoming token mapping (source chain token → local token decimals on source)
+    /// @param srcChain Source chain ID (4 bytes)
+    /// @param localToken Local token address on this chain
+    /// @param srcDecimals Token decimals on the source chain
+    function setIncomingTokenMapping(bytes4 srcChain, address localToken, uint8 srcDecimals) external;
+
     // ============================================================================
     // View Functions
     // ============================================================================
@@ -113,4 +131,10 @@ interface ITokenRegistry {
         external
         view
         returns (TokenDestMapping memory mapping_);
+
+    /// @notice Get the source chain token decimals for an incoming token
+    /// @param srcChain Source chain ID
+    /// @param localToken Local token address on this chain
+    /// @return srcDecimals Token decimals on the source chain
+    function getSrcTokenDecimals(bytes4 srcChain, address localToken) external view returns (uint8 srcDecimals);
 }

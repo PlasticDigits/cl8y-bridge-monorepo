@@ -433,6 +433,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (wrappedNative == address(0)) revert WrappedNativeNotSet();
         if (msg.value == 0) revert InvalidAmount(0);
         if (destAccount == bytes32(0)) revert InvalidDestAccount();
+        if (destChain == thisChainId) revert SameChainTransfer(destChain);
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
         if (!tokenRegistry.isTokenRegistered(wrappedNative)) revert TokenNotRegistered(wrappedNative);
 
@@ -446,7 +447,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         // Guard check
         _checkDepositGuard(wrappedNative, netAmount, msg.sender);
 
-        // Transfer fee to recipient
+        // Transfer fee to recipient.
+        // @dev The fee recipient is expected to be the DAO multisig (an EOA or a contract
+        // with receive()/fallback payable), so the low-level call will always succeed.
+        // Revert-on-failure is acceptable because a non-receivable fee recipient would
+        // indicate a misconfiguration that should block deposits until corrected.
         if (fee > 0) {
             (bool success,) = feeConfig.feeRecipient.call{value: fee}("");
             if (!success) revert FeeTransferFailed();
@@ -489,6 +494,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     {
         if (amount == 0) revert InvalidAmount(0);
         if (destAccount == bytes32(0)) revert InvalidDestAccount();
+        if (destChain == thisChainId) revert SameChainTransfer(destChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
         bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
@@ -546,6 +552,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     {
         if (amount == 0) revert InvalidAmount(0);
         if (destAccount == bytes32(0)) revert InvalidDestAccount();
+        if (destChain == thisChainId) revert SameChainTransfer(destChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
         if (!chainRegistry.isChainRegistered(destChain)) revert ChainNotRegistered(destChain);
         bytes32 destToken = tokenRegistry.getDestToken(token, destChain);
@@ -608,12 +615,15 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         bytes32 destAccount,
         address token,
         uint256 amount,
-        uint64 nonce,
-        uint8 srcDecimals
+        uint64 nonce
     ) external payable whenNotPaused nonReentrant {
         if (amount == 0) revert InvalidAmount(0);
+        if (srcChain == thisChainId) revert SameChainTransfer(srcChain);
         if (!chainRegistry.isChainRegistered(srcChain)) revert ChainNotRegistered(srcChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
+
+        // Look up source chain decimals from TokenRegistry (reverts if not mapped)
+        uint8 srcDecimals = tokenRegistry.getSrcTokenDecimals(srcChain, token);
 
         // Compute unified cross-chain hash ID (same hash as deposit on source chain)
         bytes32 xchainHashId = HashLib.computeXchainHashId(
@@ -665,7 +675,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         w.approved = true;
         w.approvedAt = block.timestamp;
 
-        // Transfer operator gas tip to operator
+        // Transfer operator gas tip to operator.
+        // @dev Revert-on-failure is intentional: the operator must conduct final review of
+        // every withdrawal. If the operator cannot receive ETH, the approval should fail
+        // rather than silently proceed, preventing exploitation if RPC is down and cancelers
+        // fail to act.
         if (w.operatorGas > 0) {
             (bool success,) = msg.sender.call{value: w.operatorGas}("");
             if (!success) revert OperatorGasTransferFailed();

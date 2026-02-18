@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {EnumerableSetLib} from "solady/utils/EnumerableSetLib.sol";
 import {ITokenRegistry} from "./interfaces/ITokenRegistry.sol";
 import {ChainRegistry} from "./ChainRegistry.sol";
 
@@ -12,6 +13,8 @@ import {ChainRegistry} from "./ChainRegistry.sol";
 /// @notice Upgradeable token registry with LockUnlock and MintBurn types
 /// @dev Uses UUPS proxy pattern for upgradeability. Rate limiting matches TerraClassic (max per tx, max per 24h).
 contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, ITokenRegistry {
+    using EnumerableSetLib for EnumerableSetLib.Bytes32Set;
+
     // ============================================================================
     // Constants
     // ============================================================================
@@ -49,8 +52,8 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @notice Mapping from token to destination chain to destination token info
     mapping(address => mapping(bytes4 => TokenDestMapping)) public tokenDestMappings;
 
-    /// @notice Mapping from token to registered destination chains
-    mapping(address => bytes4[]) private _tokenDestChains;
+    /// @notice Mapping from token to registered destination chains (O(1) add/remove/contains)
+    mapping(address => EnumerableSetLib.Bytes32Set) private _tokenDestChains;
 
     /// @notice Array of registered tokens for enumeration
     address[] private _tokens;
@@ -71,8 +74,13 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// Enforces 1-to-1: no two source tokens may map to the same destToken on the same chain.
     mapping(bytes4 => mapping(bytes32 => address)) private _destTokenOwner;
 
+    /// @notice Incoming source token mappings: (srcChain, localToken) → TokenSrcMapping.
+    /// Mirrors TerraClassic's TOKEN_SRC_MAPPINGS. Used by Bridge.withdrawSubmit to look up
+    /// the source chain's token decimals instead of accepting them as user input.
+    mapping(bytes4 => mapping(address => TokenSrcMapping)) public tokenSrcMappings;
+
     /// @notice Reserved storage slots for future upgrades
-    uint256[39] private __gap;
+    uint256[38] private __gap;
 
     struct RateLimitConfig {
         uint256 minPerTransaction;
@@ -183,6 +191,23 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         emit TokenDestinationSet(token, destChain, destToken);
     }
 
+    /// @notice Set incoming token mapping (source chain → local token decimals on source)
+    /// @param srcChain Source chain ID (4 bytes)
+    /// @param localToken Local token address on this chain
+    /// @param srcDecimals Token decimals on the source chain
+    function setIncomingTokenMapping(bytes4 srcChain, address localToken, uint8 srcDecimals) external onlyOwner {
+        if (!tokenRegistered[localToken]) {
+            revert TokenNotRegistered(localToken);
+        }
+        if (!chainRegistry.isChainRegistered(srcChain)) {
+            revert DestChainNotRegistered(srcChain);
+        }
+
+        tokenSrcMappings[srcChain][localToken] = TokenSrcMapping({srcDecimals: srcDecimals, enabled: true});
+
+        emit IncomingTokenMappingSet(srcChain, localToken, srcDecimals);
+    }
+
     /// @dev Validate inputs, ensure destToken uniqueness, update reverse lookup and dest chains list.
     function _validateAndClaimDestToken(address token, bytes4 destChain, bytes32 destToken) internal {
         if (!tokenRegistered[token]) {
@@ -210,18 +235,8 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         // Claim the new destToken
         _destTokenOwner[destChain][destToken] = token;
 
-        // Add to destination chains if not already present
-        bool found = false;
-        bytes4[] storage destChains = _tokenDestChains[token];
-        for (uint256 i = 0; i < destChains.length; i++) {
-            if (destChains[i] == destChain) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            destChains.push(destChain);
-        }
+        // Add to destination chains (no-op if already present, O(1))
+        _tokenDestChains[token].add(bytes32(destChain));
     }
 
     /// @notice Update token type
@@ -247,15 +262,16 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         delete tokenTypes[token];
 
         // Clean up destination chain mappings and reverse lookup
-        bytes4[] storage destChains = _tokenDestChains[token];
+        bytes32[] memory destChains = _tokenDestChains[token].values();
         for (uint256 i = 0; i < destChains.length; i++) {
-            bytes32 dt = tokenDestMappings[token][destChains[i]].destToken;
+            bytes4 chain = bytes4(destChains[i]);
+            bytes32 dt = tokenDestMappings[token][chain].destToken;
             if (dt != bytes32(0)) {
-                delete _destTokenOwner[destChains[i]][dt];
+                delete _destTokenOwner[chain][dt];
             }
-            delete tokenDestMappings[token][destChains[i]];
+            delete tokenDestMappings[token][chain];
+            _tokenDestChains[token].remove(destChains[i]);
         }
-        delete _tokenDestChains[token];
 
         // Remove from _tokens array (swap with last element and pop)
         uint256 len = _tokens.length;
@@ -438,11 +454,25 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         return tokenDestMappings[token][destChain];
     }
 
+    /// @notice Get the source chain token decimals for an incoming token
+    /// @param srcChain Source chain ID
+    /// @param localToken Local token address on this chain
+    /// @return srcDecimals Token decimals on the source chain
+    function getSrcTokenDecimals(bytes4 srcChain, address localToken) external view returns (uint8) {
+        TokenSrcMapping memory m = tokenSrcMappings[srcChain][localToken];
+        if (!m.enabled) revert SrcTokenNotMapped(srcChain, localToken);
+        return m.srcDecimals;
+    }
+
     /// @notice Get all destination chains for a token
     /// @param token The token address
     /// @return destChains Array of destination chain IDs
     function getTokenDestChains(address token) external view returns (bytes4[] memory destChains) {
-        return _tokenDestChains[token];
+        bytes32[] memory raw = _tokenDestChains[token].values();
+        destChains = new bytes4[](raw.length);
+        for (uint256 i = 0; i < raw.length; i++) {
+            destChains[i] = bytes4(raw[i]);
+        }
     }
 
     /// @notice Get all registered tokens

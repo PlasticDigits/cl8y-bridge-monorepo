@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::bounded_cache::BoundedHashCache;
+
 use alloy::primitives::{Address, FixedBytes};
 use alloy::providers::ProviderBuilder;
 use eyre::{eyre, Result, WrapErr};
@@ -62,8 +64,8 @@ pub struct TerraWriter {
     /// Fee recipient for withdrawals
     #[allow(dead_code)]
     fee_recipient: String,
-    /// Pending approvals awaiting execution
-    pending_executions: HashMap<[u8; 32], PendingExecution>,
+    /// Pending approvals awaiting execution (bounded to prevent unbounded growth)
+    pending_executions: crate::bounded_cache::BoundedPendingCache<PendingExecution>,
     /// This chain's 4-byte chain ID (V2)
     #[allow(dead_code)]
     this_chain_id: ChainId,
@@ -71,8 +73,8 @@ pub struct TerraWriter {
     /// Maps V2 4-byte chain ID → (rpc_url, bridge_address).
     /// Includes all known EVM chains so we can verify deposits on any source.
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
-    /// Set of hashes we've already approved (avoid duplicate approvals)
-    approved_hashes: HashMap<[u8; 32], Instant>,
+    /// Set of hashes we've already approved (bounded to prevent unbounded growth)
+    approved_hashes: BoundedHashCache,
 }
 
 impl TerraWriter {
@@ -157,10 +159,19 @@ impl TerraWriter {
             db,
             cancel_window,
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
-            pending_executions: HashMap::new(),
+            pending_executions: {
+                let cc = crate::bounded_cache::CacheConfig::from_env();
+                crate::bounded_cache::BoundedPendingCache::new(
+                    cc.pending_execution_size,
+                    cc.ttl_secs,
+                )
+            },
             this_chain_id,
             source_chain_endpoints,
-            approved_hashes: HashMap::new(),
+            approved_hashes: {
+                let cc = crate::bounded_cache::CacheConfig::from_env();
+                BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
+            },
         })
     }
 
@@ -180,10 +191,6 @@ impl TerraWriter {
 
         // Then poll Terra for unapproved withdrawals and verify against EVM
         self.poll_and_approve().await?;
-
-        // Clean up old approved hashes (older than 1 hour)
-        let cutoff = Instant::now() - Duration::from_secs(3600);
-        self.approved_hashes.retain(|_, t| *t > cutoff);
 
         Ok(())
     }
@@ -503,7 +510,7 @@ impl TerraWriter {
                                 );
 
                                 // Remember we approved this hash
-                                self.approved_hashes.insert(hash_bytes, Instant::now());
+                                self.approved_hashes.insert(hash_bytes);
                             }
                             Err(e) => {
                                 warn!(
@@ -733,7 +740,7 @@ impl TerraWriter {
         let now = Instant::now();
         let mut to_remove = Vec::new();
 
-        for (hash, pending) in &self.pending_executions {
+        for (hash, pending) in self.pending_executions.iter() {
             let elapsed = now.duration_since(pending.approved_at);
 
             if elapsed.as_secs() >= pending.delay_seconds {

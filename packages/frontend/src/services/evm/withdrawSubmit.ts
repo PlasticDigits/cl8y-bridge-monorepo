@@ -24,7 +24,6 @@ export const WITHDRAW_SUBMIT_ABI = [
       { name: 'token', type: 'address' },
       { name: 'amount', type: 'uint256' },
       { name: 'nonce', type: 'uint64' },
-      { name: 'srcDecimals', type: 'uint8' },
     ],
     outputs: [],
   },
@@ -86,7 +85,6 @@ export interface WithdrawSubmitEvmParams {
   token: Address         // ERC20 token address on destination chain
   amount: bigint         // post-fee amount in destination token decimals
   nonce: bigint          // deposit nonce from source chain event
-  srcDecimals: number    // token decimals on source chain
   operatorGas?: bigint   // optional ETH tip for operator (msg.value)
 }
 
@@ -106,7 +104,6 @@ export function buildWithdrawSubmitArgs(params: WithdrawSubmitEvmParams) {
       params.token,
       params.amount,
       params.nonce,
-      params.srcDecimals,
     ] as const,
     value: params.operatorGas ?? 0n,
   }

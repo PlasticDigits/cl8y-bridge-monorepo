@@ -644,9 +644,9 @@ impl E2eSetup {
                     let _ = self.register_cross_chain(&deployed, &deployed2).await;
 
                     // Deploy and register test token on anvil1 with cross-chain mappings
-                    if let Some(primary_token) = deployed.test_token {
+                    if let Some(chain1_token) = deployed.test_token {
                         match self
-                            .deploy_and_register_test_token_evm2(&deployed2, primary_token)
+                            .deploy_and_register_test_token_evm2(&deployed2, chain1_token)
                             .await
                         {
                             Ok(Some(token2)) => {
@@ -654,7 +654,7 @@ impl E2eSetup {
                                     evm2.contracts.test_token = token2;
                                 }
                                 info!(
-                                    "Secondary chain test token deployed and registered: {}",
+                                    "EVM2 test token deployed and cross-chain mappings registered: {}",
                                     token2
                                 );
                             }

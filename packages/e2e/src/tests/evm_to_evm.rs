@@ -589,7 +589,6 @@ pub async fn test_real_evm1_to_evm2_transfer(
         dest_token,
         net_amount,
         deposit_nonce,
-        18, // ERC20 source decimals
     )
     .await
     {

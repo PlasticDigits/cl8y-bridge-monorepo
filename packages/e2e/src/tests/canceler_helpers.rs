@@ -117,8 +117,7 @@ pub async fn create_fraudulent_approval(
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
 
     // --- Step 1: withdrawSubmit ---
-    let submit_sel =
-        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
     let src_chain_bytes4 = &src_chain_key.as_slice()[..4];
     let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_bytes4.try_into().unwrap()));
     let src_account_hex = hex::encode(src_account_bytes);
@@ -126,10 +125,9 @@ pub async fn create_fraudulent_approval(
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount_u256);
     let nonce_padded = format!("{:064x}", nonce);
-    let src_decimals_padded = format!("{:064x}", 18u8); // ERC20 default 18 decimals
 
     let submit_data = format!(
-        "0x{}{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}",
         submit_sel,
         src_chain_padded,
         src_account_hex,
@@ -137,7 +135,6 @@ pub async fn create_fraudulent_approval(
         token_padded,
         amount_padded,
         nonce_padded,
-        src_decimals_padded
     );
 
     debug!(

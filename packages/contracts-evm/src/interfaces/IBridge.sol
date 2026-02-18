@@ -123,6 +123,7 @@ interface IBridge {
     error InvalidFeeRecipient();
     error WrappedNativeNotSet();
     error DestTokenMappingNotSet(address token, bytes4 destChain);
+    error SameChainTransfer(bytes4 chainId);
     error FeeTransferFailed();
     error OperatorGasTransferFailed();
     error WrongTokenType(address token, string expected);
@@ -162,15 +163,13 @@ interface IBridge {
     /// @param token Token address on this chain
     /// @param amount Amount to withdraw (in source chain decimals)
     /// @param nonce Deposit nonce from source chain
-    /// @param srcDecimals Token decimals on the source chain (for decimal normalization)
     function withdrawSubmit(
         bytes4 srcChain,
         bytes32 srcAccount,
         bytes32 destAccount,
         address token,
         uint256 amount,
-        uint64 nonce,
-        uint8 srcDecimals
+        uint64 nonce
     ) external payable;
 
     /// @notice Operator approves a pending withdrawal

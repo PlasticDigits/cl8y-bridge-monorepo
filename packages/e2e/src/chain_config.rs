@@ -783,6 +783,57 @@ async fn is_token_dest_chain_registered(
     Ok(dest_token != B256::ZERO)
 }
 
+/// Set an incoming token mapping on TokenRegistry
+///
+/// This tells the TokenRegistry what decimals a token has on the source chain,
+/// so `Bridge.withdrawSubmit` can look up `srcDecimals` without user input.
+///
+/// # Arguments
+/// * `token_registry` - Address of the TokenRegistry contract
+/// * `src_chain` - Source chain ID (bytes4)
+/// * `local_token` - Local token address on this chain
+/// * `src_decimals` - Token decimals on the source chain
+/// * `rpc_url` - EVM RPC URL
+/// * `private_key` - Private key for signing
+pub async fn set_incoming_token_mapping(
+    token_registry: Address,
+    src_chain: ChainId4,
+    local_token: Address,
+    src_decimals: u8,
+    rpc_url: &str,
+    private_key: &str,
+) -> Result<()> {
+    let src_chain_hex = format!("0x{}", hex::encode(src_chain));
+    info!(
+        "Setting incoming token mapping: src_chain={}, local_token={}, src_decimals={}",
+        src_chain_hex, local_token, src_decimals
+    );
+
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            &format!("{}", token_registry),
+            "setIncomingTokenMapping(bytes4,address,uint8)",
+            &src_chain_hex,
+            &format!("{}", local_token),
+            &src_decimals.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("Failed to set incoming token mapping: {}", stderr));
+    }
+
+    info!("Incoming token mapping set successfully");
+    Ok(())
+}
+
 /// Encode a Terra token (native denom or CW20 address) as bytes32
 ///
 /// Uses the unified encoding from multichain-rs to match the Terra contract's
@@ -857,6 +908,18 @@ pub async fn register_test_tokens(
         terra_chain_key,
         dest_token_encoded,
         6, // Terra token decimals
+        rpc_url,
+        &private_key,
+    )
+    .await?;
+
+    // Step 4: Set incoming token mapping so withdrawSubmit can look up srcDecimals
+    // Terra tokens have 6 decimals on the source chain
+    set_incoming_token_mapping(
+        token_registry,
+        terra_chain_key,
+        token,
+        6,
         rpc_url,
         &private_key,
     )

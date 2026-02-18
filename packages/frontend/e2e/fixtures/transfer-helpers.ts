@@ -50,7 +50,6 @@ export function withdrawSubmitViaCast(params: {
   token: string          // address
   amount: string         // uint256
   nonce: string          // uint64
-  srcDecimals: number    // uint8
 }): string {
   const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
   const cmd = [
@@ -59,14 +58,13 @@ export function withdrawSubmitViaCast(params: {
     `--private-key ${params.privateKey}`,
     '--confirmations 1',
     params.bridgeAddress,
-    '"withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)"',
+    '"withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)"',
     params.srcChain,
     params.srcAccount,
     params.destAccount,
     params.token,
     params.amount,
     params.nonce,
-    String(params.srcDecimals),
   ].join(' ')
 
   const result = execSync(cmd, { encoding: 'utf8', timeout: 30_000, env: castEnv })

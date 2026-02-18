@@ -115,7 +115,6 @@ test.describe('Round-Trip Transfer Verification', () => {
       token: token1A,
       amount: netAmount1,
       nonce: String(nonce1),
-      srcDecimals: 18,
     })
     console.log(`[round-trip] Leg 1 withdrawSubmit tx: ${wsTx1}`)
 
@@ -197,7 +196,6 @@ test.describe('Round-Trip Transfer Verification', () => {
       token: tokenA,
       amount: netAmount2,
       nonce: String(nonce2),
-      srcDecimals: 18,
     })
     console.log(`[round-trip] Leg 2 withdrawSubmit tx: ${wsTx2}`)
 

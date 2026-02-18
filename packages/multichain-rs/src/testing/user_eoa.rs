@@ -257,7 +257,7 @@ impl EvmUser {
 
     /// Submit a withdrawal on the destination EVM chain
     ///
-    /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce, srcDecimals)`
+    /// Calls `bridge.withdrawSubmit(srcChain, srcAccount, destAccount, token, amount, nonce)`
     /// with operator gas payment.
     #[allow(clippy::too_many_arguments)]
     pub async fn withdraw_submit(
@@ -272,7 +272,6 @@ impl EvmUser {
         amount: U256,
         nonce: u64,
         operator_gas: U256,
-        src_decimals: u8,
     ) -> Result<FixedBytes<32>> {
         use crate::evm::contracts::Bridge;
 
@@ -287,7 +286,6 @@ impl EvmUser {
                 token_address,
                 amount,
                 nonce,
-                src_decimals,
             )
             .value(operator_gas);
 

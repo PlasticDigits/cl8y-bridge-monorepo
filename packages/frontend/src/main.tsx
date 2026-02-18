@@ -5,7 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { WagmiProvider } from 'wagmi'
 import { config } from './lib/wagmi'
 import { Layout } from './components/Layout'
+import { validateEnv } from './utils/validateEnv'
 import './index.css'
+
+validateEnv()
 
 const queryClient = new QueryClient()
 

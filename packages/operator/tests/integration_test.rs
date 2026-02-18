@@ -526,9 +526,8 @@ async fn test_withdraw_function_signature() {
     // This is used by E2E tests and the operator's sol! bindings.
     //
     // Bridge.sol: withdrawSubmit(bytes4 srcChain, bytes32 srcAccount,
-    //   bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals)
-    let func_sig =
-        keccak256(b"withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    //   bytes32 destAccount, address token, uint256 amount, uint64 nonce)
+    let func_sig = keccak256(b"withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
     let selector = &func_sig[..4];
     println!("withdrawSubmit selector: 0x{}", hex::encode(selector));
     assert_ne!(selector, &[0u8; 4]);

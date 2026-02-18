@@ -288,64 +288,19 @@ impl E2eSetup {
             Err(e) => warn!("Failed to register token for Terra destination: {}", e),
         }
 
-        // ================================================================
-        // Register for EVM destination chain (for EVM-to-EVM transfers)
-        // ================================================================
-        // The EVM chain is already registered during deployment (DeployLocal.s.sol)
-        // with predetermined ID 0x00000001. We just look it up here.
-        let evm_chain_id = self.config.evm.chain_id;
-        let evm_predetermined_id = ChainId4::from_slice(&1u32.to_be_bytes());
-        info!(
-            "Registering EVM chain key for chain ID {} (for EVM-to-EVM transfers)",
-            evm_chain_id
-        );
-
-        match chain_config::register_evm_chain_key(
-            deployed.chain_registry,
-            evm_chain_id,
-            evm_predetermined_id,
+        // Set incoming token mapping for Terra→EVM withdrawals (Terra uses 6 decimals)
+        match chain_config::set_incoming_token_mapping(
+            deployed.token_registry,
+            terra_chain_key,
+            token,
+            6,
             rpc_url,
             &private_key,
         )
         .await
         {
-            Ok(evm_chain_key) => {
-                info!(
-                    "EVM chain registered with ID: 0x{}",
-                    hex::encode(evm_chain_key)
-                );
-
-                // For EVM-to-EVM, the destination token is the same token address
-                // Encode as bytes32 (left-padded with zeros)
-                let mut dest_token_evm = [0u8; 32];
-                dest_token_evm[12..32].copy_from_slice(token.as_slice());
-                let dest_token_evm_b256 = B256::from_slice(&dest_token_evm);
-
-                // Add destination chain key for EVM (decimals are 18 for ERC20)
-                match chain_config::add_token_dest_chain_key(
-                    deployed.token_registry,
-                    token,
-                    evm_chain_key,
-                    dest_token_evm_b256,
-                    18,
-                    rpc_url,
-                    &private_key,
-                )
-                .await
-                {
-                    Ok(()) => info!(
-                        "Test token registered for EVM destination (chain_id=0x{}, evm_chain_id={})",
-                        hex::encode(evm_chain_key), evm_chain_id
-                    ),
-                    Err(e) => warn!("Failed to register token for EVM destination: {}", e),
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to register EVM chain key for chain {}: {}",
-                    evm_chain_id, e
-                );
-            }
+            Ok(()) => info!("Incoming token mapping set for Terra source"),
+            Err(e) => warn!("Failed to set incoming token mapping for Terra: {}", e),
         }
 
         info!("Test token registration complete");
@@ -533,7 +488,7 @@ impl E2eSetup {
     pub async fn deploy_and_register_test_token_evm2(
         &self,
         deployed2: &DeployedContracts,
-        primary_test_token: Address,
+        chain1_test_token: Address,
     ) -> Result<Option<Address>> {
         let evm2 = self
             .config
@@ -579,13 +534,24 @@ impl E2eSetup {
         // Add destination for chain1 (token maps to chain1 test token)
         let chain1_id = ChainId4::from_slice(&self.config.evm.v2_chain_id.to_be_bytes());
         let mut dest_token = [0u8; 32];
-        dest_token[12..32].copy_from_slice(primary_test_token.as_slice());
+        dest_token[12..32].copy_from_slice(chain1_test_token.as_slice());
 
         chain_config::add_token_dest_chain_key(
             deployed2.token_registry,
             token2,
             chain1_id,
             B256::from_slice(&dest_token),
+            18,
+            rpc2,
+            &private_key,
+        )
+        .await?;
+
+        // Set incoming mapping on chain2: tokens arriving from chain1 have 18 decimals
+        chain_config::set_incoming_token_mapping(
+            deployed2.token_registry,
+            chain1_id,
+            token2,
             18,
             rpc2,
             &private_key,
@@ -600,7 +566,7 @@ impl E2eSetup {
 
         chain_config::add_token_dest_chain_key(
             self.config.evm.contracts.token_registry,
-            primary_test_token,
+            chain1_test_token,
             chain2_id,
             B256::from_slice(&dest_token2),
             18,
@@ -609,7 +575,18 @@ impl E2eSetup {
         )
         .await?;
 
-        info!("Cross-chain token mappings registered between chain1 and chain2");
+        // Set incoming mapping on chain1: tokens arriving from chain2 have 18 decimals
+        chain_config::set_incoming_token_mapping(
+            self.config.evm.contracts.token_registry,
+            chain2_id,
+            chain1_test_token,
+            18,
+            rpc1,
+            &private_key,
+        )
+        .await?;
+
+        info!("Bidirectional EVM1↔EVM2 token mappings registered");
         Ok(Some(token2))
     }
 

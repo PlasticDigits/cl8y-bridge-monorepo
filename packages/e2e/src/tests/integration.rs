@@ -78,7 +78,7 @@ pub async fn test_fraud_detection_full(
     // Use registered Terra chain ID — fraud is in the nonce (no matching deposit)
     let fake_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]); // Terra (cross-chain source)
         bytes
     });
 

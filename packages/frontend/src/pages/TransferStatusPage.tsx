@@ -527,7 +527,6 @@ export default function TransferStatusPage() {
           token,
           amount: fixParams.amount,
           nonce: fixParams.nonce,
-          srcDecimals: 18,
         })
 
         if (txHash && transfer.id) {

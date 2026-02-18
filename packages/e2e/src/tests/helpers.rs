@@ -539,7 +539,7 @@ pub struct FraudulentApprovalResult {
 /// Create a fraudulent approval on the bridge (2-step: withdrawSubmit + withdrawApprove)
 ///
 /// This creates an approval that has no matching deposit (fraud scenario).
-/// Step 1: withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8) - creates pending withdrawal
+/// Step 1: withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64) - creates pending withdrawal
 /// Step 2: withdrawApprove(bytes32) - operator approves it
 ///
 /// IMPORTANT: `src_chain_key` must have a registered bytes4 chain ID in the first 4 bytes,
@@ -571,8 +571,7 @@ pub(crate) async fn create_fraudulent_approval(
     let amount_u256: u128 = amount.parse().unwrap_or(1234567890123456789);
 
     // --- Step 1: withdrawSubmit ---
-    let submit_sel =
-        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    let submit_sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
 
     // srcChain is the first 4 bytes of src_chain_key, ABI-encoded as bytes4 (left-aligned in 32 bytes)
     let src_chain_bytes4 = &src_chain_key.as_slice()[..4];
@@ -582,10 +581,9 @@ pub(crate) async fn create_fraudulent_approval(
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount_u256);
     let nonce_padded = format!("{:064x}", nonce);
-    let src_decimals_padded = format!("{:064x}", 18u8); // ERC20 default 18 decimals
 
     let submit_data = format!(
-        "0x{}{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}",
         submit_sel,
         src_chain_padded,
         src_account_hex,
@@ -593,7 +591,6 @@ pub(crate) async fn create_fraudulent_approval(
         token_padded,
         amount_padded,
         nonce_padded,
-        src_decimals_padded
     );
 
     debug!(

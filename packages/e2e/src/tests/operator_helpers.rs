@@ -757,17 +757,22 @@ pub async fn poll_terra_for_approval(
 
 /// Query cancel window (formerly "withdraw delay") from bridge contract
 pub async fn query_cancel_window(config: &E2eConfig) -> Result<u64> {
+    query_cancel_window_on_chain(config.evm.rpc_url.as_str(), config.evm.contracts.bridge).await
+}
+
+/// Query cancel window from a specific chain's bridge contract
+pub async fn query_cancel_window_on_chain(rpc_url: &str, bridge: Address) -> Result<u64> {
     let client = reqwest::Client::new();
 
     let call_data = format!("0x{}", selector("getCancelWindow()"));
 
     let response = client
-        .post(config.evm.rpc_url.as_str())
+        .post(rpc_url)
         .json(&serde_json::json!({
             "jsonrpc": "2.0",
             "method": "eth_call",
             "params": [{
-                "to": format!("{}", config.evm.contracts.bridge),
+                "to": format!("{}", bridge),
                 "data": call_data
             }, "latest"],
             "id": 1
@@ -974,18 +979,17 @@ pub async fn submit_withdraw_on_evm(
 ) -> Result<B256> {
     let client = reqwest::Client::new();
 
-    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals)
-    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce)
+    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
     let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_id));
     let src_account_hex = hex::encode(src_account);
     let dest_account_hex = hex::encode(dest_account);
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount);
     let nonce_padded = format!("{:064x}", nonce);
-    let src_decimals_padded = format!("{:064x}", 18u8); // ERC20 default 18 decimals
 
     let call_data = format!(
-        "0x{}{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}",
         sel,
         src_chain_padded,
         src_account_hex,
@@ -993,7 +997,6 @@ pub async fn submit_withdraw_on_evm(
         token_padded,
         amount_padded,
         nonce_padded,
-        src_decimals_padded
     );
 
     info!(
@@ -1063,7 +1066,6 @@ pub async fn submit_withdraw_on_evm(
 /// * `token` - Token address on destination chain
 /// * `amount` - Post-fee amount
 /// * `nonce` - Deposit nonce
-/// * `src_decimals` - Token decimals on the source chain (default 18 for ERC20)
 pub async fn submit_withdraw_on_chain(
     rpc_url: &str,
     bridge_address: Address,
@@ -1074,22 +1076,20 @@ pub async fn submit_withdraw_on_chain(
     token: Address,
     amount: u128,
     nonce: u64,
-    src_decimals: u8,
 ) -> Result<B256> {
     let client = reqwest::Client::new();
 
-    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce, uint8 srcDecimals)
-    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)");
+    // withdrawSubmit(bytes4 srcChain, bytes32 srcAccount, bytes32 destAccount, address token, uint256 amount, uint64 nonce)
+    let sel = selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)");
     let src_chain_padded = hex::encode(chain_id4_to_bytes32(src_chain_id));
     let src_account_hex = hex::encode(src_account);
     let dest_account_hex = hex::encode(dest_account);
     let token_padded = format!("{:0>64}", hex::encode(token.as_slice()));
     let amount_padded = format!("{:064x}", amount);
     let nonce_padded = format!("{:064x}", nonce);
-    let src_decimals_padded = format!("{:064x}", src_decimals);
 
     let call_data = format!(
-        "0x{}{}{}{}{}{}{}{}",
+        "0x{}{}{}{}{}{}{}",
         sel,
         src_chain_padded,
         src_account_hex,
@@ -1097,7 +1097,6 @@ pub async fn submit_withdraw_on_chain(
         token_padded,
         amount_padded,
         nonce_padded,
-        src_decimals_padded
     );
 
     info!(

@@ -425,21 +425,25 @@ pub async fn poll_for_withdrawal_ready(
 /// * `config` - E2E configuration
 /// * `extra_seconds` - Extra seconds to add beyond the delay
 pub async fn skip_withdrawal_delay(config: &E2eConfig, extra_seconds: u64) -> Result<()> {
-    let anvil = AnvilTimeClient::new(config.evm.rpc_url.as_str());
-
-    // Query the actual cancel window from contract
     let delay = query_cancel_window_seconds(config)
         .await
         .unwrap_or(DEFAULT_WITHDRAW_DELAY);
+    skip_withdrawal_delay_on_chain(config.evm.rpc_url.as_str(), delay, extra_seconds).await
+}
 
-    let skip_time = delay + extra_seconds;
+/// Skip time on a specific Anvil chain to pass the cancel window
+pub async fn skip_withdrawal_delay_on_chain(
+    rpc_url: &str,
+    cancel_window_secs: u64,
+    extra_seconds: u64,
+) -> Result<()> {
+    let anvil = AnvilTimeClient::new(rpc_url);
+    let skip_time = cancel_window_secs + extra_seconds;
     info!(
         "Skipping {} seconds on Anvil (delay={}, extra={})",
-        skip_time, delay, extra_seconds
+        skip_time, cancel_window_secs, extra_seconds
     );
-
     anvil.increase_time(skip_time).await?;
-
     Ok(())
 }
 
@@ -1059,23 +1063,36 @@ async fn query_cancel_window_seconds(config: &E2eConfig) -> Result<u64> {
 ///
 /// NOTE: V1 used `Withdraw(bytes32,address,address,uint256)` which no longer exists.
 pub async fn verify_withdrawal_executed(config: &E2eConfig, xchain_hash_id: B256) -> Result<bool> {
+    verify_withdrawal_executed_on_chain(
+        config.evm.rpc_url.as_str(),
+        config.evm.contracts.bridge,
+        xchain_hash_id,
+    )
+    .await
+}
+
+/// Verify a withdrawal was executed on a specific chain's bridge
+pub async fn verify_withdrawal_executed_on_chain(
+    rpc_url: &str,
+    bridge_address: Address,
+    xchain_hash_id: B256,
+) -> Result<bool> {
     let client = reqwest::Client::new();
 
-    // V2 WithdrawExecute event topic
     let withdraw_topic = "0x".to_string()
         + &hex::encode(alloy::primitives::keccak256(
             b"WithdrawExecute(bytes32,address,uint256)",
         ));
 
     let response = client
-        .post(config.evm.rpc_url.as_str())
+        .post(rpc_url)
         .json(&serde_json::json!({
             "jsonrpc": "2.0",
             "method": "eth_getLogs",
             "params": [{
                 "fromBlock": "0x0",
                 "toBlock": "latest",
-                "address": format!("{}", config.evm.contracts.bridge),
+                "address": format!("{}", bridge_address),
                 "topics": [withdraw_topic, format!("0x{}", hex::encode(xchain_hash_id))]
             }],
             "id": 1
@@ -1104,6 +1121,15 @@ pub async fn get_erc20_balance(
     token: Address,
     account: Address,
 ) -> Result<U256> {
+    get_erc20_balance_on_chain(config.evm.rpc_url.as_str(), token, account).await
+}
+
+/// Get ERC20 balance for an account on a specific chain
+pub async fn get_erc20_balance_on_chain(
+    rpc_url: &str,
+    token: Address,
+    account: Address,
+) -> Result<U256> {
     let client = reqwest::Client::new();
 
     let sel = selector("balanceOf(address)");
@@ -1111,7 +1137,7 @@ pub async fn get_erc20_balance(
     let call_data = format!("0x{}{}", sel, account_padded);
 
     let response = client
-        .post(config.evm.rpc_url.as_str())
+        .post(rpc_url)
         .json(&serde_json::json!({
             "jsonrpc": "2.0",
             "method": "eth_call",

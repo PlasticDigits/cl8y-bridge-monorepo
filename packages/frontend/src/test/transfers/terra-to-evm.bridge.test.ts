@@ -202,7 +202,6 @@ describe('Terra → EVM Bridge Transfer', () => {
         token: tokenA,
         amount,
         nonce: String(nonce),
-        srcDecimals: 6,
       })
       console.log(`[test] WithdrawSubmit tx: ${wsTxHash}`)
     } else {

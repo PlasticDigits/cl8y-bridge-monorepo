@@ -1,5 +1,6 @@
 pub mod address_codec;
 mod api;
+mod bounded_cache;
 mod config;
 mod confirmation;
 mod contracts;

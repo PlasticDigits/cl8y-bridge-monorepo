@@ -186,7 +186,6 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       token: token1A,
       amount,
       nonce: String(nonce),
-      srcDecimals: 18,
     })
     console.log(`[test] WithdrawSubmit tx on anvil1: ${wsTxHash}`)
 

@@ -287,7 +287,6 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           token: destTokenAddress,
           amount: BigInt(transfer.amount || '0'),
           nonce: BigInt(transfer.depositNonce || 0),
-          srcDecimals: transfer.srcDecimals || 6,
         })
 
         if (txHash) {

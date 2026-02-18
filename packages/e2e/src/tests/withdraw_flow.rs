@@ -88,18 +88,17 @@ async fn execute_withdraw_submit(
 ) -> eyre::Result<B256> {
     use super::helpers::chain_id4_to_bytes32;
     let params = format!(
-        "{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}",
         hex::encode(chain_id4_to_bytes32(src_chain)),
         hex::encode(src_account),
         hex::encode(dest_account),
         format!("{:0>64}", hex::encode(token.as_slice())),
         format!("{:064x}", amount),
         format!("{:064x}", nonce),
-        format!("{:064x}", 18u8) // srcDecimals: ERC20 default 18
     );
     let sel = format!(
         "0x{}",
-        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64,uint8)")
+        selector("withdrawSubmit(bytes4,bytes32,bytes32,address,uint256,uint64)")
     );
     execute_withdraw_op(config, &sel, None, Some(&params), Some(operator_gas)).await
 }

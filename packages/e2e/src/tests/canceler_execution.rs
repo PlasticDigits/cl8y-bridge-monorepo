@@ -13,7 +13,7 @@ use crate::evm::AnvilTimeClient;
 use crate::services::{find_project_root, ServiceManager};
 use crate::transfer_helpers::skip_withdrawal_delay;
 use crate::{E2eConfig, TestResult};
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -84,10 +84,10 @@ pub async fn test_canceler_live_fraud_detection(config: &E2eConfig) -> TestResul
     let fraud_nonce = generate_unique_nonce();
     let fraud_amount = "1234567890123456789";
 
-    // Use registered Terra chain ID (0x00000001) — fraud is in the nonce (no matching deposit)
+    // Use Terra chain ID (0x00000002) as source — must be cross-chain (not thisChainId)
     let fraud_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]);
         bytes
     });
 
@@ -212,7 +212,7 @@ pub async fn test_cancelled_approval_blocks_withdrawal(config: &E2eConfig) -> Te
     let test_nonce = generate_unique_nonce();
     let test_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]); // Terra (cross-chain source)
         bytes
     });
 
@@ -299,10 +299,10 @@ pub async fn test_canceler_concurrent_fraud_handling(config: &E2eConfig) -> Test
     let num_frauds = 5;
     let mut fraud_results: Vec<FraudulentApprovalResult> = Vec::new();
 
-    // Use registered chain and token for all concurrent frauds
+    // Use Terra (0x00000002) as cross-chain source for fraud submissions
     let fraud_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]);
         bytes
     });
     let fraud_token = config.evm.contracts.test_token;
@@ -374,10 +374,10 @@ pub async fn test_canceler_restart_fraud_detection(config: &E2eConfig) -> TestRe
     }
 
     let fraud_nonce = generate_unique_nonce();
-    // Use registered chain and token — fraud is in the nonce
+    // Use Terra (0x00000002) as cross-chain source — fraud is in the nonce
     let fraud_src_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered Terra chain
+        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]);
         bytes
     });
 
@@ -435,15 +435,23 @@ pub async fn test_canceler_evm_source_fraud_detection(config: &E2eConfig) -> Tes
         return TestResult::skip(name, "Canceler service is not running");
     }
 
-    // Use registered EVM chain ID (0x00000001) — the bytes4 ID from ChainRegistry
-    // EVM = 0x00000001, Terra = 0x00000002 in local setup
+    // Use EVM2 chain ID (0x00000003) as source — must be a different chain than thisChainId
+    let evm2 = match &config.evm2 {
+        Some(c) if c.contracts.bridge != Address::ZERO => c,
+        _ => {
+            return TestResult::skip(
+                name,
+                "EVM2 not configured — required for EVM-source fraud test",
+            )
+        }
+    };
     let evm_chain_key = B256::from_slice(&{
         let mut bytes = [0u8; 32];
-        bytes[0..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]); // registered EVM chain
+        bytes[0..4].copy_from_slice(&evm2.v2_chain_id.to_be_bytes());
         bytes
     });
     info!(
-        "Using registered EVM chain key: 0x{}",
+        "Using EVM2 chain key as source: 0x{}",
         hex::encode(&evm_chain_key.as_slice()[..4])
     );
 
