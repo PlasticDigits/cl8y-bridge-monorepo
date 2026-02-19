@@ -742,7 +742,9 @@ export function TransferForm() {
         let xchainHashId: string | undefined = parsed?.xchainHashId
         if (!xchainHashId && depositNonce !== undefined && destChainConfig?.bytes4ChainId) {
           try {
-            const srcChainB32 = chainIdToBytes32(2)
+            const srcChainCfg = chains[frozenSource]
+            const srcChainIdNum = parseInt(frozen?.sourceChainIdBytes4?.slice(2) ?? srcChainCfg?.bytes4ChainId?.slice(2) ?? '1', 16)
+            const srcChainB32 = chainIdToBytes32(srcChainIdNum)
             const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
             const destChainB32 = chainIdToBytes32(destChainIdNum)
             const srcAccB32 = (srcAccountHex?.startsWith('0x') && srcAccountHex.length === 66)
@@ -801,7 +803,7 @@ export function TransferForm() {
           destToken: destTokenB32,
           srcDecimals: terraDecimals,
           destBridgeAddress: destChainConfig?.bridgeAddress,
-          sourceChainIdBytes4: '0x00000002',
+          sourceChainIdBytes4: frozen?.sourceChainIdBytes4 ?? chains[frozenSource]?.bytes4ChainId,
         })
 
         // Clear frozen state after recording

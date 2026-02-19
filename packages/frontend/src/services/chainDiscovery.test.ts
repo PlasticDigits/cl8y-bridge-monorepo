@@ -42,7 +42,7 @@ describe('chainDiscovery', () => {
   })
 
   it('should resolve chain by bytes4 using static lookup', async () => {
-    // V2 chain ID 0x00000001 maps to 'ethereum' in WELL_KNOWN or 'Anvil' in local config
+    // V2 chain ID 0x00000001 maps to 'terra' in WELL_KNOWN or 'Anvil' in local config
     const chain = await resolveChainByBytes4('0x00000001')
     expect(chain).toBeDefined()
   })
@@ -56,6 +56,6 @@ describe('chainDiscovery', () => {
     const map = await buildChainIdMap()
     expect(map.size).toBeGreaterThan(0)
     // Should include well-known chains (V2 IDs)
-    expect(map.get('0x00000001')).toBeDefined() // ethereum/anvil
+    expect(map.get('0x00000001')).toBeDefined() // terra/anvil
   })
 })

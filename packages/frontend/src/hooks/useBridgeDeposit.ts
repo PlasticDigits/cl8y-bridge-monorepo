@@ -22,6 +22,7 @@ import {
 import { createPublicClient, http, parseUnits, pad, type Address, type Hex } from 'viem'
 import { DECIMALS } from '../utils/constants'
 import { terraAddressToBytes32 } from '../services/hashVerification'
+import { getCosmosBridgeChains } from '../utils/bridgeChains'
 
 // Configuration
 const TRANSACTION_TIMEOUT_MS = 120_000 // 2 minutes default timeout
@@ -144,11 +145,16 @@ export function encodeTerraAddress(terraAddress: string): Hex {
 }
 
 /**
- * Compute the destination chain bytes4 for a Terra chain.
- * Terra Classic uses a fixed chain ID of 2 in the bridge protocol.
+ * Compute the bytes4 V2 chain ID for the configured Terra/Cosmos chain.
+ * Reads the bytes4ChainId from the current network tier's Cosmos chain config.
  */
 export function computeTerraChainBytes4(): Hex {
-  return '0x00000002' as Hex
+  const cosmosChains = getCosmosBridgeChains()
+  const terra = cosmosChains[0]
+  if (terra?.bytes4ChainId) {
+    return terra.bytes4ChainId as Hex
+  }
+  throw new Error('No Cosmos bridge chain configured with a bytes4ChainId')
 }
 
 /**
