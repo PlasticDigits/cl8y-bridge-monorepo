@@ -126,6 +126,15 @@ pub fn execute_withdraw_submit(
         });
     }
 
+    // Reject if this (src_chain, nonce) pair was already approved
+    let nonce_key = (src_chain_bytes.as_slice(), nonce);
+    if WITHDRAW_NONCE_USED
+        .may_load(deps.storage, nonce_key)?
+        .unwrap_or(false)
+    {
+        return Err(ContractError::NonceAlreadyApproved { nonce });
+    }
+
     // Compute withdraw hash (same hash format as the deposit on source chain)
     let xchain_hash_id = compute_xchain_hash_id(
         &src_chain_bytes,
@@ -213,13 +222,23 @@ pub fn execute_withdraw_approve(
         return Err(ContractError::WithdrawAlreadyApproved);
     }
 
+    // Reject if this (src_chain, nonce) pair was already approved for a different hash
+    let nonce_key = (pending.src_chain.as_slice(), pending.nonce);
+    if WITHDRAW_NONCE_USED
+        .may_load(deps.storage, nonce_key)?
+        .unwrap_or(false)
+    {
+        return Err(ContractError::NonceAlreadyApproved {
+            nonce: pending.nonce,
+        });
+    }
+
     // Approve and start cancel window
     pending.approved = true;
     pending.approved_at = env.block.time.seconds();
     PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
 
     // Mark nonce as used for source chain
-    let nonce_key = (pending.src_chain.as_slice(), pending.nonce);
     WITHDRAW_NONCE_USED.save(deps.storage, nonce_key, &true)?;
 
     // Forward all operator funds to the approving operator

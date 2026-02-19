@@ -128,6 +128,7 @@ interface IBridge {
     error OperatorGasTransferFailed();
     error WrongTokenType(address token, string expected);
     error RecoveryTransferFailed();
+    error WithdrawNonceAlreadyUsed(bytes4 srcChain, uint64 nonce);
 
     // ============================================================================
     // Deposit Methods

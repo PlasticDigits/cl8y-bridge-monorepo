@@ -22,7 +22,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
-use crate::bounded_cache::BoundedHashCache;
+use crate::bounded_cache::{BoundedHashCache, BoundedMapCache};
 
 use alloy::primitives::{Address, FixedBytes};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -124,6 +124,10 @@ pub struct CancelerWatcher {
     evm_precheck_consecutive_failures: AtomicU32,
     /// C4: Circuit breaker open — skip EVM cancel attempts until next success
     evm_precheck_circuit_open: AtomicBool,
+    /// C12: Bounded retry queue for approvals whose verification returned Pending.
+    /// Without this, EVM approvals that fail verification transiently are lost forever
+    /// because the block pointer advances past the event.
+    pending_retry_queue: BoundedMapCache<PendingApproval>,
 }
 
 impl CancelerWatcher {
@@ -240,6 +244,10 @@ impl CancelerWatcher {
             metrics,
             evm_precheck_consecutive_failures: AtomicU32::new(0),
             evm_precheck_circuit_open: AtomicBool::new(false),
+            pending_retry_queue: BoundedMapCache::new(
+                config.pending_retry_max_size,
+                config.pending_retry_ttl_secs,
+            ),
         })
     }
 
@@ -389,6 +397,10 @@ impl CancelerWatcher {
     async fn poll_approvals(&mut self) -> Result<()> {
         debug!("Polling for new approvals...");
 
+        // C12: Retry approvals that previously returned Pending before polling
+        // for new events, so transient RPC failures don't cause permanent misses.
+        self.retry_pending_approvals().await;
+
         // Poll the configured base EVM bridge for approvals.
         self.poll_evm_approvals().await?;
 
@@ -413,7 +425,45 @@ impl CancelerWatcher {
             .unknown_source_chain_total
             .set(self.verifier.unknown_source_chain_count() as i64);
 
+        // C12: Update retry queue size metric
+        self.metrics
+            .pending_retry_queue_size
+            .set(self.pending_retry_queue.len() as i64);
+
         Ok(())
+    }
+
+    /// C12: Re-verify approvals that previously returned Pending.
+    ///
+    /// Drains the bounded retry queue and calls `verify_and_cancel` for each.
+    /// Items that are still Pending will be re-inserted by `verify_and_cancel`.
+    /// Items that resolve as Valid/Invalid are consumed normally (added to
+    /// verified/cancelled caches). Items that error are re-inserted to avoid loss.
+    async fn retry_pending_approvals(&mut self) {
+        let pending = self.pending_retry_queue.take_all();
+        if pending.is_empty() {
+            return;
+        }
+
+        info!(
+            count = pending.len(),
+            "Retrying pending approvals from retry queue (C12)"
+        );
+
+        for approval in pending {
+            match self.verify_and_cancel(&approval).await {
+                Ok(()) => {}
+                Err(e) => {
+                    error!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        "Error retrying pending approval — re-queuing"
+                    );
+                    self.pending_retry_queue
+                        .insert(approval.xchain_hash_id, approval);
+                }
+            }
+        }
     }
 
     /// Poll EVM bridge for pending approvals (V2)
@@ -458,6 +508,7 @@ impl CancelerWatcher {
             self.last_evm_block = 0;
             self.verified_hashes.clear();
             self.cancelled_hashes.clear();
+            self.pending_retry_queue.clear();
         }
 
         // Don't query if no new blocks
@@ -1103,6 +1154,7 @@ impl CancelerWatcher {
                     nonce = approval.nonce,
                     "Approval verified as VALID — deposit found on source chain"
                 );
+                self.pending_retry_queue.remove(&approval.xchain_hash_id);
                 self.verified_hashes.insert(approval.xchain_hash_id);
                 self.maybe_warn_dedupe_capacity("verified");
 
@@ -1121,6 +1173,7 @@ impl CancelerWatcher {
                     src_chain = %hex::encode(approval.src_chain_id),
                     "FRAUD DETECTED — Approval is INVALID, submitting cancellation"
                 );
+                self.pending_retry_queue.remove(&approval.xchain_hash_id);
 
                 // Update stats and metrics for invalid detection
                 {
@@ -1149,9 +1202,13 @@ impl CancelerWatcher {
                 }
             }
             VerificationResult::Pending => {
+                self.pending_retry_queue
+                    .insert(approval.xchain_hash_id, approval.clone());
+                self.maybe_warn_dedupe_capacity("pending_retry");
                 debug!(
                     hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                    "Verification pending - will retry"
+                    retry_queue_size = self.pending_retry_queue.len(),
+                    "Verification pending — queued for retry (C12)"
                 );
             }
         }
@@ -1355,6 +1412,7 @@ impl CancelerWatcher {
         let (len, max) = match which {
             "verified" => self.verified_hashes.capacity_info(),
             "cancelled" => self.cancelled_hashes.capacity_info(),
+            "pending_retry" => self.pending_retry_queue.capacity_info(),
             _ => return,
         };
         if max > 0 && len * 100 / max >= 80 {
@@ -1362,7 +1420,7 @@ impl CancelerWatcher {
                 cache = %which,
                 len,
                 max,
-                "Dedupe cache at or above 80% capacity"
+                "Cache at or above 80% capacity"
             );
         }
     }

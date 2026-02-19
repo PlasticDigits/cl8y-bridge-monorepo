@@ -52,6 +52,8 @@ pub struct Metrics {
     pub terra_unprocessed_approvals: IntGauge,
     /// C6: Approvals with unrecognized source chain (indicates misconfiguration)
     pub unknown_source_chain_total: IntGauge,
+    /// C12: Current entries in the pending-approval retry queue
+    pub pending_retry_queue_size: IntGauge,
     pub registry: Registry,
 }
 
@@ -131,6 +133,12 @@ impl Metrics {
         )
         .expect("constant metric name is valid");
 
+        let pending_retry_queue_size = IntGauge::new(
+            "canceler_pending_retry_queue_size",
+            "Approvals awaiting verification retry (C12)",
+        )
+        .expect("constant metric name is valid");
+
         // Register all metrics — expect is safe here because names are unique
         // constants and registration is called exactly once at startup
         registry
@@ -166,6 +174,9 @@ impl Metrics {
         registry
             .register(Box::new(unknown_source_chain_total.clone()))
             .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(pending_retry_queue_size.clone()))
+            .expect("metric registration must not be called twice");
 
         Self {
             verified_valid_total,
@@ -179,6 +190,7 @@ impl Metrics {
             terra_pending_queue_depth,
             terra_unprocessed_approvals,
             unknown_source_chain_total,
+            pending_retry_queue_size,
             registry,
         }
     }

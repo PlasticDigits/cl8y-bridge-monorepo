@@ -68,6 +68,14 @@ pub struct Config {
     /// Consecutive pre-check failures before circuit breaker opens (default 10)
     pub evm_precheck_circuit_breaker_threshold: u32,
 
+    /// C12: Max entries in the pending-approval retry queue (default 10_000).
+    /// Each entry is ~200 bytes, so 10 000 entries ≈ 2.5 MB.
+    pub pending_retry_max_size: usize,
+    /// C12: Seconds before a pending retry entry is evicted (default 7200 = 2 hours).
+    /// Should be well above the longest cancel window to avoid dropping approvals
+    /// that are still within their cancel window.
+    pub pending_retry_ttl_secs: u64,
+
     /// Optional multi-EVM chain configuration for cross-EVM fraud detection.
     /// When set, the canceler monitors all configured EVM chains for approvals
     /// and can verify deposits on any known source chain.
@@ -105,6 +113,8 @@ impl fmt::Debug for Config {
                 "evm_precheck_circuit_breaker_threshold",
                 &self.evm_precheck_circuit_breaker_threshold,
             )
+            .field("pending_retry_max_size", &self.pending_retry_max_size)
+            .field("pending_retry_ttl_secs", &self.pending_retry_ttl_secs)
             .field("multi_evm", &self.multi_evm)
             .finish()
     }
@@ -267,6 +277,15 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(10),
+
+            pending_retry_max_size: env::var("PENDING_RETRY_MAX_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10_000),
+            pending_retry_ttl_secs: env::var("PENDING_RETRY_TTL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(7200),
 
             multi_evm,
         })

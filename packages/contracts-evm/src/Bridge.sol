@@ -110,8 +110,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Guard bridge for deposit/withdraw checks (address(0) = disabled)
     address public guardBridge;
 
+    /// @notice Tracks whether a withdrawal nonce has been approved for a given source chain
+    mapping(bytes4 srcChain => mapping(uint64 nonce => bool used)) public withdrawNonceUsed;
+
     /// @notice Reserved storage slots for future upgrades
-    uint256[37] private __gap;
+    uint256[36] private __gap;
 
     // ============================================================================
     // Modifiers
@@ -622,6 +625,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (!chainRegistry.isChainRegistered(srcChain)) revert ChainNotRegistered(srcChain);
         if (!tokenRegistry.isTokenRegistered(token)) revert TokenNotRegistered(token);
 
+        // Reject if this (srcChain, nonce) pair was already approved
+        if (withdrawNonceUsed[srcChain][nonce]) {
+            revert WithdrawNonceAlreadyUsed(srcChain, nonce);
+        }
+
         // Look up source chain decimals from TokenRegistry (reverts if not mapped)
         uint8 srcDecimals = tokenRegistry.getSrcTokenDecimals(srcChain, token);
 
@@ -671,6 +679,12 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (w.submittedAt == 0) revert WithdrawNotFound(xchainHashId);
         if (w.executed) revert WithdrawAlreadyExecuted(xchainHashId);
         if (w.approved) revert WithdrawAlreadyExecuted(xchainHashId); // Already approved
+
+        // Reject if this (srcChain, nonce) pair was already approved for a different hash
+        if (withdrawNonceUsed[w.srcChain][w.nonce]) {
+            revert WithdrawNonceAlreadyUsed(w.srcChain, w.nonce);
+        }
+        withdrawNonceUsed[w.srcChain][w.nonce] = true;
 
         w.approved = true;
         w.approvedAt = block.timestamp;
