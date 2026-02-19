@@ -13,9 +13,8 @@ contract DeployCustomDecimalToken is Script {
 
         vm.startBroadcast();
 
-        TokenCl8yBridgedCustomDecimals token = new TokenCl8yBridgedCustomDecimals(
-            name, symbol, authority, "", decimals_
-        );
+        TokenCl8yBridgedCustomDecimals token =
+            new TokenCl8yBridgedCustomDecimals(name, symbol, authority, "", decimals_);
 
         console.log("TokenCl8yBridgedCustomDecimals deployed at:", address(token));
         console.log("  name:", name);
