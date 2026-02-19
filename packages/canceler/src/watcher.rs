@@ -510,8 +510,8 @@ impl CancelerWatcher {
                 last_polled = self.last_evm_block,
                 "Chain reset detected — resetting to lookback window"
             );
-            self.last_evm_block = current_block
-                .saturating_sub(self.config.evm_poll_lookback_blocks);
+            self.last_evm_block =
+                current_block.saturating_sub(self.config.evm_poll_lookback_blocks);
             self.verified_hashes.clear();
             self.cancelled_hashes.clear();
             self.pending_retry_queue.clear();
@@ -723,22 +723,21 @@ impl CancelerWatcher {
             };
 
             // First poll or chain reset: use lookback from head
-            let effective_last = if chain_state.last_block == 0
-                || current_block < chain_state.last_block
-            {
-                let start = current_block.saturating_sub(lookback);
-                info!(
-                    chain = %chain_name,
-                    current_block = current_block,
-                    lookback_blocks = lookback,
-                    start_block = start,
-                    "Additional chain first poll / reset — looking back {} blocks",
-                    lookback
-                );
-                start
-            } else {
-                chain_state.last_block
-            };
+            let effective_last =
+                if chain_state.last_block == 0 || current_block < chain_state.last_block {
+                    let start = current_block.saturating_sub(lookback);
+                    info!(
+                        chain = %chain_name,
+                        current_block = current_block,
+                        lookback_blocks = lookback,
+                        start_block = start,
+                        "Additional chain first poll / reset — looking back {} blocks",
+                        lookback
+                    );
+                    start
+                } else {
+                    chain_state.last_block
+                };
 
             if current_block <= effective_last {
                 continue;
