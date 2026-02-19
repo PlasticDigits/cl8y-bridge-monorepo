@@ -150,7 +150,12 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
 export function getChainsForTransfer(): ChainInfo[] {
   const tier = DEFAULT_NETWORK as NetworkTier
   const chainlist = getChainlist()
-  return Object.entries(BRIDGE_CHAINS[tier]).filter(([_, config]) => !!config.bridgeAddress).map(([id, config]) => {
+  return Object.entries(BRIDGE_CHAINS[tier]).filter(([_, config]) => {
+    if (!config.bridgeAddress) return false
+    // EVM chains need a bytes4ChainId to participate in V2 protocol
+    if (config.type === 'evm' && !config.bytes4ChainId) return false
+    return true
+  }).map(([id, config]) => {
     const chainlistEntry = getChainlistEntry(chainlist, id, config.chainId)
     const display = CHAIN_DISPLAY[id] ?? {
       icon: '○',
