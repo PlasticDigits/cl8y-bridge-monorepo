@@ -72,7 +72,7 @@ Frontend on Render
 
 ### API Keys
 
-- **BscScan API key** — for contract verification on BSC ([bscscan.com/apis](https://bscscan.com/apis))
+- **Etherscan API key (V2)** — a single key works across all 60+ supported chains (BSC, opBNB, etc.). Get one at [etherscan.io](https://etherscan.io/myapikey). V1 keys are no longer supported.
 - **WalletConnect Project ID** — for frontend wallet modal ([cloud.walletconnect.com](https://cloud.walletconnect.com))
 - **Render account** — for frontend hosting ([render.com](https://render.com))
 
@@ -126,45 +126,57 @@ The release binaries are at:
 
 ### 4.1 Set Environment Variables
 
-The deployer private key is **never** exported as an environment variable. Forge's `-i 1` flag
-prompts for it interactively in the terminal, keeping it out of shell history and process lists.
+The deployer private key is **never** exported as an environment variable. Forge uses `-i 1`
+and cast uses `--interactive` to prompt for the key interactively in the terminal, keeping it
+out of shell history and process lists.
 
 ```bash
 export DEPLOYER_ADDRESS="0x..."            # Deployer wallet address (key entered interactively)
-export BSCSCAN_API_KEY="..."               # BscScan API key for verification
-export ADMIN_ADDRESS="0x..."               # Admin (multi-sig recommended)
+export ADMIN_ADDRESS="0x..."               # Final admin/owner (multi-sig recommended)
 export OPERATOR_ADDRESS="0x..."            # Operator wallet address
 export FEE_RECIPIENT_ADDRESS="0x..."       # Fee collection address
-
-# Wrapped native token per chain (different on each network)
-export WETH_ADDRESS_56=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c   # WBNB on BSC
-export WETH_ADDRESS_204=0x4200000000000000000000000000000000000006   # WBNB on opBNB
+export ETHERSCAN_API_KEY="..."             # Etherscan V2 API key (works across all chains)
 ```
 
+`DEPLOYER_ADDRESS` and `ADMIN_ADDRESS` can be different. The deploy script initializes all
+contracts with the deployer as temporary owner (so it can call `registerChain`,
+`addAuthorizedCaller`, etc.), then automatically transfers ownership to `ADMIN_ADDRESS` and
+the deployer retains no privileges.
+
+These five variables are the same for both chains. The per-chain variables (`WETH_ADDRESS`,
+`CHAIN_IDENTIFIER`, `THIS_CHAIN_ID`) are set automatically by the deploy script, or manually
+if you run `forge script` directly (shown below).
+
 ### 4.2 Deploy to BSC Mainnet (Chain ID: 56)
+
+Using the deploy script (recommended — sets all per-chain config automatically):
 
 ```bash
 ./scripts/deploy-evm-mainnet.sh bsc
 ```
 
-Or manually with full control:
+Or manually with full control. `Deploy.s.sol` reads all configuration from environment
+variables, so you must set the per-chain ones yourself:
 
 ```bash
 cd packages/contracts-evm
 
-export WETH_ADDRESS=$WETH_ADDRESS_56
+# Per-chain variables (set automatically by deploy-evm-mainnet.sh)
+export WETH_ADDRESS=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c  # WBNB on BSC
+export CHAIN_IDENTIFIER="BSC"
+export THIS_CHAIN_ID=56
 
-forge script script/DeployPart1.s.sol:DeployPart1 \
+forge script script/Deploy.s.sol:Deploy \
   --broadcast --verify -vvv \
   --rpc-url https://bsc-dataseed1.binance.org \
   --verifier etherscan \
-  --etherscan-api-key $BSCSCAN_API_KEY \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
   -i 1 \
   --sender $DEPLOYER_ADDRESS
 # You will be prompted to enter the private key interactively.
 ```
 
-The script deploys (via UUPS proxy pattern):
+The script deploys five contracts (via UUPS proxy pattern):
 - **ChainRegistry** — chain registration
 - **TokenRegistry** — token registration and mappings
 - **LockUnlock** — lock/unlock handler for ERC20s
@@ -174,7 +186,7 @@ The script deploys (via UUPS proxy pattern):
 Record all deployed proxy addresses from the output. They are also saved to the broadcast file at:
 
 ```
-packages/contracts-evm/broadcast/DeployPart1.s.sol/56/run-latest.json
+packages/contracts-evm/broadcast/Deploy.s.sol/56/run-latest.json
 ```
 
 ### 4.3 Deploy to opBNB Mainnet (Chain ID: 204)
@@ -188,13 +200,16 @@ Or manually:
 ```bash
 cd packages/contracts-evm
 
-export WETH_ADDRESS=$WETH_ADDRESS_204
+# Per-chain variables (set automatically by deploy-evm-mainnet.sh)
+export WETH_ADDRESS=0x4200000000000000000000000000000000000006  # WBNB on opBNB
+export CHAIN_IDENTIFIER="opBNB"
+export THIS_CHAIN_ID=204
 
-forge script script/DeployPart1.s.sol:DeployPart1 \
+forge script script/Deploy.s.sol:Deploy \
   --broadcast --verify -vvv \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
   --verifier etherscan \
-  --etherscan-api-key $BSCSCAN_API_KEY \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
   -i 1 \
   --sender $DEPLOYER_ADDRESS
 # You will be prompted to enter the private key interactively.
@@ -203,7 +218,7 @@ forge script script/DeployPart1.s.sol:DeployPart1 \
 Record addresses from:
 
 ```
-packages/contracts-evm/broadcast/DeployPart1.s.sol/204/run-latest.json
+packages/contracts-evm/broadcast/Deploy.s.sol/204/run-latest.json
 ```
 
 ### 4.4 Verify Contracts (if not auto-verified)
@@ -211,173 +226,230 @@ packages/contracts-evm/broadcast/DeployPart1.s.sol/204/run-latest.json
 ```bash
 forge verify-contract <CONTRACT_ADDRESS> <ContractName> \
   --chain-id 56 \
-  --etherscan-api-key $BSCSCAN_API_KEY
+  --etherscan-api-key $ETHERSCAN_API_KEY
 
 forge verify-contract <CONTRACT_ADDRESS> <ContractName> \
   --chain-id 204 \
-  --etherscan-api-key $BSCSCAN_API_KEY
+  --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
 ### 4.5 Record Deployed Addresses
 
-After deployment, record all addresses. Example format:
+After deployment, export all addresses so they are available to subsequent commands.
+Extract proxy addresses from the broadcast JSON or the deployment script output.
 
-```
-# BSC Mainnet (56)
-BSC_ACCESS_MANAGER=0x...
-BSC_CHAIN_REGISTRY=0x...
-BSC_TOKEN_REGISTRY=0x...
-BSC_LOCK_UNLOCK=0x...
-BSC_MINT_BURN=0x...
-BSC_BRIDGE=0x...
-BSC_FACTORY=0x...
+```bash
+# BSC Mainnet (56) — from Deploy.s.sol broadcast
+export BSC_CHAIN_REGISTRY=0x...   # ChainRegistry proxy
+export BSC_TOKEN_REGISTRY=0x...   # TokenRegistry proxy
+export BSC_LOCK_UNLOCK=0x...      # LockUnlock proxy
+export BSC_MINT_BURN=0x...        # MintBurn proxy
+export BSC_BRIDGE=0x...           # Bridge proxy
 
-# opBNB Mainnet (204)
-OPBNB_ACCESS_MANAGER=0x...
-OPBNB_CHAIN_REGISTRY=0x...
-OPBNB_TOKEN_REGISTRY=0x...
-OPBNB_LOCK_UNLOCK=0x...
-OPBNB_MINT_BURN=0x...
-OPBNB_BRIDGE=0x...
-OPBNB_FACTORY=0x...
+# opBNB Mainnet (204) — from Deploy.s.sol broadcast
+export OPBNB_CHAIN_REGISTRY=0x...
+export OPBNB_TOKEN_REGISTRY=0x...
+export OPBNB_LOCK_UNLOCK=0x...
+export OPBNB_MINT_BURN=0x...
+export OPBNB_BRIDGE=0x...
 ```
 
-### 4.6 Deploy Bridge Tokens (Mint/Burn)
+### 4.6 Deploy AccessManager
 
-Three tokens must be deployed on each EVM chain via the `FactoryTokenCl8yBridged` contract.
+Each chain needs an AccessManager to control token factory permissions and minting roles.
+The `AccessManagerEnumerable.s.sol` script deploys both a `Create3Deployer` (if not present)
+and the `AccessManagerEnumerable` contract via CREATE3.
+
+Set the required environment variable and run on each chain:
+
+```bash
+cd packages/contracts-evm
+
+export ACCESS_MANAGER_ADMIN=$ADMIN_ADDRESS
+
+# BSC
+forge script script/AccessManagerEnumerable.s.sol:AccessManagerScript \
+  --broadcast --verify -vvv \
+  --rpc-url https://bsc-dataseed1.binance.org \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  -i 1 \
+  --sender $DEPLOYER_ADDRESS
+
+# opBNB
+forge script script/AccessManagerEnumerable.s.sol:AccessManagerScript \
+  --broadcast --verify -vvv \
+  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  -i 1 \
+  --sender $DEPLOYER_ADDRESS
+```
+
+Record the AccessManager addresses from the output:
+
+```bash
+export BSC_ACCESS_MANAGER=0x...
+export OPBNB_ACCESS_MANAGER=0x...
+```
+
+### 4.7 Deploy Token Factory
+
+Deploy `FactoryTokenCl8yBridged` on each chain, pointing at the chain's AccessManager.
+The script reads `ACCESS_MANAGER_ADDRESS` from the environment:
+
+```bash
+cd packages/contracts-evm
+
+# BSC
+export ACCESS_MANAGER_ADDRESS=$BSC_ACCESS_MANAGER
+forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript \
+  --broadcast --verify -vvv \
+  --rpc-url https://bsc-dataseed1.binance.org \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  -i 1 \
+  --sender $DEPLOYER_ADDRESS
+
+# opBNB
+export ACCESS_MANAGER_ADDRESS=$OPBNB_ACCESS_MANAGER
+forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript \
+  --broadcast --verify -vvv \
+  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  -i 1 \
+  --sender $DEPLOYER_ADDRESS
+```
+
+Record the factory addresses:
+
+```bash
+export BSC_FACTORY=0x...
+export OPBNB_FACTORY=0x...
+```
+
+### 4.8 Deploy Bridge Tokens (Mint/Burn)
+
+Three tokens must be deployed on each EVM chain. `testa` and `testb` are standard 18-decimal
+tokens deployed via the `FactoryTokenCl8yBridged` contract. `tdec` tests cross-chain decimal
+conversion and has **different decimals on every chain** — it is deployed via the factory on BSC
+(18 decimals) but requires a standalone ERC20 deployment on opBNB (12 decimals).
+
 All three use the **MintBurn** handler (the bridge mints on the destination and burns on the source).
 
 | Token | Symbol | BSC Decimals | opBNB Decimals | Terra Decimals | Notes |
 |-------|--------|-------------|----------------|----------------|-------|
 | Test A | `testa` | 18 | 18 | 18 | Standard token |
 | Test B | `testb` | 18 | 18 | 18 | Standard token |
-| Test Dec | `tdec` | 18 | 18 | 6 | Mixed-decimal token |
+| Test Dec | `tdec` | 18 | 12 | 6 | Mixed-decimal token (different on every chain) |
 
-`TokenCl8yBridged` is always 18 decimals on EVM. The decimal difference for `tdec` (6 on Terra Classic)
-is handled by the TokenRegistry's destination/source decimal mappings — the bridge applies the
-conversion automatically during transfers.
+`FactoryTokenCl8yBridged` always creates 18-decimal tokens. For `tdec` on opBNB, a standalone
+ERC20 with `decimals() = 12` and AccessManaged mint/burn is deployed directly via
+`TokenCl8yBridgedCustomDecimals`. The bridge's TokenRegistry handles the decimal conversion
+automatically during transfers.
 
-#### Deploy the Factory (if not already deployed)
+#### Create Tokens via the Factory
 
-Deploy `FactoryTokenCl8yBridged` on each chain, pointing at the chain's AccessManager:
+The factory appends ` cl8y.com/bridge` to names and `-cb` to symbols automatically. The
+`createToken` function is `restricted` (AccessManaged) — only accounts with ADMIN_ROLE (0) on
+the chain's AccessManager can call it.
+
+**BSC — all three tokens (18 decimals):**
+
+```bash
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_FACTORY "createToken(string,string,string)" "Test A" "testa" ""
+
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_FACTORY "createToken(string,string,string)" "Test B" "testb" ""
+
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_FACTORY "createToken(string,string,string)" "Test Dec" "tdec" ""
+```
+
+**opBNB — testa and testb only (18 decimals):**
+
+```bash
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_FACTORY "createToken(string,string,string)" "Test A" "testa" ""
+
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_FACTORY "createToken(string,string,string)" "Test B" "testb" ""
+```
+
+#### Deploy `tdec` on opBNB (12 decimals)
+
+The factory always creates 18-decimal tokens, so `tdec` on opBNB must be deployed as a
+standalone `TokenCl8yBridgedCustomDecimals` with 12 decimals:
 
 ```bash
 cd packages/contracts-evm
 
-# BSC
-forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript \
-  --broadcast --verify -vvv \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  --etherscan-api-key $BSCSCAN_API_KEY \
-  -i 1 \
-  --sender $DEPLOYER_ADDRESS
-
-# opBNB
-forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript \
-  --broadcast --verify -vvv \
+forge create src/TokenCl8yBridgedCustomDecimals.sol:TokenCl8yBridgedCustomDecimals \
+  --constructor-args "Test Dec cl8y.com/bridge" "tdec-cb" $OPBNB_ACCESS_MANAGER "" 12 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  --etherscan-api-key $BSCSCAN_API_KEY \
-  -i 1 \
-  --sender $DEPLOYER_ADDRESS
-```
-
-Record the factory addresses as `BSC_FACTORY` and `OPBNB_FACTORY`.
-
-#### Create Tokens via the Factory
-
-Call `createToken` on the factory for each token. The factory appends ` cl8y.com/bridge` to names
-and `-cb` to symbols automatically.
-
-```bash
-# --- BSC ---
-
-# testa
-cast send $BSC_FACTORY \
-  "createToken(string,string,string)" \
-  "Test A" "testa" "" \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
-
-# testb
-cast send $BSC_FACTORY \
-  "createToken(string,string,string)" \
-  "Test B" "testb" "" \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
-
-# tdec
-cast send $BSC_FACTORY \
-  "createToken(string,string,string)" \
-  "Test Dec" "tdec" "" \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
-
-# --- opBNB (repeat for each token) ---
-
-cast send $OPBNB_FACTORY \
-  "createToken(string,string,string)" \
-  "Test A" "testa" "" \
-  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  -i 1
-
-cast send $OPBNB_FACTORY \
-  "createToken(string,string,string)" \
-  "Test B" "testb" "" \
-  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  -i 1
-
-cast send $OPBNB_FACTORY \
-  "createToken(string,string,string)" \
-  "Test Dec" "tdec" "" \
-  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  -i 1
+  --etherscan-api-key $ETHERSCAN_API_KEY \
+  --verify \
+  --interactive
 ```
 
 #### Retrieve Token Addresses
 
-Query the factory for all created token addresses:
+Query the factory for factory-created token addresses:
 
 ```bash
-# BSC
-cast call $BSC_FACTORY "getAllTokens()" --rpc-url https://bsc-dataseed1.binance.org
+# BSC (3 tokens)
+cast call $BSC_FACTORY "getAllTokens()(address[])" --rpc-url https://bsc-dataseed1.binance.org
 
-# opBNB
-cast call $OPBNB_FACTORY "getAllTokens()" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+# opBNB (2 tokens — testa and testb only)
+cast call $OPBNB_FACTORY "getAllTokens()(address[])" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
 ```
 
-Record each address:
-
-```
-# BSC
-BSC_TESTA=0x...
-BSC_TESTB=0x...
-BSC_TDEC=0x...
-
-# opBNB
-OPBNB_TESTA=0x...
-OPBNB_TESTB=0x...
-OPBNB_TDEC=0x...
-```
-
-#### Authorize MintBurn to Mint Tokens
-
-The MintBurn handler needs permission to mint/burn these tokens. Grant the role via the
-AccessManager on each chain:
+Record each address (opBNB `tdec` comes from the `forge create` output above):
 
 ```bash
-# BSC — grant MintBurn the minter role for each token
-cast send $BSC_ACCESS_MANAGER \
-  "grantRole(bytes32,address,uint32)" \
-  $(cast keccak "MINTER_ROLE") $BSC_MINT_BURN 0 \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
+export BSC_TESTA=0x...
+export BSC_TESTB=0x...
+export BSC_TDEC=0x...
 
-# opBNB
-cast send $OPBNB_ACCESS_MANAGER \
-  "grantRole(bytes32,address,uint32)" \
-  $(cast keccak "MINTER_ROLE") $OPBNB_MINT_BURN 0 \
-  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  -i 1
+export OPBNB_TESTA=0x...
+export OPBNB_TESTB=0x...
+export OPBNB_TDEC=0x...  # from forge create output, NOT the factory
+```
+
+#### Authorize MintBurn to Mint/Burn Tokens
+
+The MintBurn handler needs permission to call `mint()` and `burn()` on each token. In
+OpenZeppelin's AccessManager, this requires two steps:
+
+1. **Grant the MintBurn contract a role** (e.g. role `1` as MINTER_ROLE)
+2. **Map that role to the `mint` and `burn` selectors** on each token contract
+
+The function selectors are: `mint(address,uint256)` = `0x40c10f19`, `burn(address,uint256)` = `0x9dc29fac`.
+
+```bash
+# --- BSC ---
+
+# Step 1: Grant MintBurn role 1
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_ACCESS_MANAGER "grantRole(uint64,address,uint32)" 1 $BSC_MINT_BURN 0
+
+# Step 2: Allow role 1 to call mint/burn on each token
+for TOKEN in $BSC_TESTA $BSC_TESTB $BSC_TDEC; do
+  cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+    $BSC_ACCESS_MANAGER "setTargetFunctionRole(address,bytes4[],uint64)" \
+    $TOKEN "[0x40c10f19,0x9dc29fac]" 1
+done
+
+# --- opBNB ---
+
+# Step 1: Grant MintBurn role 1
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_ACCESS_MANAGER "grantRole(uint64,address,uint32)" 1 $OPBNB_MINT_BURN 0
+
+# Step 2: Allow role 1 to call mint/burn on each token
+for TOKEN in $OPBNB_TESTA $OPBNB_TESTB $OPBNB_TDEC; do
+  cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+    $OPBNB_ACCESS_MANAGER "setTargetFunctionRole(address,bytes4[],uint64)" \
+    $TOKEN "[0x40c10f19,0x9dc29fac]" 1
+done
 ```
 
 ---
@@ -428,9 +500,9 @@ Default production parameters:
 
 Record the output:
 
-```
-TERRA_BRIDGE_ADDRESS=terra1...
-TERRA_CODE_ID=<number>
+```bash
+export TERRA_BRIDGE_ADDRESS=terra1...
+export TERRA_CODE_ID=<number>
 ```
 
 ### 5.4 Verify Deployment
@@ -446,148 +518,517 @@ terrad query wasm contract-state smart $TERRA_BRIDGE_ADDRESS '{"config":{}}' \
 
 After all contracts are deployed, register each chain and token pair on both sides.
 
-### 6.1 Register Terra on EVM Bridges
+> **Important:** ChainRegistry, TokenRegistry, Bridge, LockUnlock, and MintBurn use
+> `onlyOwner` access control. All `cast send` commands in this phase must be signed by
+> the **admin** key (`0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c`), not the deployer.
+> When prompted for a private key, enter the admin's key.
 
-On both BSC and opBNB, register Terra Classic as a supported destination chain:
+Ensure all address variables from sections 4.5, 4.6–4.8, and 5.3 are still exported in your
+current shell session before proceeding. If you started a new terminal, re-export them all:
 
 ```bash
-# Compute the Terra chain key
-TERRA_CHAIN_KEY=$(cast keccak "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'columbus-5' 'terra')")
+# --- Contract addresses (from sections 4.5, 4.6–4.8) ---
+export BSC_CHAIN_REGISTRY=0x6f4C6F59540460faF717C2Fea526316ae66C640c
+export BSC_TOKEN_REGISTRY=0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0
+export BSC_BRIDGE=0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d
+export BSC_MINT_BURN=0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9
+export BSC_ACCESS_MANAGER=0x...    # from section 4.6
+export BSC_FACTORY=0x...           # from section 4.7
 
-# Register on BSC
-cast send $BSC_CHAIN_REGISTRY \
-  "registerChain(string,bytes4)" \
-  "Terra Classic" "$TERRA_CHAIN_KEY" \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
+export OPBNB_CHAIN_REGISTRY=0x6f4C6F59540460faF717C2Fea526316ae66C640c
+export OPBNB_TOKEN_REGISTRY=0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0
+export OPBNB_BRIDGE=0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d
+export OPBNB_MINT_BURN=0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9
+export OPBNB_ACCESS_MANAGER=0x...  # from section 4.6
 
-# Register on opBNB
-cast send $OPBNB_CHAIN_REGISTRY \
-  "registerChain(string,bytes4)" \
-  "Terra Classic" "$TERRA_CHAIN_KEY" \
-  --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
-  -i 1
+# --- Token addresses (from section 4.8) ---
+export BSC_TESTA=0x...
+export BSC_TESTB=0x...
+export BSC_TDEC=0x...
+export OPBNB_TESTA=0x...
+export OPBNB_TESTB=0x...
+export OPBNB_TDEC=0x...
+
+# --- Terra (from section 5.3) ---
+export TERRA_BRIDGE_ADDRESS=terra1...
+export TERRA_KEY_NAME="cl8ybridge_deployer"  # deployer key in terrad keyring
+export TERRA_ADMIN_KEY="cl8y2_admin"         # admin key (required for all Phase 4 operations)
 ```
 
-### 6.2 Register EVM Chains on Terra
+### 6.0 Define Chain IDs and Token Identifiers
+
+Each chain has a predetermined 4-byte ID assigned during deployment. These are NOT the native
+chain IDs — they are bridge-internal identifiers stored in each ChainRegistry.
+
+The bytes32 variables below depend on the token address variables above — make sure those are
+exported first.
 
 ```bash
-# Add BSC chain
+# --- Bridge chain IDs (bytes4) ---
+export BSC_CHAIN_ID=0x00000038       # 56
+export OPBNB_CHAIN_ID=0x000000cc     # 204
+export TERRA_CHAIN_ID=0x00000001     # 1
+
+# --- Bridge chain IDs (base64, for Terra contract messages) ---
+# BSC  0x00000038 = AAAAOA==
+# opBNB 0x000000cc = AAAAzA==
+# Terra 0x00000001 = AAAAAQ==
+export BSC_CHAIN_B64="AAAAOA=="
+export OPBNB_CHAIN_B64="AAAAzA=="
+export TERRA_CHAIN_B64="AAAAAQ=="
+
+# --- Terra token denoms as bytes32 (keccak256 hash, for EVM dest token) ---
+# The EVM TokenRegistry identifies Terra tokens by keccak256(denom).
+export TERRA_TESTA_BYTES32=$(cast keccak "testa")
+export TERRA_TESTB_BYTES32=$(cast keccak "testb")
+export TERRA_TDEC_BYTES32=$(cast keccak "tdec")
+
+# --- EVM token addresses as bytes32 (left-padded, for EVM↔EVM dest token) ---
+# Convert 20-byte EVM addresses to 32-byte format for cross-EVM mappings.
+export BSC_TESTA_B32=$(cast abi-encode "f(address)" $BSC_TESTA)
+export BSC_TESTB_B32=$(cast abi-encode "f(address)" $BSC_TESTB)
+export BSC_TDEC_B32=$(cast abi-encode "f(address)" $BSC_TDEC)
+export OPBNB_TESTA_B32=$(cast abi-encode "f(address)" $OPBNB_TESTA)
+export OPBNB_TESTB_B32=$(cast abi-encode "f(address)" $OPBNB_TESTB)
+export OPBNB_TDEC_B32=$(cast abi-encode "f(address)" $OPBNB_TDEC)
+```
+
+### 6.1 Register Chains on EVM Bridges
+
+Each EVM chain already registered itself during deployment (via `Deploy.s.sol`). Now register
+the other two chains on each bridge.
+
+**BSC ChainRegistry** — register Terra and opBNB:
+
+```bash
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_CHAIN_REGISTRY "registerChain(string,bytes4)" "terraclassic_columbus-5" $TERRA_CHAIN_ID
+
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_CHAIN_REGISTRY "registerChain(string,bytes4)" "evm_204" $OPBNB_CHAIN_ID
+```
+
+**opBNB ChainRegistry** — register Terra and BSC:
+
+```bash
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_CHAIN_REGISTRY "registerChain(string,bytes4)" "terraclassic_columbus-5" $TERRA_CHAIN_ID
+
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_CHAIN_REGISTRY "registerChain(string,bytes4)" "evm_56" $BSC_CHAIN_ID
+```
+
+### 6.2 Register Chains on Terra
+
+Terra registered itself during instantiation (`this_chain_id`). Now register both EVM chains.
+
+The `register_chain` message takes an `identifier` string and a `chain_id` as base64-encoded
+4-byte Binary.
+
+```bash
+# Register BSC (0x00000038)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_chain":{"chain_id":56,"name":"BSC","bridge_address":"'$BSC_BRIDGE'"}}' \
-  --from $TERRA_KEY_NAME \
+  '{"register_chain":{"identifier":"evm_56","chain_id":"'$BSC_CHAIN_B64'"}}' \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 
-# Add opBNB chain
+sleep 10
+
+# Register opBNB (0x000000cc)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_chain":{"chain_id":204,"name":"opBNB","bridge_address":"'$OPBNB_BRIDGE'"}}' \
-  --from $TERRA_KEY_NAME \
+  '{"register_chain":{"identifier":"evm_204","chain_id":"'$OPBNB_CHAIN_B64'"}}' \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 ```
 
 ### 6.3 Register Tokens
 
-Register the three bridge tokens on both sides. The decimal mapping table:
+Register the three bridge tokens on all sides. Since `tdec` has different decimals on every
+chain, the mappings must be set per-pair.
 
-| Token | EVM (BSC/opBNB) | Terra Classic | Registry `destDecimals` |
-|-------|-----------------|---------------|------------------------|
+**Decimal reference:**
+
+| Token | BSC | opBNB | Terra |
+|-------|-----|-------|-------|
 | testa | 18 | 18 | 18 |
 | testb | 18 | 18 | 18 |
-| tdec | 18 | 6 | 6 (Terra→EVM: srcDecimals=6) |
+| tdec | 18 | 12 | 6 |
 
-#### EVM Side — Register Tokens in TokenRegistry
+Each token needs:
+1. `registerToken` — register the token on the local TokenRegistry
+2. `setTokenDestinationWithDecimals` — outgoing: local token → destination chain (one per destination)
+3. `setIncomingTokenMapping` — incoming: source chain → local token (one per source)
 
-Register each token as MintBurn type (type `1`), set the destination mapping to Terra, and
-configure the incoming source decimals. Repeat for both BSC and opBNB.
+#### EVM Side — BSC TokenRegistry
 
 ```bash
-# --- BSC: testa (18 decimals everywhere) ---
-cast send $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TESTA 1 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# ─── testa (18 everywhere) ───
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TESTA 1
 
-cast send $BSC_TOKEN_REGISTRY \
-  "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
-  $BSC_TESTA $TERRA_CHAIN_ID_BYTES4 $TERRA_TESTA_BYTES32 18 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testa → Terra (dest decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TESTA $TERRA_CHAIN_ID $TERRA_TESTA_BYTES32 18
 
-cast send $BSC_TOKEN_REGISTRY \
-  "setIncomingTokenMapping(bytes4,address,uint8)" \
-  $TERRA_CHAIN_ID_BYTES4 $BSC_TESTA 18 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testa → opBNB (dest decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TESTA $OPBNB_CHAIN_ID $OPBNB_TESTA_B32 18
 
-# --- BSC: testb (18 decimals everywhere) ---
-cast send $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TESTB 1 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testa ← Terra (src decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $BSC_TESTA 18
 
-cast send $BSC_TOKEN_REGISTRY \
-  "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
-  $BSC_TESTB $TERRA_CHAIN_ID_BYTES4 $TERRA_TESTB_BYTES32 18 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testa ← opBNB (src decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $OPBNB_CHAIN_ID $BSC_TESTA 18
 
-cast send $BSC_TOKEN_REGISTRY \
-  "setIncomingTokenMapping(bytes4,address,uint8)" \
-  $TERRA_CHAIN_ID_BYTES4 $BSC_TESTB 18 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# ─── testb (18 everywhere) ───
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TESTB 1
 
-# --- BSC: tdec (18 on BSC, 6 on Terra) ---
-cast send $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TDEC 1 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testb → Terra (dest decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TESTB $TERRA_CHAIN_ID $TERRA_TESTB_BYTES32 18
 
-# destDecimals=6 because Terra side has 6 decimals
-cast send $BSC_TOKEN_REGISTRY \
-  "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
-  $BSC_TDEC $TERRA_CHAIN_ID_BYTES4 $TERRA_TDEC_BYTES32 6 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testb → opBNB (dest decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TESTB $OPBNB_CHAIN_ID $OPBNB_TESTB_B32 18
 
-# srcDecimals=6 for incoming transfers from Terra
-cast send $BSC_TOKEN_REGISTRY \
-  "setIncomingTokenMapping(bytes4,address,uint8)" \
-  $TERRA_CHAIN_ID_BYTES4 $BSC_TDEC 6 \
-  --rpc-url https://bsc-dataseed1.binance.org -i 1
+# testb ← Terra (src decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $BSC_TESTB 18
+
+# testb ← opBNB (src decimals: 18)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $OPBNB_CHAIN_ID $BSC_TESTB 18
+
+# ─── tdec (BSC=18, opBNB=12, Terra=6) ───
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "registerToken(address,uint8)" $BSC_TDEC 1
+
+# tdec → Terra (dest decimals: 6)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TDEC $TERRA_CHAIN_ID $TERRA_TDEC_BYTES32 6
+
+# tdec → opBNB (dest decimals: 12)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $BSC_TDEC $OPBNB_CHAIN_ID $OPBNB_TDEC_B32 12
+
+# tdec ← Terra (src decimals: 6)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $BSC_TDEC 6
+
+# tdec ← opBNB (src decimals: 12)
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $OPBNB_CHAIN_ID $BSC_TDEC 12
 ```
 
-Repeat the above for opBNB using `$OPBNB_TOKEN_REGISTRY`, `$OPBNB_TESTA`, `$OPBNB_TESTB`,
-`$OPBNB_TDEC`, and the opBNB RPC URL.
-
-#### Terra Side — Register Tokens
+#### EVM Side — opBNB TokenRegistry
 
 ```bash
-# testa — 18 decimals on both sides
+# ─── testa (18 everywhere) ───
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "registerToken(address,uint8)" $OPBNB_TESTA 1
+
+# testa → Terra (dest decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TESTA $TERRA_CHAIN_ID $TERRA_TESTA_BYTES32 18
+
+# testa → BSC (dest decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TESTA $BSC_CHAIN_ID $BSC_TESTA_B32 18
+
+# testa ← Terra (src decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $OPBNB_TESTA 18
+
+# testa ← BSC (src decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $BSC_CHAIN_ID $OPBNB_TESTA 18
+
+# ─── testb (18 everywhere) ───
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "registerToken(address,uint8)" $OPBNB_TESTB 1
+
+# testb → Terra (dest decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TESTB $TERRA_CHAIN_ID $TERRA_TESTB_BYTES32 18
+
+# testb → BSC (dest decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TESTB $BSC_CHAIN_ID $BSC_TESTB_B32 18
+
+# testb ← Terra (src decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $OPBNB_TESTB 18
+
+# testb ← BSC (src decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $BSC_CHAIN_ID $OPBNB_TESTB 18
+
+# ─── tdec (opBNB=12, BSC=18, Terra=6) ───
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "registerToken(address,uint8)" $OPBNB_TDEC 1
+
+# tdec → Terra (dest decimals: 6)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TDEC $TERRA_CHAIN_ID $TERRA_TDEC_BYTES32 6
+
+# tdec → BSC (dest decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
+  $OPBNB_TDEC $BSC_CHAIN_ID $BSC_TDEC_B32 18
+
+# tdec ← Terra (src decimals: 6)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $TERRA_CHAIN_ID $OPBNB_TDEC 6
+
+# tdec ← BSC (src decimals: 18)
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_TOKEN_REGISTRY "setIncomingTokenMapping(bytes4,address,uint8)" \
+  $BSC_CHAIN_ID $OPBNB_TDEC 18
+```
+
+#### Terra Side — Add Tokens
+
+Register each token on the Terra bridge. The `evm_token_address` is used as a reference; the
+per-chain destination and incoming mappings are set separately below.
+
+```bash
+# testa — 18 decimals on Terra, 18 on EVM (reference BSC address)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"testa","is_native":false,"evm_token_address":"'$BSC_TESTA'","terra_decimals":18,"evm_decimals":18}}' \
-  --from $TERRA_KEY_NAME \
+  '{"add_token":{"token":"testa","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TESTA'","terra_decimals":18,"evm_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 
-# testb — 18 decimals on both sides
+sleep 10
+
+# testb — 18 decimals on Terra, 18 on EVM
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"testb","is_native":false,"evm_token_address":"'$BSC_TESTB'","terra_decimals":18,"evm_decimals":18}}' \
-  --from $TERRA_KEY_NAME \
+  '{"add_token":{"token":"testb","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TESTB'","terra_decimals":18,"evm_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 
-# tdec — 6 decimals on Terra, 18 on EVM
+sleep 10
+
+# tdec — 6 decimals on Terra, 18 on BSC (reference)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"tdec","is_native":false,"evm_token_address":"'$BSC_TDEC'","terra_decimals":6,"evm_decimals":18}}' \
-  --from $TERRA_KEY_NAME \
+  '{"add_token":{"token":"tdec","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TDEC'","terra_decimals":6,"evm_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+#### Terra Side — Set Token Destinations (outgoing)
+
+Set where each token goes when bridged from Terra to each EVM chain. The `dest_token` is the
+EVM token address left-padded to 32 bytes as a hex string.
+
+```bash
+# ─── testa destinations ───
+
+# testa → BSC (dest decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"testa","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTA_B32'","dest_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# testa → opBNB (dest decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"testa","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTA_B32'","dest_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# ─── testb destinations ───
+
+# testb → BSC (dest decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"testb","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTB_B32'","dest_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# testb → opBNB (dest decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"testb","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTB_B32'","dest_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# ─── tdec destinations ───
+
+# tdec → BSC (dest decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"tdec","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TDEC_B32'","dest_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# tdec → opBNB (dest decimals: 12)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_token_destination":{"token":"tdec","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TDEC_B32'","dest_decimals":12}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+#### Terra Side — Set Incoming Token Mappings
+
+Set how Terra identifies incoming tokens from each EVM chain. The `src_token` is the
+keccak256 hash of the Terra denom (32 bytes), base64-encoded.
+
+Compute the base64-encoded keccak hashes (these match what the EVM side uses):
+
+```bash
+export TESTA_HASH_B64=$(cast keccak "testa" | sed 's/0x//' | xxd -r -p | base64)
+export TESTB_HASH_B64=$(cast keccak "testb" | sed 's/0x//' | xxd -r -p | base64)
+export TDEC_HASH_B64=$(cast keccak "tdec" | sed 's/0x//' | xxd -r -p | base64)
+```
+
+```bash
+# ─── Incoming from BSC ───
+
+# testa ← BSC (src decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"testa","src_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# testb ← BSC (src decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"testb","src_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# tdec ← BSC (src decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"tdec","src_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# ─── Incoming from opBNB ───
+
+# testa ← opBNB (src decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"testa","src_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# testb ← opBNB (src decimals: 18)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"testb","src_decimals":18}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+
+sleep 10
+
+# tdec ← opBNB (src decimals: 12)
+terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"tdec","src_decimals":12}}' \
+  --from $TERRA_ADMIN_KEY \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 ```
 
@@ -598,38 +1039,50 @@ terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
 ```bash
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
   '{"add_operator":{"operator":"terra1..."}}' \
-  --from $TERRA_KEY_NAME \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
 ```
 
 **EVM (BSC + opBNB):**
 
-Grant the bridge operator role via the AccessManager:
+The Bridge contract has `addOperator(address)` (not `addAuthorizedCaller`, which is on the
+LockUnlock/MintBurn handlers and was already configured during deployment):
 
 ```bash
-cast send $ACCESS_MANAGER \
-  "grantRole(bytes32,address,uint32)" \
-  $BRIDGE_OPERATOR_ROLE $OPERATOR_ADDRESS 0 \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  -i 1
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_BRIDGE "addOperator(address)" $OPERATOR_ADDRESS
+
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_BRIDGE "addOperator(address)" $OPERATOR_ADDRESS
 ```
 
 ### 6.5 Register Cancelers
 
+**Terra:**
+
 ```bash
-# Terra
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
   '{"add_canceler":{"address":"terra1..."}}' \
-  --from $TERRA_KEY_NAME \
+  --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
-  --gas auto --gas-adjustment 1.3 \
-  --fees 500000uluna \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
   --keyring-backend os -y
+```
+
+**EVM (BSC + opBNB):**
+
+```bash
+cast send --interactive --rpc-url https://bsc-dataseed1.binance.org \
+  $BSC_BRIDGE "addCanceler(address)" $CANCELER_ADDRESS
+
+cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
+  $OPBNB_BRIDGE "addCanceler(address)" $CANCELER_ADDRESS
 ```
 
 Repeat for each canceler address. Run at least 2 canceler instances for redundancy.
@@ -927,13 +1380,16 @@ journalctl -u cl8y-canceler -f
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEPLOYER_ADDRESS` | Yes | Deployer wallet address (private key entered interactively via `-i 1`) |
-| `BSCSCAN_API_KEY` | Yes | For contract verification |
+| `DEPLOYER_ADDRESS` | Yes | Deployer wallet address (key entered interactively: `-i 1` for forge, `--interactive` for cast) |
 | `ADMIN_ADDRESS` | Yes | Contract admin (multi-sig recommended) |
 | `OPERATOR_ADDRESS` | Yes | Operator wallet address |
 | `FEE_RECIPIENT_ADDRESS` | Yes | Fee collection address |
-| `WETH_ADDRESS_56` | Yes | Wrapped native token on BSC (`0xbb4C...95c`) |
-| `WETH_ADDRESS_204` | Yes | Wrapped native token on opBNB (`0x4200...0006`) |
+| `ETHERSCAN_API_KEY` | Yes | Etherscan V2 key — single key covers all chains ([etherscan.io](https://etherscan.io/myapikey)) |
+| `WETH_ADDRESS` | Auto | Wrapped native token — set automatically by `deploy-evm-mainnet.sh` per chain |
+| `CHAIN_IDENTIFIER` | Auto | Chain name string (e.g. `"BSC"`, `"opBNB"`) — set automatically per chain |
+| `THIS_CHAIN_ID` | Auto | Numeric chain ID (e.g. `56`, `204`) — set automatically per chain |
+| `ACCESS_MANAGER_ADMIN` | Yes | Admin for AccessManagerEnumerable (typically same as `ADMIN_ADDRESS`) |
+| `ACCESS_MANAGER_ADDRESS` | Yes | AccessManager address on the target chain (for factory deployment) |
 | `DEPLOY_SALT` | No | CREATE2 salt for deterministic addresses |
 
 ### Terra Deployment
@@ -995,7 +1451,7 @@ cast wallet nonce $DEPLOYER_ADDRESS --rpc-url $RPC_URL
 ```bash
 forge verify-contract $ADDRESS $ContractName \
   --chain-id $CHAIN_ID \
-  --etherscan-api-key $BSCSCAN_API_KEY
+  --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
 ### Terra Deployment Fails

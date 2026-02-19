@@ -116,15 +116,14 @@ get_deployer() {
 store_contract() {
     log_info "Storing contract on mainnet..."
 
-    # Higher gas for mainnet
     TX=$(terrad tx wasm store "$WASM_FILE" \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --node "$NODE" \
-        --gas 5000000 \
-        --fees 2000000uluna \
+        --gas auto --gas-adjustment 1.5 \
+        --fees 250000000uluna \
         --keyring-backend os \
-        -y -o json 2>&1)
+        -y -o json 2>/dev/null)
 
     TX_HASH=$(echo "$TX" | jq -r '.txhash' 2>/dev/null || echo "")
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" == "null" ]; then

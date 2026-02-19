@@ -6,15 +6,13 @@ import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 
 contract FactoryTokenCl8yBridgedScript is Script {
     FactoryTokenCl8yBridged public factory;
-    address public accessManagerAddress = address(0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF);
     bytes32 public constant SALT = keccak256("FACTORY_TOKEN_CL8Y_BRIDGED_V1");
 
-    function setUp() public {}
-
     function run() public {
+        address accessManagerAddress = vm.envAddress("ACCESS_MANAGER_ADDRESS");
+
         vm.startBroadcast();
 
-        // Deploy FactoryTokenCl8yBridged deterministically with CREATE2
         factory = new FactoryTokenCl8yBridged{salt: SALT}(accessManagerAddress);
 
         console.log("FactoryTokenCl8yBridged deployed at:", address(factory));
@@ -22,10 +20,5 @@ contract FactoryTokenCl8yBridgedScript is Script {
         console.logBytes32(SALT);
 
         vm.stopBroadcast();
-    }
-
-    /// @notice Set the AccessManager address to use (call before run())
-    function setAccessManagerAddress(address _accessManagerAddress) public {
-        accessManagerAddress = _accessManagerAddress;
     }
 }

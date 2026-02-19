@@ -12,7 +12,11 @@ import {Bridge} from "../src/Bridge.sol";
 
 /// @title Deploy
 /// @notice Deployment script for all V2 bridge contracts
-/// @dev Deploys implementation contracts and proxies using UUPS pattern
+/// @dev Deploys implementation contracts and proxies using UUPS pattern.
+///      All contracts are initialized with msg.sender (deployer) as owner so that
+///      post-deployment configuration (registerChain, addAuthorizedCaller, etc.) can
+///      execute within the same transaction batch. Ownership is then transferred to
+///      ADMIN_ADDRESS and the deployer retains no privileges.
 contract Deploy is Script {
     // Deployment addresses
     address public chainRegistryProxy;
@@ -22,7 +26,6 @@ contract Deploy is Script {
     address public bridgeProxy;
 
     function run() public {
-        // Get configuration from environment
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address operator = vm.envAddress("OPERATOR_ADDRESS");
         address feeRecipient = vm.envAddress("FEE_RECIPIENT_ADDRESS");
@@ -32,23 +35,46 @@ contract Deploy is Script {
 
         vm.startBroadcast();
 
-        // Deploy all contracts
+        // Deploy all contracts with msg.sender as temporary owner
         (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(admin, operator, feeRecipient, wrappedNative, chainIdentifier, thisChainId);
+            deployAll(msg.sender, operator, feeRecipient, wrappedNative, chainIdentifier, thisChainId);
+
+        // Hand off ownership to the real admin
+        _transferAllOwnership(admin);
 
         vm.stopBroadcast();
 
-        // Log deployment addresses
         console2.log("=== V2 Bridge Deployment ===");
         console2.log("ChainRegistry:", chainRegistryProxy);
         console2.log("TokenRegistry:", tokenRegistryProxy);
         console2.log("LockUnlock:", lockUnlockProxy);
         console2.log("MintBurn:", mintBurnProxy);
         console2.log("Bridge:", bridgeProxy);
+        console2.log("Admin (owner):", admin);
+    }
+
+    /// @notice Transfer ownership of all deployed contracts from deployer to admin
+    function _transferAllOwnership(address admin) internal {
+        if (admin == msg.sender) return;
+
+        ChainRegistry(chainRegistryProxy).transferOwnership(admin);
+        console2.log("ChainRegistry ownership -> ", admin);
+
+        TokenRegistry(tokenRegistryProxy).transferOwnership(admin);
+        console2.log("TokenRegistry ownership -> ", admin);
+
+        LockUnlock(lockUnlockProxy).transferOwnership(admin);
+        console2.log("LockUnlock ownership ->    ", admin);
+
+        MintBurn(mintBurnProxy).transferOwnership(admin);
+        console2.log("MintBurn ownership ->      ", admin);
+
+        Bridge(payable(bridgeProxy)).transferOwnership(admin);
+        console2.log("Bridge ownership ->        ", admin);
     }
 
     /// @notice Deploy all V2 contracts
-    /// @param admin The admin address
+    /// @param initialOwner The initial owner for all contracts (deployer during script, transferred after)
     /// @param operator The operator address
     /// @param feeRecipient The fee recipient address
     /// @param wrappedNative The WETH/WMATIC/etc address for native deposits (address(0) to disable)
@@ -58,7 +84,7 @@ contract Deploy is Script {
     /// @return mintBurn_ The mint/burn proxy address
     /// @return bridge_ The bridge proxy address
     function deployAll(
-        address admin,
+        address initialOwner,
         address operator,
         address feeRecipient,
         address wrappedNative,
@@ -74,24 +100,24 @@ contract Deploy is Script {
             address bridge_
         )
     {
-        // 1. Deploy ChainRegistry
-        chainRegistry_ = deployChainRegistry(admin);
+        // 1. Deploy ChainRegistry (owned by deployer so registerChain succeeds)
+        chainRegistry_ = deployChainRegistry(initialOwner);
 
         // 2. Register this chain with the predetermined chain ID
         ChainRegistry(chainRegistry_).registerChain(chainIdentifier, thisChainId);
 
         // 3. Deploy TokenRegistry
-        tokenRegistry_ = deployTokenRegistry(admin, ChainRegistry(chainRegistry_));
+        tokenRegistry_ = deployTokenRegistry(initialOwner, ChainRegistry(chainRegistry_));
 
         // 4. Deploy LockUnlock
-        lockUnlock_ = deployLockUnlock(admin);
+        lockUnlock_ = deployLockUnlock(initialOwner);
 
         // 5. Deploy MintBurn
-        mintBurn_ = deployMintBurn(admin);
+        mintBurn_ = deployMintBurn(initialOwner);
 
-        // 6. Deploy Bridge (thisChainId and wrappedNative set during initialization)
+        // 6. Deploy Bridge
         bridge_ = deployBridge(
-            admin,
+            initialOwner,
             operator,
             feeRecipient,
             wrappedNative,

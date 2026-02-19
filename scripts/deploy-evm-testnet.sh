@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 #   - Foundry installed
-#   - PRIVATE_KEY environment variable set
+#   - DEPLOYER_ADDRESS environment variable set (private key entered interactively)
 #   - Testnet tokens for gas (tBNB)
 #
 # Usage:
@@ -35,11 +35,15 @@ log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
 # Network configurations
 BSC_TESTNET_RPC="https://data-seed-prebsc-1-s1.binance.org:8545"
 BSC_TESTNET_CHAIN_ID=97
+BSC_TESTNET_MULTICHAIN_ID=97
 BSC_TESTNET_EXPLORER="https://testnet.bscscan.com"
+BSC_TESTNET_WETH="0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
 
 OPBNB_TESTNET_RPC="https://opbnb-testnet-rpc.bnbchain.org"
 OPBNB_TESTNET_CHAIN_ID=5611
+OPBNB_TESTNET_MULTICHAIN_ID=5611
 OPBNB_TESTNET_EXPLORER="https://opbnb-testnet.bscscan.com"
+OPBNB_TESTNET_WETH="0x4200000000000000000000000000000000000006"
 
 # Parse arguments
 NETWORK="${1:-}"
@@ -58,14 +62,20 @@ case "$NETWORK" in
     bsc)
         RPC_URL="$BSC_TESTNET_RPC"
         CHAIN_ID="$BSC_TESTNET_CHAIN_ID"
+        MULTICHAIN_ID="$BSC_TESTNET_MULTICHAIN_ID"
         EXPLORER="$BSC_TESTNET_EXPLORER"
         NETWORK_NAME="BSC Testnet"
+        WETH_ADDRESS="$BSC_TESTNET_WETH"
+        CHAIN_IDENTIFIER="BSC"
         ;;
     opbnb)
         RPC_URL="$OPBNB_TESTNET_RPC"
         CHAIN_ID="$OPBNB_TESTNET_CHAIN_ID"
+        MULTICHAIN_ID="$OPBNB_TESTNET_MULTICHAIN_ID"
         EXPLORER="$OPBNB_TESTNET_EXPLORER"
         NETWORK_NAME="opBNB Testnet"
+        WETH_ADDRESS="$OPBNB_TESTNET_WETH"
+        CHAIN_IDENTIFIER="opBNB"
         ;;
     *)
         log_error "Unknown network: $NETWORK"
@@ -82,13 +92,14 @@ check_prereqs() {
         exit 1
     fi
     
-    if [ -z "$PRIVATE_KEY" ]; then
-        log_error "PRIVATE_KEY environment variable is required"
+    if [ -z "$DEPLOYER_ADDRESS" ]; then
+        log_error "DEPLOYER_ADDRESS environment variable is required"
+        log_info "Set it with: export DEPLOYER_ADDRESS=0x..."
         exit 1
     fi
     
     # Check balance
-    DEPLOYER=$(cast wallet address --private-key "$PRIVATE_KEY")
+    DEPLOYER="$DEPLOYER_ADDRESS"
     log_info "Deployer address: $DEPLOYER"
     
     BALANCE=$(cast balance "$DEPLOYER" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
@@ -117,34 +128,50 @@ deploy_contracts() {
     log_info "Building contracts..."
     forge build
     
-    # Deploy using the deploy script
+    # Export env vars that Deploy.s.sol reads
+    export WETH_ADDRESS
+    export CHAIN_IDENTIFIER
+    export THIS_CHAIN_ID="$MULTICHAIN_ID"
+    export ADMIN_ADDRESS
+    export OPERATOR_ADDRESS
+    export FEE_RECIPIENT_ADDRESS
+    
+    # Deploy using the deploy script (interactive key entry via -i 1)
     log_info "Running deployment script..."
-    DEPLOY_OUTPUT=$(forge script script/DeployPart1.s.sol:DeployPart1 \
+    log_info "WETH_ADDRESS=$WETH_ADDRESS"
+    log_info "CHAIN_IDENTIFIER=$CHAIN_IDENTIFIER"
+    log_info "THIS_CHAIN_ID=$THIS_CHAIN_ID"
+    forge script script/Deploy.s.sol:Deploy \
         --rpc-url "$RPC_URL" \
-        --private-key "$PRIVATE_KEY" \
+        --sender "$DEPLOYER_ADDRESS" \
+        -i 1 \
         --broadcast \
         --verify \
-        --etherscan-api-key "${BSCSCAN_API_KEY:-}" \
-        -vvv 2>&1) || {
+        --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \
+        -vvv || {
         log_error "Deployment failed"
-        echo "$DEPLOY_OUTPUT"
         exit 1
     }
     
-    echo "$DEPLOY_OUTPUT"
-    
     # Extract addresses from broadcast files
-    BROADCAST_FILE="$CONTRACTS_DIR/broadcast/DeployPart1.s.sol/$CHAIN_ID/run-latest.json"
+    BROADCAST_FILE="$CONTRACTS_DIR/broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
     
     if [ -f "$BROADCAST_FILE" ]; then
         log_step "Extracting deployed addresses..."
         
-        BRIDGE_ADDRESS=$(jq -r '.transactions[] | select(.contractName == "Cl8YBridge" or .contractName == "CL8YBridge") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        TOKEN_REGISTRY=$(jq -r '.transactions[] | select(.contractName == "TokenRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        CHAIN_REGISTRY=$(jq -r '.transactions[] | select(.contractName == "ChainRegistry") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        BRIDGE_ROUTER=$(jq -r '.transactions[] | select(.contractName == "BridgeRouter") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        MINT_BURN=$(jq -r '.transactions[] | select(.contractName == "MintBurn") | .contractAddress' "$BROADCAST_FILE" | head -1)
-        LOCK_UNLOCK=$(jq -r '.transactions[] | select(.contractName == "LockUnlock") | .contractAddress' "$BROADCAST_FILE" | head -1)
+        # Deploy.s.sol CREATE order: impl, proxy, impl, proxy, ...
+        CREATES=$(jq -r '[.transactions[] | select(.transactionType == "CREATE")] | .[].contractAddress' "$BROADCAST_FILE")
+        
+        CHAIN_REGISTRY_IMPL=$(echo "$CREATES" | sed -n '1p')
+        CHAIN_REGISTRY=$(echo "$CREATES" | sed -n '2p')
+        TOKEN_REGISTRY_IMPL=$(echo "$CREATES" | sed -n '3p')
+        TOKEN_REGISTRY=$(echo "$CREATES" | sed -n '4p')
+        LOCK_UNLOCK_IMPL=$(echo "$CREATES" | sed -n '5p')
+        LOCK_UNLOCK=$(echo "$CREATES" | sed -n '6p')
+        MINT_BURN_IMPL=$(echo "$CREATES" | sed -n '7p')
+        MINT_BURN=$(echo "$CREATES" | sed -n '8p')
+        BRIDGE_IMPL=$(echo "$CREATES" | sed -n '9p')
+        BRIDGE_ADDRESS=$(echo "$CREATES" | sed -n '10p')
         
         echo ""
         echo "========================================"
@@ -154,24 +181,24 @@ deploy_contracts() {
         echo "Network: $NETWORK_NAME (chainId: $CHAIN_ID)"
         echo "Explorer: $EXPLORER"
         echo ""
-        echo "Contract Addresses:"
-        echo "  CL8YBridge:     ${BRIDGE_ADDRESS:-not found}"
-        echo "  BridgeRouter:   ${BRIDGE_ROUTER:-not found}"
-        echo "  TokenRegistry:  ${TOKEN_REGISTRY:-not found}"
+        echo "Proxy Addresses (use these):"
+        echo "  Bridge:         ${BRIDGE_ADDRESS:-not found}"
         echo "  ChainRegistry:  ${CHAIN_REGISTRY:-not found}"
-        echo "  MintBurn:       ${MINT_BURN:-not found}"
+        echo "  TokenRegistry:  ${TOKEN_REGISTRY:-not found}"
         echo "  LockUnlock:     ${LOCK_UNLOCK:-not found}"
+        echo "  MintBurn:       ${MINT_BURN:-not found}"
         echo ""
-        echo "Verification Commands:"
-        if [ -n "$BRIDGE_ADDRESS" ]; then
-            echo "  forge verify-contract $BRIDGE_ADDRESS Cl8YBridge --chain-id $CHAIN_ID"
-        fi
+        echo "Implementation Addresses:"
+        echo "  Bridge:         ${BRIDGE_IMPL:-not found}"
+        echo "  ChainRegistry:  ${CHAIN_REGISTRY_IMPL:-not found}"
+        echo "  TokenRegistry:  ${TOKEN_REGISTRY_IMPL:-not found}"
+        echo "  LockUnlock:     ${LOCK_UNLOCK_IMPL:-not found}"
+        echo "  MintBurn:       ${MINT_BURN_IMPL:-not found}"
         echo ""
         echo "Environment Variables for Operator:"
         echo "  EVM_RPC_URL=$RPC_URL"
         echo "  EVM_CHAIN_ID=$CHAIN_ID"
         echo "  EVM_BRIDGE_ADDRESS=${BRIDGE_ADDRESS:-}"
-        echo "  EVM_ROUTER_ADDRESS=${BRIDGE_ROUTER:-}"
         echo ""
         
         # Save to .env file
@@ -182,12 +209,20 @@ deploy_contracts() {
 
 EVM_RPC_URL=$RPC_URL
 EVM_CHAIN_ID=$CHAIN_ID
+
+# Proxy addresses (interact with these)
 EVM_BRIDGE_ADDRESS=${BRIDGE_ADDRESS:-}
-EVM_ROUTER_ADDRESS=${BRIDGE_ROUTER:-}
-EVM_TOKEN_REGISTRY=${TOKEN_REGISTRY:-}
 EVM_CHAIN_REGISTRY=${CHAIN_REGISTRY:-}
-EVM_MINT_BURN=${MINT_BURN:-}
+EVM_TOKEN_REGISTRY=${TOKEN_REGISTRY:-}
 EVM_LOCK_UNLOCK=${LOCK_UNLOCK:-}
+EVM_MINT_BURN=${MINT_BURN:-}
+
+# Implementation addresses (for reference / verification)
+EVM_BRIDGE_IMPL=${BRIDGE_IMPL:-}
+EVM_CHAIN_REGISTRY_IMPL=${CHAIN_REGISTRY_IMPL:-}
+EVM_TOKEN_REGISTRY_IMPL=${TOKEN_REGISTRY_IMPL:-}
+EVM_LOCK_UNLOCK_IMPL=${LOCK_UNLOCK_IMPL:-}
+EVM_MINT_BURN_IMPL=${MINT_BURN_IMPL:-}
 EOF
         log_info "Addresses saved to $ENV_FILE"
         

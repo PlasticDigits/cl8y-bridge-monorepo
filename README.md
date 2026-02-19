@@ -13,11 +13,121 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Crosschain Transfer Flows](./docs/crosschain-flows.md) | Detailed transfer diagrams |
 | [Local Development](./docs/local-development.md) | Setting up local testnets |
 | [Testing Guide](./docs/testing.md) | Unit, integration, and E2E tests |
-| [Deployment Guide](./docs/deployment.md) | Production deployment |
+| [Deployment Guide](./docs/deployment-guide.md) | Production deployment (Render, Terra Classic, opBNB, BSC) |
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
 | [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
+
+## Live Deployments
+
+### Supported Chains
+
+| Chain | Type | Native Chain ID | Bridge bytes4 | Explorer | Status |
+|-------|------|-----------------|---------------|----------|--------|
+| BNB Smart Chain (BSC) | EVM | 56 | `0x00000038` | [bscscan.com](https://bscscan.com) | Deployed |
+| opBNB | EVM (L2) | 204 | `0x000000cc` | [opbnbscan.com](https://opbnbscan.com) | Deployed |
+| Terra Classic | Cosmos / CosmWasm | `columbus-5` | `0x00000001` | [finder.terra.money](https://finder.terra.money/classic) | Deployed |
+
+### BSC Mainnet (Chain ID: 56)
+
+| Contract | Proxy | Implementation | Role |
+|----------|-------|----------------|------|
+| ChainRegistry | [`0x6f4C6F59540460faF717C2Fea526316ae66C640c`](https://bscscan.com/address/0x6f4C6F59540460faF717C2Fea526316ae66C640c) | `0xDF9C23CCCA2Af37fb99236965BDa8f3C124536c8` | Chain registration |
+| TokenRegistry | [`0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0`](https://bscscan.com/address/0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0) | `0xb3b3e2f121400bab14920498d2c4789bfa6f7d6b` | Token registration & decimal mappings |
+| LockUnlock | [`0xa8A28bd164c6153cf27f51468C7930CebC0B2Bf7`](https://bscscan.com/address/0xa8A28bd164c6153cf27f51468C7930CebC0B2Bf7) | `0x328b57099021d132f417e104eb18a78bd686d73f` | Lock/unlock handler for ERC20 |
+| MintBurn | [`0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9`](https://bscscan.com/address/0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9) | `0x807874cac6f2dfe2030d91645302d22091437b41` | Mint/burn handler for bridged tokens |
+| Bridge | [`0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d`](https://bscscan.com/address/0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d) | `0x2b2c41db1e246cc4c90538aec95f8af63012da57` | Core bridge state machine |
+
+| Contract | Address | Role |
+|----------|---------|------|
+| AccessManager | [`0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF`](https://bscscan.com/address/0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF) | Role-based access control for token factories |
+| FactoryTokenCl8yBridged | [`0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F`](https://bscscan.com/address/0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F) | Bridged token factory (authority: AccessManager) |
+
+| Token | Address | Symbol | Decimals |
+|-------|---------|--------|----------|
+| Test A | [`0xD68393098E9252A2c377F3474C38B249D7bd5D92`](https://bscscan.com/address/0xD68393098E9252A2c377F3474C38B249D7bd5D92) | `testa-cb` | 18 |
+| Test B | [`0x65FFbA340768BadEc8002C76a542931757372d58`](https://bscscan.com/address/0x65FFbA340768BadEc8002C76a542931757372d58) | `testb-cb` | 18 |
+| Test Dec | [`0xC62351E2445AB732289e07Be795149Bc774bB043`](https://bscscan.com/address/0xC62351E2445AB732289e07Be795149Bc774bB043) | `tdec-cb` | 18 |
+
+**Configuration:**
+
+| Parameter | Value |
+|-----------|-------|
+| Owner (admin) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
+| Operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` |
+| Cancel window | 300 seconds (5 minutes) |
+| Fee | 50 bps (0.50%) |
+| Wrapped native (WBNB) | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| This chain ID | `0x00000038` (56) |
+| Registered chains | BSC (self) |
+| Proxy pattern | UUPS (ERC1967) |
+
+### opBNB Mainnet (Chain ID: 204)
+
+| Contract | Proxy | Implementation | Role |
+|----------|-------|----------------|------|
+| ChainRegistry | [`0x6f4C6F59540460faF717C2Fea526316ae66C640c`](https://opbnbscan.com/address/0x6f4C6F59540460faF717C2Fea526316ae66C640c) | `0xDF9C23CCCA2Af37fb99236965BDa8f3C124536c8` | Chain registration |
+| TokenRegistry | [`0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0`](https://opbnbscan.com/address/0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0) | `0xb3b3e2f121400bab14920498d2c4789bfa6f7d6b` | Token registration & decimal mappings |
+| LockUnlock | [`0xa8A28bd164c6153cf27f51468C7930CebC0B2Bf7`](https://opbnbscan.com/address/0xa8A28bd164c6153cf27f51468C7930CebC0B2Bf7) | `0x328b57099021d132f417e104eb18a78bd686d73f` | Lock/unlock handler for ERC20 |
+| MintBurn | [`0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9`](https://opbnbscan.com/address/0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9) | `0x807874cac6f2dfe2030d91645302d22091437b41` | Mint/burn handler for bridged tokens |
+| Bridge | [`0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d`](https://opbnbscan.com/address/0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d) | `0x2b2c41db1e246cc4c90538aec95f8af63012da57` | Core bridge state machine |
+
+| Contract | Address | Role |
+|----------|---------|------|
+| AccessManagerEnumerable | [`0xa958d75c61227606df21e3261ba80dc399d19676`](https://opbnbscan.com/address/0xa958d75c61227606df21e3261ba80dc399d19676) | Role-based access control for token factories |
+| FactoryTokenCl8yBridged | [`0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b`](https://opbnbscan.com/address/0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b) | Bridged token factory (authority: AccessManagerEnumerable) |
+| Create3Deployer | [`0x375401aaab20b0827cfc7dbe822e352738d390a9`](https://opbnbscan.com/address/0x375401aaab20b0827cfc7dbe822e352738d390a9) | Deterministic CREATE3 deployer |
+
+| Token | Address | Symbol | Decimals |
+|-------|---------|--------|----------|
+| Test A | [`0xB3a6385f4B4879cb5CB3188A574cCA0E82614bE1`](https://opbnbscan.com/address/0xB3a6385f4B4879cb5CB3188A574cCA0E82614bE1) | `testa-cb` | 18 |
+| Test B | [`0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6`](https://opbnbscan.com/address/0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6) | `testb-cb` | 18 |
+| Test Dec | [`0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d`](https://opbnbscan.com/address/0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d) | `tdec-cb` | 12 (custom decimals) |
+
+**Configuration:**
+
+| Parameter | Value |
+|-----------|-------|
+| Owner (admin) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
+| Operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` |
+| Cancel window | 300 seconds (5 minutes) |
+| Fee | 50 bps (0.50%) |
+| Wrapped native (WBNB) | `0x4200000000000000000000000000000000000006` |
+| This chain ID | `0x000000cc` (204) |
+| Registered chains | opBNB (self) |
+| Proxy pattern | UUPS (ERC1967) |
+| AccessManager admin | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
+
+> **Note:** Proxy addresses are identical on BSC and opBNB because the same deployer account
+> deployed in the same nonce order on both chains, producing deterministic CREATE addresses.
+
+### Terra Classic Mainnet (`columbus-5`)
+
+| Parameter | Value |
+|-----------|-------|
+| Contract | [`terra1evv0pdvr59yjj09k79h8thldlewlj77yexlwsnfug5nhzkxheamsr568rs`](https://finder.terra.money/classic/address/terra1evv0pdvr59yjj09k79h8thldlewlj77yexlwsnfug5nhzkxheamsr568rs) |
+| Code ID | `10945` |
+| Admin | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
+| Fee collector | `terra1q7txczaxuvy923k4km9ya062dryk6mjwd6tmzm` |
+| This chain ID | `0x00000001` (`AAAAAQ==`) |
+| Min bridge amount | 1,000,000 uluna (1 LUNC) |
+| Max bridge amount | 1,000,000,000,000 uluna (1M LUNC) |
+| Fee | 30 bps (0.30%) |
+| Withdraw delay | 300 seconds (5 minutes) |
+| Min signatures | 1 |
+
+### Testnet Deployments (BSC Testnet + opBNB Testnet, v1.2)
+
+See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for testnet addresses.
+
+### Previous Deployments
+
+| Version | Chain | Contract | Address |
+|---------|-------|----------|---------|
+| v1.4 | BSC (56) | AccessManagerEnumerable | `0x745120275A70693cc1D55cD5C81e99b0D2C1dF57` |
+| v0.0.1 | BSC (56) | AccessManager | `0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF` |
+| v0.0.1 | BSC (56) | FactoryTokenCl8yBridged | `0x4C6e7a15b0CA53408BcB84759877f16e272eeeeA` |
 
 ## Packages
 
