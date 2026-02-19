@@ -12,6 +12,14 @@ use crate::db::models::NewEvmDeposit;
 use crate::db::{get_last_evm_block, update_last_evm_block};
 use crate::types::ChainId;
 
+/// Max blocks to look back on first poll (covers the cancel window).
+/// opBNB and BSC publicnode cap eth_getLogs at 50,000 blocks.
+const DEFAULT_LOOKBACK_BLOCKS: u64 = 5_000;
+
+/// Max block range per eth_getLogs query. Queries spanning more blocks are
+/// chunked into sequential sub-queries to stay within RPC provider limits.
+const DEFAULT_CHUNK_SIZE: u64 = 5_000;
+
 /// EVM event watcher for Deposit events (V2)
 ///
 /// V2 uses the new Deposit event format with 4-byte chain IDs:
@@ -38,6 +46,8 @@ pub struct EvmWatcher {
     db: PgPool,
     /// Use V2 event format (Deposit instead of DepositRequest)
     use_v2_events: bool,
+    lookback_blocks: u64,
+    chunk_size: u64,
 }
 
 impl EvmWatcher {
@@ -109,6 +119,17 @@ impl EvmWatcher {
             "EVM watcher initialized"
         );
 
+        let lookback_blocks: u64 = std::env::var("EVM_POLL_LOOKBACK_BLOCKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_LOOKBACK_BLOCKS);
+        let chunk_size: u64 = std::env::var("EVM_POLL_CHUNK_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_CHUNK_SIZE);
+
+        tracing::info!(lookback_blocks, chunk_size, "EVM poll chunking configured");
+
         Ok(Self {
             provider,
             bridge_address,
@@ -118,6 +139,8 @@ impl EvmWatcher {
             finality_blocks: config.finality_blocks,
             db,
             use_v2_events,
+            lookback_blocks,
+            chunk_size,
         })
     }
 
@@ -134,24 +157,41 @@ impl EvmWatcher {
             // Get current finalized block
             let current_block = self.get_finalized_block().await?;
 
+            // On first run (no DB state), start from recent blocks, not genesis
+            let effective_last = if last_block == 0 {
+                let start = current_block.saturating_sub(self.lookback_blocks);
+                tracing::info!(
+                    chain_id = self.chain_id,
+                    current_block,
+                    lookback_blocks = self.lookback_blocks,
+                    start_block = start,
+                    "First poll — looking back {} blocks from head",
+                    self.lookback_blocks
+                );
+                start
+            } else {
+                last_block as u64
+            };
+
             // Skip if no new blocks
-            if current_block <= last_block as u64 {
+            if current_block <= effective_last {
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
 
-            // Process new blocks
-            let from_block = (last_block + 1) as u64;
+            let from_block = effective_last + 1;
             let to_block = current_block;
 
             tracing::info!(
                 chain_id = self.chain_id,
                 from_block,
                 to_block,
+                block_range = to_block - from_block + 1,
                 "Processing EVM blocks"
             );
 
-            self.process_block_range(from_block, to_block).await?;
+            self.process_block_range_chunked(from_block, to_block)
+                .await?;
 
             // Update last processed block
             update_last_evm_block(&self.db, self.chain_id as i64, to_block as i64).await?;
@@ -160,7 +200,42 @@ impl EvmWatcher {
         }
     }
 
-    /// Process logs from a block range
+    /// Process logs from a large block range by splitting into chunks that
+    /// stay within the RPC provider's eth_getLogs block range limit.
+    async fn process_block_range_chunked(&self, from_block: u64, to_block: u64) -> Result<()> {
+        let chunk_size = self.chunk_size.max(1);
+        let mut chunk_start = from_block;
+
+        while chunk_start <= to_block {
+            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
+
+            tracing::debug!(
+                chain_id = self.chain_id,
+                from = chunk_start,
+                to = chunk_end,
+                "Querying Deposit events chunk"
+            );
+
+            match self.process_block_range(chunk_start, chunk_end).await {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        chain_id = self.chain_id,
+                        error = %e,
+                        from = chunk_start,
+                        to = chunk_end,
+                        "eth_getLogs failed for chunk — skipping ahead"
+                    );
+                }
+            }
+
+            chunk_start = chunk_end + 1;
+        }
+
+        Ok(())
+    }
+
+    /// Process logs from a single block range (must be within RPC limits)
     async fn process_block_range(&self, from_block: u64, to_block: u64) -> Result<()> {
         let filter = Filter::new()
             .address(self.bridge_address)
