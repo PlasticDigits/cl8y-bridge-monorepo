@@ -10,7 +10,7 @@ services:
 
     # Monorepo: build from frontend package
     rootDir: packages/frontend
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci && NODE_OPTIONS=--max-old-space-size=4096 npm run build
     staticPublishPath: dist
 
     # SPA fallback for client-side routing (BrowserRouter)

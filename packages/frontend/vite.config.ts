@@ -10,7 +10,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
     // Optimize for smaller initial load (Raspberry Pi on WiFi)
     target: 'es2020',
     minify: 'esbuild',

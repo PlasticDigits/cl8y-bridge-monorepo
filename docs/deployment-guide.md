@@ -1107,12 +1107,27 @@ Create `packages/operator/.env` from the example:
 # Database
 DATABASE_URL=postgres://user:password@host:5432/operator
 
-# EVM (use a reliable RPC provider, not public endpoints)
-EVM_RPC_URL=https://your-bsc-rpc-provider.com
+# Primary EVM chain (BSC)
+EVM_RPC_URL=https://bsc-dataseed1.binance.org
 EVM_CHAIN_ID=56
-EVM_BRIDGE_ADDRESS=0x...       # Bridge proxy address from Phase 2
-EVM_ROUTER_ADDRESS=0x...       # BridgeRouter proxy address from Phase 2
+EVM_BRIDGE_ADDRESS=0x...       # BSC Bridge proxy address from Phase 2
+EVM_ROUTER_ADDRESS=0x...       # BSC BridgeRouter proxy address from Phase 2
 EVM_PRIVATE_KEY=0x...          # Operator's EVM private key
+
+# Additional EVM chains (multi-chain)
+EVM_CHAINS_COUNT=2
+EVM_CHAIN_1_NAME=bsc
+EVM_CHAIN_1_CHAIN_ID=56
+EVM_CHAIN_1_THIS_CHAIN_ID=56   # V2 chain ID from ChainRegistry (decimal)
+EVM_CHAIN_1_RPC_URL=https://bsc-dataseed1.binance.org
+EVM_CHAIN_1_BRIDGE_ADDRESS=0x...  # BSC Bridge proxy
+EVM_CHAIN_1_FINALITY_BLOCKS=15
+EVM_CHAIN_2_NAME=opbnb
+EVM_CHAIN_2_CHAIN_ID=204
+EVM_CHAIN_2_THIS_CHAIN_ID=204  # V2 chain ID from ChainRegistry (decimal)
+EVM_CHAIN_2_RPC_URL=https://opbnb-mainnet-rpc.bnbchain.org
+EVM_CHAIN_2_BRIDGE_ADDRESS=0x...  # opBNB Bridge proxy
+EVM_CHAIN_2_FINALITY_BLOCKS=15
 
 # Terra Classic
 TERRA_RPC_URL=https://terra-classic-rpc.publicnode.com:443
@@ -1120,6 +1135,7 @@ TERRA_LCD_URL=https://terra-classic-lcd.publicnode.com
 TERRA_CHAIN_ID=columbus-5
 TERRA_BRIDGE_ADDRESS=terra1...  # From Phase 3
 TERRA_MNEMONIC="..."            # Operator's Terra mnemonic
+TERRA_THIS_CHAIN_ID=1           # Terra's V2 chain ID (decimal) from ChainRegistry
 
 # Production settings
 FINALITY_BLOCKS=15
@@ -1143,11 +1159,24 @@ cargo run --release
 Create `packages/canceler/.env`:
 
 ```bash
-# EVM
-EVM_RPC_URL=https://opbnb-mainnet-rpc.bnbchain.org
-EVM_CHAIN_ID=204
-EVM_BRIDGE_ADDRESS=0x...
+# Primary EVM chain (BSC)
+EVM_RPC_URL=https://bsc-dataseed1.binance.org
+EVM_CHAIN_ID=56
+EVM_BRIDGE_ADDRESS=0x...       # BSC Bridge proxy address
 EVM_PRIVATE_KEY=0x...          # Canceler's EVM private key (different from operator)
+
+# Additional EVM chains (multi-chain)
+EVM_CHAINS_COUNT=2
+EVM_CHAIN_1_NAME=bsc
+EVM_CHAIN_1_CHAIN_ID=56
+EVM_CHAIN_1_THIS_CHAIN_ID=56
+EVM_CHAIN_1_RPC_URL=https://bsc-dataseed1.binance.org
+EVM_CHAIN_1_BRIDGE_ADDRESS=0x...  # BSC Bridge proxy
+EVM_CHAIN_2_NAME=opbnb
+EVM_CHAIN_2_CHAIN_ID=204
+EVM_CHAIN_2_THIS_CHAIN_ID=204
+EVM_CHAIN_2_RPC_URL=https://opbnb-mainnet-rpc.bnbchain.org
+EVM_CHAIN_2_BRIDGE_ADDRESS=0x...  # opBNB Bridge proxy
 
 # Terra Classic
 TERRA_LCD_URL=https://terra-classic-lcd.publicnode.com
@@ -1155,6 +1184,7 @@ TERRA_RPC_URL=https://terra-classic-rpc.publicnode.com:443
 TERRA_CHAIN_ID=columbus-5
 TERRA_BRIDGE_ADDRESS=terra1...
 TERRA_MNEMONIC="..."            # Canceler's Terra mnemonic
+TERRA_V2_CHAIN_ID=0x00000001    # Terra's V2 chain ID (bytes4 hex) from ChainRegistry
 
 # Settings
 POLL_INTERVAL_MS=5000
@@ -1167,7 +1197,7 @@ cd packages/canceler
 cargo run --release
 ```
 
-Deploy at least 2 canceler instances on separate machines for redundancy. Use the multi-instance configuration (`EVM_PRIVATE_KEY_2`, `TERRA_MNEMONIC_2`, etc.) or separate `.env` files.
+Deploy at least 2 canceler instances on separate machines for redundancy. Use separate `.env` files with distinct private keys and mnemonics for each instance.
 
 ### 7.4 Process Management
 
@@ -1325,17 +1355,26 @@ journalctl -u cl8y-canceler -f
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `EVM_RPC_URL` | Yes | EVM RPC endpoint (use a paid provider) |
-| `EVM_CHAIN_ID` | Yes | `56` (BSC) or `204` (opBNB) |
-| `EVM_BRIDGE_ADDRESS` | Yes | Bridge proxy address |
-| `EVM_ROUTER_ADDRESS` | Yes | BridgeRouter proxy address |
+| `EVM_RPC_URL` | Yes | Primary EVM RPC endpoint |
+| `EVM_CHAIN_ID` | Yes | Primary EVM chain ID (`56` for BSC) |
+| `EVM_BRIDGE_ADDRESS` | Yes | Primary Bridge proxy address |
+| `EVM_ROUTER_ADDRESS` | Yes | Primary BridgeRouter proxy address |
 | `EVM_PRIVATE_KEY` | Yes | Operator's EVM private key |
+| `EVM_CHAINS_COUNT` | Yes | Number of EVM chains (e.g., `2` for BSC + opBNB) |
+| `EVM_CHAIN_{N}_NAME` | Yes | Chain name (e.g., `bsc`, `opbnb`) |
+| `EVM_CHAIN_{N}_CHAIN_ID` | Yes | Native EVM chain ID (e.g., `56`, `204`) |
+| `EVM_CHAIN_{N}_THIS_CHAIN_ID` | Yes | V2 chain ID from ChainRegistry (decimal) |
+| `EVM_CHAIN_{N}_RPC_URL` | Yes | RPC endpoint for this chain |
+| `EVM_CHAIN_{N}_BRIDGE_ADDRESS` | Yes | Bridge proxy address on this chain |
+| `EVM_CHAIN_{N}_FINALITY_BLOCKS` | No | Block confirmations (default: 12) |
+| `EVM_CHAIN_{N}_ENABLED` | No | Enable/disable chain (default: `true`) |
 | `TERRA_RPC_URL` | Yes | Terra RPC endpoint |
 | `TERRA_LCD_URL` | Yes | Terra LCD API endpoint |
 | `TERRA_CHAIN_ID` | Yes | `columbus-5` |
 | `TERRA_BRIDGE_ADDRESS` | Yes | Terra bridge contract address |
 | `TERRA_MNEMONIC` | Yes | Operator's Terra mnemonic |
-| `FINALITY_BLOCKS` | No | Block confirmations before processing (default: 1, recommended: 15) |
+| `TERRA_THIS_CHAIN_ID` | Yes | Terra's V2 chain ID (decimal, e.g., `1`) |
+| `FINALITY_BLOCKS` | No | Default block confirmations (default: 1, recommended: 15) |
 | `POLL_INTERVAL_MS` | No | Polling interval in ms (default: 1000, recommended: 5000) |
 | `RETRY_ATTEMPTS` | No | Number of retry attempts (default: 5) |
 | `RETRY_DELAY_MS` | No | Delay between retries in ms (default: 5000) |
@@ -1349,15 +1388,22 @@ journalctl -u cl8y-canceler -f
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `EVM_RPC_URL` | Yes | EVM RPC endpoint |
-| `EVM_CHAIN_ID` | Yes | `56` or `204` |
-| `EVM_BRIDGE_ADDRESS` | Yes | Bridge proxy address |
+| `EVM_RPC_URL` | Yes | Primary EVM RPC endpoint |
+| `EVM_CHAIN_ID` | Yes | Primary EVM chain ID (`56` for BSC) |
+| `EVM_BRIDGE_ADDRESS` | Yes | Primary Bridge proxy address |
 | `EVM_PRIVATE_KEY` | Yes | Canceler's EVM private key |
+| `EVM_CHAINS_COUNT` | Yes | Number of EVM chains (e.g., `2`) |
+| `EVM_CHAIN_{N}_NAME` | Yes | Chain name (e.g., `bsc`, `opbnb`) |
+| `EVM_CHAIN_{N}_CHAIN_ID` | Yes | Native EVM chain ID |
+| `EVM_CHAIN_{N}_THIS_CHAIN_ID` | Yes | V2 chain ID from ChainRegistry (decimal) |
+| `EVM_CHAIN_{N}_RPC_URL` | Yes | RPC endpoint for this chain |
+| `EVM_CHAIN_{N}_BRIDGE_ADDRESS` | Yes | Bridge proxy address on this chain |
 | `TERRA_LCD_URL` | Yes | Terra LCD endpoint |
 | `TERRA_RPC_URL` | Yes | Terra RPC endpoint |
 | `TERRA_CHAIN_ID` | Yes | `columbus-5` |
 | `TERRA_BRIDGE_ADDRESS` | Yes | Terra bridge contract address |
 | `TERRA_MNEMONIC` | Yes | Canceler's Terra mnemonic |
+| `TERRA_V2_CHAIN_ID` | Yes | Terra's V2 chain ID (bytes4 hex, e.g., `0x00000001`) |
 | `POLL_INTERVAL_MS` | No | Polling interval in ms (default: 5000) |
 
 ### Frontend (`packages/frontend/.env.local`)
