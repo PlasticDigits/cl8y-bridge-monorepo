@@ -322,7 +322,7 @@ function registerChainsOnTerra(terraBridgeAddress: string): void {
           `--fees 10000000uluna -y 2>/dev/null`,
         { encoding: 'utf8', timeout: 30_000 }
       )
-      console.log(`[register-tokens] Registered chain "${identifier}" (V2 ID 0x${chainIdBytes[3].toString(16).padStart(2, '0')}) on Terra bridge`)
+      console.log(`[register-tokens] Registered chain "${identifier}" (V2 ID 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}) on Terra bridge`)
     } catch (err) {
       console.warn(`[register-tokens] Failed to register ${identifier} on Terra:`, (err as Error).message?.slice(0, 100))
     }
@@ -387,7 +387,7 @@ function registerTerraTokensForEvmChains(
           `--fees 10000000uluna -y 2>/dev/null`,
         { encoding: 'utf8', timeout: 30_000 }
       )
-      console.log(`[register-tokens] Set token_destination for uluna -> chain 0x${chainId[3].toString(16).padStart(2, '0')}`)
+      console.log(`[register-tokens] Set token_destination for uluna -> chain 0x${chainId[3]!.toString(16).padStart(2, '0')}`)
     } catch (err) {
       console.warn('[register-tokens] Failed to set_token_destination:', (err as Error).message?.slice(0, 100))
     }
@@ -415,7 +415,7 @@ function registerTerraTokensForEvmChains(
           `--fees 10000000uluna -y 2>/dev/null`,
         { encoding: 'utf8', timeout: 30_000 }
       )
-      console.log(`[register-tokens] Set incoming token mapping for uluna (chain 0x${chainIdBytes[3].toString(16).padStart(2, '0')}) on Terra bridge`)
+      console.log(`[register-tokens] Set incoming token mapping for uluna (chain 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}) on Terra bridge`)
     } catch (err) {
       console.warn('[register-tokens] Failed to set incoming token mapping:', (err as Error).message?.slice(0, 100))
     }

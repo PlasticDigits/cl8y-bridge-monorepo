@@ -74,7 +74,7 @@ describe('WalletStatusBar', () => {
     const onConnectEvm = vi.fn()
     render(<WalletStatusBar onConnectEvm={onConnectEvm} />)
     const buttons = screen.getAllByText('Connect')
-    fireEvent.click(buttons[0]) // EVM is first
+    fireEvent.click(buttons[0]!) // EVM is first
     expect(onConnectEvm).toHaveBeenCalledOnce()
   })
 
@@ -92,7 +92,7 @@ describe('WalletStatusBar', () => {
     const onConnectTerra = vi.fn()
     render(<WalletStatusBar onConnectTerra={onConnectTerra} />)
     const buttons = screen.getAllByText('Connect')
-    fireEvent.click(buttons[1]) // Terra is second
+    fireEvent.click(buttons[1]!) // Terra is second
     expect(onConnectTerra).toHaveBeenCalledOnce()
   })
 })

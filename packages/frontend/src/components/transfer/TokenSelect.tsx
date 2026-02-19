@@ -93,10 +93,10 @@ export function TokenSelect({ tokens, value, onChange, id = 'token-select', disa
         <TokenLogo
           symbol={selected?.symbol}
           tokenId={selected?.tokenId}
-          addressForBlockie={getAddressForBlockie(selected)}
+          addressForBlockie={selected ? getAddressForBlockie(selected) : undefined}
           size={18}
         />
-        <span>{getDisplayLabel(selected, tokenlist ? getTokenFromList(tokenlist, selected.id) : null, displayMap)}</span>
+        <span>{selected ? getDisplayLabel(selected, tokenlist ? getTokenFromList(tokenlist, selected.id) : null, displayMap) : '—'}</span>
         {canOpen && (
           <svg
             className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}

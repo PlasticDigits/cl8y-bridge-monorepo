@@ -47,7 +47,7 @@ export function useTokenRegistry() {
         if (!res.tokens || res.tokens.length === 0) break
         allTokens.push(...res.tokens)
         if (res.tokens.length < DEFAULT_LIMIT) break
-        startAfter = res.tokens[res.tokens.length - 1].token
+        startAfter = res.tokens[res.tokens.length - 1]!.token
         hasMore = res.tokens.length === DEFAULT_LIMIT
       }
 

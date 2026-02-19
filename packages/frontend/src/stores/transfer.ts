@@ -72,7 +72,7 @@ export const useTransferStore = create<TransferState>((set) => ({
     const list = readTransfers()
     const idx = list.findIndex((t) => t.id === id)
     if (idx === -1) return
-    list[idx] = { ...list[idx], ...updates }
+    list[idx] = { ...list[idx]!, ...updates }
     writeTransfers(list)
     window.dispatchEvent(new CustomEvent('cl8y-transfer-updated', { detail: { id } }))
   },

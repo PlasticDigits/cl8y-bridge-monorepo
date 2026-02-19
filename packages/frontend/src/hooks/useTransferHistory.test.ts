@@ -30,7 +30,7 @@ describe('useTransferHistory', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(mockTransfers))
     const { result } = renderHook(() => useTransferHistory())
     expect(result.current.transfers).toHaveLength(3)
-    expect(result.current.transfers[0].id).toBe('tx-1')
+    expect(result.current.transfers[0]!.id).toBe('tx-1')
   })
 
   it('should respect limit parameter', () => {

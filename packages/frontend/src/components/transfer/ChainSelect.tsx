@@ -23,7 +23,7 @@ export function ChainSelect({
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const selected = chains.find((c) => c.id === value) ?? chains[0]
+  const selected: ChainInfo | undefined = chains.find((c) => c.id === value) ?? chains[0]
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -36,6 +36,19 @@ export function ChainSelect({
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
+
+  if (!selected) {
+    return (
+      <div className="relative">
+        <label className="mb-1 block font-['Chakra_Petch'] text-sm font-bold uppercase tracking-wider text-[#b8ff3d] [text-shadow:1px_1px_0_#000]">
+          {label}
+        </label>
+        <div className="flex w-full items-center gap-2 border-2 border-white/20 bg-[#161616] px-3 py-2 text-sm text-gray-500">
+          No chains available
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div ref={containerRef} className="relative">

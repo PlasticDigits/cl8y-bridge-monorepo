@@ -32,7 +32,7 @@ function parseDeployOutput(output: string): EvmDeployResult {
     for (const key of keys) {
       // Match both "KEY=0x..." and "KEY 0x..." formats (forge log output varies)
       const match = output.match(new RegExp(`${key}[= ](0x[0-9a-fA-F]{40})`))
-      if (match) return match[1]
+      if (match) return match[1]!
     }
     throw new Error(`Could not find any of [${keys.join(', ')}] in deploy output:\n${output.slice(0, 500)}`)
   }
@@ -98,7 +98,7 @@ export function deployThreeTokens(rpcUrl: string): TokenDeployResult {
   const getAddr = (...keys: string[]): string => {
     for (const key of keys) {
       const match = output.match(new RegExp(`${key}[= ](0x[0-9a-fA-F]{40})`))
-      if (match) return match[1]
+      if (match) return match[1]!
     }
     throw new Error(`Could not find any of [${keys.join(', ')}] in deploy output`)
   }
@@ -124,8 +124,8 @@ export function deployLuncToken(rpcUrl: string): string {
   )
   const match = output.match(/LUNC_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
   if (!match) throw new Error('Could not find LUNC_TOKEN_ADDRESS in deploy output')
-  console.log(`[deploy-evm] LUNC token deployed: ${match[1]}`)
-  return match[1]
+  console.log(`[deploy-evm] LUNC token deployed: ${match[1]!}`)
+  return match[1]!
 }
 
 /**
@@ -143,8 +143,8 @@ export function deployKdecToken(rpcUrl: string, decimals: number): string {
   )
   const match = output.match(/KDEC_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
   if (!match) throw new Error('Could not find KDEC_TOKEN_ADDRESS in deploy output')
-  console.log(`[deploy-evm] KDEC token (${decimals}d) deployed: ${match[1]}`)
-  return match[1]
+  console.log(`[deploy-evm] KDEC token (${decimals}d) deployed: ${match[1]!}`)
+  return match[1]!
 }
 
 /**

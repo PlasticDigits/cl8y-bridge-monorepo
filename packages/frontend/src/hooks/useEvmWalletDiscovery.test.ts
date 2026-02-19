@@ -43,13 +43,13 @@ describe('useEvmWalletDiscovery', () => {
   it('should sort same-priority connectors alphabetically', () => {
     const { result } = renderHook(() => useEvmWalletDiscovery())
     const injected = result.current.connectors.filter((c) => c.type === 'injected')
-    expect(injected[0].name).toBe('MetaMask')
-    expect(injected[1].name).toBe('Rabby')
+    expect(injected[0]!.name).toBe('MetaMask')
+    expect(injected[1]!.name).toBe('Rabby')
   })
 
   it('should put unknown wallets last', () => {
     const { result } = renderHook(() => useEvmWalletDiscovery())
-    const last = result.current.connectors[result.current.connectors.length - 1]
+    const last = result.current.connectors[result.current.connectors.length - 1]!
     expect(last.name).toBe('Unknown Wallet')
   })
 })

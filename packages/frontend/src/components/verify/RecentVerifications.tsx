@@ -90,7 +90,7 @@ export function recordVerificationResult(hash: string, result: VerificationResul
     const idx = list.findIndex((r) => r.hash.toLowerCase() === hash.toLowerCase())
     if (idx >= 0) {
       list[idx] = {
-        ...list[idx],
+        ...list[idx]!,
         status: result.status,
         sourceChain: result.sourceChain ?? undefined,
         destChain: result.destChain ?? undefined,

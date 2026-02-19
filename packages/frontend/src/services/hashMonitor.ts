@@ -268,8 +268,8 @@ export async function fetchEvmXchainHashIds(
       )
 
       for (let i = 0; i < pairEntries.length; i++) {
-        const [key] = pairEntries[i]
-        const result = results[i]
+        const [key] = pairEntries[i]!
+        const result = results[i]!
         if (result.status === 'fulfilled' && result.value) {
           const val = result.value as Hex
           destTokenCache.set(key, val !== ('0x' + '0'.repeat(64)) ? val : null)

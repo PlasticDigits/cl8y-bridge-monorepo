@@ -81,11 +81,11 @@ export function deployTerraBridge(): string {
       encoding: 'utf8',
     })
     const envMatch = envOutput.match(/TERRA_BRIDGE_ADDRESS=(terra1[a-z0-9]+)/)
-    if (envMatch) return envMatch[1]
+    if (envMatch) return envMatch[1]!
     throw new Error('Could not find TERRA_BRIDGE_ADDRESS in deploy output')
   }
-  console.log(`[deploy-terra] Bridge deployed at: ${match[1]}`)
-  return match[1]
+  console.log(`[deploy-terra] Bridge deployed at: ${match[1]!}`)
+  return match[1]!
 }
 
 interface Cw20DeployResult {
@@ -258,7 +258,7 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
   }
 
   const tokens: Cw20DeployResult[] = []
-  for (const [name, symbol] of [['Token A', 'TKNA'], ['Token B', 'TKNB'], ['Token C', 'TKNC']]) {
+  for (const [name, symbol] of [['Token A', 'TKNA'], ['Token B', 'TKNB'], ['Token C', 'TKNC']] as const) {
     const addr = instantiateCw20Token(codeId, name, symbol, 6, '1000000000000')
     tokens.push({
       tokenAddress: addr ?? `${PLACEHOLDER_PREFIX}${symbol.toLowerCase()}`,
@@ -268,7 +268,7 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
     if (addr) console.log(`[deploy-terra] CW20 ${symbol} deployed at: ${addr}`)
   }
 
-  return { tokenA: tokens[0], tokenB: tokens[1], tokenC: tokens[2] }
+  return { tokenA: tokens[0]!, tokenB: tokens[1]!, tokenC: tokens[2]! }
 }
 
 /**

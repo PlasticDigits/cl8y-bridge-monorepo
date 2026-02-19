@@ -88,7 +88,7 @@ describe('useTransferStore', () => {
         'cl8y-bridge-transactions',
         expect.any(String)
       )
-      const stored = JSON.parse(localStorageMock.setItem.mock.calls[0][1])
+      const stored = JSON.parse(localStorageMock.setItem.mock.calls[0]![1])
       expect(stored).toHaveLength(1)
       expect(stored[0].txHash).toBe('0xabc')
       expect(stored[0].id).toMatch(/^tx-/)
@@ -134,7 +134,7 @@ describe('useTransferStore', () => {
         status: 'confirmed',
         txHash: '0xnew',
       })
-      const stored = JSON.parse(localStorageMock.setItem.mock.calls[localStorageMock.setItem.mock.calls.length - 1][1])
+      const stored = JSON.parse(localStorageMock.setItem.mock.calls[localStorageMock.setItem.mock.calls.length - 1]![1])
       expect(stored).toHaveLength(100) // still capped
       expect(stored[0].txHash).toBe('0xnew') // new one at front
     })

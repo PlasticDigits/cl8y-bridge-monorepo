@@ -52,7 +52,7 @@ describe('useTerraDeposit Integration Tests', () => {
         bytes[i] = decoded.charCodeAt(i)
       }
       const restored =
-        (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]
+        (bytes[0]! << 24) | (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!
       expect(restored).toBe(chainId)
     })
 

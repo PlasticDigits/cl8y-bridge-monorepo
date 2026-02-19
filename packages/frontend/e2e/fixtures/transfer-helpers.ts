@@ -70,7 +70,7 @@ export function withdrawSubmitViaCast(params: {
   const result = execSync(cmd, { encoding: 'utf8', timeout: 30_000, env: castEnv })
   // Extract tx hash from cast output
   const hashMatch = result.match(/transactionHash\s+(0x[a-fA-F0-9]{64})/)
-  return hashMatch ? hashMatch[1] : ''
+  return hashMatch?.[1] ?? ''
 }
 
 /**
@@ -161,7 +161,7 @@ export function depositErc20ViaCast(params: {
   )
 
   const hashMatch = result.match(/transactionHash\s+(0x[a-fA-F0-9]{64})/)
-  return { txHash: hashMatch ? hashMatch[1] : '' }
+  return { txHash: hashMatch?.[1] ?? '' }
 }
 
 /**
@@ -360,5 +360,5 @@ export function withdrawExecuteViaCast(params: {
     { encoding: 'utf8', timeout: 30_000, env: castEnv }
   )
   const hashMatch = result.match(/transactionHash\s+(0x[a-fA-F0-9]{64})/)
-  return hashMatch ? hashMatch[1] : ''
+  return hashMatch?.[1] ?? ''
 }

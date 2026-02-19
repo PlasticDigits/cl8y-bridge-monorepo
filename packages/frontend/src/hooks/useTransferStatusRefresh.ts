@@ -117,9 +117,9 @@ export function useTransferStatusRefresh(
       )
 
       for (let i = 0; i < pending.length; i++) {
-        const r = results[i]
+        const r = results[i]!
         if (r.status !== 'fulfilled' || !r.value) continue
-        const t = pending[i]
+        const t = pending[i]!
         if (shouldAdvance(t.lifecycle, r.value)) {
           updateTransferRecord(t.id, { lifecycle: r.value })
         }

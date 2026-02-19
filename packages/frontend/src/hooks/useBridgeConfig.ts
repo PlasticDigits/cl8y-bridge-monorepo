@@ -326,7 +326,7 @@ export function useBridgeConfig(): {
 
   const data: UnifiedBridgeConfig[] = queries
     .map((q, i) => {
-      const [id, config] = chains[i]
+      const [id, config] = chains[i]!
       if (q.data) return q.data
       if (q.error)
         return {
@@ -465,7 +465,7 @@ export function useChainTokens(
           )
           all.push(...batch)
           if (res.tokens.length < 50) break
-          startAfter = res.tokens[res.tokens.length - 1].token
+          startAfter = res.tokens[res.tokens.length - 1]!.token
         }
         return all
       }

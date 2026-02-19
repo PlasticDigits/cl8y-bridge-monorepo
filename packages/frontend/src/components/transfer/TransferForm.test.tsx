@@ -178,7 +178,7 @@ describe('TransferForm', () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
       const selects = screen.getAllByRole('combobox')
-      const sourceSelect = selects[0]
+      const sourceSelect = selects[0]!
       await user.click(sourceSelect)
       const options = screen.getAllByRole('option')
       const optionTexts = options.map((o) => o.textContent)

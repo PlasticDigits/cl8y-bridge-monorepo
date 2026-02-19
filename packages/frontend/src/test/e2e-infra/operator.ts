@@ -219,7 +219,7 @@ exec ${OPERATOR_BINARY} >> ${LOG_FILE} 2>&1
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
     const pids = pidStr.split('\n').map((p) => p.trim()).filter(Boolean)
-    if (pids.length > 0) {
+    if (pids.length > 0 && pids[0]) {
       writeFileSync(PID_FILE, pids[0])
       console.log(`[operator] Operator PID: ${pids[0]}`)
     }

@@ -241,7 +241,7 @@ export function TransferForm() {
   // When source changes, ensure dest is still valid
   useEffect(() => {
     const validIds = destChains.map((c) => c.id)
-    if (!validIds.includes(destChain) && validIds.length > 0) {
+    if (!validIds.includes(destChain) && validIds.length > 0 && validIds[0] !== undefined) {
       setDestChain(validIds[0])
     }
   }, [destChains, destChain])
@@ -295,7 +295,7 @@ export function TransferForm() {
     if (transferTokens.length === 0) return
     const validIds = transferTokens.map((t) => t.id)
     const currentValid = validIds.includes(selectedTokenId)
-    if (!currentValid || !selectedTokenId) {
+    if ((!currentValid || !selectedTokenId) && transferTokens[0]) {
       setSelectedTokenId(transferTokens[0].id)
     }
   }, [transferTokens, selectedTokenId])

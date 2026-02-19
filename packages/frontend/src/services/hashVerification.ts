@@ -252,7 +252,7 @@ function bech32Polymod(values: number[]): number {
     const b = chk >> 25
     chk = ((chk & 0x1ffffff) << 5) ^ v
     for (let i = 0; i < 5; i++) {
-      if ((b >> i) & 1) chk ^= BECH32_GENERATORS[i]
+      if ((b >> i) & 1) chk ^= BECH32_GENERATORS[i]!
     }
   }
   return chk
