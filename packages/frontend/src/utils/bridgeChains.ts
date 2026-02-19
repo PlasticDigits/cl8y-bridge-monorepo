@@ -94,7 +94,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       rpcUrl: import.meta.env.VITE_ETH_RPC_URL || 'https://eth.llamarpc.com',
       rpcFallbacks: ['https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com'],
       bridgeAddress: import.meta.env.VITE_ETH_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x00000001',
+      // bytes4ChainId TBD — not yet deployed; will be assigned on deployment
     },
     bsc: {
       chainId: 56,
@@ -103,7 +103,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       rpcUrl: 'https://bsc-dataseed1.binance.org',
       rpcFallbacks: ['https://bsc-dataseed2.binance.org', 'https://rpc.ankr.com/bsc'],
       bridgeAddress: import.meta.env.VITE_BSC_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x00000038', // 56 = 0x38
+      bytes4ChainId: '0x00000038',
     },
     opbnb: {
       chainId: 204,
@@ -112,7 +112,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       rpcUrl: 'https://opbnb-mainnet-rpc.bnbchain.org',
       rpcFallbacks: ['https://opbnb-rpc.publicnode.com'],
       bridgeAddress: import.meta.env.VITE_OPBNB_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x000000cc', // 204 = 0xcc
+      bytes4ChainId: '0x000000cc',
     },
     terra: {
       chainId: 'columbus-5',
@@ -126,7 +126,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
         'https://lcd.terra-classic.hexxagon.io',
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
-      bytes4ChainId: '0x00000002',
+      bytes4ChainId: '0x00000001',
     },
   },
 }
@@ -150,7 +150,7 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
 export function getChainsForTransfer(): ChainInfo[] {
   const tier = DEFAULT_NETWORK as NetworkTier
   const chainlist = getChainlist()
-  return Object.entries(BRIDGE_CHAINS[tier]).map(([id, config]) => {
+  return Object.entries(BRIDGE_CHAINS[tier]).filter(([_, config]) => !!config.bridgeAddress).map(([id, config]) => {
     const chainlistEntry = getChainlistEntry(chainlist, id, config.chainId)
     const display = CHAIN_DISPLAY[id] ?? {
       icon: '○',
