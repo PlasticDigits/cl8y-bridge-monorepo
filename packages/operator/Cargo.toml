@@ -71,5 +71,5 @@ lazy_static = "1.4"
 tokio-test = "0.4"
 
 [[bin]]
-name = "cl8y-relayer"
+name = "cl8y-operator"
 path = "src/main.rs"
