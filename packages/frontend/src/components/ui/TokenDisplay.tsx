@@ -34,7 +34,7 @@ export function TokenDisplay({
     <span className={`inline-flex items-center gap-1.5 ${className}`}>
       <TokenLogo
         symbol={symbol}
-        tokenId={tokenId}
+        tokenId={tokenId ?? undefined}
         addressForBlockie={addressForBlockie}
         size={size}
       />
