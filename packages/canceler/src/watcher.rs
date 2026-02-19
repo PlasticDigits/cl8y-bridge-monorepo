@@ -467,6 +467,12 @@ impl CancelerWatcher {
     }
 
     /// Poll EVM bridge for pending approvals (V2)
+    ///
+    /// On first poll, looks back `evm_poll_lookback_blocks` from the current
+    /// head (default 5 000). All ranges are chunked into sub-queries of at most
+    /// `evm_poll_chunk_size` blocks to stay within RPC provider limits (opBNB
+    /// and BSC publicnode cap at 50 000; BSC dataseed doesn't support
+    /// eth_getLogs at all).
     async fn poll_evm_approvals(&mut self) -> Result<()> {
         debug!(
             canceler_address = %self.evm_client.address(),
@@ -474,7 +480,6 @@ impl CancelerWatcher {
             "Polling EVM approvals"
         );
 
-        // Create provider
         let provider = ProviderBuilder::new().on_http(
             self.config
                 .evm_rpc_url
@@ -482,36 +487,36 @@ impl CancelerWatcher {
                 .wrap_err("Invalid EVM RPC URL")?,
         );
 
-        // Get current block
         let current_block = provider
             .get_block_number()
             .await
             .map_err(|e| eyre!("Failed to get block number: {}", e))?;
 
-        // If first run, start from genesis to catch all events
         if self.last_evm_block == 0 {
-            self.last_evm_block = 0;
+            let lookback = self.config.evm_poll_lookback_blocks;
+            self.last_evm_block = current_block.saturating_sub(lookback);
             info!(
                 current_block = current_block,
-                lookback_start = self.last_evm_block,
-                "First poll - starting from genesis to catch all events"
+                lookback_blocks = lookback,
+                start_block = self.last_evm_block,
+                "First poll — looking back {} blocks from head",
+                lookback
             );
         }
 
-        // Detect chain reset
         if current_block < self.last_evm_block {
             warn!(
                 current_block = current_block,
                 last_polled = self.last_evm_block,
-                "Chain reset detected - resetting polling state to scan from genesis"
+                "Chain reset detected — resetting to lookback window"
             );
-            self.last_evm_block = 0;
+            self.last_evm_block = current_block
+                .saturating_sub(self.config.evm_poll_lookback_blocks);
             self.verified_hashes.clear();
             self.cancelled_hashes.clear();
             self.pending_retry_queue.clear();
         }
 
-        // Don't query if no new blocks
         if current_block <= self.last_evm_block {
             debug!(
                 current_block = current_block,
@@ -523,157 +528,158 @@ impl CancelerWatcher {
 
         let from_block = self.last_evm_block + 1;
         let to_block = current_block;
+        let total_range = to_block - from_block + 1;
+        let chunk_size = self.config.evm_poll_chunk_size.max(1);
 
         info!(
             from_block = from_block,
             to_block = to_block,
-            block_range = to_block - from_block + 1,
+            block_range = total_range,
+            chunk_size = chunk_size,
             "Querying EVM WithdrawApprove events (V2)"
         );
 
-        // Parse bridge address
         let bridge_address = Address::from_str(&self.config.evm_bridge_address)
             .wrap_err("Invalid EVM bridge address")?;
-
-        // Query for WithdrawApprove events (V2)
         let contract = Bridge::new(bridge_address, &provider);
 
-        let filter = contract
-            .WithdrawApprove_filter()
-            .address(bridge_address)
-            .from_block(from_block)
-            .to_block(to_block);
+        let mut chunk_start = from_block;
+        while chunk_start <= to_block {
+            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
-        // Log event topic for debugging
-        let event_signature = "WithdrawApprove(bytes32)";
-        let expected_topic = compute_event_topic(event_signature);
-        debug!(
-            bridge_address = %bridge_address,
-            from_block = from_block,
-            to_block = to_block,
-            event_topic = %format!("0x{}", hex::encode(expected_topic)),
-            "Querying WithdrawApprove events"
-        );
+            let filter = contract
+                .WithdrawApprove_filter()
+                .address(bridge_address)
+                .from_block(chunk_start)
+                .to_block(chunk_end);
 
-        let logs = filter
-            .query()
-            .await
-            .map_err(|e| eyre!("Failed to query events: {}", e))?;
-
-        if !logs.is_empty() {
-            info!(
-                from_block = from_block,
-                to_block = to_block,
-                event_count = logs.len(),
-                "Found EVM WithdrawApprove events - processing for fraud detection"
-            );
-        }
-
-        // Process each approval event
-        for (event, log) in logs {
-            let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
-
-            // Skip if already processed
-            if self.verified_hashes.contains(&xchain_hash_id)
-                || self.cancelled_hashes.contains(&xchain_hash_id)
-            {
-                continue;
-            }
-
-            info!(
-                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-                block = ?log.block_number,
-                "Processing EVM approval event"
+            debug!(
+                from = chunk_start,
+                to = chunk_end,
+                "Querying WithdrawApprove chunk"
             );
 
-            // Query withdrawal details from contract using getPendingWithdraw
-            let withdrawal_info = contract
-                .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
-                .call()
-                .await;
-
-            match withdrawal_info {
-                Ok(info) => {
-                    // Skip if already cancelled or executed
-                    if info.cancelled {
-                        debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already cancelled, skipping");
-                        continue;
-                    }
-                    if info.executed {
-                        debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already executed, skipping");
-                        continue;
-                    }
-
-                    // Get cancel window
-                    let cancel_window: u64 = contract
-                        .getCancelWindow()
-                        .call()
-                        .await
-                        .map(|w| {
-                            let val: u64 = w._0.try_into().unwrap_or(300);
-                            val
-                        })
-                        .unwrap_or(300);
-
-                    // Convert token address to bytes32 (left-padded)
-                    let mut token_bytes32 = [0u8; 32];
-                    token_bytes32[12..32].copy_from_slice(info.token.as_slice());
-
-                    // Create a pending approval for verification
-                    let approval = PendingApproval {
-                        xchain_hash_id,
-                        src_chain_id: info.srcChain.0,
-                        dest_chain_id: self.this_chain_id,
-                        src_account: info.srcAccount.0,
-                        dest_token: token_bytes32,
-                        dest_account: info.destAccount.0,
-                        amount: info.amount.try_into().unwrap_or_else(|_| {
-                            warn!(
-                                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-                                amount = %info.amount,
-                                "Approval amount exceeds u128::MAX, clamping"
-                            );
-                            u128::MAX
-                        }),
-                        nonce: info.nonce,
-                        approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
-                        cancel_window,
-                    };
-
-                    // Detailed diagnostic before verification
-                    info!(
-                        xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-                        src_chain_id = %format!("0x{}", hex::encode(info.srcChain.0)),
-                        dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id)),
-                        nonce = approval.nonce,
-                        amount = approval.amount,
-                        cancel_window_secs = cancel_window,
-                        approved_at = approval.approved_at_timestamp,
-                        token = %format!("0x{}", hex::encode(info.token.as_slice())),
-                        src_account = %format!("0x{}", hex::encode(&info.srcAccount.0[..8])),
-                        dest_account = %format!("0x{}", hex::encode(&info.destAccount.0[..8])),
-                        "Calling verify_and_cancel for EVM approval"
-                    );
-
-                    if let Err(e) = self.verify_and_cancel(&approval).await {
-                        error!(
-                            error = %e,
-                            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-                            "Failed to verify approval"
-                        );
-                    }
-                }
+            let logs = match filter.query().await {
+                Ok(l) => l,
                 Err(e) => {
-                    warn!(error = %e, "Failed to get withdrawal info, skipping");
+                    warn!(
+                        error = %e,
+                        from = chunk_start,
+                        to = chunk_end,
+                        "eth_getLogs failed for chunk — skipping ahead"
+                    );
+                    chunk_start = chunk_end + 1;
                     continue;
                 }
+            };
+
+            if !logs.is_empty() {
+                info!(
+                    from_block = chunk_start,
+                    to_block = chunk_end,
+                    event_count = logs.len(),
+                    "Found EVM WithdrawApprove events — processing for fraud detection"
+                );
             }
+
+            for (event, log) in logs {
+                let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
+
+                if self.verified_hashes.contains(&xchain_hash_id)
+                    || self.cancelled_hashes.contains(&xchain_hash_id)
+                {
+                    continue;
+                }
+
+                info!(
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                    block = ?log.block_number,
+                    "Processing EVM approval event"
+                );
+
+                let withdrawal_info = contract
+                    .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
+                    .call()
+                    .await;
+
+                match withdrawal_info {
+                    Ok(info) => {
+                        if info.cancelled {
+                            debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already cancelled, skipping");
+                            continue;
+                        }
+                        if info.executed {
+                            debug!(xchain_hash_id = %bytes32_to_hex(&xchain_hash_id), "Already executed, skipping");
+                            continue;
+                        }
+
+                        let cancel_window: u64 = contract
+                            .getCancelWindow()
+                            .call()
+                            .await
+                            .map(|w| {
+                                let val: u64 = w._0.try_into().unwrap_or(300);
+                                val
+                            })
+                            .unwrap_or(300);
+
+                        let mut token_bytes32 = [0u8; 32];
+                        token_bytes32[12..32].copy_from_slice(info.token.as_slice());
+
+                        let approval = PendingApproval {
+                            xchain_hash_id,
+                            src_chain_id: info.srcChain.0,
+                            dest_chain_id: self.this_chain_id,
+                            src_account: info.srcAccount.0,
+                            dest_token: token_bytes32,
+                            dest_account: info.destAccount.0,
+                            amount: info.amount.try_into().unwrap_or_else(|_| {
+                                warn!(
+                                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                                    amount = %info.amount,
+                                    "Approval amount exceeds u128::MAX, clamping"
+                                );
+                                u128::MAX
+                            }),
+                            nonce: info.nonce,
+                            approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
+                            cancel_window,
+                        };
+
+                        info!(
+                            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                            src_chain_id = %format!("0x{}", hex::encode(info.srcChain.0)),
+                            dest_chain_id = %format!("0x{}", hex::encode(self.this_chain_id)),
+                            nonce = approval.nonce,
+                            amount = approval.amount,
+                            cancel_window_secs = cancel_window,
+                            approved_at = approval.approved_at_timestamp,
+                            token = %format!("0x{}", hex::encode(info.token.as_slice())),
+                            src_account = %format!("0x{}", hex::encode(&info.srcAccount.0[..8])),
+                            dest_account = %format!("0x{}", hex::encode(&info.destAccount.0[..8])),
+                            "Calling verify_and_cancel for EVM approval"
+                        );
+
+                        if let Err(e) = self.verify_and_cancel(&approval).await {
+                            error!(
+                                error = %e,
+                                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                                "Failed to verify approval"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to get withdrawal info, skipping");
+                        continue;
+                    }
+                }
+            }
+
+            chunk_start = chunk_end + 1;
         }
 
-        // Update last polled block
         self.last_evm_block = to_block;
 
-        // Update stats
         {
             let mut stats = self.stats.write().await;
             stats.last_evm_block = to_block;
@@ -684,10 +690,13 @@ impl CancelerWatcher {
 
     /// Poll configured EVM peers for WithdrawApprove events (multi-EVM).
     ///
+    /// Uses the same lookback + chunked-query strategy as `poll_evm_approvals`.
     /// Collects pending approvals from all additional chains first, then
     /// processes them to avoid borrow-checker issues with `&mut self`.
     async fn poll_additional_evm_approvals(&mut self) {
-        // Phase 1: Collect events from all additional chains
+        let lookback = self.config.evm_poll_lookback_blocks;
+        let chunk_size = self.config.evm_poll_chunk_size.max(1);
+
         let mut collected_approvals: Vec<PendingApproval> = Vec::new();
         let mut block_updates: Vec<(usize, u64)> = Vec::new();
 
@@ -713,16 +722,29 @@ impl CancelerWatcher {
                 }
             };
 
-            if current_block <= chain_state.last_block {
+            // First poll or chain reset: use lookback from head
+            let effective_last = if chain_state.last_block == 0
+                || current_block < chain_state.last_block
+            {
+                let start = current_block.saturating_sub(lookback);
+                info!(
+                    chain = %chain_name,
+                    current_block = current_block,
+                    lookback_blocks = lookback,
+                    start_block = start,
+                    "Additional chain first poll / reset — looking back {} blocks",
+                    lookback
+                );
+                start
+            } else {
+                chain_state.last_block
+            };
+
+            if current_block <= effective_last {
                 continue;
             }
 
-            let from_block =
-                if chain_state.last_block == 0 || current_block < chain_state.last_block {
-                    0
-                } else {
-                    chain_state.last_block + 1
-                };
+            let from_block = effective_last + 1;
             let to_block = current_block;
 
             let bridge_address = match Address::from_str(bridge_addr_str) {
@@ -734,79 +756,93 @@ impl CancelerWatcher {
             };
 
             let contract = Bridge::new(bridge_address, &provider);
-            let filter = contract
-                .WithdrawApprove_filter()
-                .address(bridge_address)
-                .from_block(from_block)
-                .to_block(to_block);
 
-            let logs = match filter.query().await {
-                Ok(l) => l,
-                Err(e) => {
-                    warn!(chain = %chain_name, error = %e, "Failed to query events");
-                    continue;
-                }
-            };
+            let mut chunk_start = from_block;
+            while chunk_start <= to_block {
+                let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
-            if !logs.is_empty() {
-                info!(
-                    chain = %chain_name,
-                    v2_id = %hex::encode(chain_v2_id),
-                    event_count = logs.len(),
-                    from_block = from_block,
-                    to_block = to_block,
-                    "Found WithdrawApprove events on additional chain"
-                );
-            }
+                let filter = contract
+                    .WithdrawApprove_filter()
+                    .address(bridge_address)
+                    .from_block(chunk_start)
+                    .to_block(chunk_end);
 
-            for (event, _log) in &logs {
-                let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
-
-                if self.verified_hashes.contains(&xchain_hash_id)
-                    || self.cancelled_hashes.contains(&xchain_hash_id)
-                {
-                    continue;
-                }
-
-                // Get withdrawal details
-                let info_result = contract
-                    .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
-                    .call()
-                    .await;
-
-                match info_result {
-                    Ok(info) => {
-                        if info.cancelled || info.executed {
-                            continue;
-                        }
-
-                        let cancel_window: u64 = contract
-                            .getCancelWindow()
-                            .call()
-                            .await
-                            .map(|w| w._0.try_into().unwrap_or(300))
-                            .unwrap_or(300);
-
-                        let mut token_bytes32 = [0u8; 32];
-                        token_bytes32[12..32].copy_from_slice(info.token.as_slice());
-
-                        collected_approvals.push(PendingApproval {
-                            xchain_hash_id,
-                            src_chain_id: info.srcChain.0,
-                            dest_chain_id: chain_v2_id,
-                            src_account: info.srcAccount.0,
-                            dest_token: token_bytes32,
-                            dest_account: info.destAccount.0,
-                            amount: info.amount.try_into().unwrap_or(u128::MAX),
-                            nonce: info.nonce,
-                            approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
-                            cancel_window,
-                        });
-                    }
+                let logs = match filter.query().await {
+                    Ok(l) => l,
                     Err(e) => {
-                        warn!(chain = %chain_name, error = %e, "Failed to get withdrawal info");
+                        warn!(
+                            chain = %chain_name,
+                            error = %e,
+                            from = chunk_start,
+                            to = chunk_end,
+                            "eth_getLogs failed for chunk — skipping ahead"
+                        );
+                        chunk_start = chunk_end + 1;
+                        continue;
+                    }
+                };
+
+                if !logs.is_empty() {
+                    info!(
+                        chain = %chain_name,
+                        v2_id = %hex::encode(chain_v2_id),
+                        event_count = logs.len(),
+                        from_block = chunk_start,
+                        to_block = chunk_end,
+                        "Found WithdrawApprove events on additional chain"
+                    );
+                }
+
+                for (event, _log) in &logs {
+                    let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
+
+                    if self.verified_hashes.contains(&xchain_hash_id)
+                        || self.cancelled_hashes.contains(&xchain_hash_id)
+                    {
+                        continue;
+                    }
+
+                    let info_result = contract
+                        .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
+                        .call()
+                        .await;
+
+                    match info_result {
+                        Ok(info) => {
+                            if info.cancelled || info.executed {
+                                continue;
+                            }
+
+                            let cancel_window: u64 = contract
+                                .getCancelWindow()
+                                .call()
+                                .await
+                                .map(|w| w._0.try_into().unwrap_or(300))
+                                .unwrap_or(300);
+
+                            let mut token_bytes32 = [0u8; 32];
+                            token_bytes32[12..32].copy_from_slice(info.token.as_slice());
+
+                            collected_approvals.push(PendingApproval {
+                                xchain_hash_id,
+                                src_chain_id: info.srcChain.0,
+                                dest_chain_id: chain_v2_id,
+                                src_account: info.srcAccount.0,
+                                dest_token: token_bytes32,
+                                dest_account: info.destAccount.0,
+                                amount: info.amount.try_into().unwrap_or(u128::MAX),
+                                nonce: info.nonce,
+                                approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
+                                cancel_window,
+                            });
+                        }
+                        Err(e) => {
+                            warn!(chain = %chain_name, error = %e, "Failed to get withdrawal info");
+                        }
                     }
                 }
+
+                chunk_start = chunk_end + 1;
             }
 
             block_updates.push((idx, to_block));

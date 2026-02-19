@@ -99,6 +99,14 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     uint256 public cancelWindow;
 
     /// @notice Pending withdrawals
+    /// CRITICAL SECURITY TODO: pendingWithdraws is a plain mapping with no enumeration.
+    /// The canceler service cannot enumerate approved-but-unresolved withdrawals on-chain
+    /// and must fall back to scanning historical WithdrawApprove event logs, which is
+    /// fragile (requires archive RPC, subject to eth_getLogs block range limits, and
+    /// misses approvals on first startup). A future upgrade MUST add an
+    /// EnumerableSet.Bytes32Set tracking approved pending IDs (add in withdrawApprove,
+    /// remove in withdrawCancel/withdrawExecuteUnlock/withdrawExecuteMint) and expose a
+    /// getApprovedPendingIds() view so the canceler can poll current state directly.
     mapping(bytes32 => PendingWithdraw) public pendingWithdraws;
 
     /// @notice Deposit records by hash

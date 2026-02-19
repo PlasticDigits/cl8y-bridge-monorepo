@@ -76,6 +76,17 @@ pub struct Config {
     /// that are still within their cancel window.
     pub pending_retry_ttl_secs: u64,
 
+    /// Max blocks to look back on first EVM poll (default 5000).
+    /// On subsequent polls this is ignored — the watcher resumes from the last
+    /// polled block. opBNB and BSC publicnode cap eth_getLogs at 50 000 blocks.
+    /// NOTE: bsc-dataseed1.binance.org does NOT support eth_getLogs at all;
+    /// use bsc-rpc.publicnode.com or a paid RPC for BSC.
+    pub evm_poll_lookback_blocks: u64,
+    /// Max block range per eth_getLogs query (default 5000).
+    /// Queries spanning more blocks are chunked into sequential sub-queries
+    /// to stay within RPC provider limits.
+    pub evm_poll_chunk_size: u64,
+
     /// Optional multi-EVM chain configuration for cross-EVM fraud detection.
     /// When set, the canceler monitors all configured EVM chains for approvals
     /// and can verify deposits on any known source chain.
@@ -115,6 +126,8 @@ impl fmt::Debug for Config {
             )
             .field("pending_retry_max_size", &self.pending_retry_max_size)
             .field("pending_retry_ttl_secs", &self.pending_retry_ttl_secs)
+            .field("evm_poll_lookback_blocks", &self.evm_poll_lookback_blocks)
+            .field("evm_poll_chunk_size", &self.evm_poll_chunk_size)
             .field("multi_evm", &self.multi_evm)
             .finish()
     }
@@ -286,6 +299,15 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(7200),
+
+            evm_poll_lookback_blocks: env::var("EVM_POLL_LOOKBACK_BLOCKS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5_000),
+            evm_poll_chunk_size: env::var("EVM_POLL_CHUNK_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5_000),
 
             multi_evm,
         })
