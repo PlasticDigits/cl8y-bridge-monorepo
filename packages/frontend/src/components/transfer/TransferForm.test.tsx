@@ -118,6 +118,14 @@ vi.mock('../../utils/bridgeChains', () => ({
   BRIDGE_CHAINS: { local: {}, testnet: {}, mainnet: {} },
 }))
 
+vi.mock('../../hooks/useDiscoveredChains', () => ({
+  useDiscoveredChains: () => ({
+    chains: mockChainsForTransfer,
+    isLoading: false,
+    error: null,
+  }),
+}))
+
 describe('TransferForm', () => {
   beforeEach(() => {
     vi.clearAllMocks()

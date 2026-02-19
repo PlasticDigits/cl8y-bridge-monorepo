@@ -24,7 +24,7 @@ const WELL_KNOWN_CHAIN_IDS: Record<string, string> = {
   '0x000015eb': 'opbnb-testnet', // 5611
 }
 
-// Bridge view ABI for getThisChainId
+// Bridge view ABI
 const BRIDGE_ABI = [
   {
     name: 'getThisChainId',
@@ -32,6 +32,24 @@ const BRIDGE_ABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'bytes4' }],
+  },
+  {
+    name: 'chainRegistry',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const
+
+// ChainRegistry view ABI
+const CHAIN_REGISTRY_ABI = [
+  {
+    name: 'getRegisteredChains',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'chainIds', type: 'bytes4[]' }],
   },
 ] as const
 
@@ -148,4 +166,55 @@ export async function resolveChainByBytes4(
 export async function buildChainIdMap(): Promise<Map<string, BridgeChainConfig>> {
   const chains = getAllBridgeChains()
   return discoverChainIds(chains)
+}
+
+/**
+ * Query the on-chain ChainRegistry via a seed EVM bridge to discover
+ * which V2 chain IDs are actually registered.
+ *
+ * Flow:
+ *   1. Pick a seed EVM chain (first one with bridgeAddress + rpcUrl)
+ *   2. Call bridge.chainRegistry() to get the ChainRegistry address
+ *   3. Call chainRegistry.getRegisteredChains() to get bytes4[]
+ *
+ * @returns Set of lowercase hex bytes4 chain IDs registered on-chain, or null on failure
+ */
+export async function discoverRegisteredChains(
+  chains: BridgeChainConfig[]
+): Promise<Set<string> | null> {
+  const seed = chains.find((c) => c.type === 'evm' && c.bridgeAddress && c.rpcUrl)
+  if (!seed) return null
+
+  try {
+    const client = createPublicClient({
+      transport: http(seed.rpcUrl, { timeout: 8000 }),
+      chain: {
+        id: seed.chainId as number,
+        name: seed.name,
+        nativeCurrency: { decimals: 18, name: 'ETH', symbol: 'ETH' },
+        rpcUrls: { default: { http: [seed.rpcUrl] } },
+      },
+    })
+
+    const registryAddr = await client.readContract({
+      address: seed.bridgeAddress as Address,
+      abi: BRIDGE_ABI,
+      functionName: 'chainRegistry',
+    })
+
+    const registered = await client.readContract({
+      address: registryAddr,
+      abi: CHAIN_REGISTRY_ABI,
+      functionName: 'getRegisteredChains',
+    })
+
+    const set = new Set<string>()
+    for (const id of registered) {
+      set.add(`0x${id.slice(2).padStart(8, '0')}`.toLowerCase())
+    }
+    return set
+  } catch (err) {
+    console.warn('[chainDiscovery] Failed to discover registered chains:', err)
+    return null
+  }
 }

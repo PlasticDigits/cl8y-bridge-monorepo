@@ -20,6 +20,7 @@ import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
+import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 import { getTokenFromList, type TokenlistData } from '../../services/tokenlist'
 import { shortenAddress } from '../../utils/shortenAddress'
@@ -193,7 +194,7 @@ export function TransferForm() {
   const navigate = useNavigate()
   const publicClient = usePublicClient()
 
-  const allChains = useMemo(() => getChainsForTransfer(), [])
+  const { chains: allChains, isLoading: isChainsLoading } = useDiscoveredChains()
 
   // Default to Terra -> first EVM (or first chain if no EVM); anvil for local, bsc for mainnet/testnet
   const [sourceChain, setSourceChain] = useState(() => {
@@ -969,7 +970,9 @@ export function TransferForm() {
     evmDestDisplay.displayLabel,
   ])
 
-  const buttonText = !isWalletConnected
+  const buttonText = isChainsLoading
+    ? 'Discovering chains...'
+    : !isWalletConnected
     ? `Connect ${walletLabel} Wallet`
     : isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)
     ? 'Loading token info...'
@@ -1052,7 +1055,7 @@ export function TransferForm() {
       <button
         type="submit"
         data-testid="submit-transfer"
-        disabled={!isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting || (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading))}
+        disabled={isChainsLoading || !isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting || (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading))}
         onClick={() => sounds.playButtonPress()}
         className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
       >
