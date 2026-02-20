@@ -81,6 +81,9 @@ sol! {
 
         /// Get this chain's registered V2 chain ID (bytes4)
         function getThisChainId() external view returns (bytes4 chainId);
+
+        /// Enumerate all pending (submitted, not yet executed/cancelled) withdrawal hashes
+        function getPendingWithdrawHashes() external view returns (bytes32[] memory hashes);
     }
 }
 
@@ -401,10 +404,20 @@ impl CancelerWatcher {
         // for new events, so transient RPC failures don't cause permanent misses.
         self.retry_pending_approvals().await;
 
-        // Poll the configured base EVM bridge for approvals.
+        // Primary: Enumerate pending withdrawals directly from contract state.
+        // Reliable — no block ranges, no eth_getLogs fragility.
+        if let Err(e) = self.poll_evm_enumeration().await {
+            warn!(error = %e, "EVM enumeration poll failed");
+        }
+
+        if !self.additional_evm_chains.is_empty() {
+            self.poll_additional_evm_enumeration().await;
+        }
+
+        // Secondary: Event-based polling for faster detection of new approvals.
+        // Dedupe caches prevent double-processing with enumeration.
         self.poll_evm_approvals().await?;
 
-        // Poll other configured EVM peers (multi-EVM support).
         if !self.additional_evm_chains.is_empty() {
             self.poll_additional_evm_approvals().await;
         }
@@ -466,7 +479,115 @@ impl CancelerWatcher {
         }
     }
 
-    /// Poll EVM bridge for pending approvals (V2)
+    /// Primary: Enumerate all pending withdrawals from the contract's EnumerableSet.
+    ///
+    /// Calls `getPendingWithdrawHashes()` to get every active pending hash, then
+    /// fetches details for each unknown hash. This is more reliable than event-based
+    /// polling because it queries current contract state directly — no block ranges,
+    /// no chunking, no missed events from RPC errors.
+    async fn poll_evm_enumeration(&mut self) -> Result<()> {
+        let provider = ProviderBuilder::new().on_http(
+            self.config
+                .evm_rpc_url
+                .parse()
+                .wrap_err("Invalid EVM RPC URL")?,
+        );
+
+        let bridge_address = Address::from_str(&self.config.evm_bridge_address)
+            .wrap_err("Invalid EVM bridge address")?;
+        let contract = Bridge::new(bridge_address, &provider);
+
+        let hashes = contract
+            .getPendingWithdrawHashes()
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to enumerate pending withdrawals: {}", e))?;
+        let pending_hashes = &hashes.hashes;
+
+        if pending_hashes.is_empty() {
+            debug!("Enumeration: no pending withdrawals on base EVM chain");
+            return Ok(());
+        }
+
+        let cancel_window: u64 = contract
+            .getCancelWindow()
+            .call()
+            .await
+            .map(|w| w._0.try_into().unwrap_or(300))
+            .unwrap_or(300);
+
+        let mut new_count: u64 = 0;
+        for hash_fb in pending_hashes {
+            let xchain_hash_id: [u8; 32] = hash_fb.0;
+
+            if self.verified_hashes.contains(&xchain_hash_id)
+                || self.cancelled_hashes.contains(&xchain_hash_id)
+            {
+                continue;
+            }
+
+            let info = match contract.getPendingWithdraw(*hash_fb).call().await {
+                Ok(i) => i,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                        "Enumeration: failed to get withdrawal info"
+                    );
+                    continue;
+                }
+            };
+
+            if !info.approved || info.cancelled || info.executed {
+                continue;
+            }
+
+            new_count += 1;
+
+            let mut token_bytes32 = [0u8; 32];
+            token_bytes32[12..32].copy_from_slice(info.token.as_slice());
+
+            let approval = PendingApproval {
+                xchain_hash_id,
+                src_chain_id: info.srcChain.0,
+                dest_chain_id: self.this_chain_id,
+                src_account: info.srcAccount.0,
+                dest_token: token_bytes32,
+                dest_account: info.destAccount.0,
+                amount: info.amount.try_into().unwrap_or_else(|_| {
+                    warn!(
+                        xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                        amount = %info.amount,
+                        "Approval amount exceeds u128::MAX, clamping"
+                    );
+                    u128::MAX
+                }),
+                nonce: info.nonce,
+                approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
+                cancel_window,
+            };
+
+            if let Err(e) = self.verify_and_cancel(&approval).await {
+                error!(
+                    error = %e,
+                    xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                    "Failed to verify enumerated approval"
+                );
+            }
+        }
+
+        if new_count > 0 {
+            info!(
+                total_pending = pending_hashes.len(),
+                new_to_process = new_count,
+                "Enumeration: found new pending approvals on base EVM chain"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Secondary: Poll EVM bridge for pending approvals via events (V2)
     ///
     /// On first poll, looks back `evm_poll_lookback_blocks` from the current
     /// head (default 5 000). All ranges are chunked into sub-queries of at most
@@ -544,6 +665,7 @@ impl CancelerWatcher {
         let contract = Bridge::new(bridge_address, &provider);
 
         let mut chunk_start = from_block;
+        let mut last_successful_block = self.last_evm_block;
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
@@ -566,10 +688,9 @@ impl CancelerWatcher {
                         error = %e,
                         from = chunk_start,
                         to = chunk_end,
-                        "eth_getLogs failed for chunk — skipping ahead"
+                        "eth_getLogs failed for chunk — will retry next poll (enumeration covers gap)"
                     );
-                    chunk_start = chunk_end + 1;
-                    continue;
+                    break;
                 }
             };
 
@@ -675,20 +796,138 @@ impl CancelerWatcher {
                 }
             }
 
+            last_successful_block = chunk_end;
             chunk_start = chunk_end + 1;
         }
 
-        self.last_evm_block = to_block;
+        self.last_evm_block = last_successful_block;
 
         {
             let mut stats = self.stats.write().await;
-            stats.last_evm_block = to_block;
+            stats.last_evm_block = last_successful_block;
         }
 
         Ok(())
     }
 
-    /// Poll configured EVM peers for WithdrawApprove events (multi-EVM).
+    /// Primary: Enumerate pending withdrawals from all additional EVM chains.
+    ///
+    /// Calls `getPendingWithdrawHashes()` on each chain's bridge contract to get
+    /// a complete snapshot of active pending withdrawals, avoiding eth_getLogs fragility.
+    async fn poll_additional_evm_enumeration(&mut self) {
+        let mut collected_approvals: Vec<PendingApproval> = Vec::new();
+
+        for chain_state in &self.additional_evm_chains {
+            let chain_name = &chain_state.name;
+            let rpc_url = &chain_state.rpc_url;
+            let bridge_addr_str = &chain_state.bridge_address;
+            let chain_v2_id = chain_state.v2_chain_id;
+
+            let provider = match rpc_url.parse() {
+                Ok(url) => ProviderBuilder::new().on_http(url),
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Invalid RPC URL for additional chain");
+                    continue;
+                }
+            };
+
+            let bridge_address = match Address::from_str(bridge_addr_str) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Invalid bridge address");
+                    continue;
+                }
+            };
+
+            let contract = Bridge::new(bridge_address, &provider);
+
+            let hashes = match contract.getPendingWithdrawHashes().call().await {
+                Ok(h) => h.hashes,
+                Err(e) => {
+                    warn!(chain = %chain_name, error = %e, "Enumeration: failed to get pending hashes");
+                    continue;
+                }
+            };
+
+            if hashes.is_empty() {
+                continue;
+            }
+
+            let cancel_window: u64 = contract
+                .getCancelWindow()
+                .call()
+                .await
+                .map(|w| w._0.try_into().unwrap_or(300))
+                .unwrap_or(300);
+
+            let mut new_count: u64 = 0;
+            for hash_fb in &hashes {
+                let xchain_hash_id: [u8; 32] = hash_fb.0;
+
+                if self.verified_hashes.contains(&xchain_hash_id)
+                    || self.cancelled_hashes.contains(&xchain_hash_id)
+                {
+                    continue;
+                }
+
+                let info = match contract.getPendingWithdraw(*hash_fb).call().await {
+                    Ok(i) => i,
+                    Err(e) => {
+                        warn!(
+                            chain = %chain_name,
+                            error = %e,
+                            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                            "Enumeration: failed to get withdrawal info"
+                        );
+                        continue;
+                    }
+                };
+
+                if !info.approved || info.cancelled || info.executed {
+                    continue;
+                }
+
+                new_count += 1;
+
+                let mut token_bytes32 = [0u8; 32];
+                token_bytes32[12..32].copy_from_slice(info.token.as_slice());
+
+                collected_approvals.push(PendingApproval {
+                    xchain_hash_id,
+                    src_chain_id: info.srcChain.0,
+                    dest_chain_id: chain_v2_id,
+                    src_account: info.srcAccount.0,
+                    dest_token: token_bytes32,
+                    dest_account: info.destAccount.0,
+                    amount: info.amount.try_into().unwrap_or(u128::MAX),
+                    nonce: info.nonce,
+                    approved_at_timestamp: info.approvedAt.try_into().unwrap_or(0),
+                    cancel_window,
+                });
+            }
+
+            if new_count > 0 {
+                info!(
+                    chain = %chain_name,
+                    total_pending = hashes.len(),
+                    new_to_process = new_count,
+                    "Enumeration: found new pending approvals on additional chain"
+                );
+            }
+        }
+
+        for approval in collected_approvals {
+            if let Err(e) = self.verify_and_cancel(&approval).await {
+                error!(
+                    error = %e,
+                    xchain_hash_id = %bytes32_to_hex(&approval.xchain_hash_id),
+                    "Failed to verify enumerated approval on additional chain"
+                );
+            }
+        }
+    }
+
+    /// Secondary: Poll configured EVM peers for WithdrawApprove events (multi-EVM).
     ///
     /// Uses the same lookback + chunked-query strategy as `poll_evm_approvals`.
     /// Collects pending approvals from all additional chains first, then
@@ -722,7 +961,6 @@ impl CancelerWatcher {
                 }
             };
 
-            // First poll or chain reset: use lookback from head
             let effective_last =
                 if chain_state.last_block == 0 || current_block < chain_state.last_block {
                     let start = current_block.saturating_sub(lookback);
@@ -757,6 +995,7 @@ impl CancelerWatcher {
             let contract = Bridge::new(bridge_address, &provider);
 
             let mut chunk_start = from_block;
+            let mut last_successful = effective_last;
             while chunk_start <= to_block {
                 let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
@@ -774,10 +1013,9 @@ impl CancelerWatcher {
                             error = %e,
                             from = chunk_start,
                             to = chunk_end,
-                            "eth_getLogs failed for chunk — skipping ahead"
+                            "eth_getLogs failed for chunk — will retry next poll (enumeration covers gap)"
                         );
-                        chunk_start = chunk_end + 1;
-                        continue;
+                        break;
                     }
                 };
 
@@ -841,18 +1079,17 @@ impl CancelerWatcher {
                     }
                 }
 
+                last_successful = chunk_end;
                 chunk_start = chunk_end + 1;
             }
 
-            block_updates.push((idx, to_block));
+            block_updates.push((idx, last_successful));
         }
 
-        // Phase 2: Update block heights
         for (idx, block) in block_updates {
             self.additional_evm_chains[idx].last_block = block;
         }
 
-        // Phase 3: Verify and cancel collected approvals
         for approval in collected_approvals {
             if let Err(e) = self.verify_and_cancel(&approval).await {
                 error!(
