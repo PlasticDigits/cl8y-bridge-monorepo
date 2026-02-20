@@ -28,14 +28,16 @@ use crate::execute::{
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{
-    query_account_fee, query_allowed_cw20_code_ids, query_calculate_fee, query_cancelers,
-    query_chain, query_chains, query_compute_xchain_hash_id, query_config, query_current_nonce,
-    query_deposit_by_nonce, query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
-    query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_operators,
-    query_pending_admin, query_pending_withdraw, query_pending_withdrawals, query_period_usage,
-    query_rate_limit, query_simulate_bridge, query_stats, query_status, query_this_chain_id,
-    query_token, query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
-    query_verify_deposit, query_withdraw_delay, query_xchain_hash_id,
+    query_account_fee, query_all_custom_account_fees, query_all_rate_limits,
+    query_all_token_dest_mappings, query_allowed_cw20_code_ids, query_calculate_fee,
+    query_cancelers, query_chain, query_chains, query_compute_xchain_hash_id, query_config,
+    query_current_nonce, query_deposit_by_nonce, query_fee_config, query_has_custom_fee,
+    query_incoming_token_mapping, query_incoming_token_mappings, query_is_canceler,
+    query_locked_balance, query_operators, query_pending_admin, query_pending_withdraw,
+    query_pending_withdrawals, query_period_usage, query_rate_limit, query_simulate_bridge,
+    query_stats, query_status, query_this_chain_id, query_token, query_token_dest_mapping,
+    query_token_type, query_tokens, query_transaction, query_verify_deposit, query_withdraw_delay,
+    query_xchain_hash_id,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -225,9 +227,7 @@ pub fn execute(
             token,
             is_native,
             token_type,
-            evm_token_address,
             terra_decimals,
-            evm_decimals,
             min_bridge_amount,
             max_bridge_amount,
         } => execute_add_token(
@@ -236,15 +236,12 @@ pub fn execute(
             token,
             is_native,
             token_type,
-            evm_token_address,
             terra_decimals,
-            evm_decimals,
             min_bridge_amount,
             max_bridge_amount,
         ),
         ExecuteMsg::UpdateToken {
             token,
-            evm_token_address,
             enabled,
             token_type,
             min_bridge_amount,
@@ -253,7 +250,6 @@ pub fn execute(
             deps,
             info,
             token,
-            evm_token_address,
             enabled,
             token_type,
             min_bridge_amount,
@@ -448,6 +444,17 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         } => to_json_binary(&query_incoming_token_mapping(deps, src_chain, src_token)?),
         QueryMsg::IncomingTokenMappings { start_after, limit } => {
             to_json_binary(&query_incoming_token_mappings(deps, start_after, limit)?)
+        }
+
+        // Enumeration queries (full state audit)
+        QueryMsg::AllRateLimits { start_after, limit } => {
+            to_json_binary(&query_all_rate_limits(deps, start_after, limit)?)
+        }
+        QueryMsg::AllCustomAccountFees { start_after, limit } => {
+            to_json_binary(&query_all_custom_account_fees(deps, start_after, limit)?)
+        }
+        QueryMsg::AllTokenDestMappings { start_after, limit } => {
+            to_json_binary(&query_all_token_dest_mappings(deps, start_after, limit)?)
         }
     }
 }

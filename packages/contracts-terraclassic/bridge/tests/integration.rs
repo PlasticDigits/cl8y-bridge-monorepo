@@ -114,12 +114,24 @@ fn setup() -> (App, Addr, Addr, Addr) {
             token: "uluna".to_string(),
             is_native: true,
             token_type: None,
-            evm_token_address: "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: None,
             max_bridge_amount: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Set destination token mapping for uluna → chain 2
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: "uluna".to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                .to_string(),
+            dest_decimals: 18,
         },
         &[],
     )
@@ -944,7 +956,7 @@ fn test_lock_stores_xchain_hash_id() {
     assert_eq!(
         dest_token_attr.unwrap().value,
         "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-        "dest_token_address should match the registered evm_token_address for uluna"
+        "dest_token_address should match the registered dest token for uluna"
     );
 
     // Query deposit by nonce
@@ -1021,7 +1033,6 @@ fn test_deposit_native_min_limit_enforced() {
         contract_addr.clone(),
         &ExecuteMsg::UpdateToken {
             token: "uluna".to_string(),
-            evm_token_address: None,
             enabled: None,
             token_type: None,
             min_bridge_amount: Some(Uint128::from(1000u128)),
@@ -1058,7 +1069,6 @@ fn test_deposit_native_max_limit_enforced() {
         contract_addr.clone(),
         &ExecuteMsg::UpdateToken {
             token: "uluna".to_string(),
-            evm_token_address: None,
             enabled: None,
             token_type: None,
             min_bridge_amount: None,
@@ -1223,10 +1233,7 @@ fn test_deposit_cw20_lock_full_flow() {
             token: cw20_addr.to_string(),
             is_native: false,
             token_type: Some("lock_unlock".to_string()),
-            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000001"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: Some(Uint128::from(1u128)),
             max_bridge_amount: Some(Uint128::from(10_000_000u128)),
         },
@@ -1326,10 +1333,7 @@ fn test_deposit_cw20_burn_full_flow() {
             token: cw20_addr.to_string(),
             is_native: false,
             token_type: Some("mint_burn".to_string()),
-            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000002"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: Some(Uint128::from(1u128)),
             max_bridge_amount: Some(Uint128::from(10_000_000u128)),
         },
@@ -1577,10 +1581,7 @@ fn test_recover_asset_cw20_success() {
             token: cw20_addr.to_string(),
             is_native: false,
             token_type: Some("lock_unlock".to_string()),
-            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000003"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: Some(Uint128::from(1u128)),
             max_bridge_amount: Some(Uint128::from(1_000_000u128)),
         },
@@ -1702,10 +1703,7 @@ fn test_recover_asset_cw20_exceeds_balance_fails() {
             token: cw20_addr.to_string(),
             is_native: false,
             token_type: Some("lock_unlock".to_string()),
-            evm_token_address: "0x0000000000000000000000000000000000000000000000000000000000000004"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: Some(Uint128::from(1u128)),
             max_bridge_amount: Some(Uint128::from(1_000_000u128)),
         },

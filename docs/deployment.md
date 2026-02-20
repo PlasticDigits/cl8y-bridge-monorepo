@@ -143,7 +143,7 @@ terrad tx wasm execute $BRIDGE_ADDRESS \
 
 # Add token
 terrad tx wasm execute $BRIDGE_ADDRESS \
-  '{"add_token":{"token":"uluna","is_native":true,"evm_token_address":"0x...","terra_decimals":6,"evm_decimals":18}}' \
+  '{"add_token":{"token":"uluna","is_native":true,"terra_decimals":6}}' \
   --from $WALLET \
   --gas auto --gas-adjustment 1.3 \
   --node https://terra-classic-rpc.publicnode.com \

@@ -29,6 +29,15 @@ fn contract_bridge() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
     Box::new(contract)
 }
 
+fn contract_cw20() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
+    let contract = ContractWrapper::new(
+        cw20_base::contract::execute,
+        cw20_base::contract::instantiate,
+        cw20_base::contract::query,
+    );
+    Box::new(contract)
+}
+
 struct TestEnv {
     app: App,
     contract_addr: Addr,
@@ -94,9 +103,7 @@ fn setup() -> TestEnv {
             token: "uluna".to_string(),
             is_native: true,
             token_type: None,
-            evm_token_address: "0x0000000000000000000000000000000000000000".to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: None,
             max_bridge_amount: None,
         },
@@ -747,8 +754,30 @@ fn test_withdraw_submit_blocked_after_mapping_removal() {
 fn test_withdraw_submit_cw20_requires_incoming_mapping() {
     let mut env = setup();
 
-    // Simulate a CW20 address (this is a mock, we just use a different token string)
-    let cw20_addr = "terra1cw20mockaddressxxxxxxxxxxxxxxxxxxxxxxxxx";
+    // Deploy a real CW20 contract (add_token now validates on-chain contract existence)
+    let cw20_code_id = env.app.store_code(contract_cw20());
+    let cw20_contract = env
+        .app
+        .instantiate_contract(
+            cw20_code_id,
+            env.admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Test CW20".to_string(),
+                symbol: "TST".to_string(),
+                decimals: 6,
+                initial_balances: vec![],
+                mint: Some(cw20::MinterResponse {
+                    minter: env.contract_addr.to_string(),
+                    cap: None,
+                }),
+                marketing: None,
+            },
+            &[],
+            "test-cw20",
+            Some(env.admin.to_string()),
+        )
+        .unwrap();
+    let cw20_addr = cw20_contract.as_str();
 
     // Register CW20 as a token on the bridge
     env.app
@@ -759,9 +788,7 @@ fn test_withdraw_submit_cw20_requires_incoming_mapping() {
                 token: cw20_addr.to_string(),
                 is_native: false,
                 token_type: None,
-                evm_token_address: "0x0000000000000000000000000000000000000000".to_string(),
                 terra_decimals: 6,
-                evm_decimals: 18,
                 min_bridge_amount: None,
                 max_bridge_amount: None,
             },

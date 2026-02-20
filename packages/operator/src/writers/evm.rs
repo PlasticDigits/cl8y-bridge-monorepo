@@ -891,11 +891,16 @@ impl EvmWriter {
         // Calculate fee
         let fee = self.calculate_fee(&deposit.amount);
 
-        // Get the EVM token address - either from the deposit or try to parse the token field
-        let evm_token_str = deposit.evm_token_address.as_ref().unwrap_or(&deposit.token);
+        // Get the destination token address from the deposit event (per-chain from TOKEN_DEST_MAPPINGS)
+        let dest_token_str = deposit.dest_token_address.as_ref().ok_or_else(|| {
+            eyre!(
+                "Missing dest_token_address for Terra deposit nonce={}",
+                deposit.nonce
+            )
+        })?;
         let recipient = EvmAddress::from_hex(&deposit.recipient)?;
-        let token = EvmAddress::from_hex(evm_token_str)
-            .map_err(|e| eyre!("Invalid EVM token address '{}': {}", evm_token_str, e))?;
+        let token = EvmAddress::from_hex(dest_token_str)
+            .map_err(|e| eyre!("Invalid dest token address '{}': {}", dest_token_str, e))?;
 
         // Token as bytes32
         let mut token_bytes32 = [0u8; 32];
@@ -905,11 +910,19 @@ impl EvmWriter {
         // Must match the encoding used by the Terra bridge contract: bech32-decode
         // the address to get the 20-byte canonical address, then left-pad to 32 bytes
         // so the address occupies positions [12..32].
+        // SECURITY: decode MUST succeed. A zero src_account causes hash mismatch between
+        // the operator and on-chain bridge, making the withdrawal unmatchable and locking funds.
         let mut src_account = [0u8; 32];
-        if let Ok((raw, _)) = crate::hash::decode_bech32_address(&deposit.sender) {
-            let start = 32 - raw.len();
-            src_account[start..32].copy_from_slice(&raw);
-        }
+        let (raw, _) = crate::hash::decode_bech32_address(&deposit.sender).map_err(|e| {
+            eyre::eyre!(
+                "CRITICAL: Failed to decode Terra sender address '{}': {}. \
+                 Cannot compute correct hash — would cause permanent fund lock.",
+                deposit.sender,
+                e
+            )
+        })?;
+        let start = 32 - raw.len();
+        src_account[start..32].copy_from_slice(&raw);
 
         // Parse amount
         let amount: u128 = deposit

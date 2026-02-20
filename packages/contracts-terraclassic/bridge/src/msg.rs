@@ -208,15 +208,14 @@ pub enum ExecuteMsg {
         enabled: Option<bool>,
     },
 
-    /// Add a new supported token
+    /// Add a new supported token.
+    /// Destination token addresses/decimals are set per-chain via SetTokenDestination.
     AddToken {
         token: String,
         is_native: bool,
         /// Token type: "lock_unlock" (default) or "mint_burn"
         token_type: Option<String>,
-        evm_token_address: String,
         terra_decimals: u8,
-        evm_decimals: u8,
         /// Per-token minimum bridge amount (None = auto-compute 0.0001% of supply)
         min_bridge_amount: Option<Uint128>,
         /// Per-token maximum bridge amount (None = auto-compute 0.01% of supply)
@@ -226,7 +225,6 @@ pub enum ExecuteMsg {
     /// Update token configuration
     UpdateToken {
         token: String,
-        evm_token_address: Option<String>,
         enabled: Option<bool>,
         /// Update token type: "lock_unlock" or "mint_burn"
         token_type: Option<String>,
@@ -584,6 +582,31 @@ pub enum QueryMsg {
         start_after: Option<String>,
         limit: Option<u32>,
     },
+
+    // ========================================================================
+    // Enumeration Queries (full state audit)
+    // ========================================================================
+    /// List all rate limit configs (paginated)
+    #[returns(AllRateLimitsResponse)]
+    AllRateLimits {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
+
+    /// List all custom account fees (paginated)
+    #[returns(AllCustomAccountFeesResponse)]
+    AllCustomAccountFees {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
+
+    /// List all token destination mappings across all tokens and chains (paginated)
+    #[returns(AllTokenDestMappingsResponse)]
+    AllTokenDestMappings {
+        /// Pagination cursor: composite key "token:dest_chain_hex"
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
 }
 
 // ============================================================================
@@ -633,9 +656,7 @@ pub struct ChainsResponse {
 pub struct TokenResponse {
     pub token: String,
     pub is_native: bool,
-    pub evm_token_address: String,
     pub terra_decimals: u8,
-    pub evm_decimals: u8,
     pub enabled: bool,
     pub min_bridge_amount: Option<Uint128>,
     pub max_bridge_amount: Option<Uint128>,
@@ -917,4 +938,44 @@ pub struct IncomingTokenMappingResponse {
 #[cw_serde]
 pub struct IncomingTokenMappingsResponse {
     pub mappings: Vec<IncomingTokenMappingResponse>,
+}
+
+// ============================================================================
+// Response Types - Enumeration Queries
+// ============================================================================
+
+#[cw_serde]
+pub struct RateLimitEntry {
+    pub token: String,
+    pub max_per_transaction: Uint128,
+    pub max_per_period: Uint128,
+}
+
+#[cw_serde]
+pub struct AllRateLimitsResponse {
+    pub rate_limits: Vec<RateLimitEntry>,
+}
+
+#[cw_serde]
+pub struct CustomAccountFeeEntry {
+    pub account: Addr,
+    pub fee_bps: u64,
+}
+
+#[cw_serde]
+pub struct AllCustomAccountFeesResponse {
+    pub custom_fees: Vec<CustomAccountFeeEntry>,
+}
+
+#[cw_serde]
+pub struct TokenDestMappingEntry {
+    pub token: String,
+    pub dest_chain: String,
+    pub dest_token: Binary,
+    pub dest_decimals: u8,
+}
+
+#[cw_serde]
+pub struct AllTokenDestMappingsResponse {
+    pub mappings: Vec<TokenDestMappingEntry>,
 }

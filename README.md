@@ -21,15 +21,62 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 
 ## Live Deployments
 
+**Deployment in progress — security remediation complete, redeploying from scratch.**
+
 ### Supported Chains
 
 | Chain | Type | Native Chain ID | Bridge bytes4 | Explorer | Status |
 |-------|------|-----------------|---------------|----------|--------|
-| BNB Smart Chain (BSC) | EVM | 56 | `0x00000038` | [bscscan.com](https://bscscan.com) | Deployed |
-| opBNB | EVM (L2) | 204 | `0x000000cc` | [opbnbscan.com](https://opbnbscan.com) | Deployed |
-| Terra Classic | Cosmos / CosmWasm | `columbus-5` | `0x00000001` | [finder.terra.money](https://finder.terra.money/classic) | Deployed |
+| BNB Smart Chain (BSC) | EVM | 56 | `0x00000038` | [bscscan.com](https://bscscan.com) | Core deployed |
+| opBNB | EVM (L2) | 204 | `0x000000cc` | [opbnbscan.com](https://opbnbscan.com) | Core deployed |
+| Terra Classic | Cosmos / CosmWasm | `columbus-5` | `0x00000001` | [finder.terra.money](https://finder.terra.money/classic) | Pending |
 
-### BSC Mainnet (Chain ID: 56)
+### BSC + opBNB Mainnet (Matching Addresses)
+
+Proxy addresses are identical on BSC and opBNB (same deployer, same nonce order).
+
+| Contract | Proxy | Implementation | Role |
+|----------|-------|----------------|------|
+| ChainRegistry | [`0x2e5d36c46680a38e7ae156fc9d109084c58c688e`](https://bscscan.com/address/0x2e5d36c46680a38e7ae156fc9d109084c58c688e) | `0x6b1aa0653d99d5dec84db4a0283efb41be826993` | Chain registration |
+| TokenRegistry | [`0x3d8820ec93748fd4df8eee6b763834a23938b207`](https://bscscan.com/address/0x3d8820ec93748fd4df8eee6b763834a23938b207) | `0x734d6d554a3f7762d0dbc5538cba8ae9e01338f7` | Token registration & decimal mappings |
+| LockUnlock | [`0xd7b3bf05987052009c350874e810df98da95d258`](https://bscscan.com/address/0xd7b3bf05987052009c350874e810df98da95d258) | `0xb43c56d9920ea8ff1f7ea4b86261f6d59df04f66` | Lock/unlock handler for ERC20 |
+| MintBurn | [`0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc`](https://bscscan.com/address/0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc) | `0x54d67c0ec4cfe1d9eb945b35d1ebcc25c6abd2c9` | Mint/burn handler for bridged tokens |
+| Bridge | [`0xb2a22c74da8e3642e0effc107d3ac362ce885369`](https://bscscan.com/address/0xb2a22c74da8e3642e0effc107d3ac362ce885369) | `0x102a87e067aa4c6cc20d06207fb64e4a1a6cdbe6` | Core bridge state machine |
+
+| Contract | Address | Role |
+|----------|---------|------|
+| AccessManagerEnumerable | [`0xa958d75c61227606df21e3261ba80dc399d19676`](https://bscscan.com/address/0xa958d75c61227606df21e3261ba80dc399d19676) | Role-based access control for token factories |
+| Create3Deployer | [`0x375401aaab20b0827cfc7dbe822e352738d390a9`](https://bscscan.com/address/0x375401aaab20b0827cfc7dbe822e352738d390a9) | Deterministic CREATE3 deployer |
+| FactoryTokenCl8yBridged (BSC) | [`0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F`](https://bscscan.com/address/0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F) | Bridged token factory (pre-existing) |
+| FactoryTokenCl8yBridged (opBNB) | [`0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b`](https://opbnbscan.com/address/0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b) | Bridged token factory (pre-existing) |
+
+**Configuration:**
+
+| Parameter | Value |
+|-----------|-------|
+| Owner (admin) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
+| Operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` |
+| Cancel window | 300 seconds (5 minutes) |
+| Fee | 50 bps (0.50%) |
+| BSC Wrapped native (WBNB) | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| opBNB Wrapped native (WBNB) | `0x4200000000000000000000000000000000000006` |
+| BSC chain ID | `0x00000038` (56) |
+| opBNB chain ID | `0x000000cc` (204) |
+| Proxy pattern | UUPS (ERC1967) |
+
+**Remaining (not yet deployed):** Test tokens, Faucet, cross-chain registration, token mappings.
+
+### Terra Classic Mainnet (`columbus-5`)
+
+Pending deployment. Run `./scripts/deploy-terra-full.sh` after EVM token deployment is complete.
+
+### Testnet Deployments (BSC Testnet + opBNB Testnet, v1.2)
+
+See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for testnet addresses.
+
+## Previous Deployments (Scrapped — Security Audit Pending Redeploy)
+
+### BSC Mainnet (Chain ID: 56) — Scrapped
 
 | Contract | Proxy | Implementation | Role |
 |----------|-------|----------------|------|
@@ -50,6 +97,10 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | Test B | [`0x65FFbA340768BadEc8002C76a542931757372d58`](https://bscscan.com/address/0x65FFbA340768BadEc8002C76a542931757372d58) | `testb-cb` | 18 |
 | Test Dec | [`0xC62351E2445AB732289e07Be795149Bc774bB043`](https://bscscan.com/address/0xC62351E2445AB732289e07Be795149Bc774bB043) | `tdec-cb` | 18 |
 
+| Contract | Address | Role |
+|----------|---------|------|
+| Faucet | [`0xFab525Ee1B14cC281903Dea7583E568377279c1E`](https://bscscan.com/address/0xFab525Ee1B14cC281903Dea7583E568377279c1E) | Test token faucet (10 tokens/day/wallet/token) |
+
 **Configuration:**
 
 | Parameter | Value |
@@ -63,7 +114,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | Registered chains | BSC (self) |
 | Proxy pattern | UUPS (ERC1967) |
 
-### opBNB Mainnet (Chain ID: 204)
+### opBNB Mainnet (Chain ID: 204) — Scrapped
 
 | Contract | Proxy | Implementation | Role |
 |----------|-------|----------------|------|
@@ -85,6 +136,10 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | Test B | [`0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6`](https://opbnbscan.com/address/0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6) | `testb-cb` | 18 |
 | Test Dec | [`0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d`](https://opbnbscan.com/address/0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d) | `tdec-cb` | 12 (custom decimals) |
 
+| Contract | Address | Role |
+|----------|---------|------|
+| Faucet | [`0xFab525Ee1B14cC281903Dea7583E568377279c1E`](https://opbnbscan.com/address/0xFab525Ee1B14cC281903Dea7583E568377279c1E) | Test token faucet (10 tokens/day/wallet/token) |
+
 **Configuration:**
 
 | Parameter | Value |
@@ -102,7 +157,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 > **Note:** Proxy addresses are identical on BSC and opBNB because the same deployer account
 > deployed in the same nonce order on both chains, producing deterministic CREATE addresses.
 
-### Terra Classic Mainnet (`columbus-5`)
+### Terra Classic Mainnet (`columbus-5`) — Scrapped
 
 | Parameter | Value |
 |-----------|-------|
@@ -117,11 +172,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | Withdraw delay | 300 seconds (5 minutes) |
 | Min signatures | 1 |
 
-### Testnet Deployments (BSC Testnet + opBNB Testnet, v1.2)
-
-See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for testnet addresses.
-
-### Previous Deployments
+### Version History (Earlier Scrapped Deployments)
 
 | Version | Chain | Contract | Address |
 |---------|-------|----------|---------|

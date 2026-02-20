@@ -729,6 +729,12 @@ pub fn execute_admin_fix_pending_decimals(
         return Err(ContractError::Unauthorized);
     }
 
+    if src_decimals > 18 {
+        return Err(ContractError::InvalidAmount {
+            reason: "Decimals cannot exceed 18".to_string(),
+        });
+    }
+
     let hash_bytes = parse_hash(&xchain_hash_id)?;
 
     let mut pending = PENDING_WITHDRAWS

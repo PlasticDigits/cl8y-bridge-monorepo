@@ -81,7 +81,7 @@ Supporting infrastructure:
 | Vite not reading env vars | Vite only reads `.env.local` from its own project root | Setup writes `packages/frontend/.env.local` |
 | LockUnlock empty on destination | No tokens to unlock for cross-chain withdrawals | `fundLockUnlock()` in setup |
 | Cancel window too long | Default 5min, operator auto-execute takes wall-clock time | `setCancelWindow(15)` in setup |
-| Terra→EVM destToken missing | `transferRecord.destToken` not set, `withdrawSubmit` passed zero address | Set from `registryTokens[].evm_token_address` |
+| Terra→EVM destToken missing | `transferRecord.destToken` not set, `withdrawSubmit` passed zero address | Set from per-chain destination mapping via `set_token_destination` |
 | Hash computation for bytes32 fields | `evmAddressToBytes32()` called on already-bytes32 strings | Length-check before padding |
 | Terra watcher crash | Transient "could not find results for height" error | Retry with break instead of crash |
 | evm-to-terra "Transfer Complete" never shows | useAutoWithdrawSubmit only polled EVM, not Terra LCD | Added Terra destination polling via queryTerraPendingWithdraw |

@@ -81,8 +81,8 @@ pub struct TerraDeposit {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// EVM token address corresponding to this Terra token
-    pub evm_token_address: Option<String>,
+    /// Destination token address on the target chain (from deposit event's dest_token_address)
+    pub dest_token_address: Option<String>,
 }
 
 /// For inserting new Terra deposits
@@ -96,8 +96,8 @@ pub struct NewTerraDeposit {
     pub amount: String,
     pub dest_chain_id: i64,
     pub block_height: i64,
-    /// EVM token address (optional, queried from Terra bridge)
-    pub evm_token_address: Option<String>,
+    /// Destination token address on the target chain (from deposit event)
+    pub dest_token_address: Option<String>,
 }
 
 /// Represents a withdrawal approval submitted to an EVM chain

@@ -79,12 +79,24 @@ fn setup_bridge() -> (App, Addr) {
             token: "uluna".to_string(),
             is_native: true,
             token_type: None,
-            evm_token_address: "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: None,
             max_bridge_amount: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Set destination token mapping for uluna → chain 2
+    app.execute_contract(
+        admin.clone(),
+        contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: "uluna".to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 2]),
+            dest_token: "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                .to_string(),
+            dest_decimals: 18,
         },
         &[],
     )

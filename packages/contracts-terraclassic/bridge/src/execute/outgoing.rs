@@ -10,11 +10,12 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::fee_manager::{calculate_fee, get_fee_type, FeeConfig, FEE_CONFIG};
-use crate::hash::{bytes32_to_hex, compute_xchain_hash_id, encode_terra_address, hex_to_bytes32};
+use crate::hash::{bytes32_to_hex, compute_xchain_hash_id, encode_terra_address};
 use crate::msg::ReceiveMsg;
 use crate::state::{
     BridgeTransaction, DepositInfo, TokenType, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
-    LOCKED_BALANCES, OUTGOING_NONCE, STATS, THIS_CHAIN_ID, TOKENS, TRANSACTIONS,
+    LOCKED_BALANCES, OUTGOING_NONCE, STATS, THIS_CHAIN_ID, TOKENS, TOKEN_DEST_MAPPINGS,
+    TRANSACTIONS,
 };
 
 /// Parse a 4-byte chain ID from Binary input.
@@ -23,6 +24,25 @@ fn parse_chain_id(chain: &cosmwasm_std::Binary) -> Result<[u8; 4], ContractError
         .to_vec()
         .try_into()
         .map_err(|_| ContractError::InvalidHashLength { got: chain.len() })
+}
+
+/// Look up the destination token address for a (token, dest_chain) pair.
+/// Mirrors the EVM Bridge's `tokenRegistry.getDestToken(token, destChain)`.
+fn resolve_dest_token(
+    deps: &cosmwasm_std::Deps,
+    token: &str,
+    dest_chain_bytes: &[u8; 4],
+) -> Result<[u8; 32], ContractError> {
+    let dest_chain_hex = hex::encode(dest_chain_bytes);
+    let mapping = TOKEN_DEST_MAPPINGS
+        .may_load(deps.storage, (token, &dest_chain_hex))?
+        .ok_or(ContractError::InvalidAddress {
+            reason: format!(
+                "No destination token mapping for token '{}' on chain 0x{}",
+                token, dest_chain_hex
+            ),
+        })?;
+    Ok(mapping.dest_token)
 }
 
 /// Parse a 32-byte account from Binary input.
@@ -53,6 +73,14 @@ pub fn execute_deposit_native(
 
     // Check destination chain
     let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+
+    let this_chain = THIS_CHAIN_ID.load(deps.storage)?;
+    if dest_chain_bytes == this_chain {
+        return Err(ContractError::InvalidAddress {
+            reason: "Cannot bridge to the same chain".to_string(),
+        });
+    }
+
     let chain =
         CHAINS
             .may_load(deps.storage, &dest_chain_bytes)?
@@ -138,15 +166,13 @@ pub fn execute_deposit_native(
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
+    // Look up per-chain destination token (mirrors EVM's getDestToken)
+    let dest_token_address = resolve_dest_token(&deps.as_ref(), &token, &dest_chain_bytes)?;
+
     // Compute and store deposit hash for verification
     let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &info.sender)?;
-    let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
-        ContractError::InvalidAddress {
-            reason: e.to_string(),
-        }
-    })?;
 
     let deposit_info = DepositInfo {
         src_chain,
@@ -269,6 +295,14 @@ fn execute_deposit_cw20_lock(
 ) -> Result<Response, ContractError> {
     // Check destination chain
     let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+
+    let this_chain = THIS_CHAIN_ID.load(deps.storage)?;
+    if dest_chain_bytes == this_chain {
+        return Err(ContractError::InvalidAddress {
+            reason: "Cannot bridge to the same chain".to_string(),
+        });
+    }
+
     let chain =
         CHAINS
             .may_load(deps.storage, &dest_chain_bytes)?
@@ -339,15 +373,13 @@ fn execute_deposit_cw20_lock(
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
+    // Look up per-chain destination token (mirrors EVM's getDestToken)
+    let dest_token_address = resolve_dest_token(&deps.as_ref(), &token, &dest_chain_bytes)?;
+
     // Compute and store deposit hash
     let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &sender)?;
-    let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
-        ContractError::InvalidAddress {
-            reason: e.to_string(),
-        }
-    })?;
 
     let deposit_info = DepositInfo {
         src_chain,
@@ -422,6 +454,14 @@ fn execute_deposit_cw20_burn(
 ) -> Result<Response, ContractError> {
     // Check destination chain
     let dest_chain_bytes = parse_chain_id(&dest_chain)?;
+
+    let this_chain = THIS_CHAIN_ID.load(deps.storage)?;
+    if dest_chain_bytes == this_chain {
+        return Err(ContractError::InvalidAddress {
+            reason: "Cannot bridge to the same chain".to_string(),
+        });
+    }
+
     let chain =
         CHAINS
             .may_load(deps.storage, &dest_chain_bytes)?
@@ -486,15 +526,13 @@ fn execute_deposit_cw20_burn(
     };
     TRANSACTIONS.save(deps.storage, nonce, &tx)?;
 
+    // Look up per-chain destination token (mirrors EVM's getDestToken)
+    let dest_token_address = resolve_dest_token(&deps.as_ref(), &token, &dest_chain_bytes)?;
+
     // Compute and store deposit hash
     let src_chain = THIS_CHAIN_ID.load(deps.storage)?;
     let dest_chain = dest_chain_bytes;
     let src_account = encode_terra_address(deps.as_ref(), &sender)?;
-    let dest_token_address = hex_to_bytes32(&token_config.evm_token_address).map_err(|e| {
-        ContractError::InvalidAddress {
-            reason: e.to_string(),
-        }
-    })?;
 
     let deposit_info = DepositInfo {
         src_chain,

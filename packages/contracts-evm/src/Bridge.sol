@@ -29,6 +29,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     using FeeCalculatorLib for FeeCalculatorLib.FeeConfig;
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
+    using EnumerableSet for EnumerableSet.Bytes32Set;
 
     // ============================================================================
     // Constants
@@ -99,14 +100,6 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     uint256 public cancelWindow;
 
     /// @notice Pending withdrawals
-    /// CRITICAL SECURITY TODO: pendingWithdraws is a plain mapping with no enumeration.
-    /// The canceler service cannot enumerate approved-but-unresolved withdrawals on-chain
-    /// and must fall back to scanning historical WithdrawApprove event logs, which is
-    /// fragile (requires archive RPC, subject to eth_getLogs block range limits, and
-    /// misses approvals on first startup). A future upgrade MUST add an
-    /// EnumerableSet.Bytes32Set tracking approved pending IDs (add in withdrawApprove,
-    /// remove in withdrawCancel/withdrawExecuteUnlock/withdrawExecuteMint) and expose a
-    /// getApprovedPendingIds() view so the canceler can poll current state directly.
     mapping(bytes32 => PendingWithdraw) public pendingWithdraws;
 
     /// @notice Deposit records by hash
@@ -121,8 +114,11 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Tracks whether a withdrawal nonce has been approved for a given source chain
     mapping(bytes4 srcChain => mapping(uint64 nonce => bool used)) public withdrawNonceUsed;
 
+    /// @notice Set of pending (submitted but not yet executed/cancelled) withdrawal hashes
+    EnumerableSet.Bytes32Set private _pendingWithdrawHashes;
+
     /// @notice Reserved storage slots for future upgrades
-    uint256[36] private __gap;
+    uint256[34] private __gap;
 
     // ============================================================================
     // Modifiers
@@ -676,6 +672,8 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
             executed: false
         });
 
+        _pendingWithdrawHashes.add(xchainHashId);
+
         emit WithdrawSubmit(xchainHashId, srcChain, srcAccount, destAccount, token, amount, nonce, msg.value);
     }
 
@@ -724,6 +722,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (block.timestamp > windowEnd) revert CancelWindowExpired();
 
         w.cancelled = true;
+        _pendingWithdrawHashes.remove(xchainHashId);
 
         emit WithdrawCancel(xchainHashId, msg.sender);
     }
@@ -738,6 +737,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
         if (!w.cancelled) revert WithdrawNotFound(xchainHashId); // Not cancelled
 
         w.cancelled = false;
+        _pendingWithdrawHashes.add(xchainHashId);
         // Reset approval time to restart cancel window
         w.approvedAt = block.timestamp;
 
@@ -764,6 +764,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Mark as executed
         w.executed = true;
+        _pendingWithdrawHashes.remove(xchainHashId);
 
         // Unlock tokens to recipient
         lockUnlock.unlock(w.recipient, w.token, normalizedAmount);
@@ -791,6 +792,7 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
 
         // Mark as executed
         w.executed = true;
+        _pendingWithdrawHashes.remove(xchainHashId);
 
         // Mint tokens to recipient
         mintBurn.mint(w.recipient, w.token, normalizedAmount);
@@ -896,6 +898,25 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @return record The deposit record
     function getDeposit(bytes32 xchainHashId) external view returns (DepositRecord memory record) {
         return deposits[xchainHashId];
+    }
+
+    /// @notice Get all pending (submitted but not yet executed/cancelled) withdrawal hashes
+    /// @return hashes Array of pending withdrawal hashes
+    function getPendingWithdrawHashes() external view returns (bytes32[] memory hashes) {
+        return _pendingWithdrawHashes.values();
+    }
+
+    /// @notice Batch query custom account fees for a list of accounts
+    /// @param accounts Array of account addresses to check
+    /// @return feeBps Array of custom fee basis points (0 if no custom fee is set)
+    function getAllCustomAccountFees(address[] calldata accounts) external view returns (uint256[] memory feeBps) {
+        feeBps = new uint256[](accounts.length);
+        for (uint256 i; i < accounts.length; i++) {
+            FeeCalculatorLib.CustomAccountFee memory f = customAccountFees[accounts[i]];
+            if (f.isSet) {
+                feeBps[i] = f.feeBps;
+            }
+        }
     }
 
     // ============================================================================

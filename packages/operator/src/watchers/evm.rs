@@ -488,34 +488,37 @@ impl EvmWatcher {
         // Query the actual dest token from the TokenRegistry contract
         // This is critical for hash consistency: the EVM Bridge uses getDestToken(token, destChain)
         // when computing the deposit hash, so we must use the same value.
+        // SECURITY: getDestToken MUST succeed. A silent fallback causes hash mismatches
+        // between the operator and on-chain bridge, permanently locking user funds.
         let dest_token_address: [u8; 32] = if self.token_registry_address != Address::ZERO {
             let token_registry = TokenRegistry::new(self.token_registry_address, &self.provider);
             let dest_chain_bytes4: FixedBytes<4> = FixedBytes::from(dest_chain_id.0);
-            match token_registry
+            let result = token_registry
                 .getDestToken(token, dest_chain_bytes4)
                 .call()
                 .await
-            {
-                Ok(result) => result.destToken.into(),
-                Err(e) => {
-                    tracing::warn!(
-                        token = %token,
-                        dest_chain = %hex::encode(dest_chain_id.0),
-                        error = %e,
-                        "Failed to query getDestToken, falling back to keccak256 of source token"
-                    );
-                    // Fallback: use source token address left-padded (legacy behavior)
-                    let mut fallback = [0u8; 32];
-                    fallback[12..32].copy_from_slice(token.as_slice());
-                    fallback
-                }
+                .map_err(|e| {
+                    eyre::eyre!(
+                    "CRITICAL: Failed to query getDestToken for token {} on dest chain 0x{}: {}. \
+                     Cannot process deposit — would cause hash mismatch and permanent fund lock.",
+                    token, hex::encode(dest_chain_id.0), e
+                )
+                })?;
+            let dest_token: [u8; 32] = result.destToken.into();
+            if dest_token == [0u8; 32] {
+                return Err(eyre::eyre!(
+                    "CRITICAL: getDestToken returned zero for token {} on dest chain 0x{}. \
+                     Token destination mapping not configured. Cannot process deposit.",
+                    token,
+                    hex::encode(dest_chain_id.0)
+                ));
             }
+            dest_token
         } else {
-            // No TokenRegistry available - use source token address as fallback
-            tracing::warn!("TokenRegistry not available, using source token address as dest_token");
-            let mut fallback = [0u8; 32];
-            fallback[12..32].copy_from_slice(token.as_slice());
-            fallback
+            return Err(eyre::eyre!(
+                "CRITICAL: TokenRegistry address not configured. Cannot determine destination \
+                 token for deposits. This would cause hash mismatches and permanent fund lock."
+            ));
         };
 
         let tx_hash = log

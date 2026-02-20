@@ -5,20 +5,23 @@
 use cosmwasm_std::{Addr, Binary, Deps, Env, Order, StdError, StdResult, Uint128};
 use cw_storage_plus::Bound;
 
+use crate::fee_manager::CUSTOM_ACCOUNT_FEES;
 use crate::fee_manager::{
     calculate_fee, calculate_fee_from_bps, get_effective_fee_bps, get_fee_type, has_custom_fee,
     FeeConfig, FEE_CONFIG,
 };
 use crate::hash::compute_xchain_hash_id;
 use crate::msg::{
-    AccountFeeResponse, AllowedCw20CodeIdsResponse, CalculateFeeResponse, CancelersResponse,
-    ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse, DepositInfoResponse,
-    FeeConfigResponse, HasCustomFeeResponse, IncomingTokenMappingResponse,
-    IncomingTokenMappingsResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
-    OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
-    PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitResponse, SimulationResponse,
-    StatsResponse, StatusResponse, ThisChainIdResponse, TokenDestMappingResponse, TokenResponse,
-    TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
+    AccountFeeResponse, AllCustomAccountFeesResponse, AllRateLimitsResponse,
+    AllTokenDestMappingsResponse, AllowedCw20CodeIdsResponse, CalculateFeeResponse,
+    CancelersResponse, ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse,
+    CustomAccountFeeEntry, DepositInfoResponse, FeeConfigResponse, HasCustomFeeResponse,
+    IncomingTokenMappingResponse, IncomingTokenMappingsResponse, IsCancelerResponse,
+    LockedBalanceResponse, NonceResponse, OperatorsResponse, PendingAdminResponse,
+    PendingWithdrawResponse, PendingWithdrawalEntry, PendingWithdrawalsResponse,
+    PeriodUsageResponse, RateLimitEntry, RateLimitResponse, SimulationResponse, StatsResponse,
+    StatusResponse, ThisChainIdResponse, TokenDestMappingEntry, TokenDestMappingResponse,
+    TokenResponse, TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
     WithdrawDelayResponse,
 };
 use crate::state::{
@@ -133,9 +136,7 @@ pub fn query_token(deps: Deps, token: String) -> StdResult<TokenResponse> {
     Ok(TokenResponse {
         token: token_config.token,
         is_native: token_config.is_native,
-        evm_token_address: token_config.evm_token_address,
         terra_decimals: token_config.terra_decimals,
-        evm_decimals: token_config.evm_decimals,
         enabled: token_config.enabled,
         min_bridge_amount: token_config.min_bridge_amount,
         max_bridge_amount: token_config.max_bridge_amount,
@@ -159,9 +160,7 @@ pub fn query_tokens(
             Ok(TokenResponse {
                 token: token_config.token,
                 is_native: token_config.is_native,
-                evm_token_address: token_config.evm_token_address,
                 terra_decimals: token_config.terra_decimals,
-                evm_decimals: token_config.evm_decimals,
                 enabled: token_config.enabled,
                 min_bridge_amount: token_config.min_bridge_amount,
                 max_bridge_amount: token_config.max_bridge_amount,
@@ -798,6 +797,9 @@ pub fn query_incoming_token_mapping(
     }))
 }
 
+const ENUM_DEFAULT_LIMIT: u32 = 30;
+const ENUM_MAX_LIMIT: u32 = 100;
+
 /// List all incoming token mappings (paginated).
 ///
 /// Pagination cursor uses a composite key: "src_chain_hex:src_token_hex"
@@ -840,4 +842,98 @@ pub fn query_incoming_token_mappings(
         .collect::<StdResult<Vec<_>>>()?;
 
     Ok(IncomingTokenMappingsResponse { mappings })
+}
+
+// ============================================================================
+// Enumeration Queries (full state audit)
+// ============================================================================
+
+/// List all rate limit configs (paginated).
+pub fn query_all_rate_limits(
+    deps: Deps,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<AllRateLimitsResponse> {
+    let limit = limit.unwrap_or(ENUM_DEFAULT_LIMIT).min(ENUM_MAX_LIMIT) as usize;
+    let start = start_after.as_deref().map(Bound::exclusive);
+
+    let rate_limits: Vec<RateLimitEntry> = RATE_LIMITS
+        .range(deps.storage, start, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let (token, config) = item?;
+            Ok(RateLimitEntry {
+                token,
+                max_per_transaction: config.max_per_transaction,
+                max_per_period: config.max_per_period,
+            })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(AllRateLimitsResponse { rate_limits })
+}
+
+/// List all custom account fees (paginated).
+pub fn query_all_custom_account_fees(
+    deps: Deps,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<AllCustomAccountFeesResponse> {
+    let limit = limit.unwrap_or(ENUM_DEFAULT_LIMIT).min(ENUM_MAX_LIMIT) as usize;
+
+    let start_addr = start_after
+        .map(|s| deps.api.addr_validate(&s))
+        .transpose()?;
+    let start = start_addr.as_ref().map(Bound::exclusive);
+
+    let custom_fees: Vec<CustomAccountFeeEntry> = CUSTOM_ACCOUNT_FEES
+        .range(deps.storage, start, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let (account, fee_bps) = item?;
+            Ok(CustomAccountFeeEntry { account, fee_bps })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(AllCustomAccountFeesResponse { custom_fees })
+}
+
+/// List all token destination mappings across all tokens and chains (paginated).
+///
+/// Pagination cursor uses a composite key: "token:dest_chain_hex"
+pub fn query_all_token_dest_mappings(
+    deps: Deps,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<AllTokenDestMappingsResponse> {
+    let limit = limit.unwrap_or(ENUM_DEFAULT_LIMIT).min(ENUM_MAX_LIMIT) as usize;
+
+    let start_pair: Option<(String, String)> = start_after.and_then(|cursor| {
+        let parts: Vec<&str> = cursor.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            Some((parts[0].to_string(), parts[1].to_string()))
+        } else {
+            None
+        }
+    });
+
+    let min_bound: Option<Bound<(&str, &str)>> = start_pair
+        .as_ref()
+        .map(|(t, c)| Bound::exclusive((t.as_str(), c.as_str())));
+
+    let mappings: Vec<TokenDestMappingEntry> = TOKEN_DEST_MAPPINGS
+        .range(deps.storage, min_bound, None, Order::Ascending)
+        .take(limit)
+        .map(|item| {
+            let ((token, dest_chain_hex), mapping) = item?;
+            Ok(TokenDestMappingEntry {
+                token,
+                dest_chain: dest_chain_hex,
+                dest_token: Binary::from(mapping.dest_token.to_vec()),
+                dest_decimals: mapping.dest_decimals,
+            })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(AllTokenDestMappingsResponse { mappings })
 }

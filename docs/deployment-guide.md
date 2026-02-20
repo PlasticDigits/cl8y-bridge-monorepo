@@ -512,6 +512,124 @@ terrad query wasm contract-state smart $TERRA_BRIDGE_ADDRESS '{"config":{}}' \
   --node https://terra-classic-rpc.publicnode.com:443
 ```
 
+### 5.5 Deploy CW20 Test Tokens
+
+Before registering tokens on the Terra bridge, you must deploy the actual CW20 token contracts
+on-chain. Each test token is a standard `cw20_base` contract. The bridge contract address is
+set as the **minter** so it can mint tokens on incoming withdrawals.
+
+#### Store the CW20 Base Code
+
+Upload the `cw20_base.wasm` binary once — all three tokens share the same code ID:
+
+```bash
+terrad tx wasm store cw20_base.wasm \
+  --from $TERRA_KEY_NAME \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+Extract the code ID from the transaction output (`code_id` attribute in the `store_code` event):
+
+```bash
+export CW20_CODE_ID=<number>
+```
+
+#### Instantiate Token Contracts
+
+Each token needs its own contract instance with its name, symbol, decimals, and the bridge
+contract as minter.
+
+**testa (18 decimals):**
+
+```bash
+terrad tx wasm instantiate $CW20_CODE_ID \
+  '{"name":"Test A","symbol":"testa","decimals":18,"initial_balances":[],"mint":{"minter":"'$TERRA_BRIDGE_ADDRESS'"}}' \
+  --label "testa-cw20" \
+  --admin $TERRA_ADMIN \
+  --from $TERRA_KEY_NAME \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+```bash
+sleep 10
+```
+
+**testb (18 decimals):**
+
+```bash
+terrad tx wasm instantiate $CW20_CODE_ID \
+  '{"name":"Test B","symbol":"testb","decimals":18,"initial_balances":[],"mint":{"minter":"'$TERRA_BRIDGE_ADDRESS'"}}' \
+  --label "testb-cw20" \
+  --admin $TERRA_ADMIN \
+  --from $TERRA_KEY_NAME \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+```bash
+sleep 10
+```
+
+**tdec (6 decimals on Terra):**
+
+```bash
+terrad tx wasm instantiate $CW20_CODE_ID \
+  '{"name":"Test Dec","symbol":"tdec","decimals":6,"initial_balances":[],"mint":{"minter":"'$TERRA_BRIDGE_ADDRESS'"}}' \
+  --label "tdec-cw20" \
+  --admin $TERRA_ADMIN \
+  --from $TERRA_KEY_NAME \
+  --chain-id columbus-5 \
+  --node https://terra-classic-rpc.publicnode.com:443 \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+#### Record CW20 Contract Addresses
+
+Query the instantiation transaction output for each contract address (the `_contract_address`
+attribute), or list contracts by code ID:
+
+```bash
+terrad query wasm list-contract-by-code $CW20_CODE_ID \
+  --node https://terra-classic-rpc.publicnode.com:443
+```
+
+Export each address:
+
+```bash
+export TERRA_TESTA_ADDR=terra1...   # testa CW20 contract
+export TERRA_TESTB_ADDR=terra1...   # testb CW20 contract
+export TERRA_TDEC_ADDR=terra1...    # tdec CW20 contract
+```
+
+#### Verify Token Contracts
+
+```bash
+terrad query wasm contract-state smart $TERRA_TESTA_ADDR '{"token_info":{}}' \
+  --node https://terra-classic-rpc.publicnode.com:443
+
+terrad query wasm contract-state smart $TERRA_TESTB_ADDR '{"token_info":{}}' \
+  --node https://terra-classic-rpc.publicnode.com:443
+
+terrad query wasm contract-state smart $TERRA_TDEC_ADDR '{"token_info":{}}' \
+  --node https://terra-classic-rpc.publicnode.com:443
+```
+
+Confirm each returns the correct `name`, `symbol`, `decimals`, and that the bridge contract
+is listed as the minter.
+
 ---
 
 ## 6. Phase 4 — Cross-Chain Configuration
@@ -549,10 +667,15 @@ export OPBNB_TESTA=0x...
 export OPBNB_TESTB=0x...
 export OPBNB_TDEC=0x...
 
-# --- Terra (from section 5.3) ---
+# --- Terra (from sections 5.3, 5.5) ---
 export TERRA_BRIDGE_ADDRESS=terra1...
 export TERRA_KEY_NAME="cl8ybridge_deployer"  # deployer key in terrad keyring
 export TERRA_ADMIN_KEY="cl8y2_admin"         # admin key (required for all Phase 4 operations)
+
+# --- Terra CW20 token addresses (from section 5.5) ---
+export TERRA_TESTA_ADDR=terra1...   # testa CW20 contract
+export TERRA_TESTB_ADDR=terra1...   # testb CW20 contract
+export TERRA_TDEC_ADDR=terra1...    # tdec CW20 contract
 ```
 
 ### 6.0 Define Chain IDs and Token Identifiers
@@ -577,11 +700,12 @@ export BSC_CHAIN_B64="AAAAOA=="
 export OPBNB_CHAIN_B64="AAAAzA=="
 export TERRA_CHAIN_B64="AAAAAQ=="
 
-# --- Terra token denoms as bytes32 (keccak256 hash, for EVM dest token) ---
-# The EVM TokenRegistry identifies Terra tokens by keccak256(denom).
-export TERRA_TESTA_BYTES32=$(cast keccak "testa")
-export TERRA_TESTB_BYTES32=$(cast keccak "testb")
-export TERRA_TDEC_BYTES32=$(cast keccak "tdec")
+# --- Terra CW20 addresses as bytes32 (for EVM dest token) ---
+# Derive the 32-byte representation of a terra1... CW20 address for cross-chain mapping.
+# bech32-decode → 20-byte canonical address → left-pad to 32 bytes.
+TERRA_TESTA_BYTES32=0x$(python3 -c "import bech32; _, data = bech32.bech32_decode('$TERRA_TESTA_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print('00' * (32 - len(raw)) + raw.hex())")
+TERRA_TESTB_BYTES32=0x$(python3 -c "import bech32; _, data = bech32.bech32_decode('$TERRA_TESTB_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print('00' * (32 - len(raw)) + raw.hex())")
+TERRA_TDEC_BYTES32=0x$(python3 -c "import bech32; _, data = bech32.bech32_decode('$TERRA_TDEC_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print('00' * (32 - len(raw)) + raw.hex())")
 
 # --- EVM token addresses as bytes32 (left-padded, for EVM↔EVM dest token) ---
 # Convert 20-byte EVM addresses to 32-byte format for cross-EVM mappings.
@@ -821,13 +945,13 @@ cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
 
 #### Terra Side — Add Tokens
 
-Register each token on the Terra bridge. The `evm_token_address` is used as a reference; the
-per-chain destination and incoming mappings are set separately below.
+Register each token on the Terra bridge. Destination token addresses and decimals are set
+per-chain via `set_token_destination` (see below).
 
 ```bash
-# testa — 18 decimals on Terra, 18 on EVM (reference BSC address)
+# testa — 18 decimals on Terra
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"testa","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TESTA'","terra_decimals":18,"evm_decimals":18}}' \
+  '{"add_token":{"token":"'$TERRA_TESTA_ADDR'","is_native":false,"token_type":"mint_burn","terra_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -837,9 +961,9 @@ terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
 
 sleep 10
 
-# testb — 18 decimals on Terra, 18 on EVM
+# testb — 18 decimals on Terra
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"testb","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TESTB'","terra_decimals":18,"evm_decimals":18}}' \
+  '{"add_token":{"token":"'$TERRA_TESTB_ADDR'","is_native":false,"token_type":"mint_burn","terra_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -849,9 +973,9 @@ terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
 
 sleep 10
 
-# tdec — 6 decimals on Terra, 18 on BSC (reference)
+# tdec — 6 decimals on Terra
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"add_token":{"token":"tdec","is_native":false,"token_type":"mint_burn","evm_token_address":"'$BSC_TDEC'","terra_decimals":6,"evm_decimals":18}}' \
+  '{"add_token":{"token":"'$TERRA_TDEC_ADDR'","is_native":false,"token_type":"mint_burn","terra_decimals":6}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -870,7 +994,7 @@ EVM token address left-padded to 32 bytes as a hex string.
 
 # testa → BSC (dest decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"testa","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTA_B32'","dest_decimals":18}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TESTA_ADDR'","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTA_B32'","dest_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -882,7 +1006,7 @@ sleep 10
 
 # testa → opBNB (dest decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"testa","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTA_B32'","dest_decimals":18}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TESTA_ADDR'","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTA_B32'","dest_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -896,7 +1020,7 @@ sleep 10
 
 # testb → BSC (dest decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"testb","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTB_B32'","dest_decimals":18}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TESTB_ADDR'","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TESTB_B32'","dest_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -908,7 +1032,7 @@ sleep 10
 
 # testb → opBNB (dest decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"testb","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTB_B32'","dest_decimals":18}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TESTB_ADDR'","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TESTB_B32'","dest_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -922,7 +1046,7 @@ sleep 10
 
 # tdec → BSC (dest decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"tdec","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TDEC_B32'","dest_decimals":18}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TDEC_ADDR'","dest_chain":"'$BSC_CHAIN_B64'","dest_token":"'$BSC_TDEC_B32'","dest_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -934,7 +1058,7 @@ sleep 10
 
 # tdec → opBNB (dest decimals: 12)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_token_destination":{"token":"tdec","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TDEC_B32'","dest_decimals":12}}' \
+  '{"set_token_destination":{"token":"'$TERRA_TDEC_ADDR'","dest_chain":"'$OPBNB_CHAIN_B64'","dest_token":"'$OPBNB_TDEC_B32'","dest_decimals":12}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -946,14 +1070,15 @@ terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
 #### Terra Side — Set Incoming Token Mappings
 
 Set how Terra identifies incoming tokens from each EVM chain. The `src_token` is the
-keccak256 hash of the Terra denom (32 bytes), base64-encoded.
+32-byte representation of the Terra CW20 address (bech32-decoded, left-padded), base64-encoded.
+This must match the bytes32 values used on the EVM side (`TERRA_*_BYTES32`).
 
-Compute the base64-encoded keccak hashes (these match what the EVM side uses):
+Compute the base64-encoded bytes32 representations:
 
 ```bash
-export TESTA_HASH_B64=$(cast keccak "testa" | sed 's/0x//' | xxd -r -p | base64)
-export TESTB_HASH_B64=$(cast keccak "testb" | sed 's/0x//' | xxd -r -p | base64)
-export TDEC_HASH_B64=$(cast keccak "tdec" | sed 's/0x//' | xxd -r -p | base64)
+export TESTA_HASH_B64=$(python3 -c "import bech32, base64; _, data = bech32.bech32_decode('$TERRA_TESTA_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print(base64.b64encode(b'\x00' * (32 - len(raw)) + raw).decode())")
+export TESTB_HASH_B64=$(python3 -c "import bech32, base64; _, data = bech32.bech32_decode('$TERRA_TESTB_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print(base64.b64encode(b'\x00' * (32 - len(raw)) + raw).decode())")
+export TDEC_HASH_B64=$(python3 -c "import bech32, base64; _, data = bech32.bech32_decode('$TERRA_TDEC_ADDR'); raw = bytes(bech32.convertbits(data, 5, 8, False)); print(base64.b64encode(b'\x00' * (32 - len(raw)) + raw).decode())")
 ```
 
 ```bash
@@ -961,7 +1086,7 @@ export TDEC_HASH_B64=$(cast keccak "tdec" | sed 's/0x//' | xxd -r -p | base64)
 
 # testa ← BSC (src decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"testa","src_decimals":18}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"'$TERRA_TESTA_ADDR'","src_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -973,7 +1098,7 @@ sleep 10
 
 # testb ← BSC (src decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"testb","src_decimals":18}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"'$TERRA_TESTB_ADDR'","src_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -985,7 +1110,7 @@ sleep 10
 
 # tdec ← BSC (src decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"tdec","src_decimals":18}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$BSC_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"'$TERRA_TDEC_ADDR'","src_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -999,7 +1124,7 @@ sleep 10
 
 # testa ← opBNB (src decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"testa","src_decimals":18}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTA_HASH_B64'","local_token":"'$TERRA_TESTA_ADDR'","src_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -1011,7 +1136,7 @@ sleep 10
 
 # testb ← opBNB (src decimals: 18)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"testb","src_decimals":18}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TESTB_HASH_B64'","local_token":"'$TERRA_TESTB_ADDR'","src_decimals":18}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \
@@ -1023,7 +1148,7 @@ sleep 10
 
 # tdec ← opBNB (src decimals: 12)
 terrad tx wasm execute $TERRA_BRIDGE_ADDRESS \
-  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"tdec","src_decimals":12}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"'$OPBNB_CHAIN_B64'","src_token":"'$TDEC_HASH_B64'","local_token":"'$TERRA_TDEC_ADDR'","src_decimals":12}}' \
   --from $TERRA_ADMIN_KEY \
   --chain-id columbus-5 \
   --node https://terra-classic-rpc.publicnode.com:443 \

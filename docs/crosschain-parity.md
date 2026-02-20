@@ -123,7 +123,7 @@ This matches the EVM `bytes32(uint256(uint160(...)))` format.
 The `token` parameter in the transfer hash is **always** the token address on the **destination** chain, not the source chain. This is enforced by:
 
 - **EVM deposit**: `destToken = tokenRegistry.getDestToken(sourceToken, destChain)`
-- **Terra deposit**: `dest_token_address` from the token configuration's `evm_token_address`
+- **Terra deposit**: `dest_token_address` from the per-chain destination mapping set via `SetTokenDestination`
 - **EVM withdrawSubmit**: User passes the local token address
 - **Terra withdrawSubmit**: User passes the local token string
 
@@ -319,7 +319,7 @@ These are the most common sources of hash mismatch, based on bugs caught during 
 
 ### 1. Using Source Token Instead of Destination Token
 
-The `token` field must be the **destination** token. On EVM, the bridge calls `tokenRegistry.getDestToken(sourceToken, destChain)`. On Terra, the deposit handler looks up the `evm_token_address` from the token configuration.
+The `token` field must be the **destination** token. On EVM, the bridge calls `tokenRegistry.getDestToken(sourceToken, destChain)`. On Terra, the deposit handler looks up the destination token address from the per-chain mapping set via `SetTokenDestination`.
 
 **Wrong**: Using the deposited token address directly
 **Right**: Looking up the registered destination token for the target chain

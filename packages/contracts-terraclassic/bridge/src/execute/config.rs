@@ -297,8 +297,14 @@ fn parse_token_type(token_type_str: Option<String>) -> TokenType {
 
 /// Add a new supported token.
 ///
-/// For CW20 tokens (is_native=false), validates that the contract's code_id
-/// is in the allowed list (when ALLOWED_CW20_CODE_IDS is non-empty).
+/// For CW20 tokens (is_native=false), ALWAYS validates that the token string
+/// is a valid contract address on-chain. Additionally checks code_id against
+/// the allowed list when ALLOWED_CW20_CODE_IDS is non-empty.
+///
+/// SECURITY: addr_validate and query_wasm_contract_info MUST run unconditionally
+/// for non-native tokens. Without this, any arbitrary string (e.g. "testa") can be
+/// stored and later used as contract_addr in WasmMsg::Execute for Cw20ExecuteMsg::Mint
+/// and Burn, causing all withdrawals to fail and locking user funds permanently.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_add_token(
     deps: DepsMut,
@@ -306,9 +312,7 @@ pub fn execute_add_token(
     token: String,
     is_native: bool,
     token_type: Option<String>,
-    evm_token_address: String,
     terra_decimals: u8,
-    evm_decimals: u8,
     min_bridge_amount: Option<Uint128>,
     max_bridge_amount: Option<Uint128>,
 ) -> Result<Response, ContractError> {
@@ -317,24 +321,32 @@ pub fn execute_add_token(
         return Err(ContractError::Unauthorized);
     }
 
-    // For CW20 tokens, validate code_id is allowed (when restriction is enabled)
+    if terra_decimals > 18 {
+        return Err(ContractError::InvalidAmount {
+            reason: "Decimals cannot exceed 18".to_string(),
+        });
+    }
+
     if !is_native {
+        // ALWAYS validate CW20 address — not gated behind allowed_cw20_code_ids
+        let token_addr =
+            deps.api
+                .addr_validate(&token)
+                .map_err(|_| ContractError::InvalidCw20Contract {
+                    token: token.clone(),
+                })?;
+        let contract_info = deps
+            .querier
+            .query_wasm_contract_info(&token_addr)
+            .map_err(|_| ContractError::InvalidCw20Contract {
+                token: token.clone(),
+            })?;
+
+        // Additionally check code_id restriction if enabled
         let allowed = ALLOWED_CW20_CODE_IDS
             .may_load(deps.storage)?
             .unwrap_or_default();
         if !allowed.is_empty() {
-            let token_addr =
-                deps.api
-                    .addr_validate(&token)
-                    .map_err(|_| ContractError::InvalidCw20Contract {
-                        token: token.clone(),
-                    })?;
-            let contract_info =
-                deps.querier
-                    .query_wasm_contract_info(&token_addr)
-                    .map_err(|_| ContractError::InvalidCw20Contract {
-                        token: token.clone(),
-                    })?;
             let code_id = contract_info.code_id;
             if !allowed.contains(&code_id) {
                 return Err(ContractError::Cw20CodeIdNotAllowed {
@@ -357,9 +369,7 @@ pub fn execute_add_token(
         token: token.clone(),
         is_native,
         token_type: token_type_parsed.clone(),
-        evm_token_address,
         terra_decimals,
-        evm_decimals,
         enabled: true,
         min_bridge_amount: effective_min,
         max_bridge_amount: effective_max,
@@ -428,12 +438,10 @@ fn compute_default_limits(
 }
 
 /// Update an existing token configuration.
-#[allow(clippy::too_many_arguments)]
 pub fn execute_update_token(
     deps: DepsMut,
     info: MessageInfo,
     token: String,
-    evm_token_address: Option<String>,
     enabled: Option<bool>,
     token_type: Option<String>,
     min_bridge_amount: Option<Uint128>,
@@ -451,9 +459,6 @@ pub fn execute_update_token(
                 token: token.clone(),
             })?;
 
-    if let Some(addr) = evm_token_address {
-        token_config.evm_token_address = addr;
-    }
     if let Some(e) = enabled {
         token_config.enabled = e;
     }
@@ -487,6 +492,12 @@ pub fn execute_set_token_destination(
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
+    }
+
+    if dest_decimals > 18 {
+        return Err(ContractError::InvalidAmount {
+            reason: "Decimals cannot exceed 18".to_string(),
+        });
     }
 
     // Verify token exists
@@ -582,6 +593,12 @@ pub fn execute_set_incoming_token_mapping(
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized);
+    }
+
+    if src_decimals > 18 {
+        return Err(ContractError::InvalidAmount {
+            reason: "Decimals cannot exceed 18".to_string(),
+        });
     }
 
     // Validate src_chain is exactly 4 bytes

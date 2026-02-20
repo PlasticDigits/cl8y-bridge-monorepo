@@ -73,6 +73,10 @@ impl TokenType {
 }
 
 /// Supported token configuration
+///
+/// Destination token addresses and decimals are stored per-chain in TOKEN_DEST_MAPPINGS,
+/// not in this struct. This avoids the critical bug where a single `evm_token_address`
+/// was used for hash computation regardless of which destination chain was targeted.
 #[cw_serde]
 pub struct TokenConfig {
     /// Token identifier (denom for native, contract address for CW20)
@@ -81,12 +85,8 @@ pub struct TokenConfig {
     pub is_native: bool,
     /// Token type (LockUnlock or MintBurn)
     pub token_type: TokenType,
-    /// Corresponding token address on EVM chain (as hex string)
-    pub evm_token_address: String,
     /// Decimals on TerraClassic
     pub terra_decimals: u8,
-    /// Decimals on EVM chain
-    pub evm_decimals: u8,
     /// Whether this token is currently enabled for bridging
     pub enabled: bool,
     /// Per-token minimum bridge amount (None/zero = no minimum)

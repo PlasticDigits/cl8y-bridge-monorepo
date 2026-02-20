@@ -156,9 +156,12 @@ build-terra-optimized:
 			echo "Rust: $$(rustc --version)" && \
 			cd /code && \
 			RUSTFLAGS="-C link-arg=-s" cargo build --release -p bridge --lib --target wasm32-unknown-unknown --features cosmwasm_1_2 --target-dir=/target --locked && \
+			RUSTFLAGS="-C link-arg=-s" cargo build --release -p faucet --lib --target wasm32-unknown-unknown --target-dir=/target --locked && \
 			mkdir -p artifacts && \
 			echo "Optimizing bridge.wasm ..." && \
 			wasm-opt -Os --signext-lowering /target/wasm32-unknown-unknown/release/bridge.wasm -o artifacts/bridge.wasm && \
+			echo "Optimizing faucet.wasm ..." && \
+			wasm-opt -Os --signext-lowering /target/wasm32-unknown-unknown/release/faucet.wasm -o artifacts/faucet.wasm && \
 			cd artifacts && sha256sum -- *.wasm | tee checksums.txt \
 		'
 	@echo "✅ Optimized WASM written to packages/contracts-terraclassic/artifacts/"

@@ -28,6 +28,15 @@ fn contract_bridge() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
     Box::new(contract)
 }
 
+fn contract_cw20() -> Box<dyn cw_multi_test::Contract<cosmwasm_std::Empty>> {
+    let contract = ContractWrapper::new(
+        cw20_base::contract::execute,
+        cw20_base::contract::instantiate,
+        cw20_base::contract::query,
+    );
+    Box::new(contract)
+}
+
 struct TestEnv {
     app: App,
     contract_addr: Addr,
@@ -111,10 +120,7 @@ fn setup() -> TestEnv {
             token: "uluna".to_string(),
             is_native: true,
             token_type: None,
-            evm_token_address: "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-                .to_string(),
             terra_decimals: 6,
-            evm_decimals: 18,
             min_bridge_amount: None,
             max_bridge_amount: None,
         },
@@ -228,6 +234,20 @@ fn deposit_to_build_liquidity(env: &mut TestEnv, amount: u128) {
         &ExecuteMsg::RegisterChain {
             identifier: "evm_1".to_string(),
             chain_id: Binary::from(vec![0, 0, 0, 3]),
+        },
+        &[],
+    );
+
+    // Set destination token mapping for uluna → chain 3 (ignored if already set)
+    let _ = env.app.execute_contract(
+        env.admin.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::SetTokenDestination {
+            token: "uluna".to_string(),
+            dest_chain: Binary::from(vec![0, 0, 0, 3]),
+            dest_token: "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                .to_string(),
+            dest_decimals: 18,
         },
         &[],
     );
@@ -1018,20 +1038,41 @@ fn test_anyone_can_execute_after_window() {
 fn test_execute_unlock_wrong_token_type_rejected() {
     let mut env = setup();
 
+    // Deploy a real CW20 contract for the mintable token
+    let cw20_code_id = env.app.store_code(contract_cw20());
+    let mintable_cw20 = env
+        .app
+        .instantiate_contract(
+            cw20_code_id,
+            env.admin.clone(),
+            &cw20_base::msg::InstantiateMsg {
+                name: "Mintable Token".to_string(),
+                symbol: "MNT".to_string(),
+                decimals: 6,
+                initial_balances: vec![],
+                mint: Some(cw20::MinterResponse {
+                    minter: env.contract_addr.to_string(),
+                    cap: None,
+                }),
+                marketing: None,
+            },
+            &[],
+            "mintable-cw20",
+            Some(env.admin.to_string()),
+        )
+        .unwrap();
+    let mintable_token = mintable_cw20.to_string();
+
     // Add a MintBurn token
     env.app
         .execute_contract(
             env.admin.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::AddToken {
-                token: "mintable_token".to_string(),
+                token: mintable_token.clone(),
                 is_native: false,
                 token_type: Some("mint_burn".to_string()),
-                evm_token_address:
-                    "0x0000000000000000000000001111111111111111111111111111111111111111"
-                        .to_string(),
                 terra_decimals: 6,
-                evm_decimals: 18,
                 min_bridge_amount: None,
                 max_bridge_amount: None,
             },
@@ -1040,15 +1081,18 @@ fn test_execute_unlock_wrong_token_type_rejected() {
         .unwrap();
 
     // Register incoming token mapping for mintable_token
-    let mintable_src_token = bridge::hash::keccak256(b"mintable_token");
+    let mock_deps = cosmwasm_std::testing::mock_dependencies();
+    let mintable_encoded =
+        bridge::hash::encode_token_address(mock_deps.as_ref(), &mintable_token).unwrap();
+    let mintable_src_token_binary = Binary::from(mintable_encoded.to_vec());
     env.app
         .execute_contract(
             env.admin.clone(),
             env.contract_addr.clone(),
             &ExecuteMsg::SetIncomingTokenMapping {
                 src_chain: create_src_chain(),
-                src_token: Binary::from(mintable_src_token.to_vec()),
-                local_token: "mintable_token".to_string(),
+                src_token: mintable_src_token_binary,
+                local_token: mintable_token.clone(),
                 src_decimals: 18,
             },
             &[],
@@ -1064,7 +1108,7 @@ fn test_execute_unlock_wrong_token_type_rejected() {
             &ExecuteMsg::WithdrawSubmit {
                 src_chain: create_src_chain(),
                 src_account: create_src_account(),
-                token: "mintable_token".to_string(),
+                token: mintable_token.clone(),
                 recipient: env.user.to_string(),
                 amount: Uint128::from(1_000_000u128),
                 nonce: 10,

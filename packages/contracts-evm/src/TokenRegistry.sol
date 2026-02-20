@@ -184,6 +184,7 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
         external
         onlyOwner
     {
+        require(destDecimals <= 18, "Decimals cannot exceed 18");
         _validateAndClaimDestToken(token, destChain, destToken);
 
         tokenDestMappings[token][destChain] = TokenDestMapping({destToken: destToken, destDecimals: destDecimals});
@@ -196,6 +197,7 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     /// @param localToken Local token address on this chain
     /// @param srcDecimals Token decimals on the source chain
     function setIncomingTokenMapping(bytes4 srcChain, address localToken, uint8 srcDecimals) external onlyOwner {
+        require(srcDecimals <= 18, "Decimals cannot exceed 18");
         if (!tokenRegistered[localToken]) {
             revert TokenNotRegistered(localToken);
         }
@@ -492,6 +494,59 @@ contract TokenRegistry is Initializable, UUPSUpgradeable, OwnableUpgradeable, IT
     function revertIfTokenNotRegistered(address token) external view {
         if (!tokenRegistered[token]) {
             revert TokenNotRegistered(token);
+        }
+    }
+
+    /// @notice Get all incoming token mappings for a given source chain
+    /// @param srcChain Source chain ID (4 bytes)
+    /// @return tokens Array of local token addresses that have enabled incoming mappings
+    /// @return srcDecimals Corresponding source-chain decimals for each token
+    function getAllIncomingMappings(bytes4 srcChain)
+        external
+        view
+        returns (address[] memory tokens, uint8[] memory srcDecimals)
+    {
+        uint256 len = _tokens.length;
+
+        uint256 count;
+        for (uint256 i; i < len; i++) {
+            if (tokenSrcMappings[srcChain][_tokens[i]].enabled) {
+                count++;
+            }
+        }
+
+        tokens = new address[](count);
+        srcDecimals = new uint8[](count);
+        uint256 idx;
+        for (uint256 i; i < len; i++) {
+            TokenSrcMapping memory m = tokenSrcMappings[srcChain][_tokens[i]];
+            if (m.enabled) {
+                tokens[idx] = _tokens[i];
+                srcDecimals[idx] = m.srcDecimals;
+                idx++;
+            }
+        }
+    }
+
+    /// @notice Get rate limit configs for all registered tokens
+    /// @return tokens Array of all registered token addresses
+    /// @return depositLimits maxPerTransaction for each token (0 = unlimited)
+    /// @return withdrawLimits maxPerPeriod (24h window cap) for each token (0 = unlimited)
+    function getAllRateLimitConfigs()
+        external
+        view
+        returns (address[] memory tokens, uint256[] memory depositLimits, uint256[] memory withdrawLimits)
+    {
+        uint256 len = _tokens.length;
+        tokens = new address[](len);
+        depositLimits = new uint256[](len);
+        withdrawLimits = new uint256[](len);
+
+        for (uint256 i; i < len; i++) {
+            tokens[i] = _tokens[i];
+            RateLimitConfig memory c = rateLimitConfigs[_tokens[i]];
+            depositLimits[i] = c.maxPerTransaction;
+            withdrawLimits[i] = c.maxPerPeriod;
         }
     }
 

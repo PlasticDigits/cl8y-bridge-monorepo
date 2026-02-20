@@ -34,7 +34,8 @@ struct Attribute {
     value: String,
 }
 
-/// Response from Terra bridge token query
+/// Response from Terra bridge token query (kept for potential future use)
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TokenQueryResponse {
     data: TokenInfo,
@@ -46,9 +47,7 @@ struct TokenQueryResponse {
 struct TokenInfo {
     token: String,
     is_native: bool,
-    evm_token_address: String,
     terra_decimals: u8,
-    evm_decimals: u8,
     enabled: bool,
 }
 
@@ -182,20 +181,16 @@ impl TerraWatcher {
             .wrap_err("Failed to parse transaction response")?;
 
         for tx in response.tx_responses {
-            if let Some(mut deposit) = self.parse_deposit_tx_v2(&tx)? {
+            if let Some(deposit) = self.parse_deposit_tx_v2(&tx)? {
                 // Check if already exists
                 if !crate::db::terra_deposit_exists(&self.db, &deposit.tx_hash, deposit.nonce)
                     .await?
                 {
-                    // Query the EVM token address for this Terra token
-                    deposit.evm_token_address =
-                        self.query_token_evm_address(&deposit.token).await?;
-
                     crate::db::insert_terra_deposit(&self.db, &deposit).await?;
                     tracing::info!(
                         tx_hash = %deposit.tx_hash,
                         nonce = deposit.nonce,
-                        evm_token = ?deposit.evm_token_address,
+                        dest_token = ?deposit.dest_token_address,
                         "Stored Terra lock transaction"
                     );
                 }
@@ -262,16 +257,19 @@ impl TerraWatcher {
             // Fee is logged but we don't store it in the deposit record currently
             let _fee = extract_string(&event.attributes, "fee").unwrap_or_default();
 
+            // dest_token_address is emitted by the contract per the TOKEN_DEST_MAPPINGS lookup
+            let dest_token_address = extract_string(&event.attributes, "dest_token_address").ok();
+
             return Ok(Some(NewTerraDeposit {
                 tx_hash: tx.txhash.clone(),
                 nonce: nonce as i64,
                 sender,
-                recipient: dest_account, // V2: dest_account is the recipient (as universal address string)
+                recipient: dest_account,
                 token,
                 amount,
                 dest_chain_id: dest_chain_id as i64,
                 block_height: tx.height,
-                evm_token_address: None, // Will be populated later
+                dest_token_address,
             }));
         }
 
@@ -316,7 +314,8 @@ impl TerraWatcher {
         ))
     }
 
-    /// Query the EVM token address for a Terra token from the bridge contract
+    /// Query the EVM token address for a Terra token from the bridge contract (deprecated, kept for reference)
+    #[allow(dead_code)]
     async fn query_token_evm_address(&self, terra_token: &str) -> Result<Option<String>> {
         use base64::Engine;
 
@@ -338,13 +337,12 @@ impl TerraWatcher {
         match client.get(&url).send().await {
             Ok(response) if response.status().is_success() => {
                 match response.json::<TokenQueryResponse>().await {
-                    Ok(token_info) => {
+                    Ok(_token_info) => {
                         tracing::debug!(
                             terra_token = %terra_token,
-                            evm_token = %token_info.data.evm_token_address,
-                            "Resolved token mapping"
+                            "Resolved token query"
                         );
-                        Ok(Some(token_info.data.evm_token_address))
+                        Ok(None)
                     }
                     Err(e) => {
                         tracing::warn!("Failed to parse token query response: {}", e);

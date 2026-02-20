@@ -274,8 +274,9 @@ ExecuteMsg::AddChain { chain_id, name, bridge_address }
 ExecuteMsg::UpdateChain { chain_id, name, bridge_address, enabled }
 
 // Token management
-ExecuteMsg::AddToken { token, is_native, evm_token_address, terra_decimals, evm_decimals }
-ExecuteMsg::UpdateToken { token, evm_token_address, enabled }
+ExecuteMsg::AddToken { token, is_native, token_type, terra_decimals, min_bridge_amount, max_bridge_amount }
+ExecuteMsg::UpdateToken { token, enabled, token_type, min_bridge_amount, max_bridge_amount }
+ExecuteMsg::SetTokenDestination { token, dest_chain, dest_token, dest_decimals }
 
 // Operator management
 ExecuteMsg::AddOperator { operator }
