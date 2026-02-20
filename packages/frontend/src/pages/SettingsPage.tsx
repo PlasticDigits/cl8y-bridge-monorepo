@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { ChainsPanel, TokensPanel, BridgeConfigPanel } from '../components/settings'
+import { ChainsPanel, TokensPanel, BridgeConfigPanel, FaucetPanel } from '../components/settings'
 import { sounds } from '../lib/sounds'
 
-type TabId = 'chains' | 'tokens' | 'bridge'
+type TabId = 'chains' | 'tokens' | 'bridge' | 'faucet'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'chains', label: 'Chains' },
   { id: 'tokens', label: 'Tokens' },
   { id: 'bridge', label: 'Bridge Config' },
+  { id: 'faucet', label: 'Faucet' },
 ]
 
 export default function SettingsPage() {
@@ -54,6 +55,7 @@ export default function SettingsPage() {
           {activeTab === 'chains' && <ChainsPanel />}
           {activeTab === 'tokens' && <TokensPanel />}
           {activeTab === 'bridge' && <BridgeConfigPanel />}
+          {activeTab === 'faucet' && <FaucetPanel />}
         </div>
         </div>
       </div>
