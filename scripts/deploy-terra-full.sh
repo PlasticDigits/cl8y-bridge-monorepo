@@ -466,6 +466,15 @@ add_tokens() {
 set_token_destinations() {
     log_header "Phase 6: Token Destinations (Outgoing)"
 
+    if [ -z "$BSC_TESTA" ]; then
+        prompt_value "BSC_TESTA" "BSC tokena address (0x...)"
+    fi
+    if [ -z "$BSC_TESTB" ]; then
+        prompt_value "BSC_TESTB" "BSC tokenb address (0x...)"
+    fi
+    if [ -z "$BSC_TDEC" ]; then
+        prompt_value "BSC_TDEC" "BSC tdec address (0x...)"
+    fi
     if [ -z "$OPBNB_TESTA" ]; then
         prompt_value "OPBNB_TESTA" "opBNB tokena address (0x...)"
     fi
