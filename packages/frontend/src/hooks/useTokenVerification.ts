@@ -73,13 +73,42 @@ function bytes4ToBase64(hex: string): string {
   return btoa(String.fromCharCode(...bytes))
 }
 
-function evmAddrToBase64Bytes32(addr: string): string {
-  const clean = addr.replace(/^0x/i, '').toLowerCase().padStart(64, '0')
-  const bytes = new Uint8Array(32)
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+/**
+ * Decode a bech32 Terra address to base64-encoded bytes32.
+ * Mirrors the deploy script: bech32_decode → convertbits(5→8) → pad to 32 bytes.
+ */
+function terraBech32ToBase64Bytes32(terraAddr: string): string | null {
+  try {
+    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+    const lower = terraAddr.toLowerCase()
+    const sepIdx = lower.lastIndexOf('1')
+    if (sepIdx < 1) return null
+    const dataPart = lower.slice(sepIdx + 1)
+    const values: number[] = []
+    for (const ch of dataPart) {
+      const idx = CHARSET.indexOf(ch)
+      if (idx < 0) return null
+      values.push(idx)
+    }
+    const data5bit = values.slice(0, -6)
+    let acc = 0
+    let bits = 0
+    const result: number[] = []
+    for (const v of data5bit) {
+      acc = (acc << 5) | v
+      bits += 5
+      while (bits >= 8) {
+        bits -= 8
+        result.push((acc >> bits) & 0xff)
+      }
+    }
+    const raw = new Uint8Array(result)
+    const padded = new Uint8Array(32)
+    padded.set(raw, 32 - raw.length)
+    return btoa(String.fromCharCode(...padded))
+  } catch {
+    return null
   }
-  return btoa(String.fromCharCode(...bytes))
 }
 
 /**
@@ -250,20 +279,21 @@ export function useTokenVerification() {
       }
 
       // 2. Incoming mappings from each EVM chain to Terra
+      // The protocol uses the bech32-decoded Terra CW20 address as src_token
+      // (the cross-chain hash token field is the dest token, which is the Terra address)
+      const srcTokenB64 = terraBech32ToBase64Bytes32(terraTokenId)
       for (const [otherKey, otherConfig] of evmChains) {
         const otherName = otherConfig.name ?? otherKey
-        const evmAddr = evmAddresses.get(otherKey)
-        if (!evmAddr) {
+        if (!srcTokenB64) {
           checks.push({
             label: `Incoming mapping ← ${otherName}`,
             status: 'skip',
-            detail: 'No EVM token address resolved for this chain',
+            detail: 'Could not bech32-decode Terra token address',
           })
           continue
         }
         try {
           const srcChainB64 = bytes4ToBase64(otherConfig.bytes4ChainId)
-          const srcTokenB64 = evmAddrToBase64Bytes32(evmAddr)
           const res = await queryContract<TerraIncomingMappingResponse>(
             lcdUrls, config.bridgeAddress,
             { incoming_token_mapping: { src_chain: srcChainB64, src_token: srcTokenB64 } }
