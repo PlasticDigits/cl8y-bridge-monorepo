@@ -5,7 +5,7 @@ import {
   useWaitForTransactionReceipt,
   useSwitchChain,
 } from 'wagmi'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, Spinner } from '../ui'
 import { useWalletStore } from '../../stores/wallet'
 import { executeContractWithCoins } from '../../services/terra'
@@ -40,6 +40,10 @@ const FAUCET_ABI = [
   },
 ] as const
 
+const ERC20_BALANCE_ABI = [
+  { name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] },
+] as const
+
 interface ChainConfig {
   key: string
   name: string
@@ -53,6 +57,7 @@ interface TokenConfig {
   symbol: string
   label: string
   addresses: Record<string, string>
+  decimals: Record<string, number>
 }
 
 const EVM_CHAINS: ChainConfig[] = [
@@ -94,6 +99,7 @@ const TOKENS: TokenConfig[] = [
       opbnb: '0xB3a6385f4B4879cb5CB3188A574cCA0E82614bE1',
       terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
     },
+    decimals: { bsc: 18, opbnb: 18, terra: 18 },
   },
   {
     symbol: 'testb',
@@ -103,6 +109,7 @@ const TOKENS: TokenConfig[] = [
       opbnb: '0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6',
       terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
     },
+    decimals: { bsc: 18, opbnb: 18, terra: 18 },
   },
   {
     symbol: 'tdec',
@@ -112,12 +119,29 @@ const TOKENS: TokenConfig[] = [
       opbnb: '0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d',
       terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
     },
+    decimals: { bsc: 18, opbnb: 12, terra: 6 },
   },
 ]
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Format raw token amount (bigint string) to human-readable with 3 significant figures */
+function formatBalanceSigFigs(raw: string, decimals: number): string {
+  const n = BigInt(raw)
+  if (n === 0n) return '0'
+  const divisor = 10n ** BigInt(decimals)
+  const whole = n / divisor
+  const frac = n % divisor
+  const fracStr = frac.toString().padStart(decimals, '0').slice(0, decimals)
+  const val = fracStr ? parseFloat(`${whole}.${fracStr}`) : Number(whole)
+  const prec = val.toPrecision(3)
+  const num = parseFloat(prec)
+  if (num >= 1e6) return `${parseFloat((num / 1e6).toPrecision(3))}M`
+  if (num >= 1e3) return `${parseFloat((num / 1e3).toPrecision(3))}k`
+  return prec
+}
 
 function formatCountdown(seconds: number): string {
   if (seconds <= 0) return 'now'
@@ -127,6 +151,75 @@ function formatCountdown(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
+}
+
+// ---------------------------------------------------------------------------
+// Balance cell components
+// ---------------------------------------------------------------------------
+
+function EvmBalanceCell({
+  chain,
+  tokenAddress,
+  decimals,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+  decimals: number
+}) {
+  const { address: userAddress } = useAccount()
+  const bridgeChainConfig = useMemo(() => {
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const config = BRIDGE_CHAINS[tier]?.[chain.key]
+    return config?.type === 'evm' ? config : null
+  }, [chain.key])
+
+  const { data: balance } = useQuery({
+    queryKey: ['faucetBalance', chain.key, tokenAddress, userAddress],
+    queryFn: async () => {
+      if (!userAddress || !bridgeChainConfig) return '0'
+      const client = getEvmClient(bridgeChainConfig as Parameters<typeof getEvmClient>[0])
+      const raw = await client.readContract({
+        address: tokenAddress as `0x${string}`,
+        abi: ERC20_BALANCE_ABI,
+        functionName: 'balanceOf',
+        args: [userAddress],
+      })
+      return raw.toString()
+    },
+    enabled: !!userAddress && !!bridgeChainConfig,
+    refetchInterval: 30_000,
+  })
+
+  if (!userAddress) return <span className="text-xs text-gray-500">—</span>
+  return <span className="text-xs text-slate-300 tabular-nums">{formatBalanceSigFigs(balance ?? '0', decimals)}</span>
+}
+
+function TerraBalanceCell({
+  chain,
+  tokenAddress,
+  decimals,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+  decimals: number
+}) {
+  const { address: terraAddress, connected: terraConnected } = useWalletStore()
+
+  const { data: balance } = useQuery({
+    queryKey: ['faucetBalance', chain.key, tokenAddress, terraAddress],
+    queryFn: async () => {
+      if (!terraAddress || !tokenAddress) return '0'
+      const networkConfig = NETWORKS[DEFAULT_NETWORK].terra
+      const lcdUrls = networkConfig.lcdFallbacks?.length ? [...networkConfig.lcdFallbacks] : [networkConfig.lcd]
+      const res = await queryContract<{ balance: string }>(lcdUrls, tokenAddress, { balance: { address: terraAddress } })
+      return res?.balance ?? '0'
+    },
+    enabled: !!terraConnected && !!terraAddress && !!tokenAddress,
+    refetchInterval: 30_000,
+  })
+
+  if (!terraAddress) return <span className="text-xs text-gray-500">—</span>
+  return <span className="text-xs text-slate-300 tabular-nums">{formatBalanceSigFigs(balance ?? '0', decimals)}</span>
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +233,7 @@ function EvmClaimButton({
   chain: ChainConfig
   tokenAddress: string
 }) {
+  const queryClient = useQueryClient()
   const { address: userAddress, isConnected } = useAccount()
   const { switchChainAsync } = useSwitchChain()
   const { writeContractAsync } = useWriteContract()
@@ -184,12 +278,13 @@ function EvmClaimButton({
       setStatus('success')
       sounds.playSuccess()
       refetchClaimable()
+      void queryClient.invalidateQueries({ queryKey: ['faucetBalance', chain.key, tokenAddress] })
     }
     if (txFailed && status === 'waiting') {
       setStatus('error')
       setError('Transaction failed on-chain')
     }
-  }, [txConfirmed, txFailed, status, refetchClaimable])
+  }, [txConfirmed, txFailed, status, refetchClaimable, queryClient, chain.key, tokenAddress])
 
   // Countdown timer
   useEffect(() => {
@@ -252,14 +347,25 @@ function EvmClaimButton({
   }
 
   if (!isConnected) {
-    return <span className="text-xs text-gray-500">Connect EVM wallet</span>
+    return <span className="text-xs text-gray-500">Connect EVM</span>
   }
 
   const isOnCooldown = countdown !== null && countdown > 0
   const isBusy = status === 'switching' || status === 'claiming' || status === 'waiting'
+  const title = isBusy
+    ? status === 'switching'
+      ? 'Switching...'
+      : status === 'claiming'
+        ? 'Sign tx...'
+        : 'Confirming...'
+    : status === 'success'
+      ? 'Claimed!'
+      : isOnCooldown
+        ? `Cooldown: ${formatCountdown(countdown)}`
+        : 'Claim tokens'
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col items-end gap-0.5">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -267,7 +373,9 @@ function EvmClaimButton({
           sounds.playButtonPress()
           handleClaim()
         }}
-        className={`px-3 py-1.5 text-xs font-medium border transition-colors ${
+        title={title}
+        aria-label={title}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded border transition-colors ${
           isBusy
             ? 'border-yellow-500/40 bg-yellow-900/20 text-yellow-300 cursor-wait'
             : isOnCooldown
@@ -277,27 +385,19 @@ function EvmClaimButton({
                 : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
         }`}
       >
-        {isBusy && <Spinner className="inline mr-1 h-3 w-3" />}
-        {status === 'switching' && 'Switching...'}
-        {status === 'claiming' && 'Sign tx...'}
-        {status === 'waiting' && 'Confirming...'}
-        {status === 'success' && 'Claimed!'}
-        {(status === 'idle' || status === 'error') &&
-          (isOnCooldown ? formatCountdown(countdown) : `${chain.name}`)}
+        {isBusy ? <Spinner className="h-4 w-4" /> : <span className="text-base" aria-hidden>💧</span>}
       </button>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200 truncate max-w-[140px]"
+          className="text-[10px] text-cyan-300 hover:text-cyan-200"
         >
-          View tx →
+          tx ↗
         </a>
       )}
-      {status === 'error' && error && (
-        <p className="text-[10px] text-red-400 max-w-[160px] break-words">{error}</p>
-      )}
+      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
     </div>
   )
 }
@@ -313,6 +413,7 @@ function TerraClaimButton({
   chain: ChainConfig
   tokenAddress: string
 }) {
+  const queryClient = useQueryClient()
   const { address: terraAddress, connected: terraConnected } = useWalletStore()
   const [status, setStatus] = useState<'idle' | 'claiming' | 'success' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -367,6 +468,7 @@ function TerraClaimButton({
       setTxHash(result.txHash)
       setStatus('success')
       sounds.playSuccess()
+      void queryClient.invalidateQueries({ queryKey: ['faucetBalance', chain.key, tokenAddress] })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Claim failed'
       if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
@@ -383,14 +485,21 @@ function TerraClaimButton({
   }
 
   if (!terraConnected) {
-    return <span className="text-xs text-gray-500">Connect Terra wallet</span>
+    return <span className="text-xs text-gray-500">Connect Terra</span>
   }
 
   const isOnCooldown = countdown !== null && countdown > 0
   const isBusy = status === 'claiming'
+  const title = isBusy
+    ? 'Claiming...'
+    : status === 'success'
+      ? 'Claimed!'
+      : isOnCooldown
+        ? `Cooldown: ${formatCountdown(countdown)}`
+        : 'Claim tokens'
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col items-end gap-0.5">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -398,7 +507,9 @@ function TerraClaimButton({
           sounds.playButtonPress()
           handleClaim()
         }}
-        className={`px-3 py-1.5 text-xs font-medium border transition-colors ${
+        title={title}
+        aria-label={title}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded border transition-colors ${
           isBusy
             ? 'border-yellow-500/40 bg-yellow-900/20 text-yellow-300 cursor-wait'
             : isOnCooldown
@@ -408,25 +519,19 @@ function TerraClaimButton({
                 : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
         }`}
       >
-        {isBusy && <Spinner className="inline mr-1 h-3 w-3" />}
-        {status === 'claiming' && 'Claiming...'}
-        {status === 'success' && 'Claimed!'}
-        {(status === 'idle' || status === 'error') &&
-          (isOnCooldown ? formatCountdown(countdown) : `${chain.name}`)}
+        {isBusy ? <Spinner className="h-4 w-4" /> : <span className="text-base" aria-hidden>💧</span>}
       </button>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200 truncate max-w-[140px]"
+          className="text-[10px] text-cyan-300 hover:text-cyan-200"
         >
-          View tx →
+          tx ↗
         </a>
       )}
-      {status === 'error' && error && (
-        <p className="text-[10px] text-red-400 max-w-[160px] break-words">{error}</p>
-      )}
+      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
     </div>
   )
 }
@@ -463,23 +568,44 @@ export function FaucetPanel() {
 
       <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
         {TOKENS.map((token) => (
-          <Card key={token.symbol} className="p-4">
+          <Card key={token.symbol} className="p-4 overflow-hidden">
             <h4 className="mb-3 font-medium text-white">{token.label}</h4>
-            <div className="space-y-2">
-              {ALL_CHAINS.map((chain) => {
-                const addr = token.addresses[chain.key]
-                if (!addr) return null
-                return (
-                  <div key={chain.key} className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-gray-400 w-20 shrink-0">{chain.name}</span>
-                    {chain.type === 'evm' ? (
-                      <EvmClaimButton chain={chain} tokenAddress={addr} />
-                    ) : (
-                      <TerraClaimButton chain={chain} tokenAddress={addr} />
-                    )}
-                  </div>
-                )
-              })}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[200px] text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 text-gray-400">
+                    <th className="py-1.5 pr-3 font-medium">Chain</th>
+                    <th className="py-1.5 pr-3 font-medium text-right">Balance</th>
+                    <th className="py-1.5 pl-3 font-medium text-right">Claim</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ALL_CHAINS.map((chain) => {
+                    const addr = token.addresses[chain.key]
+                    const decimals = token.decimals[chain.key] ?? 18
+                    if (!addr) return null
+                    return (
+                      <tr key={chain.key} className="border-b border-white/5 last:border-0">
+                        <td className="py-2 pr-3 text-gray-300">{chain.name}</td>
+                        <td className="py-2 pr-3 text-right">
+                          {chain.type === 'evm' ? (
+                            <EvmBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
+                          ) : (
+                            <TerraBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
+                          )}
+                        </td>
+                        <td className="py-2 pl-3 text-right">
+                          {chain.type === 'evm' ? (
+                            <EvmClaimButton chain={chain} tokenAddress={addr} />
+                          ) : (
+                            <TerraClaimButton chain={chain} tokenAddress={addr} />
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           </Card>
         ))}
