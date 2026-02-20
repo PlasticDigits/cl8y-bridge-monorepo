@@ -65,20 +65,20 @@ function StatusIcon({ status }: { status: VerificationCheck['status'] }) {
 function OverallBadge({ result }: { result: TokenVerificationResult }) {
   if (result.overallStatus === 'loading') {
     return (
-      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-300 animate-pulse">
+      <span className="inline-flex items-center gap-1.5 rounded-none border-2 border-white/20 bg-[#161616] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-300 shadow-[1px_1px_0_#000] animate-pulse">
         Verifying...
       </span>
     )
   }
   if (result.overallStatus === 'pass') {
     return (
-      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-green-900/50 text-green-300 border border-green-700/50">
+      <span className="inline-flex items-center gap-1.5 rounded-none border-2 border-green-700/60 bg-[#161616] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-green-300 shadow-[1px_1px_0_#000]">
         <span>&#10003;</span> {result.passedChecks}/{result.totalChecks} Verified
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-red-900/50 text-red-300 border border-red-700/50">
+      <span className="inline-flex items-center gap-1.5 rounded-none border-2 border-red-600/60 bg-[#161616] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-red-300 shadow-[1px_1px_0_#000]">
       <span>&#10007;</span> {result.failedChecks} Failed
     </span>
   )
@@ -86,7 +86,7 @@ function OverallBadge({ result }: { result: TokenVerificationResult }) {
 
 function VerificationPanel({ result }: { result: TokenVerificationResult }) {
   return (
-    <div className="border-t border-white/10 bg-black/30 px-4 py-3 space-y-3">
+    <div className="border-t-2 border-white/20 bg-black/30 px-4 py-3 space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
           Verification Details
@@ -105,7 +105,7 @@ function VerificationPanel({ result }: { result: TokenVerificationResult }) {
 function ChainVerificationSection({ chain }: { chain: ChainVerification }) {
   const hasFailures = chain.checks.some((c) => c.status === 'fail' || c.status === 'error')
   return (
-    <div className="rounded border border-white/10 bg-black/20">
+    <div className="rounded-none border-2 border-white/20 bg-black/20 shadow-[2px_2px_0_#000]">
       <div className={`flex items-center gap-2 px-3 py-2 text-xs font-medium ${hasFailures ? 'text-red-300' : 'text-green-300'}`}>
         <ChainIcon chainId={chain.chainKey} />
         <span>{chain.chainName}</span>
@@ -177,8 +177,8 @@ export function TokenCard({ token, verification, onVerify }: TokenCardProps) {
   }
 
   return (
-    <div className="border-2 border-white/20 bg-[#161616]">
-      <div className="border-b border-white/20 bg-[#161616] px-4 py-3">
+    <div className="border-2 border-white/20 bg-[#161616] shadow-[3px_3px_0_#000]">
+      <div className="border-b-2 border-white/20 bg-[#161616] px-4 py-3">
         <h4 className="flex items-center gap-2 font-medium text-white">
           <TokenLogo
             symbol={display.symbol}
@@ -215,7 +215,7 @@ export function TokenCard({ token, verification, onVerify }: TokenCardProps) {
               <button
                 type="button"
                 onClick={handleVerifyClick}
-                className="rounded px-2 py-0.5 text-xs font-medium text-gray-400 border border-white/10 hover:text-white hover:border-white/30 transition-colors"
+                className="rounded-none border-2 border-white/20 bg-[#161616] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400 shadow-[1px_1px_0_#000] hover:text-white hover:border-white/40 transition-all"
               >
                 Verify
               </button>
@@ -226,7 +226,7 @@ export function TokenCard({ token, verification, onVerify }: TokenCardProps) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-white/20 bg-[#161616]">
+            <tr className="border-b-2 border-white/20 bg-[#161616]">
               <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-300">
                 Chain
               </th>
