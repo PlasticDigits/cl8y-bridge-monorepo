@@ -679,29 +679,69 @@ main() {
     # LOCKSTEP DEPLOYMENT: each phase runs on BSC then opBNB before moving
     # to the next phase. This ensures the deployer nonce stays in sync so
     # contract addresses match across chains (deterministic CREATE).
+    #
+    # SKIP LOGIC: Set env vars to skip already-completed phases:
+    #   Phase 1: BSC_BRIDGE, BSC_CHAIN_REGISTRY, BSC_TOKEN_REGISTRY,
+    #            BSC_LOCK_UNLOCK, BSC_MINT_BURN (+ opBNB_ equivalents)
+    #   Phase 2: BSC_ACCESS_MANAGER, opBNB_ACCESS_MANAGER
+    #   Phase 3: BSC_TESTA, BSC_TESTB, BSC_TDEC (+ opBNB_ equivalents)
+    #   Phase 4: (no skip — idempotent, runs if tokens exist)
+    #   Phase 5: BSC_FAUCET, opBNB_FAUCET
     # ═══════════════════════════════════════════════════════════════════════
 
     # ─── Phase 1: Core bridge on both chains ───
-    deploy_core "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "$BSC_WETH" "BSC"
-    log_info "Now deploying the same on opBNB to keep nonces in sync..."
-    prompt_continue
-    deploy_core "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "$OPBNB_WETH" "opBNB"
+    if [ -n "$BSC_BRIDGE" ] && [ -n "$BSC_CHAIN_REGISTRY" ] && [ -n "$BSC_TOKEN_REGISTRY" ] \
+       && [ -n "$BSC_LOCK_UNLOCK" ] && [ -n "$BSC_MINT_BURN" ] \
+       && [ -n "$opBNB_BRIDGE" ] && [ -n "$opBNB_CHAIN_REGISTRY" ] && [ -n "$opBNB_TOKEN_REGISTRY" ] \
+       && [ -n "$opBNB_LOCK_UNLOCK" ] && [ -n "$opBNB_MINT_BURN" ]; then
+        log_info "Phase 1: SKIPPED — core contracts already set via env vars"
+        log_info "  BSC Bridge:   $BSC_BRIDGE"
+        log_info "  opBNB Bridge: $opBNB_BRIDGE"
+    else
+        deploy_core "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "$BSC_WETH" "BSC"
+        log_info "Now deploying the same on opBNB to keep nonces in sync..."
+        prompt_continue
+        deploy_core "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "$OPBNB_WETH" "opBNB"
+    fi
 
     # ─── Phase 2: AccessManager on both chains ───
-    deploy_access_manager "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC"
-    deploy_access_manager "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB"
+    if [ -n "$BSC_ACCESS_MANAGER" ] && [ -n "$opBNB_ACCESS_MANAGER" ]; then
+        log_info "Phase 2: SKIPPED — AccessManager already set via env vars"
+        log_info "  BSC:   $BSC_ACCESS_MANAGER"
+        log_info "  opBNB: $opBNB_ACCESS_MANAGER"
+    else
+        deploy_access_manager "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC"
+        deploy_access_manager "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB"
+    fi
 
     # ─── Phase 3: Tokens on both chains ───
-    deploy_tokens "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC" "$BSC_FACTORY" 18
-    deploy_tokens "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB" "$OPBNB_FACTORY" 12
+    if [ -n "$BSC_TESTA" ] && [ -n "$BSC_TESTB" ] && [ -n "$BSC_TDEC" ] \
+       && [ -n "$opBNB_TESTA" ] && [ -n "$opBNB_TESTB" ] && [ -n "$opBNB_TDEC" ]; then
+        log_info "Phase 3: SKIPPED — tokens already set via env vars"
+        log_info "  BSC testa:  $BSC_TESTA"
+        log_info "  BSC testb:  $BSC_TESTB"
+        log_info "  BSC tdec:   $BSC_TDEC"
+        log_info "  opBNB testa: $opBNB_TESTA"
+        log_info "  opBNB testb: $opBNB_TESTB"
+        log_info "  opBNB tdec:  $opBNB_TDEC"
+    else
+        deploy_tokens "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC" "$BSC_FACTORY" 18
+        deploy_tokens "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB" "$OPBNB_FACTORY" 12
+    fi
 
     # ─── Phase 4: Mint permissions on both chains ───
     setup_mint_permissions "BSC" "$BSC_RPC" "BSC"
     setup_mint_permissions "opBNB" "$OPBNB_RPC" "opBNB"
 
     # ─── Phase 5: Faucet on both chains ───
-    deploy_faucet "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC"
-    deploy_faucet "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB"
+    if [ -n "$BSC_FAUCET" ] && [ -n "$opBNB_FAUCET" ]; then
+        log_info "Phase 5: SKIPPED — faucets already set via env vars"
+        log_info "  BSC:   $BSC_FAUCET"
+        log_info "  opBNB: $opBNB_FAUCET"
+    else
+        deploy_faucet "BSC" "$BSC_RPC" "$BSC_CHAIN_ID_NUMERIC" "BSC"
+        deploy_faucet "opBNB" "$OPBNB_RPC" "$OPBNB_CHAIN_ID_NUMERIC" "opBNB"
+    fi
 
     # Save addresses after all contracts deployed
     save_addresses "BSC Mainnet" "BSC" ".env.bsc-mainnet"
