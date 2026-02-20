@@ -7,10 +7,12 @@ export function TokensPanel() {
   const { data: tokens, isLoading, error } = useTokenRegistry()
   const { verify, getResult } = useTokenVerification()
 
-  const handleVerifyAll = () => {
-    if (!tokens) return
+  const isVerifyingAny = tokens?.some((t) => getResult(t.token)?.overallStatus === 'loading') ?? false
+
+  const handleVerifyAll = async () => {
+    if (!tokens || isVerifyingAny) return
     for (const token of tokens) {
-      verify(token.token, token.evm_token_address || undefined)
+      await verify(token.token, token.evm_token_address || undefined)
     }
   }
 
@@ -42,9 +44,10 @@ export function TokensPanel() {
           <button
             type="button"
             onClick={handleVerifyAll}
-            className="rounded px-3 py-1 text-xs font-medium text-gray-400 border border-white/10 hover:text-white hover:border-white/30 transition-colors"
+            disabled={isVerifyingAny}
+            className="rounded-none border-2 border-white/20 bg-[#161616] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400 shadow-[1px_1px_0_#000] hover:text-white hover:border-white/40 transition-all disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-white/20 disabled:hover:text-gray-400"
           >
-            Verify All
+            {isVerifyingAny ? 'Verifying…' : 'Verify All'}
           </button>
         )}
       </div>

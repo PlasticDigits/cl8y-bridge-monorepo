@@ -1,8 +1,9 @@
 /**
  * Hash Monitor Service
  *
- * Fetches all transfer hashes from deposits and withdraws via RPC/LCD.
- * Uses enumeration RPC calls only (no historical eth_getLogs).
+ * Fetches deposit and withdraw hashes from ALL configured bridge chains (EVM + Terra).
+ * - EVM: deposits via getLogs (Deposit events), withdraws via getPendingWithdrawHashes
+ * - Terra: deposits via deposit_by_nonce, withdraws via pending_withdrawals (paginated)
  * Used by the Monitor & Review Hashes section to display chain-sourced data.
  */
 
@@ -10,8 +11,30 @@ import type { Address, Hex, PublicClient } from 'viem'
 import { getEvmClient } from './evmClient'
 import { BRIDGE_VIEW_ABI } from './evmBridgeQueries'
 import { queryContract } from './lcdClient'
-import { base64ToHex } from './hashVerification'
+import { base64ToHex, computeXchainHashIdFromDeposit, evmAddressToBytes32 } from './hashVerification'
 import { getDeployedEvmBridgeChainEntries, getCosmosBridgeChains } from '../utils/bridgeChains'
+
+/** EVM Deposit event for getLogs. Matches IBridge.Deposit. */
+const DEPOSIT_EVENT_ABI = [
+  {
+    type: 'event',
+    name: 'Deposit',
+    inputs: [
+      { name: 'destChain', type: 'bytes4', indexed: true },
+      { name: 'destAccount', type: 'bytes32', indexed: true },
+      { name: 'srcAccount', type: 'bytes32', indexed: false },
+      { name: 'token', type: 'address', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+      { name: 'nonce', type: 'uint64', indexed: false },
+      { name: 'fee', type: 'uint256', indexed: false },
+    ],
+  },
+] as const
+
+/** Block range per getLogs chunk (RPCs often cap at 5k–50k). */
+const EVM_GETLOGS_CHUNK = 5_000
+/** Max blocks to look back for EVM deposits (e.g. ~1 day on BSC). */
+const EVM_LOOKBACK_BLOCKS = 20_000
 
 export interface MonitorHashEntry {
   hash: Hex
@@ -26,12 +49,98 @@ export interface MonitorHashEntry {
 }
 
 /**
- * Fetch transfer hashes from an EVM bridge via enumeration (getPendingWithdrawHashes).
- * Uses readContract calls only — no historical eth_getLogs.
- * Note: EVM deposits are not enumerated (contract has no deposit enumeration);
- * only pending withdrawals are shown from EVM chains.
+ * Fetch EVM deposit hashes via getLogs (Deposit events).
+ * Some RPCs (e.g. bsc-dataseed1) do not support getLogs — returns [] on failure.
  */
-export async function fetchEvmXchainHashIds(
+export async function fetchEvmDepositHashes(
+  client: PublicClient,
+  bridgeAddress: Address,
+  _chainId: number,
+  chainKey: string,
+  chainName: string,
+  options?: { lookbackBlocks?: number; chunkBlocks?: number }
+): Promise<MonitorHashEntry[]> {
+  const entries: MonitorHashEntry[] = []
+
+  if (!bridgeAddress) return entries
+
+  const lookback = options?.lookbackBlocks ?? EVM_LOOKBACK_BLOCKS
+  const chunk = options?.chunkBlocks ?? EVM_GETLOGS_CHUNK
+
+  try {
+    const block = await client.getBlock({ blockTag: 'latest' })
+    const toBlock = block.number
+    const fromBlock = toBlock - BigInt(lookback) < 0n ? 0n : toBlock - BigInt(lookback)
+
+    const [thisChainIdRaw, logs] = await Promise.all([
+      client.readContract({
+        address: bridgeAddress,
+        abi: BRIDGE_VIEW_ABI,
+        functionName: 'getThisChainId',
+        args: [],
+      }),
+      (async () => {
+        const allLogs: { srcAccount: Hex; destAccount: Hex; token: Address; amount: bigint; nonce: bigint; destChain: Hex }[] = []
+        let from = fromBlock
+        while (from <= toBlock) {
+          const to = from + BigInt(chunk) - 1n > toBlock ? toBlock : from + BigInt(chunk) - 1n
+          const batch = await client.getContractEvents({
+            address: bridgeAddress,
+            abi: DEPOSIT_EVENT_ABI,
+            eventName: 'Deposit',
+            fromBlock: from,
+            toBlock: to,
+          })
+          for (const e of batch) {
+            if (e.args.srcAccount && e.args.destAccount && e.args.token && e.args.amount !== undefined && e.args.nonce !== undefined && e.args.destChain) {
+              const dc = (e.args.destChain as string).replace(/^0x/, '')
+              const destChainBytes32 = (`0x${dc.padStart(8, '0')}${'0'.repeat(56)}`) as Hex
+              allLogs.push({
+                srcAccount: e.args.srcAccount as Hex,
+                destAccount: e.args.destAccount as Hex,
+                token: e.args.token,
+                amount: e.args.amount,
+                nonce: e.args.nonce,
+                destChain: destChainBytes32 as Hex,
+              })
+            }
+          }
+          from = to + 1n
+        }
+        return allLogs
+      })(),
+    ])
+
+    const thisChainId = parseInt((thisChainIdRaw as Hex).slice(2).slice(0, 8), 16)
+    for (const log of logs) {
+      const tokenBytes = evmAddressToBytes32(log.token)
+      const hash = computeXchainHashIdFromDeposit(
+        thisChainId,
+        log.destChain,
+        log.srcAccount,
+        log.destAccount,
+        tokenBytes,
+        log.amount,
+        log.nonce
+      )
+      entries.push({
+        hash,
+        source: 'deposit',
+        chainKey,
+        chainName,
+      })
+    }
+  } catch {
+    // getLogs not supported or RPC error — skip
+  }
+
+  return entries
+}
+
+/**
+ * Fetch EVM withdraw hashes via getPendingWithdrawHashes.
+ */
+export async function fetchEvmWithdrawHashes(
   client: PublicClient,
   bridgeAddress: Address,
   _chainId: number,
@@ -184,7 +293,8 @@ interface TerraDepositInfoResponse {
 }
 
 /**
- * Fetch Terra deposit hashes by iterating DepositByNonce (1..currentNonce).
+ * Fetch Terra deposit hashes by iterating DepositByNonce (0..currentNonce-1).
+ * Terra uses 0-based nonces: first deposit gets nonce 0, current_nonce is the next to use.
  * Capped to avoid excessive RPC calls (e.g. max 200 deposits).
  */
 export async function fetchTerraDepositHashes(
@@ -201,12 +311,13 @@ export async function fetchTerraDepositHashes(
   try {
     const nonceResp = await queryContract<{ nonce: number }>(lcdUrls, bridgeAddress, { current_nonce: {} })
     const currentNonce = nonceResp?.nonce ?? 0
-    const end = Math.min(currentNonce, maxNonce)
+    const count = Math.min(currentNonce, maxNonce)
+    if (count === 0) return entries
 
     const batchSize = 10
-    for (let from = 1; from <= end; from += batchSize) {
-      const to = Math.min(from + batchSize - 1, end)
-      const promises = Array.from({ length: to - from + 1 }, (_, i) => {
+    for (let from = 0; from < count; from += batchSize) {
+      const toExcl = Math.min(from + batchSize, count)
+      const promises = Array.from({ length: toExcl - from }, (_, i) => {
         const nonce = from + i
         return queryContract<TerraDepositInfoResponse>(lcdUrls, bridgeAddress, {
           deposit_by_nonce: { nonce },
@@ -233,24 +344,43 @@ export async function fetchTerraDepositHashes(
 }
 
 /**
- * Fetch all transfer hashes from all configured bridge chains.
- * Uses enumeration only — no eth_getLogs. Only queries chains where the bridge is deployed.
- * Merges and deduplicates by hash, optionally capped for pagination.
+ * Fetch deposit and withdraw hashes from all configured bridge chains.
+ * - EVM: deposits (getLogs), withdraws (getPendingWithdrawHashes) on each EVM chain
+ * - Terra: deposits (deposit_by_nonce), withdraws (pending_withdrawals paginated) on each Cosmos chain
+ * Merges and deduplicates by hash.
  */
 export async function fetchAllXchainHashIds(
   options?: {
     terraDepositMaxNonce?: number
+    evmDepositLookbackBlocks?: number
   }
 ): Promise<MonitorHashEntry[]> {
   const evmChainEntries = getDeployedEvmBridgeChainEntries()
-  const cosmosChains = getCosmosBridgeChains().filter((c) => c.bridgeAddress && (c.lcdUrl || (c.lcdFallbacks && c.lcdFallbacks.length > 0)))
+  const cosmosChains = getCosmosBridgeChains().filter(
+    (c) => c.bridgeAddress && (c.lcdUrl || (c.lcdFallbacks && c.lcdFallbacks.length > 0))
+  )
 
-  const results: MonitorHashEntry[] = []
-
-  const evmPromises = evmChainEntries.map(async ({ chainKey, config }) => {
+  // EVM: deposits + withdraws per chain
+  const evmDepositPromises = evmChainEntries.map(async ({ chainKey, config }) => {
     try {
       const client = getEvmClient(config)
-      return fetchEvmXchainHashIds(
+      return fetchEvmDepositHashes(
+        client,
+        config.bridgeAddress as Address,
+        config.chainId as number,
+        chainKey,
+        config.name,
+        { lookbackBlocks: options?.evmDepositLookbackBlocks }
+      )
+    } catch {
+      return []
+    }
+  })
+
+  const evmWithdrawPromises = evmChainEntries.map(async ({ chainKey, config }) => {
+    try {
+      const client = getEvmClient(config)
+      return fetchEvmWithdrawHashes(
         client,
         config.bridgeAddress as Address,
         config.chainId as number,
@@ -262,11 +392,7 @@ export async function fetchAllXchainHashIds(
     }
   })
 
-  const terraWithdrawPromises = cosmosChains.map(async (chain) => {
-    const lcdUrls = chain.lcdFallbacks ?? (chain.lcdUrl ? [chain.lcdUrl] : [])
-    return fetchTerraWithdrawHashes(lcdUrls, chain.bridgeAddress!, chain.name, chain.name)
-  })
-
+  // Terra: deposits + withdraws (paginated) per chain
   const terraDepositPromises = cosmosChains.map(async (chain) => {
     const lcdUrls = chain.lcdFallbacks ?? (chain.lcdUrl ? [chain.lcdUrl] : [])
     return fetchTerraDepositHashes(
@@ -278,11 +404,18 @@ export async function fetchAllXchainHashIds(
     )
   })
 
-  const [evmResults, terraWithdrawResults, terraDepositResults] = await Promise.all([
-    Promise.all(evmPromises),
-    Promise.all(terraWithdrawPromises),
-    Promise.all(terraDepositPromises),
-  ])
+  const terraWithdrawPromises = cosmosChains.map(async (chain) => {
+    const lcdUrls = chain.lcdFallbacks ?? (chain.lcdUrl ? [chain.lcdUrl] : [])
+    return fetchTerraWithdrawHashes(lcdUrls, chain.bridgeAddress!, chain.name, chain.name)
+  })
+
+  const [evmDepositResults, evmWithdrawResults, terraDepositResults, terraWithdrawResults] =
+    await Promise.all([
+      Promise.all(evmDepositPromises),
+      Promise.all(evmWithdrawPromises),
+      Promise.all(terraDepositPromises),
+      Promise.all(terraWithdrawPromises),
+    ])
 
   const byHash = new Map<string, MonitorHashEntry>()
   const merge = (list: MonitorHashEntry[]) => {
@@ -301,11 +434,12 @@ export async function fetchAllXchainHashIds(
     }
   }
 
-  for (const list of evmResults) merge(list)
-  for (const list of terraWithdrawResults) merge(list)
+  for (const list of evmDepositResults) merge(list)
+  for (const list of evmWithdrawResults) merge(list)
   for (const list of terraDepositResults) merge(list)
+  for (const list of terraWithdrawResults) merge(list)
 
-  results.push(...byHash.values())
+  const results = Array.from(byHash.values())
 
   // Sort by timestamp desc (newest first), fallback to hash for stable order
   results.sort((a, b) => {
