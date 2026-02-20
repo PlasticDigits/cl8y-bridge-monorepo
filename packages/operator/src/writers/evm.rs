@@ -279,30 +279,178 @@ impl EvmWriter {
         Ok(window._0.try_into().unwrap_or(300))
     }
 
-    /// Process pending withdrawals on this EVM chain (V2 poll-and-approve)
+    /// Process pending withdrawals on this EVM chain (V2)
     ///
     /// This is the main processing loop for the EVM writer. It:
     /// 1. Checks if any approved withdrawals are ready for execution
-    /// 2. Polls WithdrawSubmit events on this EVM chain
-    /// 3. For each unapproved withdrawal, verifies the deposit on the source chain
-    /// 4. If verified, calls withdrawApprove(hash) on this chain
+    /// 2. Enumerates all pending withdrawals from contract state (primary)
+    /// 3. Polls WithdrawSubmit events for faster new-event detection (secondary)
+    /// 4. For each unapproved withdrawal, verifies the deposit on the source chain
+    /// 5. If verified, calls withdrawApprove(hash) on this chain
     ///
     /// This handles BOTH Terra→EVM and EVM→EVM transfers uniformly —
-    /// any WithdrawSubmit event on this chain gets verified and approved.
+    /// any pending withdrawal on this chain gets verified and approved.
     pub async fn process_pending(&mut self) -> Result<()> {
-        // First, check if any pending executions are ready
         self.process_pending_executions().await?;
 
-        // Poll for WithdrawSubmit events and approve verified ones
+        // Primary: enumerate pending withdrawals from contract state
+        if let Err(e) = self.enumerate_and_approve().await {
+            warn!(error = %e, "Enumeration-based approval poll failed");
+        }
+
+        // Secondary: event-based polling for faster detection
         self.poll_and_approve().await?;
 
         Ok(())
     }
 
-    /// Poll EVM bridge for WithdrawSubmit events and approve verified withdrawals
+    /// Primary: Enumerate all pending withdrawals from the contract's EnumerableSet
+    /// and approve any that have a verified deposit on the source chain.
     ///
-    /// Mirrors the Terra writer's poll_and_approve: scans for pending withdrawals
-    /// on this chain, verifies each against the source chain, and approves.
+    /// More reliable than event-based polling — queries current contract state
+    /// directly, avoiding block range issues with eth_getLogs.
+    async fn enumerate_and_approve(&mut self) -> Result<()> {
+        let provider =
+            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+
+        let contract = Bridge::new(self.bridge_address, &provider);
+
+        let hashes = contract
+            .getPendingWithdrawHashes()
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to enumerate pending withdrawals: {}", e))?;
+        let pending_hashes = &hashes.hashes;
+
+        if pending_hashes.is_empty() {
+            return Ok(());
+        }
+
+        let mut new_count: u64 = 0;
+        for hash_fb in pending_hashes {
+            let xchain_hash_id: [u8; 32] = hash_fb.0;
+
+            if self.approved_hashes.contains_key(&xchain_hash_id) {
+                continue;
+            }
+
+            let pending = match contract.getPendingWithdraw(*hash_fb).call().await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&xchain_hash_id),
+                        "Enumeration: failed to query getPendingWithdraw"
+                    );
+                    continue;
+                }
+            };
+
+            if pending.approved {
+                self.approved_hashes.insert(xchain_hash_id);
+                continue;
+            }
+            if pending.cancelled || pending.executed {
+                continue;
+            }
+
+            new_count += 1;
+
+            let src_chain_id = pending.srcChain.0;
+            let nonce = pending.nonce;
+            let amount: u128 = pending.amount.try_into().unwrap_or_else(|_| {
+                warn!(amount = %pending.amount, "Amount exceeds u128::MAX, clamping");
+                u128::MAX
+            });
+
+            info!(
+                hash = %bytes32_to_hex(&xchain_hash_id),
+                src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                nonce = nonce,
+                amount = amount,
+                token = %pending.token,
+                "Enumeration: processing unapproved withdrawal — verifying deposit on source chain"
+            );
+
+            let deposit_verified = match self
+                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id)
+                .await
+            {
+                Ok(verified) => verified,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&xchain_hash_id),
+                        src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                        "Failed to verify deposit on source chain, will retry"
+                    );
+                    continue;
+                }
+            };
+
+            if !deposit_verified {
+                debug!(
+                    hash = %bytes32_to_hex(&xchain_hash_id),
+                    src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                    "No verified deposit found on source chain, skipping (will retry next cycle)"
+                );
+                continue;
+            }
+
+            info!(
+                hash = %bytes32_to_hex(&xchain_hash_id),
+                nonce = nonce,
+                "Deposit verified on source chain, submitting withdrawApprove"
+            );
+
+            match self.submit_withdraw_approve(&xchain_hash_id).await {
+                Ok(tx_hash) => {
+                    info!(
+                        tx_hash = %tx_hash,
+                        hash = %bytes32_to_hex(&xchain_hash_id),
+                        nonce = nonce,
+                        "WithdrawApprove submitted successfully (via enumeration)"
+                    );
+
+                    self.approved_hashes.insert(xchain_hash_id);
+
+                    self.pending_executions.insert(
+                        xchain_hash_id,
+                        PendingExecution {
+                            xchain_hash_id,
+                            approved_at: Instant::now(),
+                            delay_seconds: self.cancel_window,
+                            attempts: 0,
+                        },
+                    );
+
+                    self.sync_deposit_status_after_approval(&src_chain_id, nonce)
+                        .await;
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&xchain_hash_id),
+                        "Failed to submit withdrawApprove, will retry next cycle"
+                    );
+                }
+            }
+        }
+
+        if new_count > 0 {
+            info!(
+                total_pending = pending_hashes.len(),
+                new_to_process = new_count,
+                "Enumeration: found unapproved withdrawals"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Secondary: Poll EVM bridge for WithdrawSubmit events and approve verified withdrawals
+    ///
+    /// Supplements enumeration with faster event-based detection of new submissions.
     async fn poll_and_approve(&mut self) -> Result<()> {
         // Create provider
         let provider =
@@ -359,9 +507,9 @@ impl EvmWriter {
 
         let contract = Bridge::new(self.bridge_address, &provider);
 
-        // Query WithdrawSubmit events in chunks to stay within RPC block range limits
         let mut all_logs = Vec::new();
         let mut chunk_start = from_block;
+        let mut last_successful_block = self.last_polled_block;
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
@@ -381,14 +529,16 @@ impl EvmWriter {
                         );
                     }
                     all_logs.extend(logs);
+                    last_successful_block = chunk_end;
                 }
                 Err(e) => {
                     warn!(
                         error = %e,
                         from = chunk_start,
                         to = chunk_end,
-                        "eth_getLogs failed for WithdrawSubmit chunk — skipping"
+                        "eth_getLogs failed for WithdrawSubmit chunk — will retry next poll (enumeration covers gap)"
                     );
+                    break;
                 }
             }
 
@@ -521,8 +671,7 @@ impl EvmWriter {
             }
         }
 
-        // Update last polled block
-        self.last_polled_block = to_block;
+        self.last_polled_block = last_successful_block;
 
         Ok(())
     }

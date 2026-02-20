@@ -190,11 +190,11 @@ impl EvmWatcher {
                 "Processing EVM blocks"
             );
 
-            self.process_block_range_chunked(from_block, to_block)
+            let last_successful = self
+                .process_block_range_chunked(from_block, to_block)
                 .await?;
 
-            // Update last processed block
-            update_last_evm_block(&self.db, self.chain_id as i64, to_block as i64).await?;
+            update_last_evm_block(&self.db, self.chain_id as i64, last_successful as i64).await?;
 
             tokio::time::sleep(poll_interval).await;
         }
@@ -202,9 +202,14 @@ impl EvmWatcher {
 
     /// Process logs from a large block range by splitting into chunks that
     /// stay within the RPC provider's eth_getLogs block range limit.
-    async fn process_block_range_chunked(&self, from_block: u64, to_block: u64) -> Result<()> {
+    ///
+    /// Returns the last successfully processed block number. On failure,
+    /// stops and returns the last successful block so the caller doesn't
+    /// advance the cursor past missed blocks.
+    async fn process_block_range_chunked(&self, from_block: u64, to_block: u64) -> Result<u64> {
         let chunk_size = self.chunk_size.max(1);
         let mut chunk_start = from_block;
+        let mut last_successful = from_block.saturating_sub(1);
 
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
@@ -217,22 +222,25 @@ impl EvmWatcher {
             );
 
             match self.process_block_range(chunk_start, chunk_end).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    last_successful = chunk_end;
+                }
                 Err(e) => {
                     tracing::warn!(
                         chain_id = self.chain_id,
                         error = %e,
                         from = chunk_start,
                         to = chunk_end,
-                        "eth_getLogs failed for chunk — skipping ahead"
+                        "eth_getLogs failed for chunk — will retry next poll"
                     );
+                    break;
                 }
             }
 
             chunk_start = chunk_end + 1;
         }
 
-        Ok(())
+        Ok(last_successful)
     }
 
     /// Process logs from a single block range (must be within RPC limits)

@@ -123,6 +123,9 @@ sol! {
         /// Get this chain's registered chain ID
         function getThisChainId() external view returns (bytes4);
 
+        /// Enumerate all pending (submitted, not yet executed/cancelled) withdrawal hashes
+        function getPendingWithdrawHashes() external view returns (bytes32[] memory hashes);
+
         /// Get the current deposit nonce
         function getDepositNonce() external view returns (uint64);
 
