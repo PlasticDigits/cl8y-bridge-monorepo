@@ -2,80 +2,16 @@
  * Hash Monitor Service
  *
  * Fetches all transfer hashes from deposits and withdraws via RPC/LCD.
+ * Uses enumeration RPC calls only (no historical eth_getLogs).
  * Used by the Monitor & Review Hashes section to display chain-sourced data.
  */
 
-import { decodeEventLog, type Address, type Hex, type PublicClient } from 'viem'
-import {
-  computeXchainHashIdFromDeposit,
-} from './hashVerification'
+import type { Address, Hex, PublicClient } from 'viem'
 import { getEvmClient } from './evmClient'
-import { getTokenRegistryAddress, TOKEN_REGISTRY_ABI } from './evm/tokenRegistry'
+import { BRIDGE_VIEW_ABI } from './evmBridgeQueries'
 import { queryContract } from './lcdClient'
 import { base64ToHex } from './hashVerification'
-import { getEvmBridgeChains, getCosmosBridgeChains } from '../utils/bridgeChains'
-
-/** bytes4 to bytes32 (left-aligned) for Deposit event destChain/destAccount */
-function bytes4ToBytes32(b: `0x${string}`): Hex {
-  const hex = b.slice(2).toLowerCase()
-  return `0x${hex.padEnd(64, '0')}` as Hex
-}
-
-const DEPOSIT_EVENT_ABI = [
-  {
-    type: 'event',
-    name: 'Deposit',
-    inputs: [
-      { name: 'destChain', type: 'bytes4', indexed: true },
-      { name: 'destAccount', type: 'bytes32', indexed: true },
-      { name: 'srcAccount', type: 'bytes32', indexed: false },
-      { name: 'token', type: 'address', indexed: false },
-      { name: 'amount', type: 'uint256', indexed: false },
-      { name: 'nonce', type: 'uint64', indexed: false },
-      { name: 'fee', type: 'uint256', indexed: false },
-    ],
-  },
-] as const
-
-const WITHDRAW_SUBMIT_EVENT_ABI = [
-  {
-    type: 'event',
-    name: 'WithdrawSubmit',
-    inputs: [
-      { name: 'xchainHashId', type: 'bytes32', indexed: true },
-      { name: 'srcChain', type: 'bytes4', indexed: false },
-      { name: 'srcAccount', type: 'bytes32', indexed: false },
-      { name: 'destAccount', type: 'bytes32', indexed: false },
-      { name: 'token', type: 'address', indexed: false },
-      { name: 'amount', type: 'uint256', indexed: false },
-      { name: 'nonce', type: 'uint64', indexed: false },
-      { name: 'operatorGas', type: 'uint256', indexed: false },
-    ],
-  },
-] as const
-
-const WITHDRAW_EXECUTE_EVENT_ABI = [
-  {
-    type: 'event',
-    name: 'WithdrawExecute',
-    inputs: [
-      { name: 'xchainHashId', type: 'bytes32', indexed: true },
-      { name: 'recipient', type: 'address', indexed: false },
-      { name: 'amount', type: 'uint256', indexed: false },
-    ],
-  },
-] as const
-
-const WITHDRAW_CANCEL_EVENT_ABI = [
-  {
-    type: 'event',
-    name: 'WithdrawCancel',
-    inputs: [
-      { name: 'xchainHashId', type: 'bytes32', indexed: true },
-      { name: 'canceler', type: 'address', indexed: false },
-    ],
-  },
-] as const
+import { getDeployedEvmBridgeChainEntries, getCosmosBridgeChains } from '../utils/bridgeChains'
 
 export interface MonitorHashEntry {
   hash: Hex
@@ -90,241 +26,66 @@ export interface MonitorHashEntry {
 }
 
 /**
- * Fetch transfer hashes from an EVM bridge via Deposit and WithdrawSubmit events.
+ * Fetch transfer hashes from an EVM bridge via enumeration (getPendingWithdrawHashes).
+ * Uses readContract calls only — no historical eth_getLogs.
+ * Note: EVM deposits are not enumerated (contract has no deposit enumeration);
+ * only pending withdrawals are shown from EVM chains.
  */
 export async function fetchEvmXchainHashIds(
   client: PublicClient,
   bridgeAddress: Address,
   _chainId: number,
   chainKey: string,
-  chainName: string,
-  fromBlock?: bigint,
-  toBlock?: bigint
+  chainName: string
 ): Promise<MonitorHashEntry[]> {
   const entries: MonitorHashEntry[] = []
 
   if (!bridgeAddress) return entries
 
-  const [depositLogs, withdrawLogs, executeLogs, cancelLogs, thisChainIdResult] = await Promise.all([
-    client.getLogs({
+  try {
+    const hashes = await client.readContract({
       address: bridgeAddress,
-      event: {
-        type: 'event',
-        name: 'Deposit',
-        inputs: [
-          { name: 'destChain', type: 'bytes4', indexed: true },
-          { name: 'destAccount', type: 'bytes32', indexed: true },
-          { name: 'srcAccount', type: 'bytes32', indexed: false },
-          { name: 'token', type: 'address', indexed: false },
-          { name: 'amount', type: 'uint256', indexed: false },
-          { name: 'nonce', type: 'uint64', indexed: false },
-          { name: 'fee', type: 'uint256', indexed: false },
-        ],
-      },
-      fromBlock: fromBlock ?? 0n,
-      toBlock: toBlock ?? 'latest',
-    }),
-    client.getLogs({
-      address: bridgeAddress,
-      event: {
-        type: 'event',
-        name: 'WithdrawSubmit',
-        inputs: [
-          { name: 'xchainHashId', type: 'bytes32', indexed: true },
-          { name: 'srcChain', type: 'bytes4', indexed: false },
-          { name: 'srcAccount', type: 'bytes32', indexed: false },
-          { name: 'destAccount', type: 'bytes32', indexed: false },
-          { name: 'token', type: 'address', indexed: false },
-          { name: 'amount', type: 'uint256', indexed: false },
-          { name: 'nonce', type: 'uint64', indexed: false },
-          { name: 'operatorGas', type: 'uint256', indexed: false },
-        ],
-      },
-      fromBlock: fromBlock ?? 0n,
-      toBlock: toBlock ?? 'latest',
-    }),
-    client.getLogs({
-      address: bridgeAddress,
-      event: {
-        type: 'event',
-        name: 'WithdrawExecute',
-        inputs: [
-          { name: 'xchainHashId', type: 'bytes32', indexed: true },
-          { name: 'recipient', type: 'address', indexed: false },
-          { name: 'amount', type: 'uint256', indexed: false },
-        ],
-      },
-      fromBlock: fromBlock ?? 0n,
-      toBlock: toBlock ?? 'latest',
-    }),
-    client.getLogs({
-      address: bridgeAddress,
-      event: {
-        type: 'event',
-        name: 'WithdrawCancel',
-        inputs: [
-          { name: 'xchainHashId', type: 'bytes32', indexed: true },
-          { name: 'canceler', type: 'address', indexed: false },
-        ],
-      },
-      fromBlock: fromBlock ?? 0n,
-      toBlock: toBlock ?? 'latest',
-    }),
-    client.readContract({
-      address: bridgeAddress,
-      abi: [{ name: 'getThisChainId', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'bytes4' }] }],
-      functionName: 'getThisChainId',
-    }),
-  ])
+      abi: BRIDGE_VIEW_ABI,
+      functionName: 'getPendingWithdrawHashes',
+    })
 
-  const hex = (thisChainIdResult as `0x${string}`).slice(2)
-  const thisChainId = parseInt(hex.slice(0, 8), 16)
+    const hashList = (hashes as Hex[]) ?? []
+    if (hashList.length === 0) return entries
 
-  // Build sets of executed/cancelled hashes from events (EVM doesn't expose these in WithdrawSubmit)
-  const executedHashes = new Set<string>()
-  const cancelledHashes = new Set<string>()
-  for (const log of executeLogs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: WITHDRAW_EXECUTE_EVENT_ABI,
-        data: log.data,
-        topics: log.topics,
-      })
-      if (decoded.eventName === 'WithdrawExecute') {
-        const args = decoded.args as { xchainHashId: Hex }
-        executedHashes.add(args.xchainHashId.toLowerCase())
-      }
-    } catch {
-      /* skip */
-    }
-  }
-  for (const log of cancelLogs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: WITHDRAW_CANCEL_EVENT_ABI,
-        data: log.data,
-        topics: log.topics,
-      })
-      if (decoded.eventName === 'WithdrawCancel') {
-        const args = decoded.args as { xchainHashId: Hex }
-        cancelledHashes.add(args.xchainHashId.toLowerCase())
-      }
-    } catch {
-      /* skip */
-    }
-  }
-
-  // Deposit events emit the SOURCE token, but the deposit hash uses the DEST token
-  // (from TokenRegistry mapping). Query the TokenRegistry for each unique (token, destChain)
-  // pair to compute the correct hash.
-  const decodedDeposits: Array<{
-    destChain: `0x${string}`
-    destAccount: Hex
-    srcAccount: Hex
-    token: Address
-    amount: bigint
-    nonce: bigint
-  }> = []
-
-  for (const log of depositLogs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: DEPOSIT_EVENT_ABI,
-        data: log.data,
-        topics: log.topics,
-      })
-      if (decoded.eventName === 'Deposit') {
-        decodedDeposits.push(decoded.args as typeof decodedDeposits[number])
-      }
-    } catch {
-      // Skip malformed logs
-    }
-  }
-
-  if (decodedDeposits.length > 0) {
-    // Batch-resolve destTokens from TokenRegistry
-    const destTokenCache = new Map<string, Hex | null>()
-    try {
-      const registryAddr = await getTokenRegistryAddress(client, bridgeAddress)
-
-      // Collect unique (token, destChain) pairs
-      const pairs = new Map<string, { token: Address; destChain: `0x${string}` }>()
-      for (const d of decodedDeposits) {
-        const key = `${d.token.toLowerCase()}-${d.destChain}`
-        if (!pairs.has(key)) pairs.set(key, { token: d.token, destChain: d.destChain })
-      }
-
-      // Query destTokens in parallel
-      const pairEntries = [...pairs.entries()]
-      const results = await Promise.allSettled(
-        pairEntries.map(([, { token, destChain }]) =>
-          client.readContract({
-            address: registryAddr,
-            abi: TOKEN_REGISTRY_ABI,
-            functionName: 'getDestToken',
-            args: [token, destChain],
-          })
-        )
+    const results = await Promise.allSettled(
+      hashList.map((hash) =>
+        client.readContract({
+          address: bridgeAddress,
+          abi: BRIDGE_VIEW_ABI,
+          functionName: 'getPendingWithdraw',
+          args: [hash],
+        })
       )
+    )
 
-      for (let i = 0; i < pairEntries.length; i++) {
-        const [key] = pairEntries[i]!
-        const result = results[i]!
-        if (result.status === 'fulfilled' && result.value) {
-          const val = result.value as Hex
-          destTokenCache.set(key, val !== ('0x' + '0'.repeat(64)) ? val : null)
-        }
+    for (let i = 0; i < hashList.length; i++) {
+      const result = results[i]
+      if (result?.status !== 'fulfilled' || !result.value) continue
+
+      const pw = result.value as {
+        submittedAt: bigint
+        approved: boolean
+        cancelled: boolean
+        executed: boolean
       }
-    } catch {
-      // TokenRegistry query failed; skip deposit hash computation
-    }
-
-    for (const d of decodedDeposits) {
-      const key = `${d.token.toLowerCase()}-${d.destChain}`
-      const destToken = destTokenCache.get(key)
-      if (!destToken) continue // Can't compute hash without destToken
-
-      const destChainBytes32 = bytes4ToBytes32(d.destChain)
-      const hash = computeXchainHashIdFromDeposit(
-        thisChainId,
-        destChainBytes32,
-        d.srcAccount,
-        d.destAccount,
-        destToken,
-        d.amount,
-        d.nonce
-      )
       entries.push({
-        hash,
-        source: 'deposit',
+        hash: hashList[i]!,
+        source: 'withdraw',
         chainKey,
         chainName,
+        timestamp: pw.submittedAt > 0n ? Number(pw.submittedAt) : undefined,
+        approved: pw.approved,
+        cancelled: pw.cancelled,
+        executed: pw.executed,
       })
     }
-  }
-
-  for (const log of withdrawLogs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: WITHDRAW_SUBMIT_EVENT_ABI,
-        data: log.data,
-        topics: log.topics,
-      })
-      if (decoded.eventName === 'WithdrawSubmit') {
-        const args = decoded.args as { xchainHashId: Hex }
-        const hashKey = args.xchainHashId.toLowerCase()
-        entries.push({
-          hash: args.xchainHashId,
-          source: 'withdraw',
-          chainKey,
-          chainName,
-          executed: executedHashes.has(hashKey),
-          cancelled: cancelledHashes.has(hashKey),
-        })
-      }
-    } catch {
-      // Skip malformed logs
-    }
+  } catch {
+    // RPC or contract call failed
   }
 
   return entries
@@ -342,41 +103,74 @@ interface TerraPendingWithdrawalsResponse {
   withdrawals: TerraPendingWithdrawalEntry[]
 }
 
+/** Default page size for Terra pending_withdrawals (matches canceler C2). */
+const TERRA_PAGE_SIZE = 50
+/** Max pages per Terra chain to bound fetch time (~1000 entries at 50/page). */
+const TERRA_MAX_PAGES = 20
+
 /**
  * Fetch transfer hashes from a Terra bridge via PendingWithdrawals list.
+ * Uses paginated enumeration: loops with start_after until fewer than limit results.
  */
 export async function fetchTerraWithdrawHashes(
   lcdUrls: string[],
   bridgeAddress: string,
   chainKey: string,
   chainName: string,
-  startAfter?: string,
-  limit = 30
+  options?: {
+    /** Page size per request (default 50) */
+    limit?: number
+    /** Max pages to fetch per chain (default 20, ~1000 entries) */
+    maxPages?: number
+  }
 ): Promise<MonitorHashEntry[]> {
   const entries: MonitorHashEntry[] = []
 
   if (!bridgeAddress || !lcdUrls.length) return entries
 
+  const limit = options?.limit ?? TERRA_PAGE_SIZE
+  const maxPages = options?.maxPages ?? TERRA_MAX_PAGES
+
   try {
-    const query: Record<string, unknown> = { pending_withdrawals: { limit } }
-    if (startAfter) {
-      (query.pending_withdrawals as Record<string, unknown>).start_after = startAfter
-    }
+    let startAfter: string | undefined
+    let pagesFetched = 0
 
-    const response = await queryContract<TerraPendingWithdrawalsResponse>(lcdUrls, bridgeAddress, query)
+    while (pagesFetched < maxPages) {
+      const query: Record<string, unknown> = { pending_withdrawals: { limit } }
+      if (startAfter) {
+        (query.pending_withdrawals as Record<string, unknown>).start_after = startAfter
+      }
 
-    for (const w of response?.withdrawals ?? []) {
-      const hash = base64ToHex(w.xchain_hash_id) as Hex
-      entries.push({
-        hash,
-        source: 'withdraw',
-        chainKey,
-        chainName,
-        timestamp: w.submitted_at,
-        approved: w.approved,
-        cancelled: w.cancelled,
-        executed: w.executed,
-      })
+      const response = await queryContract<TerraPendingWithdrawalsResponse>(
+        lcdUrls,
+        bridgeAddress,
+        query
+      )
+
+      const withdrawals = response?.withdrawals ?? []
+      for (const w of withdrawals) {
+        const hash = base64ToHex(w.xchain_hash_id) as Hex
+        entries.push({
+          hash,
+          source: 'withdraw',
+          chainKey,
+          chainName,
+          timestamp: w.submitted_at,
+          approved: w.approved,
+          cancelled: w.cancelled,
+          executed: w.executed,
+        })
+      }
+
+      pagesFetched++
+
+      // If fewer than limit, we have the last page
+      if (withdrawals.length < limit) break
+
+      // Cursor for next page: last hash in this batch (base64)
+      const last = withdrawals[withdrawals.length - 1]
+      if (!last?.xchain_hash_id) break
+      startAfter = last.xchain_hash_id
     }
   } catch {
     // LCD or contract query failed
@@ -440,31 +234,28 @@ export async function fetchTerraDepositHashes(
 
 /**
  * Fetch all transfer hashes from all configured bridge chains.
+ * Uses enumeration only — no eth_getLogs. Only queries chains where the bridge is deployed.
  * Merges and deduplicates by hash, optionally capped for pagination.
  */
 export async function fetchAllXchainHashIds(
   options?: {
-    evmFromBlock?: bigint
-    evmToBlock?: bigint
     terraDepositMaxNonce?: number
   }
 ): Promise<MonitorHashEntry[]> {
-  const evmChains = getEvmBridgeChains().filter((c) => c.bridgeAddress)
+  const evmChainEntries = getDeployedEvmBridgeChainEntries()
   const cosmosChains = getCosmosBridgeChains().filter((c) => c.bridgeAddress && (c.lcdUrl || (c.lcdFallbacks && c.lcdFallbacks.length > 0)))
 
   const results: MonitorHashEntry[] = []
 
-  const evmPromises = evmChains.map(async (chain) => {
+  const evmPromises = evmChainEntries.map(async ({ chainKey, config }) => {
     try {
-      const client = getEvmClient(chain)
+      const client = getEvmClient(config)
       return fetchEvmXchainHashIds(
         client,
-        chain.bridgeAddress as Address,
-        chain.chainId as number,
-        chain.name,
-        chain.name,
-        options?.evmFromBlock,
-        options?.evmToBlock
+        config.bridgeAddress as Address,
+        config.chainId as number,
+        chainKey,
+        config.name
       )
     } catch {
       return []

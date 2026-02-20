@@ -16,9 +16,9 @@ export function useTokenDestMapping(
     queryKey: ['tokenDestMapping', terraToken, destChainBytes4],
     queryFn: async () => {
       if (!terraToken || !destChainBytes4) return null
-      const hex = await queryTokenDestMapping(terraToken, destChainBytes4)
-      if (!hex) return null
-      return bytes32ToAddress(hex as `0x${string}`)
+      const result = await queryTokenDestMapping(terraToken, destChainBytes4)
+      if (!result) return null
+      return bytes32ToAddress(result.hex as `0x${string}`)
     },
     enabled: !!terraToken && !!destChainBytes4 && enabled,
     staleTime: 60_000,

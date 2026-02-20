@@ -1,20 +1,18 @@
 /**
  * useTerraDeposit - Terra → EVM deposit flow (V2)
  *
- * Executes deposit_native on the Terra bridge contract.
- * V2 message format:
- *   { deposit_native: { dest_chain: Binary(4 bytes), dest_account: Binary(32 bytes) } }
+ * Supports both native token deposits (deposit_native) and CW20 deposits
+ * (CW20 send → bridge Receive handler).
  *
- * Changes from V1:
- * - Replaces `lock` message with `deposit_native`
- * - dest_chain is bytes4 big-endian, base64-encoded (not a numeric chain ID)
- * - dest_account is 32-byte left-padded address, base64-encoded (not raw string)
- * - Removed duplicate recordTransfer (TransferForm handles record creation)
+ * V2 message format:
+ *   Native: { deposit_native: { dest_chain: Binary(4 bytes), dest_account: Binary(32 bytes) } }
+ *   CW20:   send { contract: bridge, amount, msg: base64({ deposit_cw20_lock|deposit_cw20_mintable_burn: { dest_chain, dest_account } }) }
  */
 
 import { useState, useCallback } from 'react'
-import { executeContractWithCoins } from '../services/terra'
-import { CONTRACTS, DEFAULT_NETWORK } from '../utils/constants'
+import { executeContractWithCoins, executeCw20Send } from '../services/terra'
+import { queryContract } from '../services/lcdClient'
+import { CONTRACTS, DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 import { useTransferStore } from '../stores/transfer'
 import { terraAddressToBytes32 } from '../services/hashVerification'
 
@@ -29,6 +27,14 @@ export interface UseTerraDepositReturn {
     destChainId: number
     recipientEvm: string
     recipientTerra?: string
+    /** Token identifier (e.g. "uluna" or CW20 address). Defaults to "uluna". */
+    tokenId?: string
+    /** Whether this is a native token (uses deposit_native). Defaults to true. */
+    isNative?: boolean
+    /** Token decimals for display. Defaults to 6 if omitted. */
+    srcDecimals?: number
+    /** Token symbol for display (e.g. "LUNC", "TKNA"). Defaults to "LUNC" if omitted. */
+    tokenSymbol?: string
   }) => Promise<string | null>
   reset: () => void
 }
@@ -81,6 +87,26 @@ export function encodeDestAccountBase64(address: string): string {
   return btoa(String.fromCharCode(...rawBytes))
 }
 
+/**
+ * Query the token_type from the Terra bridge contract (lock_unlock or mint_burn).
+ */
+async function queryTokenType(bridgeAddress: string, token: string): Promise<string> {
+  const networkConfig = NETWORKS[DEFAULT_NETWORK].terra
+  const lcdUrls = networkConfig.lcdFallbacks?.length
+    ? [...networkConfig.lcdFallbacks]
+    : [networkConfig.lcd]
+  try {
+    const res = await queryContract<{ token: string; token_type: string }>(
+      lcdUrls,
+      bridgeAddress,
+      { token_type: { token } }
+    )
+    return res.token_type ?? 'lock_unlock'
+  } catch {
+    return 'lock_unlock'
+  }
+}
+
 export function useTerraDeposit(): UseTerraDepositReturn {
   const [status, setStatus] = useState<TerraDepositStatus>('idle')
   const [txHash, setTxHash] = useState<string | null>(null)
@@ -93,11 +119,19 @@ export function useTerraDeposit(): UseTerraDepositReturn {
       destChainId,
       recipientEvm,
       recipientTerra,
+      tokenId = 'uluna',
+      isNative = true,
+      srcDecimals,
+      tokenSymbol,
     }: {
       amountMicro: string
       destChainId: number
       recipientEvm: string
       recipientTerra?: string
+      tokenId?: string
+      isNative?: boolean
+      srcDecimals?: number
+      tokenSymbol?: string
     }): Promise<string | null> => {
       const bridgeAddress = CONTRACTS[DEFAULT_NETWORK].terraBridge
       if (!bridgeAddress) {
@@ -131,31 +165,41 @@ export function useTerraDeposit(): UseTerraDepositReturn {
         txHash: null,
         recipient: recipientEvm || recipientTerra || '',
         startedAt: Date.now(),
+        srcDecimals,
+        tokenSymbol,
       })
 
       try {
-        // V2 deposit_native message format
-        // dest_chain: base64 of bytes4 chain ID
-        // dest_account: base64 of bytes32 left-padded address
         const destChainB64 = encodeDestChainBase64(destChainId)
         const destRecipient = recipientEvm || recipientTerra || ''
         const destAccountB64 = encodeDestAccountBase64(destRecipient)
 
-        const depositMsg = {
-          deposit_native: {
-            dest_chain: destChainB64,
-            dest_account: destAccountB64,
-          },
-        }
+        let result: { txHash: string }
 
-        const result = await executeContractWithCoins(bridgeAddress, depositMsg, [
-          { denom: 'uluna', amount: amountMicro },
-        ])
+        if (isNative) {
+          const depositMsg = {
+            deposit_native: {
+              dest_chain: destChainB64,
+              dest_account: destAccountB64,
+            },
+          }
+          result = await executeContractWithCoins(bridgeAddress, depositMsg, [
+            { denom: tokenId, amount: amountMicro },
+          ])
+        } else {
+          // CW20 deposit: query token_type to pick the correct receive message
+          const tokenType = await queryTokenType(bridgeAddress, tokenId)
+          const embeddedMsg =
+            tokenType === 'mint_burn'
+              ? { deposit_cw20_mintable_burn: { dest_chain: destChainB64, dest_account: destAccountB64 } }
+              : { deposit_cw20_lock: { dest_chain: destChainB64, dest_account: destAccountB64 } }
+
+          result = await executeCw20Send(tokenId, bridgeAddress, amountMicro, embeddedMsg)
+        }
 
         setTxHash(result.txHash)
         setStatus('success')
         updateActiveTransfer({ txHash: result.txHash, status: 'confirmed' })
-        // Note: TransferForm handles recordTransfer -- no duplicate call here
         setActiveTransfer(null)
         return result.txHash
       } catch (err) {

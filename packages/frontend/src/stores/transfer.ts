@@ -13,6 +13,10 @@ export interface ActiveTransfer {
   txHash: string | null
   recipient: string
   startedAt: number
+  /** Token decimals on source chain (for amount formatting). Defaults to 6 if omitted. */
+  srcDecimals?: number
+  /** Human-readable token symbol (e.g. "LUNC", "TKNA"). Defaults to "LUNC" if omitted. */
+  tokenSymbol?: string
 }
 
 export interface TransferState {

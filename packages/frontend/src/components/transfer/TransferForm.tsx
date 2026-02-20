@@ -96,37 +96,58 @@ const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000
 
 /** Build selectable token options from registry for the given direction */
 function buildTransferTokens(
-  registryTokens: { token: string; is_native: boolean; evm_token_address: string; terra_decimals: number; evm_decimals: number; enabled: boolean }[] | undefined,
+  registryTokens: { token: string; is_native: boolean; evm_token_address?: string; terra_decimals: number; evm_decimals?: number; enabled: boolean }[] | undefined,
   isSourceTerra: boolean,
   fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined,
   tokenlist: TokenlistData | null,
-  /** When source is EVM: per-chain token address from Terra token_dest_mapping; falls back to registry evm_token_address when missing */
-  sourceChainMappings?: Record<string, string>
+  /** When source is EVM: per-chain token address from Terra token_dest_mapping */
+  sourceChainMappings?: Record<string, string>,
+  /** When source is Terra and dest is EVM: only show tokens with a dest mapping */
+  destChainMappings?: Record<string, string>
 ): TokenOption[] {
   const symbolFromList = (token: string) =>
     tokenlist ? getTokenFromList(tokenlist, token)?.symbol : null
   if (isSourceTerra) {
-    const fromRegistry = (registryTokens ?? [])
-      .filter((t) => t.enabled)
-      .map((t) => ({
-        id: t.token,
-        symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-        tokenId: t.token,
-      }))
+    // Wait for tokenlist to load so we never flash raw addresses as symbols
+    if (!tokenlist) return []
+    let enabledTokens = (registryTokens ?? []).filter((t) => t.enabled)
+    // Filter to tokens that have a destination mapping on the selected EVM chain
+    if (destChainMappings && Object.keys(destChainMappings).length > 0) {
+      enabledTokens = enabledTokens.filter((t) => t.token in destChainMappings)
+    }
+    const fromRegistry = enabledTokens.map((t) => ({
+      id: t.token,
+      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
+      tokenId: t.token,
+    }))
     if (fromRegistry.length > 0) return fromRegistry
-    return [{ id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' }]
+    return []
   }
-  // EVM source: show all enabled tokens with evm_token_address.
-  // Use per-chain token_dest_mapping when available, else fall back to registry evm_token_address.
+  // Wait for tokenlist so we never flash raw addresses as symbols
+  if (!tokenlist) return []
+  // EVM source: use per-chain token_dest_mapping to determine which tokens
+  // exist on the selected source chain. Only show tokens with a mapping.
+  if (sourceChainMappings && Object.keys(sourceChainMappings).length > 0) {
+    return Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
+      const reg = registryTokens?.find((t) => t.token === terraToken)
+      return {
+        id: terraToken,
+        symbol: symbolFromList(terraToken) ?? getTokenDisplaySymbol(reg?.token ?? terraToken),
+        tokenId: terraToken,
+        evmTokenAddress: evmAddr,
+      }
+    })
+  }
+  // Fallback: try legacy evm_token_address from registry (for older contracts)
   const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
-  const fromRegistry = baseRegistry.map((t) => ({
-    id: t.token,
-    symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-    tokenId: t.token,
-    evmTokenAddress:
-      sourceChainMappings?.[t.token] ?? bytes32ToAddress(t.evm_token_address),
-  }))
-  if (fromRegistry.length > 0) return fromRegistry
+  if (baseRegistry.length > 0) {
+    return baseRegistry.map((t) => ({
+      id: t.token,
+      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
+      tokenId: t.token,
+      evmTokenAddress: bytes32ToAddress(t.evm_token_address!),
+    }))
+  }
   if (fallbackConfig && !sourceChainMappings) {
     return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
   }
@@ -154,10 +175,12 @@ function bytes32ToAddress(hex: string): Address {
 /** Get EVM token config for deposit/balance from selected token id */
 function getEvmTokenConfig(
   selectedTokenId: string,
-  registryTokens: { token: string; evm_token_address: string; evm_decimals: number }[] | undefined,
+  registryTokens: { token: string; evm_token_address?: string; evm_decimals?: number }[] | undefined,
   fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined,
   /** When source is EVM: use per-chain address from token_dest_mapping */
-  sourceChainMappings?: Record<string, string>
+  sourceChainMappings?: Record<string, string>,
+  /** Per-chain decimals from token_dest_mapping */
+  sourceChainDecimals?: Record<string, number>
 ): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
   const mappedAddr = sourceChainMappings?.[selectedTokenId]
@@ -167,7 +190,7 @@ function getEvmTokenConfig(
       address: (mappedAddr ?? bytes32ToAddress(evmAddr)) as Address,
       lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
       symbol: getTokenDisplaySymbol(fromRegistry?.token ?? selectedTokenId),
-      decimals: fromRegistry?.evm_decimals ?? 18,
+      decimals: sourceChainDecimals?.[selectedTokenId] ?? fromRegistry?.evm_decimals ?? 18,
     }
   }
   if (fallbackConfig && (selectedTokenId === fallbackConfig.address || selectedTokenId === 'uluna')) {
@@ -255,16 +278,33 @@ export function TransferForm() {
     () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[sourceChain],
     [sourceChain]
   )
+  const destChainConfig = useMemo(
+    () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[destChain],
+    [destChain]
+  )
   const { data: bridgeConfigData } = useBridgeConfig()
   const isSourceEvm = sourceChainConfig?.type === 'evm'
   const sourceChainBytes4 = sourceChainConfig?.bytes4ChainId
-  const { mappings: sourceChainMappings, isLoading: isSourceMappingsLoading } = useSourceChainTokenMappings(
+  const destChainBytes4 = destChainConfig?.bytes4ChainId
+  const isDestEvmChain = destChainConfig?.type === 'evm'
+  const { mappings: sourceChainMappings, decimalsMap: sourceChainDecimals, isLoading: isSourceMappingsLoading } = useSourceChainTokenMappings(
     registryTokens,
     sourceChainBytes4,
     !!isSourceEvm && !!sourceChainBytes4
   )
+  // When source is Terra and dest is EVM, query dest chain mappings to filter
+  // tokens to only those that have a destination on the selected EVM chain.
+  const { mappings: destChainMappings, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
+    registryTokens,
+    destChainBytes4,
+    isSourceTerra && !!isDestEvmChain && !!destChainBytes4
+  )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+  // Only apply chain mapping filters once ALL queries are done.
+  // Partial results would exclude tokens whose queries are still in flight.
+  const readySourceMappings = isSourceEvm && !isSourceMappingsLoading ? sourceChainMappings : undefined
+  const readyDestMappings = isSourceTerra && isDestEvmChain && !isDestMappingsLoading ? destChainMappings : undefined
   const transferTokens = useMemo(
     () =>
       buildTransferTokens(
@@ -272,20 +312,23 @@ export function TransferForm() {
         isSourceTerra,
         fallbackTokenConfig,
         tokenlist ?? null,
-        isSourceEvm ? sourceChainMappings : undefined
+        readySourceMappings,
+        readyDestMappings
       ),
-    [registryTokens, isSourceTerra, fallbackTokenConfig, tokenlist, isSourceEvm, sourceChainMappings]
+    [registryTokens, isSourceTerra, fallbackTokenConfig, tokenlist, readySourceMappings, readyDestMappings]
   )
 
+  const readySourceDecimals = isSourceEvm && !isSourceMappingsLoading ? sourceChainDecimals : undefined
   const evmTokenConfig = useMemo(
     () =>
       getEvmTokenConfig(
         selectedTokenId,
         registryTokens,
         fallbackTokenConfig,
-        isSourceEvm ? sourceChainMappings : undefined
+        readySourceMappings,
+        readySourceDecimals
       ),
-    [selectedTokenId, registryTokens, fallbackTokenConfig, isSourceEvm, sourceChainMappings]
+    [selectedTokenId, registryTokens, fallbackTokenConfig, readySourceMappings, readySourceDecimals]
   )
   const tokenConfig = isSourceTerra ? undefined : evmTokenConfig
   const terraDecimals = useMemo(
@@ -302,12 +345,6 @@ export function TransferForm() {
     }
   }, [transferTokens, selectedTokenId])
 
-  const destChainConfig = useMemo(
-    () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[destChain],
-    [destChain]
-  )
-  const destChainBytes4 = destChainConfig?.bytes4ChainId
-  const isDestEvmChain = destChainConfig?.type === 'evm'
   const { data: tokenDestMappingAddr } = useTokenDestMapping(
     selectedTokenId || undefined,
     destChainBytes4,
@@ -897,12 +934,11 @@ export function TransferForm() {
     const destConfig = BRIDGE_CHAINS[tier][destChain]
 
     if (direction === 'terra-to-evm') {
-      // Terra → EVM: deposit_native on Terra bridge (V2)
+      // Terra → EVM: deposit on Terra bridge (V2)
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
         return
       }
-      // Use V2 chain ID from config (e.g. 1 for anvil, 3 for anvil1), NOT native chain ID
       const v2Bytes4 = destConfig?.bytes4ChainId
       if (!v2Bytes4) {
         setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
@@ -910,7 +946,20 @@ export function TransferForm() {
       }
       const destChainId = parseInt(v2Bytes4, 16)
       const amountMicro = parseAmount(amount, terraDecimals)
-      await terraLock({ amountMicro, destChainId, recipientEvm: recipientAddr })
+      const selectedReg = registryTokens?.find((t) => t.token === selectedTokenId)
+      const isNative = selectedReg?.is_native ?? (selectedTokenId === 'uluna')
+      await terraLock({
+        amountMicro,
+        destChainId,
+        recipientEvm: recipientAddr,
+        tokenId: selectedTokenId || 'uluna',
+        isNative,
+        srcDecimals: terraDecimals,
+        tokenSymbol:
+          terraDisplay.displayLabel ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          getTokenDisplaySymbol(selectedTokenId || 'uluna'),
+      })
     } else if (direction === 'evm-to-terra') {
       // EVM → Terra: depositERC20 on Bridge (V2) with bytes4 Terra chain ID
       if (!recipientAddr || !recipientAddr.startsWith('terra1')) {
@@ -957,7 +1006,7 @@ export function TransferForm() {
   const selectedSymbol =
     isSourceTerra
       ? terraDisplay.displayLabel || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC'
-      : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC')
+      : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || '—')
   const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
 
   // "You will receive" shows DESTINATION token - use display hooks for symbol, link to dest chain
@@ -994,11 +1043,15 @@ export function TransferForm() {
     evmDestDisplay.displayLabel,
   ])
 
+  const isTokenInfoLoading =
+    (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)) ||
+    (isSourceTerra && (isRegistryLoading || isDestMappingsLoading))
+
   const buttonText = isChainsLoading
     ? 'Discovering chains...'
     : !isWalletConnected
     ? `Connect ${walletLabel} Wallet`
-    : isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)
+    : isTokenInfoLoading
     ? 'Loading token info...'
     : isSubmitting
     ? 'Processing...'
@@ -1079,7 +1132,7 @@ export function TransferForm() {
       <button
         type="submit"
         data-testid="submit-transfer"
-        disabled={isChainsLoading || !isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting || (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading))}
+        disabled={isChainsLoading || !isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting || isTokenInfoLoading}
         onClick={() => sounds.playButtonPress()}
         className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
       >

@@ -21,7 +21,7 @@ const BRIDGE_TOKEN_REGISTRY_ABI = [
   },
 ] as const
 
-// ABI for TokenRegistry.getDestToken and getDestTokenMapping
+// ABI for TokenRegistry view functions
 export const TOKEN_REGISTRY_ABI = [
   {
     name: 'getDestToken',
@@ -51,6 +51,23 @@ export const TOKEN_REGISTRY_ABI = [
         ],
       },
     ],
+  },
+  {
+    name: 'isTokenRegistered',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'token', type: 'address' }],
+    outputs: [{ name: 'registered', type: 'bool' }],
+  },
+  {
+    name: 'getSrcTokenDecimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'srcChain', type: 'bytes4' },
+      { name: 'token', type: 'address' },
+    ],
+    outputs: [{ name: 'srcDecimals', type: 'uint8' }],
   },
 ] as const
 
@@ -140,6 +157,52 @@ export async function getDestTokenMapping(
     }
   } catch (err) {
     console.warn('[TokenRegistry] Failed to query getDestTokenMapping:', err)
+    return null
+  }
+}
+
+/**
+ * Check if a token is registered on the TokenRegistry.
+ */
+export async function isTokenRegistered(
+  publicClient: PublicClient,
+  bridgeAddress: Address,
+  tokenAddress: Address
+): Promise<boolean> {
+  try {
+    const registryAddr = await getTokenRegistryAddress(publicClient, bridgeAddress)
+    const registered = await publicClient.readContract({
+      address: registryAddr,
+      abi: TOKEN_REGISTRY_ABI,
+      functionName: 'isTokenRegistered',
+      args: [tokenAddress],
+    })
+    return registered as boolean
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Query source token decimals for incoming transfers from a specific chain.
+ * Returns null if the incoming mapping is not configured (reverts on-chain).
+ */
+export async function getSrcTokenDecimals(
+  publicClient: PublicClient,
+  bridgeAddress: Address,
+  srcChainBytes4: Hex,
+  tokenAddress: Address
+): Promise<number | null> {
+  try {
+    const registryAddr = await getTokenRegistryAddress(publicClient, bridgeAddress)
+    const decimals = await publicClient.readContract({
+      address: registryAddr,
+      abi: TOKEN_REGISTRY_ABI,
+      functionName: 'getSrcTokenDecimals',
+      args: [srcChainBytes4 as `0x${string}`, tokenAddress],
+    })
+    return decimals as number
+  } catch {
     return null
   }
 }

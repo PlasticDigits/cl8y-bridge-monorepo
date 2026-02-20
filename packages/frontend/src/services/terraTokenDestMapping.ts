@@ -36,14 +36,19 @@ function base64ToHex(b64: string): string {
   return '0x' + Array.from(raw, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
 }
 
+export interface TokenDestMappingResult {
+  hex: string
+  decimals: number
+}
+
 /**
  * Query Terra bridge for token destination mapping.
- * Returns the dest token bytes32 as hex, or null if no mapping.
+ * Returns the dest token bytes32 as hex + decimals, or null if no mapping.
  */
 export async function queryTokenDestMapping(
   terraToken: string,
   destChainBytes4: string
-): Promise<string | null> {
+): Promise<TokenDestMappingResult | null> {
   const terraBridge = CONTRACTS[DEFAULT_NETWORK].terraBridge
   if (!terraBridge) return null
 
@@ -64,7 +69,7 @@ export async function queryTokenDestMapping(
     if (!res?.dest_token) return null
     const hex = base64ToHex(res.dest_token)
     if (hex === '0x' + '0'.repeat(64)) return null
-    return hex
+    return { hex, decimals: res.dest_decimals }
   } catch {
     return null
   }

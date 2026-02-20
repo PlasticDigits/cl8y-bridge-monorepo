@@ -7,7 +7,7 @@
 import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { useTokenList } from './useTokenList'
-import { useCw20TokenInfo, useEvmTokenInfo, fetchEvmTokenInfo, fetchCw20TokenInfo } from './useTokenOnchainInfo'
+import { useCw20TokenInfo, useEvmTokenInfo, fetchEvmTokenInfo, fetchCw20TokenInfo, getCachedTokenInfo } from './useTokenOnchainInfo'
 import { getTokenFromList } from '../services/tokenlist'
 import type { BridgeChainConfig } from '../types/chain'
 import { isAddressLike, shortenAddress } from '../utils/shortenAddress'
@@ -104,27 +104,35 @@ export function useTokenOptionsDisplayMap(
   const evmRpcOrConfig = sourceChainConfigOrRpcUrl
 
   const cw20Results = useQueries({
-    queries: terraCw20Tokens.map((t) => ({
-      queryKey: ['cw20TokenInfo', t.tokenId],
-      queryFn: async () => {
-        const res = await fetchCw20TokenInfo(t.tokenId)
-        return { tokenId: t.tokenId, symbol: res.symbol, name: res.name }
-      },
-      enabled: !!t.tokenId,
-      staleTime: 5 * 60 * 1000,
-    })),
+    queries: terraCw20Tokens.map((t) => {
+      const cached = getCachedTokenInfo(`cw20:${t.tokenId}`)
+      return {
+        queryKey: ['cw20TokenInfo', t.tokenId],
+        queryFn: async () => {
+          const res = await fetchCw20TokenInfo(t.tokenId)
+          return { tokenId: t.tokenId, symbol: res.symbol, name: res.name }
+        },
+        enabled: !!t.tokenId,
+        staleTime: 5 * 60 * 1000,
+        initialData: cached ? { tokenId: t.tokenId, symbol: cached.symbol, name: cached.name } : undefined,
+      }
+    }),
   })
 
   const evmResults = useQueries({
-    queries: evmTokens.map((t) => ({
-      queryKey: ['evmTokenInfo', t.evmTokenAddress, evmRpcOrConfig],
-      queryFn: () =>
-        t.evmTokenAddress && evmRpcOrConfig
-          ? fetchEvmTokenInfo(t.evmTokenAddress, evmRpcOrConfig)
-          : { symbol: '', name: '' },
-      enabled: !!t.evmTokenAddress && !!evmRpcOrConfig,
-      staleTime: 5 * 60 * 1000,
-    })),
+    queries: evmTokens.map((t) => {
+      const cached = t.evmTokenAddress ? getCachedTokenInfo(`erc20:${t.evmTokenAddress.toLowerCase()}`) : undefined
+      return {
+        queryKey: ['evmTokenInfo', t.evmTokenAddress, evmRpcOrConfig],
+        queryFn: () =>
+          t.evmTokenAddress && evmRpcOrConfig
+            ? fetchEvmTokenInfo(t.evmTokenAddress, evmRpcOrConfig)
+            : { symbol: '', name: '' },
+        enabled: !!t.evmTokenAddress && !!evmRpcOrConfig,
+        staleTime: 5 * 60 * 1000,
+        initialData: cached,
+      }
+    }),
   })
 
   return useMemo(() => {

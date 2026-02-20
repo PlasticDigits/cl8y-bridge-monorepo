@@ -12,6 +12,8 @@ import { CONTRACTS, DEFAULT_NETWORK } from '../utils/constants'
 export interface SourceChainTokenMappings {
   /** Map terra token id -> evm address on source chain. Only tokens with a mapping. */
   mappings: Record<string, string>
+  /** Map terra token id -> EVM decimals from the per-chain dest mapping. */
+  decimalsMap: Record<string, number>
   isLoading: boolean
 }
 
@@ -21,13 +23,13 @@ export interface SourceChainTokenMappings {
  */
 export function useSourceChainTokenMappings(
   registryTokens:
-    | Array<{ token: string; evm_token_address: string; enabled?: boolean }>
+    | Array<{ token: string; evm_token_address?: string; enabled?: boolean }>
     | undefined,
   sourceChainBytes4: string | undefined,
   enabled: boolean
 ): SourceChainTokenMappings {
   const tokens = (registryTokens ?? []).filter(
-    (t) => t.enabled !== false && t.evm_token_address
+    (t) => t.enabled !== false
   )
   const terraBridge = CONTRACTS[DEFAULT_NETWORK].terraBridge
   const queries = useQueries({
@@ -35,9 +37,9 @@ export function useSourceChainTokenMappings(
       queryKey: ['tokenDestMapping', terraBridge, t.token, sourceChainBytes4],
       queryFn: async () => {
         if (!t.token || !sourceChainBytes4) return null
-        const hex = await queryTokenDestMapping(t.token, sourceChainBytes4)
-        if (!hex) return null
-        return bytes32ToAddress(hex as `0x${string}`)
+        const result = await queryTokenDestMapping(t.token, sourceChainBytes4)
+        if (!result) return null
+        return { address: bytes32ToAddress(result.hex as `0x${string}`), decimals: result.decimals }
       },
       enabled: enabled && !!t.token && !!sourceChainBytes4,
       staleTime: 60_000,
@@ -45,6 +47,7 @@ export function useSourceChainTokenMappings(
   })
 
   const mappings: Record<string, string> = {}
+  const decimalsMap: Record<string, number> = {}
   let isLoading = false
 
   // If enabled but upstream registryTokens haven't loaded yet, we're still
@@ -56,11 +59,12 @@ export function useSourceChainTokenMappings(
   tokens.forEach((t, i) => {
     const q = queries[i]
     if (q?.isLoading) isLoading = true
-    const addr = q?.data
-    if (addr) {
-      mappings[t.token] = addr
+    const data = q?.data
+    if (data) {
+      mappings[t.token] = data.address
+      decimalsMap[t.token] = data.decimals
     }
   })
 
-  return { mappings, isLoading }
+  return { mappings, decimalsMap, isLoading }
 }

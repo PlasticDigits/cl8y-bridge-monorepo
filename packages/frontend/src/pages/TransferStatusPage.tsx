@@ -24,12 +24,19 @@ import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
+import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { useStepProgress } from '../hooks/useStepProgress'
-import { formatCountdownMmSs } from '../utils/format'
+import { formatCountdownMmSs, formatCancelWindowRange } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
-import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
+import {
+  BRIDGE_CHAINS,
+  getBridgeChainEntryByBytes4,
+  getChainKeyByConfig,
+  type NetworkTier,
+} from '../utils/bridgeChains'
+import type { BridgeChainConfig } from '../types/chain'
 import { DEFAULT_NETWORK } from '../utils/constants'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
@@ -238,12 +245,26 @@ function TransferDetails({ transfer }: { transfer: TransferRecord }) {
   )
 }
 
+/** Extract bytes4 from bytes32 (left-aligned, e.g. 0x00000038... → 0x00000038) */
+function bytes32ToBytes4(bytes32: `0x${string}`): string {
+  const clean = bytes32.slice(2).padStart(64, '0')
+  return ('0x' + clean.slice(0, 8)) as string
+}
+
 function buildTransferFromLookup(
   hash: string,
-  source: { amount: bigint; srcAccount: `0x${string}`; destAccount: `0x${string}`; token: `0x${string}` } | null,
-  sourceChain: { name: string; bridgeAddress?: string } | null,
+  source: {
+    amount: bigint
+    srcAccount: `0x${string}`
+    destAccount: `0x${string}`
+    token: `0x${string}`
+    srcChain?: `0x${string}`
+    destChain?: `0x${string}`
+    nonce?: bigint
+  } | null,
+  sourceChain: BridgeChainConfig | null,
   dest: { amount: bigint; executed: boolean; approved: boolean } | null,
-  destChain: { name: string; bridgeAddress?: string } | null
+  destChain: BridgeChainConfig | null
 ): TransferRecord {
   const lifecycle: TransferRecord['lifecycle'] = dest?.executed
     ? 'executed'
@@ -253,25 +274,51 @@ function buildTransferFromLookup(
     ? 'hash-submitted'
     : 'deposited'
   const amount = (source?.amount ?? dest?.amount ?? 0n).toString()
-  const srcIsTerra = (sourceChain?.name ?? '').includes('terra') || (sourceChain?.name ?? '').includes('localterra')
-  const destIsTerra = (destChain?.name ?? '').includes('terra') || (destChain?.name ?? '').includes('localterra')
-  const direction: TransferRecord['direction'] = srcIsTerra ? 'terra-to-evm' : destIsTerra ? 'evm-to-terra' : 'evm-to-evm'
+  const srcIsCosmos = sourceChain?.type === 'cosmos'
+  const destIsCosmos = destChain?.type === 'cosmos'
+  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+
+  // Resolve chain KEYs (e.g. 'bsc', 'terra') instead of display names
+  const resolvedSourceChainKey = sourceChain ? (getChainKeyByConfig(sourceChain) ?? sourceChain.name ?? 'unknown') : 'unknown'
+  let resolvedSourceBytes4 = sourceChain?.bytes4ChainId
+  if (!resolvedSourceBytes4 && source?.srcChain) {
+    resolvedSourceBytes4 = bytes32ToBytes4(source.srcChain)
+  }
+
+  let resolvedDestChainKey: string | null = null
+  let resolvedDestBridgeAddress: string | undefined
+  if (destChain) {
+    resolvedDestChainKey = getChainKeyByConfig(destChain) ?? null
+    resolvedDestBridgeAddress = destChain.bridgeAddress
+  }
+  if (!resolvedDestChainKey && source?.destChain) {
+    const bytes4 = bytes32ToBytes4(source.destChain)
+    const entry = getBridgeChainEntryByBytes4(bytes4)
+    if (entry) {
+      const [destChainKey, destConfig] = entry
+      resolvedDestChainKey = destChainKey
+      resolvedDestBridgeAddress = destConfig.bridgeAddress
+    }
+  }
+
   return {
     id: hash,
     type: 'deposit',
     direction,
-    sourceChain: sourceChain?.name ?? 'unknown',
-    destChain: destChain?.name ?? 'unknown',
+    sourceChain: resolvedSourceChainKey,
+    destChain: resolvedDestChainKey ?? 'unknown',
     amount,
     status: 'confirmed',
-    txHash: '', // Not available from on-chain lookup
+    txHash: '',
     timestamp: Date.now(),
     xchainHashId: hash,
     lifecycle,
+    depositNonce: source?.nonce !== undefined ? Number(source.nonce) : undefined,
     srcAccount: source?.srcAccount,
     destAccount: source?.destAccount,
     destToken: source?.token,
-    destBridgeAddress: destChain?.bridgeAddress,
+    destBridgeAddress: resolvedDestBridgeAddress,
+    sourceChainIdBytes4: resolvedSourceBytes4,
   }
 }
 
@@ -627,6 +674,11 @@ export default function TransferStatusPage() {
     transfer?.lifecycle === 'approved'
   )
 
+  const { data: bridgeConfigs } = useBridgeConfig()
+  const destChainCancelWindow = transfer?.destChain
+    ? bridgeConfigs?.find((c) => c.chainId === transfer.destChain)?.cancelWindowSeconds ?? null
+    : null
+
   if (!transfer) {
     const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)
     const isLookingUp = isValidHash && lookupLoading
@@ -861,7 +913,12 @@ export default function TransferStatusPage() {
                     Waiting for Operator Approval
                   </p>
                   <p className="text-blue-400/70 text-xs mt-1">
-                    The operator is verifying your deposit on the source chain. This usually takes 10-30 seconds.
+                    The operator is verifying your deposit on the source chain.
+                    {destChainCancelWindow != null ? (
+                      <> After approval, the cancel window is {formatCancelWindowRange(destChainCancelWindow)} before tokens are released.</>
+                    ) : (
+                      <> This usually takes a few minutes depending on the destination chain.</>
+                    )}
                   </p>
                   {isBroken && fixLoading && (
                     <p className="text-amber-400/70 text-xs mt-1">Checking for fix option…</p>
@@ -880,7 +937,11 @@ export default function TransferStatusPage() {
                 Cancel Window Active
               </p>
               <p className="text-blue-400/70 text-xs mt-1">
-                Approved. Waiting for the cancel window to expire before tokens are released.
+                Approved. Waiting for the cancel window to expire before tokens are released
+                {destChainCancelWindow != null && (
+                  <span className="ml-1">({formatCancelWindowRange(destChainCancelWindow)})</span>
+                )}
+                .
                 {cancelWindowRemaining != null && cancelWindowRemaining > 0 ? (
                   <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
                     {formatCountdownMmSs(cancelWindowRemaining)} remaining

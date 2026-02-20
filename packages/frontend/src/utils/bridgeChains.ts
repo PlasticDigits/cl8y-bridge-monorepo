@@ -289,6 +289,23 @@ export function getEvmBridgeChains(): BridgeChainConfig[] {
 }
 
 /**
+ * Get EVM bridge chains where the bridge is actually deployed (has bytes4ChainId).
+ * Use this for RPC queries (e.g. hash monitor) to avoid querying chains like
+ * Ethereum mainnet that don't have the bridge deployed yet.
+ */
+export function getDeployedEvmBridgeChainEntries(): Array<{ chainKey: string; config: BridgeChainConfig }> {
+  const tier = DEFAULT_NETWORK as NetworkTier
+  return Object.entries(BRIDGE_CHAINS[tier])
+    .filter(
+      ([_, c]) =>
+        c.type === 'evm' &&
+        !!c.bridgeAddress &&
+        !!c.bytes4ChainId
+    )
+    .map(([key, config]) => ({ chainKey: key, config }))
+}
+
+/**
  * Get Cosmos bridge chains only.
  */
 export function getCosmosBridgeChains(): BridgeChainConfig[] {

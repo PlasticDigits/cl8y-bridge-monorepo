@@ -4,6 +4,8 @@
  * Tokenlist crosschain info is not required - we match purely on symbol.
  */
 
+import { getCachedTokenInfo } from '../hooks/useTokenOnchainInfo'
+
 /** Symbols we have logo assets for (from /tokens/*.png) */
 const LOGO_SYMBOLS = new Set([
   'ALPHA', 'BTC', 'CL8Y', 'CZB', 'CZUSD', 'DOGE', 'ETH', 'LUNC', 'SOL',
@@ -19,11 +21,24 @@ const DENOM_TO_SYMBOL: Record<string, string> = {
 /**
  * Returns display symbol for a token identifier (denom or cw20 address).
  * Maps known Terra denoms to friendly symbols (uluna -> LUNC, uusd -> USTC).
+ * Falls back to localStorage cache from previous on-chain lookups.
+ * Shortens long addresses so they never flash as raw identifiers.
  */
 export function getTokenDisplaySymbol(tokenId: string): string {
   if (!tokenId?.trim()) return ''
   const lower = tokenId.toLowerCase()
-  return DENOM_TO_SYMBOL[lower] ?? tokenId
+  if (DENOM_TO_SYMBOL[lower]) return DENOM_TO_SYMBOL[lower]
+  if (lower.startsWith('terra1') && lower.length >= 44) {
+    const cached = getCachedTokenInfo(`cw20:${tokenId}`)
+    if (cached?.symbol) return cached.symbol
+    return tokenId.slice(0, 8) + '…' + tokenId.slice(-6)
+  }
+  if (lower.startsWith('0x') && lower.length >= 42) {
+    const cached = getCachedTokenInfo(`erc20:${lower}`)
+    if (cached?.symbol) return cached.symbol
+    return tokenId.slice(0, 8) + '…' + tokenId.slice(-6)
+  }
+  return tokenId
 }
 
 /**

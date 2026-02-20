@@ -40,9 +40,9 @@ export function useTokenChains(
       queryKey: ['tokenDestMapping', terraTokenId, config.bytes4ChainId],
       queryFn: async () => {
         if (!terraTokenId || !config.bytes4ChainId) return null
-        const hex = await queryTokenDestMapping(terraTokenId, config.bytes4ChainId)
-        if (!hex) return null
-        return bytes32ToAddress(hex as `0x${string}`)
+        const result = await queryTokenDestMapping(terraTokenId, config.bytes4ChainId)
+        if (!result) return null
+        return bytes32ToAddress(result.hex as `0x${string}`)
       },
       enabled: !!terraTokenId && !!config.bytes4ChainId,
       staleTime: 60_000,

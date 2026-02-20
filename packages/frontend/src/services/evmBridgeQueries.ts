@@ -76,6 +76,13 @@ export const BRIDGE_VIEW_ABI = [
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  {
+    name: 'getPendingWithdrawHashes',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'bytes32[]' }],
+  },
 ] as const
 
 /** Convert bytes4 from contract (0x + 8 hex chars) to bytes32 (left-aligned). */

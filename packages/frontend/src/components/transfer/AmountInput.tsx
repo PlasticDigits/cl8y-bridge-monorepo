@@ -28,7 +28,7 @@ export function AmountInput({
   value,
   onChange,
   onMax,
-  symbol = 'LUNC',
+  symbol = '—',
   tokens,
   selectedTokenId,
   onTokenChange,

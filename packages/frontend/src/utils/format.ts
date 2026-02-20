@@ -133,6 +133,14 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format cancel window as a range: base + 10% rounded (e.g. 600 → "600-660 seconds").
+ */
+export function formatCancelWindowRange(cancelWindowSeconds: number): string {
+  const max = cancelWindowSeconds + Math.round(cancelWindowSeconds * 0.1)
+  return `${cancelWindowSeconds}-${max} seconds`
+}
+
+/**
  * Format duration in seconds as mm:ss for countdown timers.
  * Updates visibly every second (e.g. "02:30", "01:05", "00:09").
  */

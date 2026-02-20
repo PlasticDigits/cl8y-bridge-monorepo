@@ -26,8 +26,8 @@ function isSequenceMismatchError(error: unknown): boolean {
 
 function handleSwapTransactionError(error: unknown): Error {
   if (error instanceof Error) {
-    const m = error.message
-    if (m.includes('User rejected') || m.includes('rejected') || m.includes('User denied')) {
+    const m = error.message.toLowerCase()
+    if (m.includes('user rejected') || m.includes('rejected') || m.includes('user denied')) {
       return new Error('Transaction rejected by user')
     }
     if (
@@ -40,10 +40,17 @@ function handleSwapTransactionError(error: unknown): Error {
           'or disconnect and reconnect your wallet.'
       )
     }
-    if (m.includes('Failed to fetch') || m.includes('NetworkError') || m.includes('network')) {
-      return new Error(`Network error: ${m}. Please check your connection and try again.`)
+    if (m.includes('insufficient funds') || m.includes('spendable balance')) {
+      const feeUluna = Math.ceil(parseFloat(gasLimits.gasPriceUluna) * gasLimits.bridge)
+      const feeLunc = (feeUluna / 1e6).toFixed(2)
+      return new Error(
+        `Insufficient LUNC for gas fees. Terra Classic transactions require ~${feeLunc} LUNC for gas. Add more LUNC to your wallet and try again.`
+      )
     }
-    return new Error(`Transaction failed: ${m}`)
+    if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network')) {
+      return new Error(`Network error: ${error.message}. Please check your connection and try again.`)
+    }
+    return new Error(`Transaction failed: ${error.message}`)
   }
   return new Error(`Transaction failed: ${String(error)}`)
 }
@@ -118,35 +125,57 @@ export async function executeCw20Send(
   tokenAddress: string,
   recipientContract: string,
   amount: string,
-  embeddedMsg: object
+  embeddedMsg: object,
+  maxRetries: number = 2
 ): Promise<{ txHash: string }> {
-  const wallet = getConnectedWallet()
-  if (!wallet) {
-    throw new Error('Wallet not connected')
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const wallet = getConnectedWallet()
+    if (!wallet) {
+      throw new Error('Wallet not connected')
+    }
+
+    try {
+      const sendMsg = {
+        send: {
+          contract: recipientContract,
+          amount: amount,
+          msg: btoa(JSON.stringify(embeddedMsg)),
+        },
+      }
+
+      const msg = new MsgExecuteContract({
+        sender: wallet.address,
+        contract: tokenAddress,
+        msg: sendMsg,
+        funds: [],
+      })
+
+      const unsignedTx: UnsignedTx = { msgs: [msg], memo: '' }
+      const fee = estimateTerraClassicFee(gasLimits.bridge)
+      const txHash = await wallet.broadcastTx(unsignedTx, fee)
+      const { txResponse } = await wallet.pollTx(txHash)
+
+      if (txResponse.code !== 0) {
+        throw new Error(txResponse.rawLog || `Transaction failed with code ${txResponse.code}`)
+      }
+      return { txHash }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+
+      if (isSequenceMismatchError(error) && attempt < maxRetries) {
+        try {
+          await reconnectWalletForRefresh()
+          await new Promise((r) => setTimeout(r, 1000))
+          continue
+        } catch {
+          throw handleSwapTransactionError(error)
+        }
+      }
+      throw handleSwapTransactionError(error)
+    }
   }
 
-  const sendMsg = {
-    send: {
-      contract: recipientContract,
-      amount: amount,
-      msg: btoa(JSON.stringify(embeddedMsg)),
-    },
-  }
-
-  const msg = new MsgExecuteContract({
-    sender: wallet.address,
-    contract: tokenAddress,
-    msg: sendMsg,
-    funds: [],
-  })
-
-  const unsignedTx: UnsignedTx = { msgs: [msg], memo: '' }
-  const fee = estimateTerraClassicFee(gasLimits.execute)
-  const txHash = await wallet.broadcastTx(unsignedTx, fee)
-  const { txResponse } = await wallet.pollTx(txHash)
-
-  if (txResponse.code !== 0) {
-    throw new Error(txResponse.rawLog || `Transaction failed with code ${txResponse.code}`)
-  }
-  return { txHash }
+  throw lastError || new Error('Transaction failed after retries')
 }

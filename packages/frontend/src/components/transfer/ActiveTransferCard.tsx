@@ -14,6 +14,9 @@ export function ActiveTransferCard() {
     ? getExplorerTxUrl(activeTransfer.sourceChain, activeTransfer.txHash)
     : null
 
+  const decimals = activeTransfer.srcDecimals ?? DECIMALS.LUNC
+  const symbol = activeTransfer.tokenSymbol ?? 'LUNC'
+
   return (
     <div className="border-2 border-amber-500/40 bg-amber-900/20 p-3">
       <div className="mb-1 flex items-center justify-between">
@@ -29,8 +32,8 @@ export function ActiveTransferCard() {
       </div>
       <div className="space-y-1 text-sm text-gray-300">
         <p className="flex items-center gap-1.5">
-          <TokenLogo symbol="LUNC" size={18} />
-          {formatAmount(activeTransfer.amount, DECIMALS.LUNC)} LUNC {activeTransfer.direction === 'terra-to-evm' ? '→' : '←'}{' '}
+          <TokenLogo symbol={symbol} size={18} />
+          {formatAmount(activeTransfer.amount, decimals)} {symbol} {activeTransfer.direction === 'terra-to-evm' ? '→' : '←'}{' '}
           {activeTransfer.sourceChain} to {activeTransfer.destChain}
         </p>
         {activeTransfer.txHash && (

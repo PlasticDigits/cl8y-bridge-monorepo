@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { TokenEntry } from '../../hooks/useTokenRegistry'
 import type { TokenChainInfo } from '../../hooks/useTokenChains'
+import type { TokenVerificationResult, ChainVerification, VerificationCheck } from '../../hooks/useTokenVerification'
 import { useTerraTokenDisplayInfo } from '../../hooks/useTokenDisplayInfo'
 import { useTokenChains } from '../../hooks/useTokenChains'
 import { useTokenList } from '../../hooks/useTokenList'
@@ -12,6 +14,8 @@ import { getTerraAddressFromList } from '../../services/tokenlist'
 
 export interface TokenCardProps {
   token: TokenEntry
+  verification?: TokenVerificationResult
+  onVerify?: () => void
 }
 
 function ChainIcon({ chainId }: { chainId: string }) {
@@ -27,7 +31,6 @@ function ChainIcon({ chainId }: { chainId: string }) {
   }
 }
 
-/** Resolve Terra address for display: prefer terra1xxx, resolve symbol via tokenlist when needed */
 function terraAddressForDisplay(
   c: TokenChainInfo,
   tokenId: string,
@@ -36,24 +39,107 @@ function terraAddressForDisplay(
 ): string {
   if (c.type !== 'cosmos' || !c.address) return c.address || ''
   const addr = c.address.trim()
-  // Already terra1 address
   if (addr.startsWith('terra1')) return addr
-  // cw20:terra1xxx format – extract terra1 part
   const terraMatch = addr.match(/terra1[a-z0-9]+/i)
   if (terraMatch) return terraMatch[0]!
-  // Symbol-like (tdec etc): resolve via tokenlist to get terra1 address
   const resolved = getTerraAddressFromList(tokenlist, tokenId, symbol)
   if (resolved) return resolved
   return addr
 }
 
-export function TokenCard({ token }: TokenCardProps) {
+function StatusIcon({ status }: { status: VerificationCheck['status'] }) {
+  switch (status) {
+    case 'pass':
+      return <span className="text-green-400" title="Pass">&#10003;</span>
+    case 'fail':
+      return <span className="text-red-400" title="Fail">&#10007;</span>
+    case 'error':
+      return <span className="text-amber-400" title="Error">!</span>
+    case 'loading':
+      return <span className="text-gray-400 animate-pulse">...</span>
+    default:
+      return <span className="text-gray-500">-</span>
+  }
+}
+
+function OverallBadge({ result }: { result: TokenVerificationResult }) {
+  if (result.overallStatus === 'loading') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-gray-700 text-gray-300 animate-pulse">
+        Verifying...
+      </span>
+    )
+  }
+  if (result.overallStatus === 'pass') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-green-900/50 text-green-300 border border-green-700/50">
+        <span>&#10003;</span> {result.passedChecks}/{result.totalChecks} Verified
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-red-900/50 text-red-300 border border-red-700/50">
+      <span>&#10007;</span> {result.failedChecks} Failed
+    </span>
+  )
+}
+
+function VerificationPanel({ result }: { result: TokenVerificationResult }) {
+  return (
+    <div className="border-t border-white/10 bg-black/30 px-4 py-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+          Verification Details
+        </span>
+        <span className="text-xs text-gray-500">
+          {result.passedChecks} pass / {result.failedChecks} fail / {result.totalChecks} total
+        </span>
+      </div>
+      {result.chains.map((cv) => (
+        <ChainVerificationSection key={cv.chainKey} chain={cv} />
+      ))}
+    </div>
+  )
+}
+
+function ChainVerificationSection({ chain }: { chain: ChainVerification }) {
+  const hasFailures = chain.checks.some((c) => c.status === 'fail' || c.status === 'error')
+  return (
+    <div className="rounded border border-white/10 bg-black/20">
+      <div className={`flex items-center gap-2 px-3 py-2 text-xs font-medium ${hasFailures ? 'text-red-300' : 'text-green-300'}`}>
+        <ChainIcon chainId={chain.chainKey} />
+        <span>{chain.chainName}</span>
+        <span className="ml-auto text-gray-500">
+          {chain.checks.filter((c) => c.status === 'pass').length}/{chain.checks.length}
+        </span>
+      </div>
+      <ul className="border-t border-white/5 divide-y divide-white/5">
+        {chain.checks.map((check, idx) => (
+          <li key={idx} className="flex items-start gap-2 px-3 py-1.5 text-xs">
+            <span className="shrink-0 mt-0.5 w-4 text-center">
+              <StatusIcon status={check.status} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className={check.status === 'pass' ? 'text-gray-300' : check.status === 'fail' ? 'text-red-300' : 'text-amber-300'}>
+                {check.label}
+              </span>
+              {check.detail && (
+                <p className="text-[11px] text-gray-500 mt-0.5 break-all">{check.detail}</p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+export function TokenCard({ token, verification, onVerify }: TokenCardProps) {
   const display = useTerraTokenDisplayInfo(token.token)
   const chains = useTokenChains(token.token, token.evm_token_address || undefined)
   const { data: tokenlist } = useTokenList()
+  const [expanded, setExpanded] = useState(false)
 
-  // Native tokens use LockUnlock (locked on source, minted on dest)
-  // CW20 tokens use MintBurn (minted/burned across chains)
   const bridgeMode = token.is_native ? 'LockUnlock' : 'MintBurn'
 
   const getExplorerLink = (c: TokenChainInfo, displayAddr: string) => {
@@ -77,6 +163,18 @@ export function TokenCard({ token }: TokenCardProps) {
   const shortAddr = (addr: string) => (addr ? shortenAddress(addr) : '—')
   const decimalsForChain = (c: TokenChainInfo) =>
     c.type === 'cosmos' ? token.terra_decimals : token.evm_decimals
+
+  const handleVerifyClick = () => {
+    if (verification?.overallStatus === 'loading') return
+    if (onVerify) onVerify()
+    setExpanded(true)
+  }
+
+  const handleBadgeClick = () => {
+    if (verification && verification.overallStatus !== 'loading') {
+      setExpanded((prev) => !prev)
+    }
+  }
 
   return (
     <div className="border-2 border-white/20 bg-[#161616]">
@@ -103,6 +201,26 @@ export function TokenCard({ token }: TokenCardProps) {
           {!token.enabled && (
             <span className="ml-2 text-xs text-amber-300">(disabled)</span>
           )}
+          <span className="ml-auto flex items-center gap-2">
+            {verification && verification.overallStatus !== 'idle' ? (
+              <button
+                type="button"
+                onClick={handleBadgeClick}
+                className="cursor-pointer hover:opacity-80 transition-opacity"
+                title={expanded ? 'Hide verification details' : 'Show verification details'}
+              >
+                <OverallBadge result={verification} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleVerifyClick}
+                className="rounded px-2 py-0.5 text-xs font-medium text-gray-400 border border-white/10 hover:text-white hover:border-white/30 transition-colors"
+              >
+                Verify
+              </button>
+            )}
+          </span>
         </h4>
       </div>
       <div className="overflow-x-auto">
@@ -155,6 +273,9 @@ export function TokenCard({ token }: TokenCardProps) {
           </tbody>
         </table>
       </div>
+      {expanded && verification && verification.overallStatus !== 'idle' && (
+        <VerificationPanel result={verification} />
+      )}
     </div>
   )
 }
