@@ -88,7 +88,9 @@ async function pingMultiple(
     return { ok: false, latencyMs: null, error: 'No endpoints configured', endpointCount: 0 }
   }
   if (unique.length === 1) {
-    const result = await pingOne(unique[0])
+    const first = unique[0]
+    if (!first) return { ok: false, latencyMs: null, error: 'No endpoints configured', endpointCount: 0 }
+    const result = await pingOne(first)
     return { ...result, endpointCount: 1 }
   }
 

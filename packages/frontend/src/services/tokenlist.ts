@@ -53,13 +53,16 @@ export function getTokenFromList(
   return entry ? { symbol: entry.symbol, name: entry.name } : null
 }
 
+/** Minimal tokenlist shape for address resolution (tokens array only required) */
+export type TokenlistLike = { tokens: Array<{ symbol?: string; address?: string; denom?: string; type?: string }> } | null
+
 /**
  * Get Terra contract address for a token when tokenlist has it.
  * Used when registry returns symbol/denom but we need terra1xxx for display.
  * Returns address for cw20 tokens matched by tokenId or symbol.
  */
 export function getTerraAddressFromList(
-  tokenlist: TokenlistData | null,
+  tokenlist: TokenlistData | TokenlistLike,
   tokenId: string,
   symbol?: string
 ): string | null {

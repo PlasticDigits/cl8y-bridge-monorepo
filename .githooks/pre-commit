@@ -7,9 +7,10 @@
 #
 # Checks:
 #   1. Formatting (Rust + Solidity) - ALL packages
-#   2. Clippy linting (Rust) - ALL packages  
-#   3. Secret detection (gitleaks)
-#   4. Full E2E tests (starts infra, runs tests, tears down)
+#   2. Clippy linting (Rust) - ALL packages
+#   3. Frontend TypeScript type check
+#   4. Secret detection (gitleaks)
+#   5. Full E2E tests (starts infra, runs tests, tears down) [disabled]
 #
 # Install: git config core.hooksPath .githooks
 # Skip: git commit --no-verify (USE THIS, GET FIRED. CRITICAL security risk)
@@ -129,6 +130,22 @@ if command -v cargo &> /dev/null; then
         CHECKS_PASSED=false
     else
         echo "    ✓ terra contracts clippy clean"
+    fi
+fi
+
+# ==============================================================================
+# FRONTEND - TypeScript type check
+# ==============================================================================
+
+echo ""
+echo "📦 Checking frontend (TypeScript)..."
+
+if [ -d "$REPO_ROOT/packages/frontend" ]; then
+    if ! (cd "$REPO_ROOT/packages/frontend" && npx tsc --noEmit 2>/dev/null); then
+        echo "❌ Frontend has TypeScript errors. Run: cd packages/frontend && npx tsc --noEmit"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ frontend typecheck clean"
     fi
 fi
 

@@ -101,7 +101,6 @@ export function useCw20Balance(
     queryFn: async () => {
       if (!walletAddress || !cw20ContractAddress) return '0';
       const result = await queryContract<{ balance: string }>(
-        lcdUrls,
         cw20ContractAddress,
         { balance: { address: walletAddress } }
       );
