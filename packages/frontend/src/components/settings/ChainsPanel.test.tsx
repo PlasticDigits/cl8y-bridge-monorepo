@@ -7,6 +7,7 @@ import * as useChainStatusModule from '../../hooks/useChainStatus'
 
 vi.mock('../../hooks/useChainStatus', () => ({
   useChainStatus: vi.fn(),
+  useChainStatusPerEndpoint: vi.fn().mockReturnValue({ data: undefined, isLoading: false }),
 }))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

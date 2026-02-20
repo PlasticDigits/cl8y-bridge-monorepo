@@ -5,12 +5,22 @@ import { ChainCard } from './ChainCard'
 export function ChainsPanel() {
   const bridgeChains = getAllBridgeChains()
 
-  // Merge with lib/chains for explorer URLs
+  // Merge with lib/chains for explorer URLs; build RPC/LCD URL arrays for round-robin display
   const chainsWithExplorer = bridgeChains.map((chain) => {
     const info = getChainByChainId(chain.chainId)
+    const rpcUrls =
+      chain.type === 'evm'
+        ? [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])].filter(Boolean)
+        : undefined
+    const lcdUrls =
+      chain.type === 'cosmos'
+        ? (chain.lcdFallbacks?.length ? chain.lcdFallbacks : chain.lcdUrl ? [chain.lcdUrl] : [])
+        : undefined
     return {
       ...chain,
       explorerUrl: info?.explorerUrl ?? '',
+      rpcUrls,
+      lcdUrls,
     }
   })
 
@@ -26,8 +36,8 @@ export function ChainsPanel() {
             name={chain.name}
             chainId={chain.chainId}
             type={chain.type}
-            rpcUrl={chain.type === 'evm' ? chain.rpcUrl : undefined}
-            lcdUrl={chain.type === 'cosmos' ? chain.lcdUrl : undefined}
+            rpcUrls={chain.rpcUrls}
+            lcdUrls={chain.lcdUrls}
             explorerUrl={chain.explorerUrl}
           />
         ))}

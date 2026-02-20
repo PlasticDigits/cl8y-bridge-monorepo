@@ -9,6 +9,7 @@ import * as useBridgeConfigModule from '../hooks/useBridgeConfig'
 
 vi.mock('../hooks/useChainStatus', () => ({
   useChainStatus: vi.fn(),
+  useChainStatusPerEndpoint: vi.fn().mockReturnValue({ data: undefined, isLoading: false }),
 }))
 
 vi.mock('../hooks/useTokenRegistry', () => ({
