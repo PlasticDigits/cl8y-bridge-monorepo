@@ -31,6 +31,7 @@ import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddres
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
+import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 
 const LOG = '[TransferStatus]'
@@ -354,6 +355,16 @@ export default function TransferStatusPage() {
       window.removeEventListener('cl8y-transfer-recorded', handler)
     }
   }, [xchainHashId, getTransferByXchainHashId])
+
+  // Play success sound when transfer completes (only on transition, not on page load)
+  const prevLifecycleRef = useRef<TransferLifecycle | undefined>(undefined)
+  useEffect(() => {
+    const current = transfer?.lifecycle
+    if (current === 'executed' && prevLifecycleRef.current !== undefined && prevLifecycleRef.current !== 'executed') {
+      sounds.playSuccess()
+    }
+    prevLifecycleRef.current = current
+  }, [transfer?.lifecycle])
 
   // --- Terra nonce resolution ---
   // For terra-to-evm transfers that lack a depositNonce, parse it from LCD.

@@ -118,9 +118,6 @@ export function TokenCard({ token }: TokenCardProps) {
               <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-300">
                 Decimals
               </th>
-              <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-300 w-12">
-                Logo
-              </th>
             </tr>
           </thead>
           <tbody>
@@ -151,14 +148,6 @@ export function TokenCard({ token }: TokenCardProps) {
                   </td>
                   <td className="px-4 py-2 font-mono text-gray-400">
                     {decimalsForChain(c)}
-                  </td>
-                  <td className="px-4 py-2">
-                    <TokenLogo
-                      symbol={display.symbol}
-                      tokenId={token.token}
-                      addressForBlockie={display.addressForBlockie}
-                      size={20}
-                    />
                   </td>
                 </tr>
               )

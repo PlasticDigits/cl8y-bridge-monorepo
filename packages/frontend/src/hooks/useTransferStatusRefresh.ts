@@ -10,6 +10,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type { Address, Hex } from 'viem'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
+import { sounds } from '../lib/sounds'
 import { useTransferStore } from '../stores/transfer'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
@@ -121,6 +122,7 @@ export function useTransferStatusRefresh(
         if (r.status !== 'fulfilled' || !r.value) continue
         const t = pending[i]!
         if (shouldAdvance(t.lifecycle, r.value)) {
+          if (r.value === 'executed') sounds.playSuccess()
           updateTransferRecord(t.id, { lifecycle: r.value })
         }
       }

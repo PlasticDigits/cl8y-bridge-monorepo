@@ -385,7 +385,13 @@ function EvmClaimButton({
                 : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
         }`}
       >
-        {isBusy ? <Spinner className="h-4 w-4" /> : <span className="text-base" aria-hidden>💧</span>}
+        {isBusy ? (
+          <Spinner className="h-4 w-4" />
+        ) : isOnCooldown || status === 'success' ? (
+          <span className="text-base font-bold" aria-hidden title="Already claimed">✓</span>
+        ) : (
+          <span className="text-base" aria-hidden>💧</span>
+        )}
       </button>
       {status === 'success' && txHash && (
         <a
@@ -519,7 +525,13 @@ function TerraClaimButton({
                 : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
         }`}
       >
-        {isBusy ? <Spinner className="h-4 w-4" /> : <span className="text-base" aria-hidden>💧</span>}
+        {isBusy ? (
+          <Spinner className="h-4 w-4" />
+        ) : isOnCooldown || status === 'success' ? (
+          <span className="text-base font-bold" aria-hidden title="Already claimed">✓</span>
+        ) : (
+          <span className="text-base" aria-hidden>💧</span>
+        )}
       </button>
       {status === 'success' && txHash && (
         <a
