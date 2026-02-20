@@ -85,19 +85,38 @@ function OverallBadge({ result }: { result: TokenVerificationResult }) {
 }
 
 function VerificationPanel({ result }: { result: TokenVerificationResult }) {
+  const [collapsed, setCollapsed] = useState(false)
+
   return (
     <div className="border-t-2 border-white/20 bg-black/30 px-4 py-3 space-y-3">
-      <div className="flex items-center justify-between">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex w-full items-center justify-between text-left hover:opacity-80 transition-opacity"
+        aria-expanded={!collapsed}
+      >
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
           Verification Details
         </span>
-        <span className="text-xs text-gray-500">
-          {result.passedChecks} pass / {result.failedChecks} fail / {result.totalChecks} total
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">
+            {result.passedChecks} pass / {result.failedChecks} fail / {result.totalChecks} total
+          </span>
+          <span
+            className={`text-gray-400 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+            aria-hidden
+          >
+            ▼
+          </span>
         </span>
-      </div>
-      {result.chains.map((cv) => (
-        <ChainVerificationSection key={cv.chainKey} chain={cv} />
-      ))}
+      </button>
+      {!collapsed && (
+        <div className="space-y-3">
+          {result.chains.map((cv) => (
+            <ChainVerificationSection key={cv.chainKey} chain={cv} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
