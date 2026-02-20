@@ -330,8 +330,28 @@ impl EvmWriter {
             return Ok(());
         }
 
+        // On first poll, look back from head instead of scanning from genesis
+        let lookback: u64 = std::env::var("EVM_POLL_LOOKBACK_BLOCKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5_000);
+        let chunk_size: u64 = std::env::var("EVM_POLL_CHUNK_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5_000)
+            .max(1);
+
         let from_block = if self.last_polled_block == 0 {
-            0
+            let start = current_block.saturating_sub(lookback);
+            info!(
+                chain_id = self.chain_id,
+                current_block,
+                lookback_blocks = lookback,
+                start_block = start,
+                "Writer first poll — looking back {} blocks from head",
+                lookback
+            );
+            start
         } else {
             self.last_polled_block + 1
         };
@@ -339,28 +359,43 @@ impl EvmWriter {
 
         let contract = Bridge::new(self.bridge_address, &provider);
 
-        // Query WithdrawSubmit events
-        let filter = contract
-            .WithdrawSubmit_filter()
-            .from_block(from_block)
-            .to_block(to_block);
+        // Query WithdrawSubmit events in chunks to stay within RPC block range limits
+        let mut all_logs = Vec::new();
+        let mut chunk_start = from_block;
+        while chunk_start <= to_block {
+            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
-        let logs = match filter.query().await {
-            Ok(logs) => logs,
-            Err(e) => {
-                warn!(error = %e, "Failed to query WithdrawSubmit events");
-                return Ok(());
+            let filter = contract
+                .WithdrawSubmit_filter()
+                .from_block(chunk_start)
+                .to_block(chunk_end);
+
+            match filter.query().await {
+                Ok(logs) => {
+                    if !logs.is_empty() {
+                        info!(
+                            from_block = chunk_start,
+                            to_block = chunk_end,
+                            count = logs.len(),
+                            "Found WithdrawSubmit events in chunk"
+                        );
+                    }
+                    all_logs.extend(logs);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        from = chunk_start,
+                        to = chunk_end,
+                        "eth_getLogs failed for WithdrawSubmit chunk — skipping"
+                    );
+                }
             }
-        };
 
-        if !logs.is_empty() {
-            info!(
-                from_block = from_block,
-                to_block = to_block,
-                count = logs.len(),
-                "Found WithdrawSubmit events to process"
-            );
+            chunk_start = chunk_end + 1;
         }
+
+        let logs = all_logs;
 
         for (event, _log) in &logs {
             let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
