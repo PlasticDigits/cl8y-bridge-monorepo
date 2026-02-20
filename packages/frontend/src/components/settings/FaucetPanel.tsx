@@ -92,7 +92,7 @@ const TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0xD68393098E9252A2c377F3474C38B249D7bd5D92',
       opbnb: '0xB3a6385f4B4879cb5CB3188A574cCA0E82614bE1',
-      terra: '', // set from token registry or env
+      terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
     },
   },
   {
@@ -101,7 +101,7 @@ const TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0x65FFbA340768BadEc8002C76a542931757372d58',
       opbnb: '0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6',
-      terra: '',
+      terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
     },
   },
   {
@@ -110,7 +110,7 @@ const TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0xC62351E2445AB732289e07Be795149Bc774bB043',
       opbnb: '0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d',
-      terra: '',
+      terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
     },
   },
 ]
