@@ -17,12 +17,6 @@ async-trait = "0.1"
 # EVM interactions
 alloy = { version = "0.8", features = ["full"] }
 
-# Cosmos/Terra interactions
-# Compatible with LocalTerra CometBFT v0.37.18, terrad v3.6.2, wasmvm v1.5.9
-cosmrs = { version = "0.17", features = ["cosmwasm"] }
-cosmwasm-std = "1.5"
-tendermint = "0.37"
-tendermint-rpc = { version = "0.37", features = ["http-client"] }
 
 # HTTP server (matches canceler package)
 axum = "0.8"

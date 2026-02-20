@@ -2,7 +2,6 @@ use eyre::{eyre, Result, WrapErr};
 use serde::{de, Deserialize, Deserializer};
 use sqlx::PgPool;
 use std::time::Duration;
-use tendermint_rpc::{Client, HttpClient, Url};
 
 use crate::db::models::NewTerraDeposit;
 use crate::db::{get_last_terra_block, update_last_terra_block};
@@ -60,7 +59,6 @@ struct TokenInfo {
 /// V2 only: `action=deposit_native|deposit_cw20_lock|deposit_cw20_mintable_burn`,
 /// attributes include `nonce`, `sender`, `dest_chain`, `dest_account`, `token`, `amount`, `fee`.
 pub struct TerraWatcher {
-    rpc_client: HttpClient,
     lcd_url: String,
     bridge_address: String,
     chain_id: String,
@@ -70,9 +68,6 @@ pub struct TerraWatcher {
 impl TerraWatcher {
     /// Create a new Terra watcher
     pub async fn new(config: &crate::config::TerraConfig, db: PgPool) -> Result<Self> {
-        let url: Url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
-        let rpc_client = HttpClient::new(url).wrap_err("Failed to create RPC client")?;
-
         tracing::info!(
             chain_id = %config.chain_id,
             bridge_address = %config.bridge_address,
@@ -81,7 +76,6 @@ impl TerraWatcher {
         );
 
         Ok(Self {
-            rpc_client,
             lcd_url: config.lcd_url.clone(),
             bridge_address: config.bridge_address.clone(),
             chain_id: config.chain_id.clone(),
@@ -92,23 +86,53 @@ impl TerraWatcher {
     /// Run the watcher loop
     pub async fn run(&self) -> Result<()> {
         let poll_interval = Duration::from_millis(1000);
+        let mut consecutive_failures: u32 = 0;
+        const MAX_CONSECUTIVE_FAILURES: u32 = 30;
 
         loop {
-            // Get last processed height from DB
-            let last_height = get_last_terra_block(&self.db, &self.chain_id)
-                .await?
-                .unwrap_or(0);
+            let last_height = match get_last_terra_block(&self.db, &self.chain_id).await {
+                Ok(h) => h.unwrap_or(0),
+                Err(e) => {
+                    tracing::error!(
+                        chain_id = %self.chain_id,
+                        error = %e,
+                        "Failed to read last Terra block from DB"
+                    );
+                    return Err(e);
+                }
+            };
 
-            // Get current height
-            let current_height = self.get_current_height().await?;
+            let current_height = match self.get_current_height().await {
+                Ok(h) => {
+                    consecutive_failures = 0;
+                    h
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    let backoff = Duration::from_secs((2u64).pow(consecutive_failures.min(6)));
+                    tracing::warn!(
+                        chain_id = %self.chain_id,
+                        error = %e,
+                        consecutive_failures,
+                        backoff_secs = backoff.as_secs(),
+                        "Failed to get Terra block height, will retry"
+                    );
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        return Err(e.wrap_err(format!(
+                            "Terra height fetch failed {} consecutive times",
+                            consecutive_failures
+                        )));
+                    }
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+            };
 
-            // Skip if no new blocks
             if current_height <= last_height as u64 {
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
 
-            // Process new blocks one at a time
             for height in (last_height + 1) as u64..=current_height {
                 tracing::info!(
                     chain_id = %self.chain_id,
@@ -118,13 +142,10 @@ impl TerraWatcher {
 
                 match self.process_block(height).await {
                     Ok(()) => {
-                        // Update last processed height
                         update_last_terra_block(&self.db, &self.chain_id, height as i64).await?;
                     }
                     Err(e) => {
-                        // Transient errors (e.g. "could not find results for height")
-                        // should not crash the watcher. Log and retry on next cycle.
-                        let err_str = format!("{}", e);
+                        let err_str = format!("{e}");
                         if err_str.contains("could not find results for height")
                             || err_str.contains("block results")
                         {
@@ -134,10 +155,8 @@ impl TerraWatcher {
                                 error = %e,
                                 "Transient error processing Terra block, will retry next cycle"
                             );
-                            // Break the inner loop so we re-query current_height next cycle
                             break;
                         }
-                        // Non-transient errors still propagate
                         return Err(e);
                     }
                 }
@@ -149,17 +168,7 @@ impl TerraWatcher {
 
     /// Process transactions in a block
     async fn process_block(&self, height: u64) -> Result<()> {
-        // Query block results to get transactions (kept for future use)
-        let _block_results = self
-            .rpc_client
-            .block_results(
-                tendermint::block::Height::try_from(height)
-                    .map_err(|e| eyre::eyre!("Invalid block height {}: {}", height, e))?,
-            )
-            .await
-            .wrap_err("Failed to get block results")?;
-
-        // Also query via LCD for transaction details
+        // Query via LCD for transaction details
         let url = format!(
             "{}/cosmos/tx/v1beta1/txs?events=wasm._contract_address='{}'&events=tx.height={}",
             self.lcd_url, self.bridge_address, height
@@ -358,15 +367,37 @@ impl TerraWatcher {
         }
     }
 
-    /// Get the current block height
+    /// Get the current block height via LCD REST API.
+    ///
+    /// Uses the LCD `/cosmos/base/tendermint/v1beta1/blocks/latest` endpoint
+    /// instead of tendermint-rpc `status()` which fails on Terra Classic due to
+    /// validator key deserialization issues (invalid secp256k1 key).
     async fn get_current_height(&self) -> Result<u64> {
-        let status = self
-            .rpc_client
-            .status()
-            .await
-            .wrap_err("Failed to get node status")?;
+        let url = format!(
+            "{}/cosmos/base/tendermint/v1beta1/blocks/latest",
+            self.lcd_url
+        );
 
-        Ok(status.sync_info.latest_block_height.value())
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .wrap_err("Failed to build HTTP client")?;
+
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .wrap_err("Failed to query Terra block height")?;
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .wrap_err("Failed to parse Terra block height response")?;
+
+        json["block"]["header"]["height"]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| eyre!("Missing or invalid height in LCD response"))
     }
 }
 
@@ -534,9 +565,7 @@ mod tests {
     }
 
     fn watcher_for_parse_tests() -> TerraWatcher {
-        let url: Url = "http://localhost:26657".parse().unwrap();
         TerraWatcher {
-            rpc_client: HttpClient::new(url).unwrap(),
             lcd_url: "http://localhost:1317".to_string(),
             bridge_address: "terra14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9ssrc8au"
                 .to_string(),
