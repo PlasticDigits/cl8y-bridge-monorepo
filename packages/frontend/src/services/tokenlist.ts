@@ -52,3 +52,30 @@ export function getTokenFromList(
   })
   return entry ? { symbol: entry.symbol, name: entry.name } : null
 }
+
+/**
+ * Get Terra contract address for a token when tokenlist has it.
+ * Used when registry returns symbol/denom but we need terra1xxx for display.
+ * Returns address for cw20 tokens matched by tokenId or symbol.
+ */
+export function getTerraAddressFromList(
+  tokenlist: TokenlistData | null,
+  tokenId: string,
+  symbol?: string
+): string | null {
+  if (!tokenlist?.tokens) return null
+  const id = tokenId.trim().toLowerCase()
+  // Direct match: tokenId is address or denom
+  let entry = tokenlist.tokens.find((t) => {
+    if (t.address) return t.address.toLowerCase() === id
+    if (t.denom) return t.denom.toLowerCase() === id
+    return false
+  })
+  // Fallback: match by symbol for cw20 (registry may store symbol as token id)
+  if (!entry?.address && symbol?.trim()) {
+    entry = tokenlist.tokens.find(
+      (t) => t.type === 'cw20' && t.symbol?.toLowerCase() === symbol.trim().toLowerCase()
+    ) ?? undefined
+  }
+  return entry?.address ?? null
+}

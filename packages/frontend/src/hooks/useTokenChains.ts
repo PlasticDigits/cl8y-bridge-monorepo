@@ -7,7 +7,7 @@ import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { bytes32ToAddress, normalizeToEvmAddress } from '../services/evm/tokenRegistry'
-import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
+import { BRIDGE_CHAINS, getExplorerUrlForChain, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
 
 export interface TokenChainInfo {
@@ -16,6 +16,8 @@ export interface TokenChainInfo {
   type: 'cosmos' | 'evm'
   address: string
   rpcUrl?: string
+  /** Base explorer URL for building token/address links */
+  explorerUrl: string
 }
 
 /**
@@ -68,6 +70,7 @@ export function useTokenChains(
           type: 'cosmos',
           address: terraTokenId ?? '',
           rpcUrl: config.lcdUrl,
+          explorerUrl: getExplorerUrlForChain(chainId),
         })
       }
     }
@@ -83,6 +86,7 @@ export function useTokenChains(
           type: 'evm',
           address: addr,
           rpcUrl: config.rpcUrl,
+          explorerUrl: getExplorerUrlForChain(chainId),
         })
       }
     })

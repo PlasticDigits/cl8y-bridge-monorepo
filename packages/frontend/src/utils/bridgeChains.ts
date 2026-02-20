@@ -218,6 +218,22 @@ export function getBridgeChainEntryByBytes4(
 }
 
 /**
+ * Get explorer base URL for a bridge chain key (e.g. "terra", "bsc").
+ * Uses chainlist when loaded, otherwise falls back to CHAIN_DISPLAY.
+ */
+export function getExplorerUrlForChain(chainKey: string): string {
+  try {
+    const chainlist = getChainlist()
+    const config = BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[chainKey]
+    const entry = config ? getChainlistEntry(chainlist, chainKey, config.chainId) : undefined
+    if (entry?.explorerUrl) return entry.explorerUrl
+  } catch {
+    // Chainlist not loaded
+  }
+  return CHAIN_DISPLAY[chainKey]?.explorerUrl ?? ''
+}
+
+/**
  * Get chain display info (name, icon) for a bridge chain key.
  */
 export function getChainDisplayInfo(chainKey: string): { name: string; icon: string } {
