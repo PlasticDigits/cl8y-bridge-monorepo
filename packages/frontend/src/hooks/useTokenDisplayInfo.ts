@@ -9,6 +9,7 @@ import { useQueries } from '@tanstack/react-query'
 import { useTokenList } from './useTokenList'
 import { useCw20TokenInfo, useEvmTokenInfo, fetchEvmTokenInfo, fetchCw20TokenInfo } from './useTokenOnchainInfo'
 import { getTokenFromList } from '../services/tokenlist'
+import type { BridgeChainConfig } from '../types/chain'
 import { isAddressLike, shortenAddress } from '../utils/shortenAddress'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
 
@@ -56,13 +57,14 @@ export function useTerraTokenDisplayInfo(tokenId: string | undefined) {
 
 /**
  * Get display info for an EVM token address.
+ * Prefer chainConfig (enables RPC fallbacks) over rpcUrl.
  */
 export function useEvmTokenDisplayInfo(
   evmAddress: string | undefined,
-  rpcUrl: string | undefined,
+  rpcUrlOrConfig: string | BridgeChainConfig | undefined,
   enabled: boolean
 ) {
-  const { data: evmInfo } = useEvmTokenInfo(evmAddress, rpcUrl ?? '', enabled)
+  const { data: evmInfo } = useEvmTokenInfo(evmAddress, rpcUrlOrConfig, enabled)
 
   return useMemo((): TokenDisplayInfo => {
     if (!evmAddress || !evmAddress.startsWith('0x'))
@@ -88,16 +90,18 @@ export function useEvmTokenDisplayInfo(
 
 /**
  * Resolve display labels for token select options (dropdown).
- * Uses tokenlist + CW20 onchain for Terra, ERC20 onchain for EVM when rpcUrl provided.
- * Returns map of token id -> displayLabel for use in TokenSelect.
+ * Uses tokenlist + CW20 onchain for Terra, ERC20 onchain for EVM when sourceChainConfig provided.
+ * Prefer sourceChainConfig (enables RPC fallbacks) over sourceChainRpcUrl.
  */
 export function useTokenOptionsDisplayMap(
   tokens: Array<{ id: string; symbol: string; tokenId: string; evmTokenAddress?: string }>,
-  sourceChainRpcUrl?: string
+  /** Chain config (enables RPC fallbacks) or single rpcUrl for backward compat */
+  sourceChainConfigOrRpcUrl?: BridgeChainConfig | string
 ): Record<string, string> {
   const { data: tokenlist } = useTokenList()
   const terraCw20Tokens = tokens.filter((t) => t.tokenId?.startsWith('terra1'))
   const evmTokens = tokens.filter((t) => t.evmTokenAddress && t.evmTokenAddress.startsWith('0x'))
+  const evmRpcOrConfig = sourceChainConfigOrRpcUrl
 
   const cw20Results = useQueries({
     queries: terraCw20Tokens.map((t) => ({
@@ -113,12 +117,12 @@ export function useTokenOptionsDisplayMap(
 
   const evmResults = useQueries({
     queries: evmTokens.map((t) => ({
-      queryKey: ['evmTokenInfo', t.evmTokenAddress, sourceChainRpcUrl],
+      queryKey: ['evmTokenInfo', t.evmTokenAddress, evmRpcOrConfig],
       queryFn: () =>
-        t.evmTokenAddress && sourceChainRpcUrl
-          ? fetchEvmTokenInfo(t.evmTokenAddress, sourceChainRpcUrl)
+        t.evmTokenAddress && evmRpcOrConfig
+          ? fetchEvmTokenInfo(t.evmTokenAddress, evmRpcOrConfig)
           : { symbol: '', name: '' },
-      enabled: !!t.evmTokenAddress && !!sourceChainRpcUrl,
+      enabled: !!t.evmTokenAddress && !!evmRpcOrConfig,
       staleTime: 5 * 60 * 1000,
     })),
   })
@@ -140,7 +144,7 @@ export function useTokenOptionsDisplayMap(
           continue
         }
       }
-      if (t.evmTokenAddress && sourceChainRpcUrl) {
+      if (t.evmTokenAddress && evmRpcOrConfig) {
         const idx = evmTokens.findIndex((x) => x.evmTokenAddress === t.evmTokenAddress)
         const data = evmResults[idx]?.data
         const symbol = data?.symbol ?? (data?.name && !isAddressLike(data.name) ? data.name : '')
@@ -154,7 +158,7 @@ export function useTokenOptionsDisplayMap(
         fallback && !isAddressLike(fallback) ? fallback : isAddressLike(t.symbol) ? shortenAddress(t.symbol) : t.symbol
     }
     return map
-  }, [tokens, tokenlist, terraCw20Tokens, cw20Results, evmTokens, evmResults, sourceChainRpcUrl])
+  }, [tokens, tokenlist, terraCw20Tokens, cw20Results, evmTokens, evmResults, evmRpcOrConfig])
 }
 
 /**

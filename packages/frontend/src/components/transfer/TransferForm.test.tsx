@@ -68,6 +68,10 @@ vi.mock('../../hooks/useBridgeConfig', () => ({
   useTokenDetails: () => ({ data: null }),
 }))
 
+vi.mock('../../hooks/useContract', () => ({
+  useCw20Balance: () => ({ data: '0' }),
+}))
+
 vi.mock('../../hooks/useTokenDisplayInfo', () => ({
   useTerraTokenDisplayInfo: (tokenId: string) => ({
     displayLabel: tokenId === 'uluna' ? 'LUNC' : tokenId === 'uusd' ? 'USTC' : tokenId,

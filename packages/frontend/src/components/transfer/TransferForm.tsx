@@ -8,6 +8,7 @@ import { useTokenList } from '../../hooks/useTokenList'
 import { useTokenDestMapping } from '../../hooks/useTokenDestMapping'
 import { useSourceChainTokenMappings } from '../../hooks/useSourceChainTokenMappings'
 import { useBridgeConfig, useTokenDetails } from '../../hooks/useBridgeConfig'
+import { useCw20Balance } from '../../hooks/useContract'
 import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from '../../hooks/useTokenDisplayInfo'
 import {
   useBridgeDeposit,
@@ -22,7 +23,7 @@ import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
 import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
-import { getTokenFromList, type TokenlistData } from '../../services/tokenlist'
+import { getTokenFromList, getTerraAddressFromList, type TokenlistData } from '../../services/tokenlist'
 import { shortenAddress } from '../../utils/shortenAddress'
 import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
@@ -334,6 +335,27 @@ export function TransferForm() {
   )
 
   const terraDisplay = useTerraTokenDisplayInfo(selectedTokenId || undefined)
+
+  // Resolve terra1 address for CW20 tokens (e.g. TDEC); native uluna uses bank balance
+  const terraCw20Address = useMemo(() => {
+    if (!selectedTokenId || selectedTokenId === 'uluna') return null
+    if (selectedTokenId.startsWith('terra1')) return selectedTokenId
+    const cw20Match = selectedTokenId.match(/cw20:(terra1[a-z0-9]+)/i)
+    if (cw20Match?.[1]) return cw20Match[1]
+    const symbol = transferTokens.find((t) => t.id === selectedTokenId)?.symbol
+    return getTerraAddressFromList(tokenlist ?? null, selectedTokenId, symbol) ?? null
+  }, [selectedTokenId, transferTokens, tokenlist])
+
+  const { data: terraCw20Balance } = useCw20Balance(
+    terraAddress ?? undefined,
+    terraCw20Address ?? undefined,
+    isSourceTerra && !!terraCw20Address
+  )
+
+  const terraSourceBalance = isSourceTerra
+    ? (selectedTokenId === 'uluna' ? luncBalance : (terraCw20Balance ?? '0'))
+    : '0'
+
   const evmSourceDisplay = useEvmTokenDisplayInfo(
     tokenConfig?.address,
     sourceChainConfig?.type === 'evm' ? sourceChainConfig.rpcUrl : undefined,
@@ -356,6 +378,7 @@ export function TransferForm() {
       bridgeAddress: config.bridgeAddress as Address,
       nativeChainId: typeof config.chainId === 'number' ? config.chainId : undefined,
       rpcUrl: config.rpcUrl,
+      sourceChainConfig: config,
     }
   }, [sourceChain])
 
@@ -374,6 +397,7 @@ export function TransferForm() {
           bridgeAddress: sourceBridgeConfig?.bridgeAddress,
           sourceNativeChainId: sourceBridgeConfig?.nativeChainId,
           sourceRpcUrl: sourceBridgeConfig?.rpcUrl,
+          sourceChainConfig: sourceBridgeConfig?.sourceChainConfig,
         }
       : undefined
   )
@@ -424,7 +448,7 @@ export function TransferForm() {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
-      balanceStr = luncBalance
+      balanceStr = terraSourceBalance
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     }
@@ -463,7 +487,7 @@ export function TransferForm() {
     }
   }, [
     isSourceTerra,
-    luncBalance,
+    terraSourceBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -477,7 +501,7 @@ export function TransferForm() {
     const srcDecimals = amountDecimals
     let balanceStr: string
     if (isSourceTerra) {
-      balanceStr = luncBalance
+      balanceStr = terraSourceBalance
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     } else {
@@ -504,7 +528,7 @@ export function TransferForm() {
     setAmount(formatAmount(effectiveMax.toString(), srcDecimals))
   }, [
     isSourceTerra,
-    luncBalance,
+    terraSourceBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -924,7 +948,7 @@ export function TransferForm() {
   }
 
   const balanceDisplay = isSourceTerra
-    ? formatAmount(luncBalance, terraDecimals)
+    ? formatAmount(terraSourceBalance, terraDecimals)
     : tokenBalance !== undefined && tokenConfig
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
@@ -1014,7 +1038,7 @@ export function TransferForm() {
         value={amount}
         onChange={setAmount}
         onMax={
-          isSourceTerra && luncBalance
+          isSourceTerra && terraSourceBalance
             ? handleMax
             : tokenBalance !== undefined && tokenConfig
             ? handleMax
@@ -1024,7 +1048,7 @@ export function TransferForm() {
         selectedTokenId={selectedTokenId}
         onTokenChange={setSelectedTokenId}
         symbol={selectedSymbol}
-        sourceChainRpcUrl={!isSourceTerra && sourceChainConfig?.type === 'evm' ? sourceChainConfig.rpcUrl : undefined}
+        sourceChainConfigOrRpcUrl={!isSourceTerra && sourceChainConfig?.type === 'evm' ? sourceChainConfig : undefined}
         maxLabel={displayMaxLabel}
         minLabel={displayMinLabel}
       />

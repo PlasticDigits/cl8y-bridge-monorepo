@@ -49,18 +49,18 @@ export function useTokenDisplay({
     [tokenId]
   )
   const isEvm = useMemo(() => !!tokenId?.startsWith('0x'), [tokenId])
-  const rpcUrl = useMemo(() => {
+  const evmChainConfig = useMemo(() => {
     if (!sourceChain) return undefined
     const tier = DEFAULT_NETWORK as NetworkTier
     const config = BRIDGE_CHAINS[tier]?.[sourceChain]
-    return config?.type === 'evm' ? config.rpcUrl : undefined
+    return config?.type === 'evm' ? config : undefined
   }, [sourceChain])
 
   const terraInfo = useTerraTokenDisplayInfo(isTerra ? tokenId ?? undefined : undefined)
   const evmInfo = useEvmTokenDisplayInfo(
     isEvm ? tokenId ?? undefined : undefined,
-    rpcUrl ?? undefined,
-    !!isEvm && !!rpcUrl
+    evmChainConfig,
+    !!isEvm && !!evmChainConfig
   )
 
   return useMemo((): TokenDisplayResult => {

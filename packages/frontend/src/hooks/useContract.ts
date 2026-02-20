@@ -87,6 +87,33 @@ export function useNativeBalance(
   });
 }
 
+/**
+ * Query CW20 token balance for a wallet address.
+ * Returns balance in base units (same format as useNativeBalance).
+ */
+export function useCw20Balance(
+  walletAddress: string | undefined,
+  cw20ContractAddress: string | undefined,
+  enabled: boolean = true
+) {
+  return useQuery({
+    queryKey: ['cw20Balance', walletAddress, cw20ContractAddress],
+    queryFn: async () => {
+      if (!walletAddress || !cw20ContractAddress) return '0';
+      const result = await queryContract<{ balance: string }>(
+        lcdUrls,
+        cw20ContractAddress,
+        { balance: { address: walletAddress } }
+      );
+      return result?.balance || '0';
+    },
+    enabled: !!walletAddress && !!cw20ContractAddress && enabled,
+    refetchInterval: POLLING_INTERVAL,
+    staleTime: POLLING_INTERVAL / 2,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
 // ============================================
 // Invalidation Helpers
 // ============================================
@@ -97,6 +124,9 @@ export function useInvalidateQueries() {
   return {
     invalidateAll: () => queryClient.invalidateQueries(),
     invalidateBridge: () => queryClient.invalidateQueries({ queryKey: ['bridge'] }),
-    invalidateBalances: () => queryClient.invalidateQueries({ queryKey: ['nativeBalance'] }),
+    invalidateBalances: () => {
+      queryClient.invalidateQueries({ queryKey: ['nativeBalance'] })
+      queryClient.invalidateQueries({ queryKey: ['cw20Balance'] })
+    },
   };
 }

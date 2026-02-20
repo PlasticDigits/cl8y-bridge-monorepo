@@ -8,6 +8,8 @@ import { queryContract } from '../services/lcdClient'
 import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants'
 import { getAddress } from 'viem'
 import { createPublicClient, http } from 'viem'
+import { getEvmClient } from '../services/evmClient'
+import type { BridgeChainConfig } from '../types/chain'
 
 const ERC20_ABI = [
   {
@@ -60,14 +62,17 @@ export function useCw20TokenInfo(terraAddress: string | undefined, enabled: bool
   })
 }
 
-/** Fetcher for EVM token symbol/name - used by useEvmTokenInfo and useQueries batch */
+/** Fetcher for EVM token symbol/name. Uses getEvmClient (with RPC fallbacks) when chainConfig provided. */
 export async function fetchEvmTokenInfo(
   evmAddress: string,
-  rpcUrl: string
+  rpcUrlOrConfig: string | BridgeChainConfig
 ): Promise<{ symbol: string; name: string }> {
   if (!evmAddress?.startsWith('0x')) return { symbol: '', name: '' }
   const addr = getAddress(evmAddress)
-  const client = createPublicClient({ transport: http(rpcUrl) })
+  const client =
+    typeof rpcUrlOrConfig === 'string'
+      ? createPublicClient({ transport: http(rpcUrlOrConfig) })
+      : getEvmClient(rpcUrlOrConfig as BridgeChainConfig & { chainId: number })
   const [symbol, name] = await Promise.all([
     client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'symbol' }),
     client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'name' }),
@@ -77,14 +82,16 @@ export async function fetchEvmTokenInfo(
 
 export function useEvmTokenInfo(
   evmAddress: string | undefined,
-  rpcUrl: string,
+  rpcUrlOrConfig: string | BridgeChainConfig | undefined,
   enabled: boolean
 ) {
   return useQuery({
-    queryKey: ['evmTokenInfo', evmAddress, rpcUrl],
+    queryKey: ['evmTokenInfo', evmAddress, rpcUrlOrConfig],
     queryFn: () =>
-      evmAddress && rpcUrl ? fetchEvmTokenInfo(evmAddress, rpcUrl) : { symbol: '', name: '' },
-    enabled: !!evmAddress && evmAddress.startsWith('0x') && !!rpcUrl && enabled,
+      evmAddress && rpcUrlOrConfig
+        ? fetchEvmTokenInfo(evmAddress, rpcUrlOrConfig)
+        : { symbol: '', name: '' },
+    enabled: !!evmAddress && evmAddress.startsWith('0x') && !!rpcUrlOrConfig && enabled,
     staleTime: 5 * 60 * 1000,
   })
 }

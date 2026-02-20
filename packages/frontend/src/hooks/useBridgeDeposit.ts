@@ -20,9 +20,12 @@ import {
   useSwitchChain,
 } from 'wagmi'
 import { createPublicClient, http, parseUnits, pad, type Address, type Hex } from 'viem'
+import { useQuery } from '@tanstack/react-query'
 import { DECIMALS } from '../utils/constants'
 import { terraAddressToBytes32 } from '../services/hashVerification'
 import { getCosmosBridgeChains } from '../utils/bridgeChains'
+import { getEvmClient } from '../services/evmClient'
+import type { BridgeChainConfig } from '../types/chain'
 
 // Configuration
 const TRANSACTION_TIMEOUT_MS = 120_000 // 2 minutes default timeout
@@ -110,6 +113,13 @@ export interface UseDepositParams {
    * contract exists) that must target the source chain even before wallet switching.
    */
   sourceRpcUrl?: string
+  /**
+   * Full source chain config with rpcUrl + rpcFallbacks. When provided, token
+   * balance is fetched via our RPC (with retry/fallback) instead of wagmi's
+   * chain-bound client. Ensures balance shows correctly for any source chain
+   * (e.g. opBNB) even when the wallet is connected to a different chain (e.g. BSC).
+   */
+  sourceChainConfig?: BridgeChainConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -270,16 +280,45 @@ export function useBridgeDeposit(params?: UseDepositParams) {
 
   // Single approval: Bridge does both fee transferFrom and net transferFrom to LockUnlock
 
-  // Read token balance
-  const { data: tokenBalance } = useReadContract({
+  // Read token balance from source chain using our RPC (with fallbacks) when available.
+  // This ensures balance shows for opBNB etc. even when wallet is connected to BSC,
+  // instead of wagmi's useReadContract which is bound to the wallet's current chain.
+  const useSourceRpcBalance =
+    !!params?.sourceChainConfig &&
+    params.sourceChainConfig.type === 'evm' &&
+    !!userAddress &&
+    !!params?.tokenAddress
+
+  const { data: sourceRpcBalance } = useQuery({
+    queryKey: ['evmTokenBalance', userAddress, params?.tokenAddress, params?.sourceChainConfig?.chainId],
+    queryFn: async () => {
+      if (!params?.sourceChainConfig || params.sourceChainConfig.type !== 'evm' || !userAddress || !params?.tokenAddress)
+        return undefined
+      const client = getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
+      return client.readContract({
+        address: params.tokenAddress,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [userAddress],
+      })
+    },
+    enabled: useSourceRpcBalance,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+
+  // Fallback: use wagmi's useReadContract when we don't have sourceChainConfig
+  const { data: wagmiBalance } = useReadContract({
     address: params?.tokenAddress,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: userAddress ? [userAddress] : undefined,
     query: {
-      enabled: !!userAddress && !!params?.tokenAddress,
+      enabled: !!userAddress && !!params?.tokenAddress && !useSourceRpcBalance,
     },
   })
+
+  const tokenBalance = useSourceRpcBalance ? sourceRpcBalance : wagmiBalance
 
   /** Start timeout for transaction */
   const startTimeout = useCallback((onTimeout: () => void) => {
@@ -342,16 +381,15 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       const amountWei = parseUnits(amount, tokenDecimals)
 
       // Pre-flight: verify the token contract exists on the SOURCE chain.
-      // After switchChainAsync(), the React hook `publicClient` still references
-      // the old chain until re-render, so we create a one-off client targeting
-      // the source chain's RPC directly.
+      // Use our RPC (with fallbacks) when sourceChainConfig is provided.
       {
-        const rpcUrl = params?.sourceRpcUrl
-        const checkClient = rpcUrl
-          ? createPublicClient({ transport: http(rpcUrl) })
-          : publicClient
-        if (!rpcUrl) {
-          console.warn('[useBridgeDeposit] No sourceRpcUrl provided, using wallet-bound publicClient for pre-flight check')
+        const checkClient = params?.sourceChainConfig && params.sourceChainConfig.type === 'evm'
+          ? getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
+          : params?.sourceRpcUrl
+            ? createPublicClient({ transport: http(params.sourceRpcUrl) })
+            : publicClient
+        if (!params?.sourceRpcUrl && !params?.sourceChainConfig) {
+          console.warn('[useBridgeDeposit] No sourceRpcUrl/sourceChainConfig provided, using wallet-bound publicClient for pre-flight check')
         }
         if (checkClient) {
           const code = await checkClient.getCode({ address: params.tokenAddress })

@@ -1,6 +1,7 @@
 import { TokenLogo } from '../ui'
 import type { TokenOption } from './TokenSelect'
 import { sounds } from '../../lib/sounds'
+import type { BridgeChainConfig } from '../../types/chain'
 import { TokenSelect } from './TokenSelect'
 import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 
@@ -15,8 +16,8 @@ export interface AmountInputProps {
   onTokenChange?: (tokenId: string) => void
   placeholder?: string
   disabled?: boolean
-  /** Source chain RPC URL when EVM - enables onchain symbol lookup in token dropdown */
-  sourceChainRpcUrl?: string
+  /** Source chain config or rpcUrl when EVM - enables onchain symbol lookup with RPC fallbacks */
+  sourceChainConfigOrRpcUrl?: BridgeChainConfig | string
   /** Compact-formatted max amount for label (e.g. "100" or "1.23k") */
   maxLabel?: string
   /** Compact-formatted min amount for label (e.g. "0.001" or "1e-5") */
@@ -33,7 +34,7 @@ export function AmountInput({
   onTokenChange,
   placeholder = '0.0',
   disabled,
-  sourceChainRpcUrl,
+  sourceChainConfigOrRpcUrl,
   maxLabel,
   minLabel,
 }: AmountInputProps) {
@@ -112,7 +113,7 @@ export function AmountInput({
               value={selectedTokenId ?? tokens[0]?.id ?? ''}
               onChange={onTokenChange}
               disabled={disabled}
-              sourceChainRpcUrl={sourceChainRpcUrl}
+              sourceChainConfigOrRpcUrl={sourceChainConfigOrRpcUrl}
             />
           ) : (
             <>

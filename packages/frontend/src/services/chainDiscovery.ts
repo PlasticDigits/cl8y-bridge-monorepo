@@ -7,7 +7,7 @@
 
 import type { BridgeChainConfig } from '../types/chain'
 import { getAllBridgeChains, getBridgeChainByBytes4 } from '../utils/bridgeChains'
-import { createPublicClient, http } from 'viem'
+import { getEvmClient } from './evmClient'
 import type { Address } from 'viem'
 
 // Static map of well-known V2 bytes4 chain IDs.
@@ -94,15 +94,7 @@ export async function discoverChainIds(
     }
 
     try {
-      const client = createPublicClient({
-        transport: http(chain.rpcUrl, { timeout: 5000 }),
-        chain: {
-          id: chain.chainId as number,
-          name: chain.name,
-          nativeCurrency: { decimals: 18, name: 'ETH', symbol: 'ETH' },
-          rpcUrls: { default: { http: [chain.rpcUrl] } },
-        },
-      })
+      const client = getEvmClient(chain as BridgeChainConfig & { chainId: number })
 
       const bytes4 = await client.readContract({
         address: chain.bridgeAddress as Address,
@@ -186,15 +178,7 @@ export async function discoverRegisteredChains(
   if (!seed) return null
 
   try {
-    const client = createPublicClient({
-      transport: http(seed.rpcUrl, { timeout: 8000 }),
-      chain: {
-        id: seed.chainId as number,
-        name: seed.name,
-        nativeCurrency: { decimals: 18, name: 'ETH', symbol: 'ETH' },
-        rpcUrls: { default: { http: [seed.rpcUrl] } },
-      },
-    })
+    const client = getEvmClient(seed as BridgeChainConfig & { chainId: number })
 
     const registryAddr = await client.readContract({
       address: seed.bridgeAddress as Address,

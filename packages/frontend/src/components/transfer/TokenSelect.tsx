@@ -5,6 +5,7 @@ import { useTokenList } from '../../hooks/useTokenList'
 import { useTokenOptionsDisplayMap } from '../../hooks/useTokenDisplayInfo'
 import { getTokenFromList } from '../../services/tokenlist'
 import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
+import type { BridgeChainConfig } from '../../types/chain'
 
 export interface TokenOption {
   id: string
@@ -20,8 +21,8 @@ export interface TokenSelectProps {
   onChange: (tokenId: string) => void
   id?: string
   disabled?: boolean
-  /** Source chain RPC URL when source is EVM - enables onchain symbol lookup for dropdown */
-  sourceChainRpcUrl?: string
+  /** Source chain config (enables RPC fallbacks) or rpcUrl when EVM - enables onchain symbol lookup */
+  sourceChainConfigOrRpcUrl?: BridgeChainConfig | string
 }
 
 function getDisplayLabel(
@@ -44,11 +45,11 @@ function getAddressForBlockie(token: TokenOption): string | undefined {
   return isAddressLike(token.tokenId) ? token.tokenId : undefined
 }
 
-export function TokenSelect({ tokens, value, onChange, id = 'token-select', disabled, sourceChainRpcUrl }: TokenSelectProps) {
+export function TokenSelect({ tokens, value, onChange, id = 'token-select', disabled, sourceChainConfigOrRpcUrl }: TokenSelectProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const { data: tokenlist } = useTokenList()
-  const displayMap = useTokenOptionsDisplayMap(tokens, sourceChainRpcUrl)
+  const displayMap = useTokenOptionsDisplayMap(tokens, sourceChainConfigOrRpcUrl)
 
   const selected = tokens.find((t) => t.id === value) ?? tokens[0]
 
