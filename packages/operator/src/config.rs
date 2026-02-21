@@ -42,6 +42,9 @@ impl fmt::Debug for DatabaseConfig {
 #[derive(Clone, Deserialize)]
 pub struct EvmConfig {
     pub rpc_url: String,
+    /// Additional RPC URLs for fallback (tried in order when primary fails)
+    #[serde(default)]
+    pub rpc_fallback_urls: Vec<String>,
     pub chain_id: u64,
     pub bridge_address: String,
     pub private_key: String,
@@ -62,6 +65,7 @@ impl fmt::Debug for EvmConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EvmConfig")
             .field("rpc_url", &self.rpc_url)
+            .field("rpc_fallback_urls", &self.rpc_fallback_urls)
             .field("chain_id", &self.chain_id)
             .field("bridge_address", &self.bridge_address)
             .field("private_key", &"<redacted>")
@@ -69,6 +73,15 @@ impl fmt::Debug for EvmConfig {
             .field("this_chain_id", &self.this_chain_id)
             .field("use_v2_events", &self.use_v2_events)
             .finish()
+    }
+}
+
+impl EvmConfig {
+    /// All RPC URLs: primary followed by fallbacks.
+    pub fn all_rpc_urls(&self) -> Vec<String> {
+        let mut urls = vec![self.rpc_url.clone()];
+        urls.extend(self.rpc_fallback_urls.iter().cloned());
+        urls
     }
 }
 
@@ -167,9 +180,16 @@ impl Config {
                 .map_err(|_| eyre!("DATABASE_URL environment variable is required"))?,
         };
 
+        let evm_rpc_raw = env::var("EVM_RPC_URL")
+            .map_err(|_| eyre!("EVM_RPC_URL environment variable is required"))?;
+        let evm_rpc_urls = crate::rpc_fallback::parse_rpc_urls(&evm_rpc_raw);
+        if evm_rpc_urls.is_empty() {
+            return Err(eyre!("EVM_RPC_URL cannot be empty"));
+        }
+
         let evm = EvmConfig {
-            rpc_url: env::var("EVM_RPC_URL")
-                .map_err(|_| eyre!("EVM_RPC_URL environment variable is required"))?,
+            rpc_url: evm_rpc_urls[0].clone(),
+            rpc_fallback_urls: evm_rpc_urls[1..].to_vec(),
             chain_id: env::var("EVM_CHAIN_ID")
                 .map_err(|_| eyre!("EVM_CHAIN_ID environment variable is required"))?
                 .parse()
@@ -354,6 +374,7 @@ mod tests {
             },
             evm: EvmConfig {
                 rpc_url: "http://localhost:8545".to_string(),
+                rpc_fallback_urls: vec![],
                 chain_id: 1,
                 bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
@@ -409,6 +430,7 @@ mod tests {
             },
             evm: EvmConfig {
                 rpc_url: "http://localhost:8545".to_string(),
+                rpc_fallback_urls: vec![],
                 chain_id: 1,
                 bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),

@@ -21,6 +21,7 @@ impl EvmChainConfigExt for EvmChainConfig {
     fn to_operator_evm_config(&self, private_key: &str) -> crate::config::EvmConfig {
         crate::config::EvmConfig {
             rpc_url: self.rpc_url.clone(),
+            rpc_fallback_urls: self.rpc_fallback_urls.clone(),
             chain_id: self.chain_id,
             bridge_address: self.bridge_address.clone(),
             private_key: private_key.to_string(),
@@ -43,6 +44,7 @@ mod tests {
             chain_id: 31337,
             this_chain_id: ChainId::from_u32(1),
             rpc_url: "http://localhost:8545".to_string(),
+            rpc_fallback_urls: vec!["http://localhost:8546".to_string()],
             bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
             finality_blocks: 0,
             enabled: true,
@@ -62,6 +64,7 @@ mod tests {
                 chain_id: 31337,
                 this_chain_id: ChainId::from_u32(1),
                 rpc_url: "http://localhost:8545".to_string(),
+                rpc_fallback_urls: vec![],
                 bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
                 finality_blocks: 0,
                 enabled: true,
@@ -71,6 +74,7 @@ mod tests {
                 chain_id: 31338,
                 this_chain_id: ChainId::from_u32(3),
                 rpc_url: "http://localhost:8546".to_string(),
+                rpc_fallback_urls: vec![],
                 bridge_address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
                 finality_blocks: 0,
                 enabled: true,

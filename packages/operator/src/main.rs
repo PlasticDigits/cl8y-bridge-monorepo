@@ -9,6 +9,7 @@ mod discovery;
 pub mod hash;
 mod metrics;
 mod multi_evm;
+mod rpc_fallback;
 mod terra_client;
 mod types;
 mod watchers;

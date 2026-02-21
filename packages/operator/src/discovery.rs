@@ -112,8 +112,8 @@ mod tests {
                 url: "postgres://localhost/test".to_string(),
             },
             evm: EvmConfig {
-                // Use unreachable host for fast failure in discovery tests (no real RPC)
                 rpc_url: "http://127.0.0.1:1".to_string(),
+                rpc_fallback_urls: vec![],
                 chain_id: 31337,
                 bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
                 private_key: "0x0000000000000000000000000000000000000000000000000000000000000001"
@@ -162,6 +162,7 @@ mod tests {
                 chain_id: 56,
                 this_chain_id: multichain_rs::types::ChainId::from_u32(2),
                 rpc_url: "https://bsc-dataseed.binance.org".to_string(),
+                rpc_fallback_urls: vec![],
                 bridge_address: "0x0000000000000000000000000000000000000002".to_string(),
                 finality_blocks: 12,
                 enabled: true,

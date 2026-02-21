@@ -72,8 +72,10 @@ pub struct EvmChainConfig {
     pub chain_id: u64,
     /// 4-byte V2 chain ID from ChainRegistry (NOT the native chain ID)
     pub this_chain_id: ChainId,
-    /// RPC endpoint URL
+    /// Primary RPC endpoint URL
     pub rpc_url: String,
+    /// Additional RPC URLs for fallback (tried in order when primary fails)
+    pub rpc_fallback_urls: Vec<String>,
     /// Bridge contract address (0x-prefixed, 42 chars)
     pub bridge_address: String,
     /// Required block confirmations for finality (default 12)
@@ -89,6 +91,7 @@ impl Default for EvmChainConfig {
             chain_id: 0,
             this_chain_id: ChainId::from_u32(0),
             rpc_url: String::new(),
+            rpc_fallback_urls: Vec::new(),
             bridge_address: String::new(),
             finality_blocks: 12,
             enabled: true,
@@ -352,8 +355,18 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             .parse()
             .map_err(|_| eyre!("Invalid {}_THIS_CHAIN_ID — must be a u32", prefix))?;
 
-        let rpc_url = std::env::var(format!("{}_RPC_URL", prefix))
+        let rpc_raw = std::env::var(format!("{}_RPC_URL", prefix))
             .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;
+        let rpc_parts: Vec<String> = rpc_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if rpc_parts.is_empty() {
+            return Err(eyre!("{}_RPC_URL cannot be empty", prefix));
+        }
+        let rpc_url = rpc_parts[0].clone();
+        let rpc_fallback_urls = rpc_parts[1..].to_vec();
 
         let bridge_address = std::env::var(format!("{}_BRIDGE_ADDRESS", prefix))
             .map_err(|_| eyre!("Missing {}_BRIDGE_ADDRESS", prefix))?;
@@ -373,6 +386,7 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             chain_id,
             this_chain_id: ChainId::from_u32(this_chain_id),
             rpc_url,
+            rpc_fallback_urls,
             bridge_address,
             finality_blocks,
             enabled,
@@ -407,6 +421,7 @@ mod tests {
             chain_id,
             this_chain_id: ChainId::from_u32(v2_id),
             rpc_url: format!("http://localhost:{}", 8545 + chain_id - 31337),
+            rpc_fallback_urls: vec![],
             bridge_address: test_bridge_address(),
             finality_blocks: 0,
             enabled: true,

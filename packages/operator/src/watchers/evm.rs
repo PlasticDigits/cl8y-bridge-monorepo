@@ -1,5 +1,5 @@
 use alloy::primitives::{Address, FixedBytes, B256, U256};
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::http::{Client, Http};
 use eyre::{Result, WrapErr};
@@ -34,17 +34,16 @@ const DEFAULT_CHUNK_SIZE: u64 = 5_000;
 /// );
 /// ```
 pub struct EvmWatcher {
-    provider: RootProvider<Http<Client>>,
+    /// All RPC providers (primary + fallbacks), tried in order on failure
+    providers: Vec<RootProvider<Http<Client>>>,
+    rpc_urls: Vec<String>,
     bridge_address: Address,
-    /// TokenRegistry contract address (queried from Bridge on init)
     token_registry_address: Address,
     chain_id: u64,
-    /// This chain's 4-byte chain ID (V2)
     #[allow(dead_code)]
     this_chain_id: ChainId,
     finality_blocks: u64,
     db: PgPool,
-    /// Use V2 event format (Deposit instead of DepositRequest)
     use_v2_events: bool,
     lookback_blocks: u64,
     chunk_size: u64,
@@ -53,62 +52,76 @@ pub struct EvmWatcher {
 impl EvmWatcher {
     /// Create a new EVM watcher
     pub async fn new(config: &crate::config::EvmConfig, db: PgPool) -> Result<Self> {
-        let url = config.rpc_url.parse().wrap_err("Failed to parse RPC URL")?;
-        let provider = ProviderBuilder::new().on_http(url);
+        let rpc_urls = config.all_rpc_urls();
+        let providers = crate::rpc_fallback::create_providers(&rpc_urls)?;
+
+        if rpc_urls.len() > 1 {
+            tracing::info!(
+                chain_id = config.chain_id,
+                primary_rpc = %rpc_urls[0],
+                fallback_count = rpc_urls.len() - 1,
+                "EVM watcher configured with {} RPC endpoints",
+                rpc_urls.len()
+            );
+        }
 
         let bridge_address =
             Address::from_str(&config.bridge_address).wrap_err("Invalid bridge address")?;
 
-        // Default to V2 events
         let use_v2_events = config.use_v2_events.unwrap_or(true);
 
-        // Query this chain's V2 ID from the bridge contract, fall back to config
-        let bridge_contract = Bridge::new(bridge_address, &provider);
-        let this_chain_id = match bridge_contract.getThisChainId().call().await {
-            Ok(result) => {
-                let v2_id = ChainId::from_bytes(result._0.0);
-                tracing::info!(
-                    native_chain_id = config.chain_id,
-                    v2_chain_id = %v2_id,
-                    v2_hex = %format!("0x{}", hex::encode(v2_id.as_bytes())),
-                    "Queried V2 chain ID from bridge contract"
-                );
-                v2_id
-            }
-            Err(e) => {
-                if let Some(configured_id) = config.this_chain_id {
-                    let fallback = ChainId::from_u32(configured_id);
+        // Scope contract queries so the provider borrow is released before storing
+        let (this_chain_id, token_registry_address) = {
+            let provider = &providers[0];
+            let bridge_contract = Bridge::new(bridge_address, provider);
+
+            let this_chain_id = match bridge_contract.getThisChainId().call().await {
+                Ok(result) => {
+                    let v2_id = ChainId::from_bytes(result._0.0);
+                    tracing::info!(
+                        native_chain_id = config.chain_id,
+                        v2_chain_id = %v2_id,
+                        v2_hex = %format!("0x{}", hex::encode(v2_id.as_bytes())),
+                        "Queried V2 chain ID from bridge contract"
+                    );
+                    v2_id
+                }
+                Err(e) => {
+                    if let Some(configured_id) = config.this_chain_id {
+                        let fallback = ChainId::from_u32(configured_id);
+                        tracing::warn!(
+                            error = %e,
+                            native_chain_id = config.chain_id,
+                            configured_v2_id = %fallback,
+                            "Failed to query V2 chain ID from bridge, using EVM_THIS_CHAIN_ID config"
+                        );
+                        fallback
+                    } else {
+                        return Err(eyre::eyre!(
+                            "Cannot resolve EVM V2 chain ID: bridge query failed ({}) and \
+                             EVM_THIS_CHAIN_ID is not set. Set EVM_THIS_CHAIN_ID to the V2 \
+                             chain ID from ChainRegistry (e.g., EVM_THIS_CHAIN_ID=1).",
+                            e
+                        ));
+                    }
+                }
+            };
+
+            let token_registry_address = bridge_contract
+                .tokenRegistry()
+                .call()
+                .await
+                .map(|r| r._0)
+                .unwrap_or_else(|e| {
                     tracing::warn!(
                         error = %e,
-                        native_chain_id = config.chain_id,
-                        configured_v2_id = %fallback,
-                        "Failed to query V2 chain ID from bridge, using EVM_THIS_CHAIN_ID config"
+                        "Failed to query TokenRegistry address from Bridge, dest token lookups will fail"
                     );
-                    fallback
-                } else {
-                    return Err(eyre::eyre!(
-                        "Cannot resolve EVM V2 chain ID: bridge query failed ({}) and \
-                         EVM_THIS_CHAIN_ID is not set. Set EVM_THIS_CHAIN_ID to the V2 \
-                         chain ID from ChainRegistry (e.g., EVM_THIS_CHAIN_ID=1).",
-                        e
-                    ));
-                }
-            }
-        };
+                    Address::ZERO
+                });
 
-        // Query TokenRegistry address from Bridge contract for dest token lookups
-        let token_registry_address = bridge_contract
-            .tokenRegistry()
-            .call()
-            .await
-            .map(|r| r._0)
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to query TokenRegistry address from Bridge, dest token lookups will fail"
-                );
-                Address::ZERO
-            });
+            (this_chain_id, token_registry_address)
+        };
 
         tracing::info!(
             native_chain_id = config.chain_id,
@@ -116,6 +129,7 @@ impl EvmWatcher {
             v2_chain_id_hex = %format!("0x{}", hex::encode(this_chain_id.as_bytes())),
             token_registry = %token_registry_address,
             use_v2_events = use_v2_events,
+            rpc_endpoints = rpc_urls.len(),
             "EVM watcher initialized"
         );
 
@@ -131,7 +145,8 @@ impl EvmWatcher {
         tracing::info!(lookback_blocks, chunk_size, "EVM poll chunking configured");
 
         Ok(Self {
-            provider,
+            providers,
+            rpc_urls,
             bridge_address,
             token_registry_address,
             chain_id: config.chain_id,
@@ -147,17 +162,42 @@ impl EvmWatcher {
     /// Run the watcher loop
     pub async fn run(&self) -> Result<()> {
         let poll_interval = Duration::from_millis(1000);
+        let mut consecutive_rpc_failures: u32 = 0;
+        const MAX_CONSECUTIVE_RPC_FAILURES: u32 = 30;
 
         loop {
-            // Get last processed block from DB
             let last_block = get_last_evm_block(&self.db, self.chain_id as i64)
                 .await?
                 .unwrap_or(0);
 
-            // Get current finalized block
-            let current_block = self.get_finalized_block().await?;
+            let current_block = match self.get_finalized_block().await {
+                Ok(block) => {
+                    consecutive_rpc_failures = 0;
+                    block
+                }
+                Err(e) => {
+                    consecutive_rpc_failures += 1;
+                    let backoff = Duration::from_secs(2u64.pow(consecutive_rpc_failures.min(6)));
+                    tracing::warn!(
+                        chain_id = self.chain_id,
+                        error = %e,
+                        consecutive_failures = consecutive_rpc_failures,
+                        backoff_secs = backoff.as_secs(),
+                        rpc_count = self.providers.len(),
+                        "All RPC endpoints failed for get_block_number, retrying with backoff"
+                    );
+                    if consecutive_rpc_failures >= MAX_CONSECUTIVE_RPC_FAILURES {
+                        return Err(e.wrap_err(format!(
+                            "Block number fetch failed {} consecutive times across all {} RPC endpoints",
+                            consecutive_rpc_failures,
+                            self.providers.len()
+                        )));
+                    }
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+            };
 
-            // On first run (no DB state), start from recent blocks, not genesis
             let effective_last = if last_block == 0 {
                 let start = current_block.saturating_sub(self.lookback_blocks);
                 tracing::info!(
@@ -250,11 +290,7 @@ impl EvmWatcher {
             .from_block(from_block)
             .to_block(to_block);
 
-        let logs = self
-            .provider
-            .get_logs(&filter)
-            .await
-            .wrap_err("Failed to get logs")?;
+        let logs = self.get_logs_with_fallback(&filter).await?;
 
         // Get the appropriate event signature based on V1 or V2
         let deposit_signature = if self.use_v2_events {
@@ -499,19 +535,36 @@ impl EvmWatcher {
         // SECURITY: getDestToken MUST succeed. A silent fallback causes hash mismatches
         // between the operator and on-chain bridge, permanently locking user funds.
         let dest_token_address: [u8; 32] = if self.token_registry_address != Address::ZERO {
-            let token_registry = TokenRegistry::new(self.token_registry_address, &self.provider);
             let dest_chain_bytes4: FixedBytes<4> = FixedBytes::from(dest_chain_id.0);
-            let result = token_registry
-                .getDestToken(token, dest_chain_bytes4)
-                .call()
-                .await
-                .map_err(|e| {
-                    eyre::eyre!(
-                    "CRITICAL: Failed to query getDestToken for token {} on dest chain 0x{}: {}. \
+            let mut query_result = None;
+            let mut last_err = None;
+            for provider in &self.providers {
+                let token_registry = TokenRegistry::new(self.token_registry_address, provider);
+                match token_registry
+                    .getDestToken(token, dest_chain_bytes4)
+                    .call()
+                    .await
+                {
+                    Ok(r) => {
+                        query_result = Some(r);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                    }
+                }
+            }
+            let result = query_result.ok_or_else(|| {
+                eyre::eyre!(
+                    "CRITICAL: Failed to query getDestToken for token {} on dest chain 0x{} \
+                     from all {} RPCs: {}. \
                      Cannot process deposit — would cause hash mismatch and permanent fund lock.",
-                    token, hex::encode(dest_chain_id.0), e
+                    token,
+                    hex::encode(dest_chain_id.0),
+                    self.providers.len(),
+                    last_err.unwrap()
                 )
-                })?;
+            })?;
             let dest_token: [u8; 32] = result.destToken.into();
             if dest_token == [0u8; 32] {
                 return Err(eyre::eyre!(
@@ -626,17 +679,76 @@ impl EvmWatcher {
         }
     }
 
-    /// Get the current finalized block number
+    /// Get the current finalized block number, trying all RPC providers.
     async fn get_finalized_block(&self) -> Result<u64> {
-        let block = self
-            .provider
-            .get_block_number()
-            .await
-            .wrap_err("Failed to get block number")?;
+        let mut last_err = None;
+        for (i, provider) in self.providers.iter().enumerate() {
+            match provider.get_block_number().await {
+                Ok(block) => {
+                    if i > 0 {
+                        tracing::info!(
+                            chain_id = self.chain_id,
+                            rpc_url = %self.rpc_urls[i],
+                            "get_block_number succeeded on fallback RPC #{}", i + 1
+                        );
+                    }
+                    return Ok(block.saturating_sub(self.finality_blocks));
+                }
+                Err(e) => {
+                    if self.providers.len() > 1 {
+                        tracing::warn!(
+                            chain_id = self.chain_id,
+                            rpc_url = %self.rpc_urls[i],
+                            error = %e,
+                            remaining = self.providers.len() - i - 1,
+                            "get_block_number failed on RPC #{}", i + 1
+                        );
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(eyre::eyre!(
+            "Failed to get block number from all {} RPC endpoints: {}",
+            self.providers.len(),
+            last_err.unwrap()
+        ))
+    }
 
-        // Subtract finality_blocks to get a safe block
-        let finality = block.saturating_sub(self.finality_blocks);
-        Ok(finality)
+    /// Query logs from all providers with fallback.
+    async fn get_logs_with_fallback(&self, filter: &Filter) -> Result<Vec<Log>> {
+        let mut last_err = None;
+        for (i, provider) in self.providers.iter().enumerate() {
+            match provider.get_logs(filter).await {
+                Ok(logs) => {
+                    if i > 0 {
+                        tracing::info!(
+                            chain_id = self.chain_id,
+                            rpc_url = %self.rpc_urls[i],
+                            "get_logs succeeded on fallback RPC #{}", i + 1
+                        );
+                    }
+                    return Ok(logs);
+                }
+                Err(e) => {
+                    if self.providers.len() > 1 {
+                        tracing::warn!(
+                            chain_id = self.chain_id,
+                            rpc_url = %self.rpc_urls[i],
+                            error = %e,
+                            remaining = self.providers.len() - i - 1,
+                            "get_logs failed on RPC #{}", i + 1
+                        );
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(eyre::eyre!(
+            "Failed to get logs from all {} RPC endpoints: {}",
+            self.providers.len(),
+            last_err.unwrap()
+        ))
     }
 
     /// Compute the V1 DepositRequest event signature hash

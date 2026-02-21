@@ -58,6 +58,8 @@ struct PendingExecution {
 ///    withdrawExecuteUnlock/Mint to complete the transfer.
 pub struct EvmWriter {
     rpc_url: String,
+    /// All RPC URLs (primary + fallbacks) for read operations
+    rpc_urls: Vec<String>,
     bridge_address: Address,
     chain_id: u64,
     /// This chain's registered 4-byte chain ID (V2)
@@ -153,10 +155,32 @@ impl EvmWriter {
             "EVM writer initialized (V2)"
         );
 
-        // Query cancel window from V2 contract — fail if unreachable (cannot start safely)
-        let cancel_window = Self::query_cancel_window(&evm_config.rpc_url, bridge_address)
-            .await
-            .wrap_err("Failed to query cancel window from bridge — cannot start safely")?;
+        // Query cancel window from V2 contract — try all RPC endpoints
+        let all_rpc_urls = evm_config.all_rpc_urls();
+        let mut cancel_window_result = None;
+        for url in &all_rpc_urls {
+            match Self::query_cancel_window(url, bridge_address).await {
+                Ok(window) => {
+                    cancel_window_result = Some(window);
+                    break;
+                }
+                Err(e) => {
+                    if all_rpc_urls.len() > 1 {
+                        warn!(rpc = %url, error = %e, "Failed to query cancel window, trying next RPC");
+                    } else {
+                        return Err(e.wrap_err(
+                            "Failed to query cancel window from bridge — cannot start safely",
+                        ));
+                    }
+                }
+            }
+        }
+        let cancel_window = cancel_window_result.ok_or_else(|| {
+            eyre!(
+                "Failed to query cancel window from all {} RPCs",
+                all_rpc_urls.len()
+            )
+        })?;
 
         let terra_lcd_url = terra_config.map(|t| t.lcd_url.clone());
         let terra_bridge_address = terra_config.map(|t| t.bridge_address.clone());
@@ -245,6 +269,7 @@ impl EvmWriter {
 
         Ok(Self {
             rpc_url: evm_config.rpc_url.clone(),
+            rpc_urls: all_rpc_urls,
             bridge_address,
             chain_id: evm_config.chain_id,
             this_chain_id,
@@ -310,16 +335,39 @@ impl EvmWriter {
     /// More reliable than event-based polling — queries current contract state
     /// directly, avoiding block range issues with eth_getLogs.
     async fn enumerate_and_approve(&mut self) -> Result<()> {
-        let provider =
-            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        // Try each RPC URL until enumeration succeeds
+        let (provider, hashes) = {
+            let mut result = None;
+            for (i, url) in self.rpc_urls.iter().enumerate() {
+                let p = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
+                let call_result = {
+                    let c = Bridge::new(self.bridge_address, &p);
+                    c.getPendingWithdrawHashes().call().await
+                };
+                match call_result {
+                    Ok(hashes) => {
+                        if i > 0 && self.rpc_urls.len() > 1 {
+                            info!(chain_id = self.chain_id, rpc = %url, "Using fallback RPC for enumeration");
+                        }
+                        result = Some((p, hashes));
+                        break;
+                    }
+                    Err(e) => {
+                        if self.rpc_urls.len() > 1 {
+                            warn!(chain_id = self.chain_id, rpc = %url, error = %e, remaining = self.rpc_urls.len() - i - 1, "Enumeration RPC failed, trying next");
+                        }
+                    }
+                }
+            }
+            result.ok_or_else(|| {
+                eyre!(
+                    "Failed to enumerate pending withdrawals from all {} RPCs",
+                    self.rpc_urls.len()
+                )
+            })?
+        };
 
         let contract = Bridge::new(self.bridge_address, &provider);
-
-        let hashes = contract
-            .getPendingWithdrawHashes()
-            .call()
-            .await
-            .map_err(|e| eyre!("Failed to enumerate pending withdrawals: {}", e))?;
         let pending_hashes = &hashes.hashes;
 
         if pending_hashes.is_empty() {
@@ -452,15 +500,33 @@ impl EvmWriter {
     ///
     /// Supplements enumeration with faster event-based detection of new submissions.
     async fn poll_and_approve(&mut self) -> Result<()> {
-        // Create provider
-        let provider =
-            ProviderBuilder::new().on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
-
-        // Get current block
-        let current_block = provider
-            .get_block_number()
-            .await
-            .map_err(|e| eyre!("Failed to get block number: {}", e))?;
+        // Find a working provider by trying each RPC URL
+        let (provider, current_block) = {
+            let mut result = None;
+            for (i, url) in self.rpc_urls.iter().enumerate() {
+                let p = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
+                match p.get_block_number().await {
+                    Ok(block) => {
+                        if i > 0 && self.rpc_urls.len() > 1 {
+                            info!(chain_id = self.chain_id, rpc = %url, "Using fallback RPC for writer poll");
+                        }
+                        result = Some((p, block));
+                        break;
+                    }
+                    Err(e) => {
+                        if self.rpc_urls.len() > 1 {
+                            warn!(chain_id = self.chain_id, rpc = %url, error = %e, remaining = self.rpc_urls.len() - i - 1, "Writer poll RPC failed for block number, trying next");
+                        }
+                    }
+                }
+            }
+            result.ok_or_else(|| {
+                eyre!(
+                    "Failed to get block number from all {} RPCs",
+                    self.rpc_urls.len()
+                )
+            })?
+        };
 
         // Detect chain reset (e.g., Anvil restart)
         if current_block < self.last_polled_block {
