@@ -11,6 +11,7 @@ import {
   recordVerification,
   recordVerificationResult,
 } from '../components/verify'
+import { HashWithBlockie } from '../components/ui'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
 
 export default function HashVerificationPage() {
@@ -95,8 +96,8 @@ export default function HashVerificationPage() {
 
       <div className="shell-panel-strong">
         {inputHash && !loading && (
-          <p className="mb-3 truncate font-mono text-xs text-gray-300">
-            Queried: {inputHash}
+          <p className="mb-3 flex min-w-0 items-center gap-2 font-mono text-xs text-gray-300">
+            Queried: <HashWithBlockie hash={inputHash} truncated={false} className="text-gray-300" />
           </p>
         )}
         {(queriedChains.length > 0 || failedChains.length > 0 || loading) && (
@@ -113,8 +114,10 @@ export default function HashVerificationPage() {
         <HashComparisonPanel
           source={source}
           sourceChainName={sourceChain?.name || null}
+          sourceChainConfig={sourceChain}
           dest={dest}
           destChainName={destChain?.name || null}
+          destChainConfig={destChain}
           status={status}
           matches={matches}
           loading={loading}

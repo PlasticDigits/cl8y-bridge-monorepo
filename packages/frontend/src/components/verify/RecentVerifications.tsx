@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { HashStatus } from '../../types/transfer'
+import { CopyButton, HashWithBlockie } from '../ui'
 
 const STORAGE_KEY = 'cl8y-bridge-verifications'
 const DEFAULT_LIMIT = 5
@@ -48,12 +49,15 @@ export function RecentVerifications({ limit = DEFAULT_LIMIT }: { limit?: number 
             key={item.hash}
             className="flex items-center justify-between border-2 border-white/20 bg-[#161616] p-3"
           >
-            <Link
-              to={`/verify?hash=${encodeURIComponent(item.hash)}`}
-              className="flex-1 truncate font-mono text-xs text-cyan-300 hover:text-cyan-200 hover:underline"
-            >
-              {item.hash.slice(0, 18)}…{item.hash.slice(-10)}
-            </Link>
+            <div className="flex flex-1 min-w-0 items-center gap-2">
+              <CopyButton text={item.hash} label="Copy hash" className="shrink-0" />
+              <Link
+                to={`/verify?hash=${encodeURIComponent(item.hash)}`}
+                className="text-cyan-300 hover:text-cyan-200 hover:underline"
+              >
+                <HashWithBlockie hash={item.hash} size={18} />
+              </Link>
+            </div>
             <span className="ml-2 shrink-0 text-xs text-gray-400">
               {new Date(item.timestamp).toLocaleString()}
             </span>

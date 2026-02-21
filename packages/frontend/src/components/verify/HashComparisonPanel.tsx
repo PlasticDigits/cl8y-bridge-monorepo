@@ -1,5 +1,6 @@
 import type { DepositData, PendingWithdrawData } from '../../hooks/useTransferLookup'
 import type { HashStatus } from '../../types/transfer'
+import type { BridgeChainConfig } from '../../types/chain'
 import { SourceHashCard } from './SourceHashCard'
 import { DestHashCard } from './DestHashCard'
 import { HashFieldsTable } from './HashFieldsTable'
@@ -11,8 +12,10 @@ import { Spinner } from '../ui'
 export interface HashComparisonPanelProps {
   source: DepositData | null
   sourceChainName: string | null
+  sourceChainConfig?: BridgeChainConfig | null
   dest: PendingWithdrawData | null
   destChainName: string | null
+  destChainConfig?: BridgeChainConfig | null
   status: HashStatus
   matches: boolean | null
   loading: boolean
@@ -22,8 +25,10 @@ export interface HashComparisonPanelProps {
 export function HashComparisonPanel({
   source,
   sourceChainName,
+  sourceChainConfig,
   dest,
   destChainName,
+  destChainConfig,
   status,
   matches,
   loading,
@@ -82,8 +87,8 @@ export function HashComparisonPanel({
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {source && <SourceHashCard data={source} chainName={sourceChainName} />}
-        {dest && <DestHashCard data={dest} chainName={destChainName} />}
+        {source && <SourceHashCard data={source} chainName={sourceChainName} chainConfig={sourceChainConfig ?? null} />}
+        {dest && <DestHashCard data={dest} chainName={destChainName} chainConfig={destChainConfig ?? null} />}
       </div>
 
       <HashFieldsTable source={source} dest={dest} />

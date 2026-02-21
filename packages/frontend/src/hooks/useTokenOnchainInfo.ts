@@ -22,6 +22,7 @@ const CACHE_TTL = 7 * 24 * 60 * 60 * 1000 // 7 days
 interface CachedEntry {
   symbol: string
   name: string
+  decimals?: number
   ts: number
 }
 
@@ -34,17 +35,17 @@ function getCache(): Record<string, CachedEntry> {
   }
 }
 
-export function getCachedTokenInfo(key: string): { symbol: string; name: string } | undefined {
+export function getCachedTokenInfo(key: string): { symbol: string; name: string; decimals?: number } | undefined {
   const cache = getCache()
   const entry = cache[key]
   if (!entry || !entry.symbol || Date.now() - entry.ts > CACHE_TTL) return undefined
-  return { symbol: entry.symbol, name: entry.name }
+  return { symbol: entry.symbol, name: entry.name, decimals: entry.decimals }
 }
 
-function setCachedTokenInfo(key: string, info: { symbol: string; name: string }) {
+function setCachedTokenInfo(key: string, info: { symbol: string; name: string; decimals?: number }) {
   try {
     const cache = getCache()
-    cache[key] = { symbol: info.symbol, name: info.name, ts: Date.now() }
+    cache[key] = { symbol: info.symbol, name: info.name, decimals: info.decimals, ts: Date.now() }
     localStorage.setItem(CACHE_KEY, JSON.stringify(cache))
   } catch { /* quota or private browsing */ }
 }
@@ -65,6 +66,13 @@ const ERC20_ABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'string' }],
+  },
+  {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
   },
 ] as const
 
@@ -106,22 +114,23 @@ export function useCw20TokenInfo(terraAddress: string | undefined, enabled: bool
   })
 }
 
-/** Fetcher for EVM token symbol/name. Uses getEvmClient (with RPC fallbacks) when chainConfig provided. */
+/** Fetcher for EVM token symbol/name/decimals. Uses getEvmClient (with RPC fallbacks) when chainConfig provided. */
 export async function fetchEvmTokenInfo(
   evmAddress: string,
   rpcUrlOrConfig: string | BridgeChainConfig
-): Promise<{ symbol: string; name: string }> {
+): Promise<{ symbol: string; name: string; decimals?: number }> {
   if (!evmAddress?.startsWith('0x')) return { symbol: '', name: '' }
   const addr = getAddress(evmAddress)
   const client =
     typeof rpcUrlOrConfig === 'string'
       ? createPublicClient({ transport: http(rpcUrlOrConfig) })
       : getEvmClient(rpcUrlOrConfig as BridgeChainConfig & { chainId: number })
-  const [symbol, name] = await Promise.all([
+  const [symbol, name, decimals] = await Promise.all([
     client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'symbol' }),
     client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'name' }),
+    client.readContract({ address: addr, abi: ERC20_ABI, functionName: 'decimals' }).catch(() => undefined),
   ])
-  const result = { symbol: symbol ?? '', name: name ?? '' }
+  const result = { symbol: symbol ?? '', name: name ?? '', decimals: decimals != null ? Number(decimals) : undefined }
   if (result.symbol) setCachedTokenInfo(`erc20:${evmAddress.toLowerCase()}`, result)
   return result
 }
@@ -134,10 +143,10 @@ export function useEvmTokenInfo(
   const cached = evmAddress ? getCachedTokenInfo(`erc20:${evmAddress.toLowerCase()}`) : undefined
   return useQuery({
     queryKey: ['evmTokenInfo', evmAddress, rpcUrlOrConfig],
-    queryFn: () =>
+    queryFn: (): Promise<{ symbol: string; name: string; decimals?: number }> =>
       evmAddress && rpcUrlOrConfig
         ? fetchEvmTokenInfo(evmAddress, rpcUrlOrConfig)
-        : { symbol: '', name: '' },
+        : Promise.resolve({ symbol: '', name: '' }),
     enabled: !!evmAddress && evmAddress.startsWith('0x') && !!rpcUrlOrConfig && enabled,
     staleTime: 5 * 60 * 1000,
     initialData: cached,

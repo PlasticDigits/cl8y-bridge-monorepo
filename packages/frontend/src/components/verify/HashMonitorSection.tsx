@@ -4,6 +4,7 @@ import type { HashStatus } from '../../types/transfer'
 import { sounds } from '../../lib/sounds'
 import { useHashMonitor, type HashMonitorRecord } from '../../hooks/useHashMonitor'
 import { StatusBadge } from './StatusBadge'
+import { CopyButton, HashWithBlockie } from '../ui'
 
 export type MonitorFilter = 'all' | 'verified' | 'pending' | 'canceled' | 'fraudulent'
 
@@ -158,14 +159,19 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
                       }
                     }}
                   >
-                    <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs text-gray-300">
-                      <Link
-                        to={`/verify?hash=${encodeURIComponent(r.hash)}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-cyan-300 hover:text-cyan-200 hover:underline"
-                      >
-                        {r.hash.startsWith('0x') ? r.hash.slice(0, 18) + '…' + r.hash.slice(-10) : r.hash.slice(0, 16) + '…'}
-                      </Link>
+                    <td className="max-w-[180px] px-3 py-2 font-mono text-xs text-gray-300">
+                      <div className="flex items-center gap-1.5">
+                        <span onClick={(e) => e.stopPropagation()}>
+                          <CopyButton text={r.hash} label="Copy hash" />
+                        </span>
+                        <Link
+                          to={`/verify?hash=${encodeURIComponent(r.hash)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-cyan-300 hover:text-cyan-200 hover:underline"
+                        >
+                          <HashWithBlockie hash={r.hash} size={18} />
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <StatusBadge status={r.status ?? 'unknown'} />

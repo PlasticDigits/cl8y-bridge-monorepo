@@ -1,16 +1,16 @@
 import type { DepositData } from '../../hooks/useTransferLookup'
+import type { BridgeChainConfig } from '../../types/chain'
 import { bytes4ChainIdToLabel, chainIdToLabel } from '../../utils/chainLabel'
-import { formatAmount } from '../../utils/format'
-import { DECIMALS } from '../../utils/constants'
+import { TokenAmountDisplay } from './TokenAmountDisplay'
 
 export interface SourceHashCardProps {
   data: DepositData
   chainName?: string | null
+  chainConfig?: BridgeChainConfig | null
 }
 
-export function SourceHashCard({ data, chainName }: SourceHashCardProps) {
+export function SourceHashCard({ data, chainName, chainConfig }: SourceHashCardProps) {
   const srcChainLabel = chainName || chainIdToLabel(data.chainId)
-  // destChain is bytes32, extract bytes4 (first 10 chars: 0x + 8 hex)
   const destChainBytes4 = data.destChain.slice(0, 10)
   const destChainLabel = bytes4ChainIdToLabel(destChainBytes4)
 
@@ -26,10 +26,10 @@ export function SourceHashCard({ data, chainName }: SourceHashCardProps) {
           <span className="text-gray-400">Dest chain:</span>{' '}
           <span className="text-white">{destChainLabel}</span>
         </p>
-        <p>
+        <div>
           <span className="text-gray-400">Amount:</span>{' '}
-          <span className="text-white">{formatAmount(data.amount, DECIMALS.LUNC)} LUNC</span>
-        </p>
+          <TokenAmountDisplay amount={data.amount} tokenBytes32={data.token} chainConfig={chainConfig ?? null} />
+        </div>
         <p>
           <span className="text-gray-400">Nonce:</span>{' '}
           <span className="text-white">{data.nonce.toString()}</span>

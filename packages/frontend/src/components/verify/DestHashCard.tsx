@@ -1,16 +1,16 @@
 import type { PendingWithdrawData } from '../../hooks/useTransferLookup'
+import type { BridgeChainConfig } from '../../types/chain'
 import { bytes4ChainIdToLabel, chainIdToLabel } from '../../utils/chainLabel'
-import { formatAmount } from '../../utils/format'
-import { DECIMALS } from '../../utils/constants'
+import { TokenAmountDisplay } from './TokenAmountDisplay'
 
 export interface DestHashCardProps {
   data: PendingWithdrawData
   chainName?: string | null
+  chainConfig?: BridgeChainConfig | null
 }
 
-export function DestHashCard({ data, chainName }: DestHashCardProps) {
+export function DestHashCard({ data, chainName, chainConfig }: DestHashCardProps) {
   const destChainLabel = chainName || chainIdToLabel(data.chainId)
-  // srcChain is bytes32, extract bytes4 (first 10 chars: 0x + 8 hex)
   const srcChainBytes4 = data.srcChain.slice(0, 10)
   const srcChainLabel = bytes4ChainIdToLabel(srcChainBytes4)
 
@@ -46,10 +46,10 @@ export function DestHashCard({ data, chainName }: DestHashCardProps) {
           <span className="text-gray-400">State:</span>{' '}
           <span className={stateColor}>{stateLabel}</span>
         </p>
-        <p>
+        <div>
           <span className="text-gray-400">Amount:</span>{' '}
-          <span className="text-white">{formatAmount(data.amount, DECIMALS.LUNC)} LUNC</span>
-        </p>
+          <TokenAmountDisplay amount={data.amount} tokenBytes32={data.token} chainConfig={chainConfig ?? null} />
+        </div>
         <p>
           <span className="text-gray-400">Nonce:</span>{' '}
           <span className="text-white">{data.nonce.toString()}</span>
