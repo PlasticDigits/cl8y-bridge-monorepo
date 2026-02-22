@@ -85,6 +85,8 @@ pub struct EvmWriter {
     /// Source chain verification endpoints, keyed by V2 4-byte chain ID.
     /// Used for routing cross-chain deposit verification to the correct source chain RPC/bridge.
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
+    /// Shared HTTP client for Terra LCD queries (reused across calls)
+    http: reqwest::Client,
 }
 
 impl EvmWriter {
@@ -291,6 +293,11 @@ impl EvmWriter {
                 BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
             },
             source_chain_endpoints,
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .pool_max_idle_per_host(2)
+                .build()
+                .wrap_err("Failed to build HTTP client for EVM writer")?,
         })
     }
 
@@ -755,15 +762,15 @@ impl EvmWriter {
         src_chain_id: &[u8; 4],
     ) -> Result<bool> {
         // Terra-source withdrawals are verified on Terra bridge storage.
-        if self
+        if let Some(terra_id) = self
             .terra_chain_id
             .as_ref()
-            .is_some_and(|id| src_chain_id == id.as_bytes())
+            .filter(|id| src_chain_id == id.as_bytes())
         {
             debug!(
                 hash = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                terra_chain = %format!("0x{}", hex::encode(self.terra_chain_id.as_ref().unwrap().as_bytes())),
+                terra_chain = %format!("0x{}", hex::encode(terra_id.as_bytes())),
                 "Routing source deposit verification to Terra bridge"
             );
             return self.verify_terra_deposit(xchain_hash_id).await;
@@ -962,7 +969,8 @@ impl EvmWriter {
             query_b64
         );
 
-        let response = reqwest::Client::new()
+        let response = self
+            .http
             .get(&url)
             .send()
             .await

@@ -159,6 +159,11 @@ impl EvmWatcher {
         })
     }
 
+    /// Get the native chain ID this watcher monitors
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Run the watcher loop
     pub async fn run(&self) -> Result<()> {
         let poll_interval = Duration::from_millis(1000);
@@ -388,27 +393,27 @@ impl EvmWatcher {
 
     /// Parse a DepositRequest log (V1 format)
     fn parse_deposit_log(&self, log: &Log) -> Result<NewEvmDeposit> {
-        // Indexed topics (V1):
-        // topics[0] = event signature
-        // topics[1] = destChainKey (bytes32)
-        // topics[2] = destTokenAddress (bytes32)
-        // topics[3] = destAccount (bytes32)
-
-        // Non-indexed data (abi encoded):
-        // token (address)
-        // amount (uint256)
-        // nonce (uint256)
-
         let topics = log.topics();
+        if topics.len() < 4 {
+            return Err(eyre::eyre!(
+                "V1 Deposit event requires 4 topics, got {}",
+                topics.len()
+            ));
+        }
+
         let dest_chain_key = topics[1].as_slice().to_vec();
         let dest_token_address = topics[2].as_slice().to_vec();
         let dest_account = topics[3].as_slice().to_vec();
 
-        // Determine destination chain type based on dest_account format
         let dest_chain_type = Self::classify_dest_chain_type(&dest_account);
 
-        // Decode non-indexed data
         let data = log.data().data.as_ref();
+        if data.len() < 96 {
+            return Err(eyre::eyre!(
+                "V1 Deposit event data too short: {} bytes, need 96",
+                data.len()
+            ));
+        }
         let token = Address::from_slice(&data[12..32]);
         let amount = U256::from_be_slice(&data[32..64]);
         let nonce = U256::from_be_slice(&data[64..96]);

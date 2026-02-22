@@ -53,6 +53,32 @@ impl WatcherManager {
 
         let terra_watcher = TerraWatcher::new(&config.terra, db).await?;
 
+        // Detect duplicate watchers (misconfiguration where the same chain
+        // appears in both primary EVM config and multi-EVM config)
+        let mut seen_chain_ids = std::collections::HashMap::new();
+        for watcher in &evm_watchers {
+            let chain_id = watcher.chain_id();
+            *seen_chain_ids.entry(chain_id).or_insert(0u32) += 1;
+        }
+        for (&chain_id, &count) in &seen_chain_ids {
+            if count > 1 {
+                warn!(
+                    chain_id,
+                    count,
+                    "DUPLICATE EVM watcher detected — chain appears {} times! \
+                     This wastes resources and may cause race conditions. \
+                     Check if chain {} is in both EVM_CHAIN_ID and EVM_CHAINS config.",
+                    count,
+                    chain_id
+                );
+            }
+        }
+        info!(
+            evm_watchers = evm_watchers.len(),
+            evm_chain_ids = ?seen_chain_ids.keys().collect::<Vec<_>>(),
+            "Watcher manager created"
+        );
+
         Ok(Self {
             evm_watchers,
             terra_watcher,

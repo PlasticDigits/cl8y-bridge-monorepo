@@ -62,6 +62,7 @@ pub struct TerraWatcher {
     bridge_address: String,
     chain_id: String,
     db: PgPool,
+    http: reqwest::Client,
 }
 
 impl TerraWatcher {
@@ -74,11 +75,18 @@ impl TerraWatcher {
             "Terra watcher initialized"
         );
 
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(2)
+            .build()
+            .wrap_err("Failed to build HTTP client for Terra watcher")?;
+
         Ok(Self {
             lcd_url: config.lcd_url.clone(),
             bridge_address: config.bridge_address.clone(),
             chain_id: config.chain_id.clone(),
             db,
+            http,
         })
     }
 
@@ -132,6 +140,17 @@ impl TerraWatcher {
                 continue;
             }
 
+            let blocks_behind = current_height.saturating_sub(last_height as u64);
+            if blocks_behind > 10 {
+                tracing::info!(
+                    chain_id = %self.chain_id,
+                    from = last_height + 1,
+                    to = current_height,
+                    blocks_behind,
+                    "Terra watcher catching up"
+                );
+            }
+
             for height in (last_height + 1) as u64..=current_height {
                 tracing::info!(
                     chain_id = %self.chain_id,
@@ -156,8 +175,23 @@ impl TerraWatcher {
                             );
                             break;
                         }
+                        // Log the fatal error explicitly and flush before returning
+                        tracing::error!(
+                            chain_id = %self.chain_id,
+                            height,
+                            error = %e,
+                            "Fatal error processing Terra block — watcher exiting"
+                        );
+                        use std::io::Write;
+                        let _ = std::io::stderr().flush();
                         return Err(e);
                     }
+                }
+
+                // Brief yield every 50 blocks during catchup to avoid starving
+                // other tokio tasks and hammering the LCD
+                if blocks_behind > 50 && height % 50 == 0 {
+                    tokio::task::yield_now().await;
                 }
             }
 
@@ -173,7 +207,10 @@ impl TerraWatcher {
             self.lcd_url, self.bridge_address, height
         );
 
-        let response: TxSearchResponse = reqwest::get(&url)
+        let response: TxSearchResponse = self
+            .http
+            .get(&url)
+            .send()
             .await
             .wrap_err("Failed to query transactions")?
             .json()
@@ -376,12 +413,8 @@ impl TerraWatcher {
             self.lcd_url
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .wrap_err("Failed to build HTTP client")?;
-
-        let resp = client
+        let resp = self
+            .http
             .get(&url)
             .send()
             .await
@@ -570,6 +603,7 @@ mod tests {
             chain_id: "localterra".to_string(),
             db: PgPool::connect_lazy("postgres://postgres:postgres@localhost:5432/postgres")
                 .unwrap(),
+            http: reqwest::Client::new(),
         }
     }
 

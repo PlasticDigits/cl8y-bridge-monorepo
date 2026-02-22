@@ -24,6 +24,31 @@ fn main() -> eyre::Result<()> {
     // Install color-eyre for better error reporting
     color_eyre::install()?;
 
+    // Install a panic hook that logs via tracing BEFORE the default handler runs.
+    // Rust panics only write to stderr; if stderr isn't captured in the same log
+    // stream as tracing (stdout), panic messages are silently lost.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Box<dyn Any>".to_string()
+        };
+        // Log to tracing so it appears in the same log stream as everything else
+        tracing::error!(
+            panic.payload = %payload,
+            panic.location = %location,
+            "PANIC: task panicked — this will crash the operator"
+        );
+        default_hook(info);
+    }));
+
     // Run the async main
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -117,26 +142,46 @@ async fn async_main() -> eyre::Result<()> {
         }
     });
 
-    // Run watchers, writers, and confirmation tracker concurrently
+    // Run watchers, writers, and confirmation tracker concurrently.
+    // Each branch is wrapped in spawn_blocking(catch_unwind) so a panic in one
+    // task is logged and surfaced rather than silently killing the process.
+    let watcher_handle = tokio::spawn(async move { watcher_manager.run(shutdown_rx).await });
+    let writer_handle = tokio::spawn(async move { writer_manager.run(shutdown_rx2).await });
+    let confirmation_handle =
+        tokio::spawn(async move { confirmation_tracker.run(shutdown_rx3).await });
+
     tokio::select! {
-        result = watcher_manager.run(shutdown_rx) => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "Watcher manager error");
+        result = watcher_handle => {
+            match result {
+                Ok(Ok(())) => tracing::info!("Watcher manager exited cleanly"),
+                Ok(Err(e)) => tracing::error!(error = %e, "Watcher manager error"),
+                Err(e) => tracing::error!(error = %e, "Watcher manager task panicked"),
             }
         }
-        result = writer_manager.run(shutdown_rx2) => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "Writer manager error");
+        result = writer_handle => {
+            match result {
+                Ok(Ok(())) => tracing::info!("Writer manager exited cleanly"),
+                Ok(Err(e)) => tracing::error!(error = %e, "Writer manager error"),
+                Err(e) => tracing::error!(error = %e, "Writer manager task panicked"),
             }
         }
-        result = confirmation_tracker.run(shutdown_rx3) => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "Confirmation tracker error");
+        result = confirmation_handle => {
+            match result {
+                Ok(Ok(())) => tracing::info!("Confirmation tracker exited cleanly"),
+                Ok(Err(e)) => tracing::error!(error = %e, "Confirmation tracker error"),
+                Err(e) => tracing::error!(error = %e, "Confirmation tracker task panicked"),
             }
         }
     }
 
     tracing::info!("CL8Y Bridge Relayer stopped");
+
+    // Flush stderr to ensure all log output is visible in cloud log collectors
+    // (Render, Docker, systemd) before the process exits. Without this, the last
+    // few lines (including error messages explaining WHY we exited) can be lost.
+    use std::io::Write;
+    let _ = std::io::stderr().flush();
+
     Ok(())
 }
 
