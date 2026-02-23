@@ -5,6 +5,9 @@ import { createDevTerraWallet } from './devWallet'
 
 const connectedWallets: Map<string, ConnectedWallet> = new Map()
 
+/** Track how the current wallet was connected so sequence-mismatch retry uses the right type */
+let lastConnectionType: WalletType = WalletType.EXTENSION
+
 export async function connectTerraWallet(
   walletName: WalletName = WalletName.STATION,
   walletType: WalletType = WalletType.EXTENSION
@@ -36,6 +39,7 @@ export async function connectTerraWallet(
     }
 
     connectedWallets.set(TERRA_CLASSIC_CHAIN_ID, wallet)
+    lastConnectionType = walletType
 
     const walletTypeMap: Partial<Record<WalletName, TerraWalletType>> = {
       [WalletName.STATION]: 'station',
@@ -121,7 +125,7 @@ export function connectDevWallet(): { address: string; walletType: TerraWalletTy
   }
 }
 
-export async function reconnectWalletForRefresh(): Promise<void> {
+export async function reconnectWalletForRefresh(connectionType?: WalletType): Promise<void> {
   const wallet = connectedWallets.get(TERRA_CLASSIC_CHAIN_ID)
   if (!wallet) {
     throw new Error('No wallet connected')
@@ -133,7 +137,9 @@ export async function reconnectWalletForRefresh(): Promise<void> {
     return
   }
 
-  console.log('🔄 Refreshing wallet connection to update account info...')
+  const effectiveType = connectionType ?? lastConnectionType
+
+  console.log(`🔄 Refreshing wallet connection (${effectiveType}) to update account info...`)
 
   try {
     controller.disconnect([TERRA_CLASSIC_CHAIN_ID])
@@ -141,7 +147,7 @@ export async function reconnectWalletForRefresh(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     const chainInfo = getChainInfo()
-    const wallets = await controller.connect(WalletType.EXTENSION, [chainInfo])
+    const wallets = await controller.connect(effectiveType, [chainInfo])
     const newWallet = wallets.get(TERRA_CLASSIC_CHAIN_ID)
 
     if (newWallet) {
@@ -154,4 +160,36 @@ export async function reconnectWalletForRefresh(): Promise<void> {
     console.error('Failed to refresh wallet connection:', error)
     throw new Error('Failed to refresh wallet. Please disconnect and reconnect manually.')
   }
+}
+
+/**
+ * Attempt to silently reconnect a previously-connected wallet on page refresh.
+ * For extensions, this re-requests the key from the browser extension.
+ * For WalletConnect, cosmes checks localStorage for a cached session.
+ * Returns the connected address on success, or null on failure.
+ */
+export async function tryReconnect(
+  walletName: WalletName,
+  connectionType: WalletType
+): Promise<{ address: string } | null> {
+  const controller = CONTROLLERS[walletName]
+  if (!controller) return null
+
+  try {
+    const chainInfo = getChainInfo()
+    console.log(`[Wallet] Auto-reconnecting ${walletName} (${connectionType})`)
+
+    const wallets = await controller.connect(connectionType, [chainInfo])
+    const wallet = wallets.get(TERRA_CLASSIC_CHAIN_ID)
+
+    if (wallet) {
+      connectedWallets.set(TERRA_CLASSIC_CHAIN_ID, wallet)
+      lastConnectionType = connectionType
+      console.log(`[Wallet] Auto-reconnected: ${wallet.address}`)
+      return { address: wallet.address }
+    }
+  } catch (error) {
+    console.warn(`[Wallet] Auto-reconnect failed for ${walletName}:`, error)
+  }
+  return null
 }

@@ -9,6 +9,7 @@ export {
   isTerraWalletConnected,
   reconnectWalletForRefresh,
   connectDevWallet,
+  tryReconnect,
 } from './connect'
 export { executeContractWithCoins, executeCw20Send } from './transaction'
 export {

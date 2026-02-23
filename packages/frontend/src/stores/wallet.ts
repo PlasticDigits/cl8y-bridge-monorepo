@@ -15,6 +15,7 @@ import {
   isLeapInstalled,
   isCosmostationInstalled,
   connectDevWallet,
+  tryReconnect,
   WalletName,
   WalletType,
   TerraWalletType,
@@ -24,6 +25,16 @@ import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
 // Re-export for convenience
 export { WalletName, WalletType };
 export type { TerraWalletType };
+
+/** Map TerraWalletType (persisted string) back to cosmes WalletName for reconnection */
+const WALLET_TYPE_TO_NAME: Record<TerraWalletType, WalletName> = {
+  station: WalletName.STATION,
+  keplr: WalletName.KEPLR,
+  luncdash: WalletName.LUNCDASH,
+  galaxy: WalletName.GALAXYSTATION,
+  leap: WalletName.LEAP,
+  cosmostation: WalletName.COSMOSTATION,
+};
 
 export interface WalletState {
   // Connection state
@@ -49,6 +60,7 @@ export interface WalletState {
   connect: (walletName: WalletName, walletType?: WalletType) => Promise<void>;
   connectSimulated: () => void;
   disconnect: () => Promise<void>;
+  attemptReconnect: () => Promise<boolean>;
   setBalances: (balances: { lunc?: string }) => void;
   setConnecting: (connecting: boolean) => void;
   cancelConnection: () => void;
@@ -70,7 +82,7 @@ export function checkWalletAvailability() {
 
 export const useWalletStore = create<WalletState>()(
   persist(
-    (set, _get) => ({
+    (set, get) => ({
       // Initial state
       connected: false,
       connecting: false,
@@ -83,7 +95,6 @@ export const useWalletStore = create<WalletState>()(
       showWalletModal: false,
 
       // Connect dev wallet (DEV_MODE only) using cosmes MnemonicWallet
-      // Creates a real ConnectedWallet that can sign and broadcast transactions
       connectSimulated: () => {
         const result = connectDevWallet()
         const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
@@ -104,12 +115,12 @@ export const useWalletStore = create<WalletState>()(
         set({ connecting: true, connectingWallet: walletName });
         
         try {
-          // LUNC Dash always uses WalletConnect
           const effectiveWalletType = walletName === WalletName.LUNCDASH 
             ? WalletType.WALLETCONNECT 
             : walletTypeParam;
           
           const result = await connectTerraWallet(walletName, effectiveWalletType);
+          const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
           
           set({
             connected: true,
@@ -118,7 +129,7 @@ export const useWalletStore = create<WalletState>()(
             address: result.address,
             walletType: result.walletType,
             connectionType: result.connectionType,
-            chainId: result.walletType === 'station' ? 'columbus-5' : 'columbus-5', // Adjust based on network
+            chainId,
           });
           
           console.log('Terra wallet connected:', result.address, result.walletType);
@@ -127,6 +138,43 @@ export const useWalletStore = create<WalletState>()(
           set({ connecting: false, connectingWallet: null });
           throw error;
         }
+      },
+
+      // Attempt to silently reconnect a previously-connected wallet (e.g. page refresh).
+      // Extensions re-request key; WalletConnect restores cached session.
+      attemptReconnect: async () => {
+        const { walletType, connectionType, address } = get()
+        if (!walletType || !address) return false
+
+        const walletName = WALLET_TYPE_TO_NAME[walletType]
+        if (!walletName) return false
+
+        const effectiveType = connectionType ?? WalletType.EXTENSION
+
+        try {
+          const result = await tryReconnect(walletName, effectiveType)
+          if (result) {
+            const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
+            set({
+              connected: true,
+              address: result.address,
+              chainId,
+            })
+            return true
+          }
+        } catch (error) {
+          console.warn('Auto-reconnect failed:', error)
+        }
+
+        // Clear persisted state on failed reconnection
+        set({
+          connected: false,
+          address: null,
+          walletType: null,
+          connectionType: null,
+          chainId: null,
+        })
+        return false
       },
 
       // Disconnect wallet
@@ -175,8 +223,8 @@ export const useWalletStore = create<WalletState>()(
       name: 'cl8y-bridge-wallet-storage',
       partialize: (state) => ({
         walletType: state.walletType,
+        connectionType: state.connectionType,
         address: state.address,
-        // Don't persist balances - refresh on reconnect
       }),
     }
   )

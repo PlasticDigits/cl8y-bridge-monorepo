@@ -1,7 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useAccount, useSwitchChain } from 'wagmi'
 import { useHashVerification } from '../hooks/useHashVerification'
 import { useTransferStore } from '../stores/transfer'
+import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
+import { useWallet } from '../hooks/useWallet'
+import { useUIStore } from '../stores/ui'
 import {
   HashSearchBar,
   HashComparisonPanel,
@@ -13,6 +17,131 @@ import {
 } from '../components/verify'
 import { HashWithBlockie } from '../components/ui'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
+import { getBridgeChainByBytes4 } from '../utils/bridgeChains'
+import { bytes32ToAddress } from '../services/evm/tokenRegistry'
+import { bytes32ToTerraAddress } from '../services/hashVerification'
+import { hexToUint8Array } from '../services/terra/withdrawSubmit'
+import type { DepositData } from '../hooks/useTransferLookup'
+import type { Hex, Address } from 'viem'
+
+/** Extract bytes4 from bytes32 (left-aligned) */
+function bytes32ToBytes4(bytes32: Hex): string {
+  const clean = bytes32.slice(2).padStart(64, '0')
+  return '0x' + clean.slice(0, 8)
+}
+
+function SubmitHashButton({ source }: { source: DepositData }) {
+  const { address: evmAddress, chain: evmChain } = useAccount()
+  const { connected: isTerraConnected, setShowWalletModal } = useWallet()
+  const { setShowEvmWalletModal } = useUIStore()
+  const { switchChainAsync } = useSwitchChain()
+  const { submitOnEvm, submitOnTerra, isLoading, status: submitStatus, error: submitError } = useWithdrawSubmit()
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  const destBytes4 = bytes32ToBytes4(source.destChain)
+  const destChainConfig = getBridgeChainByBytes4(destBytes4)
+  const isDestEvm = destChainConfig?.type === 'evm'
+  const isDestCosmos = destChainConfig?.type === 'cosmos'
+
+  const handleSubmit = useCallback(async () => {
+    setLocalError(null)
+    if (!destChainConfig?.bridgeAddress) {
+      setLocalError('Destination bridge address not configured')
+      return
+    }
+
+    try {
+      if (isDestEvm) {
+        if (!evmAddress) {
+          setShowEvmWalletModal(true)
+          return
+        }
+        const destChainId = destChainConfig.chainId as number
+        if (evmChain?.id !== destChainId) {
+          await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
+        }
+
+        const srcChainBytes4 = bytes32ToBytes4(source.srcChain) as Hex
+        let tokenAddr: Address
+        try {
+          tokenAddr = bytes32ToAddress(source.token)
+        } catch {
+          tokenAddr = '0x0000000000000000000000000000000000000000' as Address
+        }
+
+        await submitOnEvm({
+          bridgeAddress: destChainConfig.bridgeAddress as Address,
+          srcChain: srcChainBytes4,
+          srcAccount: source.srcAccount,
+          destAccount: source.destAccount,
+          token: tokenAddr,
+          amount: source.amount,
+          nonce: source.nonce,
+        })
+      } else if (isDestCosmos) {
+        if (!isTerraConnected) {
+          setShowWalletModal(true)
+          return
+        }
+
+        const srcChainBytes4 = hexToUint8Array(bytes32ToBytes4(source.srcChain))
+        const srcAccountBytes32 = hexToUint8Array(source.srcAccount)
+        let recipient: string
+        try {
+          recipient = bytes32ToTerraAddress(source.destAccount)
+        } catch {
+          setLocalError('Could not decode Terra recipient from deposit data')
+          return
+        }
+
+        await submitOnTerra({
+          bridgeAddress: destChainConfig.bridgeAddress,
+          srcChainBytes4,
+          srcAccountBytes32,
+          token: 'uluna',
+          recipient,
+          amount: source.amount.toString(),
+          nonce: Number(source.nonce),
+        })
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Submission failed')
+    }
+  }, [source, destChainConfig, isDestEvm, isDestCosmos, evmAddress, evmChain, isTerraConnected, switchChainAsync, submitOnEvm, submitOnTerra, setShowEvmWalletModal, setShowWalletModal])
+
+  if (submitStatus === 'success') {
+    return (
+      <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">
+        Hash submitted successfully.
+      </p>
+    )
+  }
+
+  const needsWallet = isDestEvm ? !evmAddress : isDestCosmos ? !isTerraConnected : false
+  const buttonLabel = isLoading
+    ? 'Submitting…'
+    : needsWallet
+    ? `Connect ${isDestEvm ? 'EVM' : 'TC'} Wallet`
+    : `Submit Hash${destChainConfig ? ` on ${destChainConfig.name}` : ''}`
+
+  const displayError = localError || submitError
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={isLoading || !destChainConfig}
+        className="btn-primary inline-flex text-xs"
+      >
+        {buttonLabel}
+      </button>
+      {displayError && (
+        <span className="text-xs text-red-400">{displayError}</span>
+      )}
+    </div>
+  )
+}
 
 export default function HashVerificationPage() {
   const [searchParams] = useSearchParams()
@@ -148,10 +277,7 @@ export default function HashVerificationPage() {
                     Submit Hash Now
                   </Link>
                 ) : (
-                  <p className="text-xs text-gray-400">
-                    To submit, navigate to the transfer status page with this hash or connect your
-                    wallet on the destination chain.
-                  </p>
+                  <SubmitHashButton source={source} />
                 )}
               </div>
             </div>

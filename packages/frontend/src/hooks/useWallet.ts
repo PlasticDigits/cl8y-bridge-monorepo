@@ -5,7 +5,7 @@
  * Wraps the wallet store with additional utilities.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWalletStore, checkWalletAvailability, WalletName, WalletType } from '../stores/wallet';
 import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG } from '../utils/constants';
 
@@ -50,6 +50,7 @@ export function useWallet() {
     connect: storeConnect,
     connectSimulated: storeConnectSimulated,
     disconnect: storeDisconnect,
+    attemptReconnect,
     setBalances,
     setConnecting,
     cancelConnection,
@@ -66,6 +67,17 @@ export function useWallet() {
     const interval = setInterval(check, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-reconnect on mount when persisted state indicates a previous connection.
+  // Runs once; restores the cosmes controller connection so the wallet is usable.
+  const reconnectAttempted = useRef(false);
+  useEffect(() => {
+    if (reconnectAttempted.current) return;
+    if (connected) return; // already connected
+    if (!walletType || !address) return; // no persisted session
+    reconnectAttempted.current = true;
+    attemptReconnect();
+  }, [connected, walletType, address, attemptReconnect]);
 
   // Refresh balances from chain
   const refreshBalances = useCallback(async () => {
@@ -87,7 +99,6 @@ export function useWallet() {
   ) => {
     try {
       await storeConnect(walletName, walletTypeParam);
-      // Refresh balances after connection
       await refreshBalances();
     } catch (error) {
       console.error('Connection failed:', error);
@@ -95,8 +106,7 @@ export function useWallet() {
     }
   }, [storeConnect, refreshBalances]);
 
-  // Connect simulated wallet (dev mode - uses MnemonicWallet which CAN sign
-  // real transactions on LocalTerra; no browser extension needed)
+  // Connect simulated wallet (dev mode)
   const connectSimulated = useCallback(() => {
     storeConnectSimulated();
   }, [storeConnectSimulated]);
@@ -110,9 +120,7 @@ export function useWallet() {
   useEffect(() => {
     if (connected && address) {
       refreshBalances();
-      
-      // Set up periodic refresh
-      const interval = setInterval(refreshBalances, 30000); // 30 seconds
+      const interval = setInterval(refreshBalances, 30000);
       return () => clearInterval(interval);
     }
   }, [connected, address, refreshBalances]);
