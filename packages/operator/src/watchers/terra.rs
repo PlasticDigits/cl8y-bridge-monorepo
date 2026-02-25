@@ -94,6 +94,7 @@ impl TerraWatcher {
     pub async fn run(&self) -> Result<()> {
         let poll_interval = Duration::from_millis(1000);
         let mut consecutive_failures: u32 = 0;
+        let mut consecutive_block_failures: u32 = 0;
         const MAX_CONSECUTIVE_FAILURES: u32 = 30;
 
         loop {
@@ -160,31 +161,48 @@ impl TerraWatcher {
 
                 match self.process_block(height).await {
                     Ok(()) => {
-                        update_last_terra_block(&self.db, &self.chain_id, height as i64).await?;
-                    }
-                    Err(e) => {
-                        let err_str = format!("{e}");
-                        if err_str.contains("could not find results for height")
-                            || err_str.contains("block results")
+                        consecutive_block_failures = 0;
+                        if let Err(e) =
+                            update_last_terra_block(&self.db, &self.chain_id, height as i64).await
                         {
+                            consecutive_block_failures += 1;
                             tracing::warn!(
                                 chain_id = %self.chain_id,
                                 height,
+                                consecutive_block_failures,
+                                max_failures = MAX_CONSECUTIVE_FAILURES,
                                 error = %e,
-                                "Transient error processing Terra block, will retry next cycle"
+                                "Failed to persist last Terra block, will retry this height next cycle"
                             );
+                            if consecutive_block_failures >= MAX_CONSECUTIVE_FAILURES {
+                                return Err(e.wrap_err(format!(
+                                    "Persisting last Terra block failed {} consecutive times at height {}",
+                                    consecutive_block_failures, height
+                                )));
+                            }
                             break;
                         }
-                        // Log the fatal error explicitly and flush before returning
-                        tracing::error!(
+                    }
+                    Err(e) => {
+                        consecutive_block_failures += 1;
+                        let err_str = format!("{e}");
+                        let transient = is_likely_transient_terra_error(&err_str);
+                        tracing::warn!(
                             chain_id = %self.chain_id,
                             height,
+                            transient,
+                            consecutive_block_failures,
+                            max_failures = MAX_CONSECUTIVE_FAILURES,
                             error = %e,
-                            "Fatal error processing Terra block — watcher exiting"
+                            "Error processing Terra block, will retry next cycle"
                         );
-                        use std::io::Write;
-                        let _ = std::io::stderr().flush();
-                        return Err(e);
+                        if consecutive_block_failures >= MAX_CONSECUTIVE_FAILURES {
+                            return Err(e.wrap_err(format!(
+                                "Processing Terra blocks failed {} consecutive times (last height {})",
+                                consecutive_block_failures, height
+                            )));
+                        }
+                        break;
                     }
                 }
 
@@ -207,15 +225,35 @@ impl TerraWatcher {
             self.lcd_url, self.bridge_address, height
         );
 
-        let response: TxSearchResponse = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .wrap_err("Failed to query transactions")?
-            .json()
-            .await
-            .wrap_err("Failed to parse transaction response")?;
+        let response =
+            self.http.get(&url).send().await.wrap_err_with(|| {
+                format!("Failed to query Terra transactions at height {}", height)
+            })?;
+
+        let status = response.status();
+        let body = response.text().await.wrap_err_with(|| {
+            format!(
+                "Failed to read Terra transaction response body at height {}",
+                height
+            )
+        })?;
+        if !status.is_success() {
+            return Err(eyre!(
+                "Terra tx query returned status {} at height {} url={} body={}",
+                status,
+                height,
+                url,
+                clip_for_log(&body, 300)
+            ));
+        }
+
+        let response: TxSearchResponse = serde_json::from_str(&body).wrap_err_with(|| {
+            format!(
+                "Failed to parse Terra transaction response at height {} body={}",
+                height,
+                clip_for_log(&body, 300)
+            )
+        })?;
 
         for tx in response.tx_responses {
             if let Some(deposit) = self.parse_deposit_tx_v2(&tx)? {
@@ -420,16 +458,55 @@ impl TerraWatcher {
             .await
             .wrap_err("Failed to query Terra block height")?;
 
-        let json: serde_json::Value = resp
-            .json()
+        let status = resp.status();
+        let body = resp
+            .text()
             .await
-            .wrap_err("Failed to parse Terra block height response")?;
+            .wrap_err("Failed to read Terra block height response body")?;
+        if !status.is_success() {
+            return Err(eyre!(
+                "Terra height query returned status {} url={} body={}",
+                status,
+                url,
+                clip_for_log(&body, 300)
+            ));
+        }
+
+        let json: serde_json::Value = serde_json::from_str(&body).wrap_err_with(|| {
+            format!(
+                "Failed to parse Terra block height response body={}",
+                clip_for_log(&body, 300)
+            )
+        })?;
 
         json["block"]["header"]["height"]
             .as_str()
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or_else(|| eyre!("Missing or invalid height in LCD response"))
     }
+}
+
+fn clip_for_log(input: &str, max_chars: usize) -> String {
+    let clipped: String = input.chars().take(max_chars).collect();
+    if input.chars().count() > max_chars {
+        format!("{}...(truncated)", clipped)
+    } else {
+        clipped
+    }
+}
+
+fn is_likely_transient_terra_error(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("could not find results for height")
+        || e.contains("block results")
+        || e.contains("429")
+        || e.contains("503")
+        || e.contains("504")
+        || e.contains("timeout")
+        || e.contains("timed out")
+        || e.contains("connection reset")
+        || e.contains("connection refused")
+        || e.contains("temporarily unavailable")
 }
 
 /// Helper function to extract string attribute

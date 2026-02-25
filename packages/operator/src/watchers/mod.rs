@@ -84,9 +84,10 @@ impl WatcherManager {
         let mut join_set = tokio::task::JoinSet::new();
 
         for evm_watcher in self.evm_watchers {
-            join_set.spawn(async move { evm_watcher.run().await });
+            let chain_id = evm_watcher.chain_id();
+            join_set.spawn(async move { (format!("evm:{chain_id}"), evm_watcher.run().await) });
         }
-        join_set.spawn(async move { self.terra_watcher.run().await });
+        join_set.spawn(async move { ("terra".to_string(), self.terra_watcher.run().await) });
 
         tokio::select! {
             _ = shutdown.recv() => {
@@ -96,16 +97,21 @@ impl WatcherManager {
             }
             maybe_done = join_set.join_next() => {
                 let result = match maybe_done {
-                    Some(Ok(Ok(()))) => {
-                        error!("A watcher exited unexpectedly without error");
+                    Some(Ok((watcher_name, Ok(())))) => {
+                        error!(watcher = %watcher_name, "Watcher exited unexpectedly without error");
                         Err(eyre::eyre!("watcher exited unexpectedly"))
                     }
-                    Some(Ok(Err(e))) => {
-                        error!("A watcher stopped with error: {:?}", e);
+                    Some(Ok((watcher_name, Err(e)))) => {
+                        error!(
+                            watcher = %watcher_name,
+                            error = %e,
+                            error_chain = ?e,
+                            "Watcher stopped with error"
+                        );
                         Err(e)
                     }
                     Some(Err(e)) => {
-                        error!("A watcher task panicked: {:?}", e);
+                        error!(error = %e, "Watcher task panicked");
                         Err(eyre::eyre!("watcher task panicked: {}", e))
                     }
                     None => {
