@@ -330,6 +330,25 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
         return Ok(None);
     }
 
+    // Dump all EVM_CHAIN_* env vars so misconfiguration is immediately obvious
+    let mut found_vars: Vec<String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("EVM_CHAIN"))
+        .map(|(k, v)| {
+            if k.contains("KEY") || k.contains("MNEMONIC") {
+                format!("{}=<redacted>", k)
+            } else {
+                format!("{}={}", k, v)
+            }
+        })
+        .collect();
+    found_vars.sort();
+    eprintln!(
+        "[multi-evm] Loading {} chain(s) (indices 1..={}). Environment:\n  {}",
+        count,
+        count,
+        found_vars.join("\n  ")
+    );
+
     let mut chains = Vec::with_capacity(count);
 
     for i in 1..=count {
@@ -338,10 +357,20 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
         let name =
             std::env::var(format!("{}_NAME", prefix)).unwrap_or_else(|_| format!("chain_{}", i));
 
-        let chain_id: u64 = std::env::var(format!("{}_CHAIN_ID", prefix))
-            .map_err(|_| eyre!("Missing {}_CHAIN_ID", prefix))?
+        let chain_id_var = format!("{}_CHAIN_ID", prefix);
+        let chain_id: u64 = std::env::var(&chain_id_var)
+            .map_err(|_| {
+                eyre!(
+                    "Missing {}. EVM_CHAINS_COUNT={} so indices 1..={} are expected. \
+                     Found env vars: [{}]",
+                    chain_id_var,
+                    count,
+                    count,
+                    found_vars.join(", ")
+                )
+            })?
             .parse()
-            .map_err(|_| eyre!("Invalid {}_CHAIN_ID — must be a u64", prefix))?;
+            .map_err(|_| eyre!("Invalid {} — must be a u64", chain_id_var))?;
 
         // 4-byte chain ID (V2) — from ChainRegistry, NOT the native chain ID.
         let this_chain_id: u32 = std::env::var(format!("{}_THIS_CHAIN_ID", prefix))
@@ -355,21 +384,23 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             .parse()
             .map_err(|_| eyre!("Invalid {}_THIS_CHAIN_ID — must be a u32", prefix))?;
 
-        let rpc_raw = std::env::var(format!("{}_RPC_URL", prefix))
-            .map_err(|_| eyre!("Missing {}_RPC_URL", prefix))?;
+        let rpc_var = format!("{}_RPC_URL", prefix);
+        let rpc_raw = std::env::var(&rpc_var)
+            .map_err(|_| eyre!("Missing {}. Set it to the RPC endpoint for chain {}", rpc_var, name))?;
         let rpc_parts: Vec<String> = rpc_raw
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
         if rpc_parts.is_empty() {
-            return Err(eyre!("{}_RPC_URL cannot be empty", prefix));
+            return Err(eyre!("{} cannot be empty", rpc_var));
         }
         let rpc_url = rpc_parts[0].clone();
         let rpc_fallback_urls = rpc_parts[1..].to_vec();
 
-        let bridge_address = std::env::var(format!("{}_BRIDGE_ADDRESS", prefix))
-            .map_err(|_| eyre!("Missing {}_BRIDGE_ADDRESS", prefix))?;
+        let bridge_var = format!("{}_BRIDGE_ADDRESS", prefix);
+        let bridge_address = std::env::var(&bridge_var)
+            .map_err(|_| eyre!("Missing {}. Set it to the bridge contract address for chain {}", bridge_var, name))?;
 
         let finality_blocks: u64 = std::env::var(format!("{}_FINALITY_BLOCKS", prefix))
             .ok()
