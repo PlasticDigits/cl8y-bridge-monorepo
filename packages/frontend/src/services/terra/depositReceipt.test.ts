@@ -120,6 +120,43 @@ describe('parseTerraLockReceipt', () => {
     expect(result!.destTokenAddress).toBeUndefined()
   })
 
+  it('should prefer lock_amount over generic amount (CW20 fee transfer)', async () => {
+    // CW20 deposits produce multiple wasm events:
+    // 1. Bridge emits lock_amount (net amount after fee)
+    // 2. CW20 fee transfer emits amount (the fee)
+    // The parser must use lock_amount to avoid showing the fee as the transfer amount.
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      mockOkFetch({
+        tx_response: {
+          code: 0,
+          events: [
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'deposit_cw20' },
+                { key: 'nonce', value: '5' },
+                { key: 'lock_amount', value: '9970000' },
+                { key: 'token', value: 'terra1abc...' },
+              ],
+            },
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'transfer' },
+                { key: 'amount', value: '30000' },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    const result = await parseTerraLockReceipt('CW20_TX', MOCK_LCD_URL, NO_RETRY)
+    expect(result).not.toBeNull()
+    expect(result!.nonce).toBe(5)
+    expect(result!.amount).toBe('9970000')
+  })
+
   it('should return null when LCD returns non-200', async () => {
     global.fetch = vi.fn().mockResolvedValue(mockFailFetch(404))
 

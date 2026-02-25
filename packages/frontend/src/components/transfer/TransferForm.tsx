@@ -292,12 +292,11 @@ export function TransferForm() {
     sourceChainBytes4,
     !!isSourceEvm && !!sourceChainBytes4
   )
-  // When source is Terra and dest is EVM, query dest chain mappings to filter
-  // tokens to only those that have a destination on the selected EVM chain.
-  const { mappings: destChainMappings, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
+  // Query dest chain mappings for token filtering (Terra→EVM) and dest decimals (all→EVM).
+  const { mappings: destChainMappings, decimalsMap: destChainDecimals, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
     registryTokens,
     destChainBytes4,
-    isSourceTerra && !!isDestEvmChain && !!destChainBytes4
+    !!isDestEvmChain && !!destChainBytes4
   )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
@@ -466,7 +465,9 @@ export function TransferForm() {
 
   const amountDecimals = isSourceTerra ? terraDecimals : (tokenConfig?.decimals ?? DECIMALS.LUNC)
   const destDecimals = isDestEvmChain
-    ? (registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals ?? 18)
+    ? (destChainDecimals?.[selectedTokenId]
+        ?? registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals
+        ?? 18)
     : terraDecimals
 
   const toSourceUnits = useCallback(
@@ -476,7 +477,9 @@ export function TransferForm() {
         return destBaseUnits * BigInt(10 ** exp)
       }
       const exp = destDecimals - amountDecimals
-      return destBaseUnits / BigInt(10 ** exp)
+      const result = destBaseUnits / BigInt(10 ** exp)
+      if (result === 0n && destBaseUnits > 0n) return 1n
+      return result
     },
     [amountDecimals, destDecimals]
   )

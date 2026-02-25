@@ -268,8 +268,10 @@ function EvmClaimButton({
     staleTime: 15_000,
   })
 
+  const chainId = chain.chainId as 1 | 31337 | 56 | 31338 | 204
   const { isSuccess: txConfirmed, isError: txFailed } = useWaitForTransactionReceipt({
     hash: txHash,
+    chainId,
     query: { enabled: !!txHash && status === 'waiting' },
   })
 
@@ -328,6 +330,7 @@ function EvmClaimButton({
         abi: FAUCET_ABI,
         functionName: 'claim',
         args: [tokenAddr],
+        chainId,
       })
       setTxHash(hash)
       setStatus('waiting')
@@ -340,7 +343,7 @@ function EvmClaimButton({
       setStatus('error')
       setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
     }
-  }, [isConnected, userAddress, chain.chainId, faucetAddr, tokenAddr, switchChainAsync, writeContractAsync])
+  }, [isConnected, userAddress, chain.chainId, chainId, faucetAddr, tokenAddr, switchChainAsync, writeContractAsync])
 
   if (!chain.faucetAddress) {
     return <span className="text-xs text-gray-500">Not deployed</span>

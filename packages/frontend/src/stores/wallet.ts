@@ -52,6 +52,8 @@ export interface WalletState {
   
   // Connecting state for specific wallets
   connectingWallet: WalletName | null;
+  /** Timestamp when connecting started, used to detect stale WalletConnect attempts */
+  connectingSince: number | null;
   
   // Modal state (for triggering wallet modal from other components)
   showWalletModal: boolean;
@@ -92,6 +94,7 @@ export const useWalletStore = create<WalletState>()(
       chainId: null,
       luncBalance: '0',
       connectingWallet: null,
+      connectingSince: null,
       showWalletModal: false,
 
       // Connect dev wallet (DEV_MODE only) using cosmes MnemonicWallet
@@ -102,6 +105,7 @@ export const useWalletStore = create<WalletState>()(
           connected: true,
           connecting: false,
           connectingWallet: null,
+          connectingSince: null,
           address: result.address,
           walletType: result.walletType as TerraWalletType,
           connectionType: result.connectionType,
@@ -112,7 +116,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Connect to wallet
       connect: async (walletName: WalletName, walletTypeParam: WalletType = WalletType.EXTENSION) => {
-        set({ connecting: true, connectingWallet: walletName });
+        set({ connecting: true, connectingWallet: walletName, connectingSince: Date.now() });
         
         try {
           const effectiveWalletType = walletName === WalletName.LUNCDASH 
@@ -126,6 +130,7 @@ export const useWalletStore = create<WalletState>()(
             connected: true,
             connecting: false,
             connectingWallet: null,
+            connectingSince: null,
             address: result.address,
             walletType: result.walletType,
             connectionType: result.connectionType,
@@ -135,7 +140,7 @@ export const useWalletStore = create<WalletState>()(
           console.log('Terra wallet connected:', result.address, result.walletType);
         } catch (error) {
           console.error('Wallet connection failed:', error);
-          set({ connecting: false, connectingWallet: null });
+          set({ connecting: false, connectingWallet: null, connectingSince: null });
           throw error;
         }
       },
@@ -189,6 +194,7 @@ export const useWalletStore = create<WalletState>()(
           connected: false,
           connecting: false,
           connectingWallet: null,
+          connectingSince: null,
           address: null,
           walletType: null,
           connectionType: null,
@@ -211,7 +217,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Cancel pending connection
       cancelConnection: () => {
-        set({ connecting: false, connectingWallet: null });
+        set({ connecting: false, connectingWallet: null, connectingSince: null });
       },
 
       // Control wallet modal visibility

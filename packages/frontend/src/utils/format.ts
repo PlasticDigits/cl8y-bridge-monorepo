@@ -71,9 +71,12 @@ export function formatCompact(
     return numToSigFig(scaled, sigfigs) + 'k'
   }
   if (abs < 0.0001) {
+    // Show plain decimal instead of scientific notation (e.g. "0.000001" not "1e-6")
     const exp = Math.floor(Math.log10(abs))
-    const mantissa = num / Math.pow(10, exp)
-    return `${numToSigFig(mantissa, sigfigs)}e${exp}`
+    const decimalPlaces = Math.max(-exp + (sigfigs - 1), 1)
+    const formatted = num.toFixed(decimalPlaces)
+    // Strip trailing zeros but keep at least one decimal place
+    return formatted.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
   }
   return numToSigFig(num, sigfigs)
 }

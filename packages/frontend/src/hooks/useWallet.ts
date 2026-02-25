@@ -7,7 +7,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWalletStore, checkWalletAvailability, WalletName, WalletType } from '../stores/wallet';
+import { connectTerraWallet } from '../services/terra';
 import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG } from '../utils/constants';
+
+/** Auto-cancel WalletConnect attempts that haven't resolved in this many ms */
+const WC_CONNECTION_TIMEOUT_MS = 60_000;
 
 export { WalletName, WalletType };
 
@@ -46,6 +50,7 @@ export function useWallet() {
     chainId,
     luncBalance,
     connectingWallet,
+    connectingSince,
     showWalletModal,
     connect: storeConnect,
     connectSimulated: storeConnectSimulated,
@@ -78,6 +83,62 @@ export function useWallet() {
     reconnectAttempted.current = true;
     attemptReconnect();
   }, [connected, walletType, address, attemptReconnect]);
+
+  // Auto-cancel stale WalletConnect connection attempts (e.g. WebSocket died
+  // while Safari was backgrounded during a LUNC Dash app-switch).
+  useEffect(() => {
+    if (!connecting || !connectingSince) return;
+    const remaining = WC_CONNECTION_TIMEOUT_MS - (Date.now() - connectingSince);
+    if (remaining <= 0) {
+      console.warn('[Wallet] Connection attempt timed out, resetting')
+      cancelConnection();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (useWalletStore.getState().connecting) {
+        console.warn('[Wallet] Connection attempt timed out, resetting')
+        cancelConnection();
+      }
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [connecting, connectingSince, cancelConnection]);
+
+  // When the page becomes visible again after a WalletConnect app-switch (e.g.
+  // returning from LUNC Dash on iPad), retry the connection. The WC bridge may
+  // have a completed session cached in localStorage that we can pick up.
+  useEffect(() => {
+    const handleVisibility = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const state = useWalletStore.getState();
+      if (!state.connecting || !state.connectingWallet) return;
+
+      const wallet = state.connectingWallet;
+      console.log('[Wallet] Page became visible during WC connection, retrying', wallet);
+
+      cancelConnection();
+      await new Promise((r) => setTimeout(r, 500));
+
+      try {
+        const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId;
+        const result = await connectTerraWallet(wallet, WalletType.WALLETCONNECT);
+        useWalletStore.setState({
+          connected: true,
+          connecting: false,
+          connectingWallet: null,
+          connectingSince: null,
+          address: result.address,
+          walletType: result.walletType,
+          connectionType: result.connectionType,
+          chainId,
+        });
+      } catch {
+        console.warn('[Wallet] Visibility-triggered reconnect failed');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [cancelConnection]);
 
   // Refresh balances from chain
   const refreshBalances = useCallback(async () => {

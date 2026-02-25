@@ -107,3 +107,14 @@
 :root[data-theme='light'] .bg-emerald-600 {
   background-color: #22c55e !important;
 }
+
+/* Yellow-on-light-brown badges (DEPOSITED, Awaiting deposit, Action Required): use dark text for contrast */
+:root[data-theme='light'] [class*='bg-yellow-900'][class*='text-yellow'],
+:root[data-theme='light'] [class*='border-yellow-600'][class*='text-yellow'] {
+  color: #422006 !important;
+}
+:root[data-theme='light'] .border-yellow-600\/70,
+:root[data-theme='light'] .border-yellow-700,
+:root[data-theme='light'] .border-yellow-700\/60 {
+  border-color: rgba(66, 32, 6, 0.6) !important;
+}

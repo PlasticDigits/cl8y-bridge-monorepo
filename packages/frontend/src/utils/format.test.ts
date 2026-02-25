@@ -90,10 +90,10 @@ describe('formatCompact', () => {
     expect(formatCompact('1234567000000000', 6)).toBe('1.235b')
   })
 
-  it('formats small numbers with scientific notation', () => {
+  it('formats small numbers as plain decimals', () => {
     // 0.000012 human = 12 base (6 decimals); abs < 0.0001
-    expect(formatCompact('12', 6)).toMatch(/e-\d+/)
-    expect(formatCompact('1', 6)).toMatch(/e-\d+/)
+    expect(formatCompact('12', 6)).toBe('0.000012')
+    expect(formatCompact('1', 6)).toBe('0.000001')
   })
 
   it('formats mid-range numbers with sigfigs', () => {

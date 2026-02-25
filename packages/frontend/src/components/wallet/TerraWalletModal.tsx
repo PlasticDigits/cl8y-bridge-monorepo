@@ -4,6 +4,8 @@ import { Modal } from '../ui'
 import { TerraWalletOption, getTerraWalletIcon } from './TerraWalletOption'
 import { DEV_MODE } from '../../utils/constants'
 
+const WC_WALLETS = new Set<WalletName>([WalletName.LUNCDASH, WalletName.GALAXYSTATION])
+
 export interface TerraWalletModalProps {
   isOpen: boolean
   onClose: () => void
@@ -22,6 +24,8 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     cancelConnection,
   } = useWallet()
 
+  const isWcConnecting = connecting && connectingWallet != null && WC_WALLETS.has(connectingWallet)
+
   // Modal already handles Escape key - this just adds cancelConnection on close
   const closeModal = useCallback(() => {
     onClose()
@@ -35,6 +39,11 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     } catch {
       // Error is shown via useWallet / store
     }
+  }
+
+  const handleRetry = (walletName: WalletName) => {
+    cancelConnection()
+    setTimeout(() => handleConnect(walletName, WalletType.WALLETCONNECT), 100)
   }
 
   const wallets = [
@@ -114,16 +123,36 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
         ))}
         <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">Mobile / WalletConnect</p>
         {wallets.slice(4).map((w) => (
-          <TerraWalletOption
-            key={w.walletName}
-            name={w.name}
-            description={w.description}
-            available={w.available}
-            loading={connectingWallet === w.walletName}
-            onClick={() => handleConnect(w.walletName, WalletType.WALLETCONNECT)}
-            disabled={connecting}
-            icon={getTerraWalletIcon(w.walletName)}
-          />
+          <div key={w.walletName}>
+            <TerraWalletOption
+              name={w.name}
+              description={w.description}
+              available={w.available}
+              loading={connectingWallet === w.walletName}
+              onClick={() => handleConnect(w.walletName, WalletType.WALLETCONNECT)}
+              disabled={connecting}
+              icon={getTerraWalletIcon(w.walletName)}
+            />
+            {connectingWallet === w.walletName && isWcConnecting && (
+              <div className="flex items-center gap-2 mt-1 ml-14">
+                <p className="text-xs text-gray-400">Waiting for wallet&hellip;</p>
+                <button
+                  type="button"
+                  onClick={() => handleRetry(w.walletName)}
+                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelConnection}
+                  className="text-xs text-gray-500 hover:text-gray-400 underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </Modal>

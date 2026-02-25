@@ -119,6 +119,7 @@ async function attemptParse(
 
     let nonce: number | undefined
     let amount: string | undefined
+    let lockAmount: string | undefined
     let token: string | undefined
     let destChainId: number | undefined
     let recipient: string | undefined
@@ -140,8 +141,10 @@ async function attemptParse(
             case 'deposit_nonce':
               nonce = parseInt(value, 10)
               break
-            case 'amount':
             case 'lock_amount':
+              lockAmount = value
+              break
+            case 'amount':
               amount = value
               break
             case 'token':
@@ -179,6 +182,10 @@ async function attemptParse(
         }
       }
     }
+
+    // Prefer lock_amount (net amount from bridge) over generic amount
+    // (which may be from CW20 fee transfers that appear later in the events)
+    amount = lockAmount ?? amount
 
     // Also extract from the tx body messages if events didn't have all fields
     if (!sender || !amount || !destChainId || !recipient) {

@@ -68,3 +68,5 @@ packages/contracts-terraclassic/external/
 # E2E Logs
 # ===================
 .e2e*
+test-results/
+playwright-report/

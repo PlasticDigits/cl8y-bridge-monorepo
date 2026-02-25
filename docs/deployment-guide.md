@@ -73,7 +73,7 @@ Frontend on Render
 ### API Keys
 
 - **Etherscan API key (V2)** — a single key works across all 60+ supported chains (BSC, opBNB, etc.). Get one at [etherscan.io](https://etherscan.io/myapikey). V1 keys are no longer supported.
-- **WalletConnect Project ID** — for frontend wallet modal ([cloud.walletconnect.com](https://cloud.walletconnect.com))
+- **WalletConnect Project ID** — for frontend wallet modal ([cloud.walletconnect.com](https://cloud.walletconnect.com)). **Important:** after creating the project, add and verify your production domain in the WalletConnect Cloud dashboard. An unverified domain can trigger MetaMask's "deceptive request" phishing warning when users connect via WalletConnect.
 - **Render account** — for frontend hosting ([render.com](https://render.com))
 
 ---

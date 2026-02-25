@@ -56,7 +56,20 @@ const connectors = [
       ]
     : []),
   // WalletConnect requires a valid projectId — omit if not configured
-  ...(WC_PROJECT_ID ? [walletConnect({ projectId: WC_PROJECT_ID })] : []),
+  ...(WC_PROJECT_ID
+    ? [
+        walletConnect({
+          projectId: WC_PROJECT_ID,
+          metadata: {
+            name: 'CL8Y Bridge',
+            description: 'Cross-chain transfers between any supported chains',
+            url: window.location.origin,
+            icons: [`${window.location.origin}/logo-128.png`],
+          },
+          showQrModal: true,
+        }),
+      ]
+    : []),
   coinbaseWallet(),
 ]
 
