@@ -190,7 +190,7 @@ fn init_logging() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,cl8y_relayer=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,cl8y_operator=debug"));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_thread_ids(true))

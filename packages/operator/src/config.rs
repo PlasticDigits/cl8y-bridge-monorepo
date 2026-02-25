@@ -333,6 +333,22 @@ impl Config {
             return Err(eyre!("fees.default_fee_bps cannot exceed 100"));
         }
 
+        // Reject duplicate chain IDs across primary EVM and multi-EVM configs.
+        // Running two watchers for the same chain causes race conditions on DB
+        // writes (duplicate deposits, cursor conflicts) and will crash the operator.
+        if let Some(ref multi) = self.multi_evm {
+            for chain in multi.enabled_chains() {
+                if chain.chain_id == self.evm.chain_id {
+                    return Err(eyre!(
+                        "FATAL: EVM chain {} appears in both EVM_CHAIN_ID and EVM_CHAINS. \
+                         This creates duplicate watchers that race on DB writes and crash the operator. \
+                         Remove it from one of the two configs.",
+                        chain.chain_id
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -465,5 +481,85 @@ mod tests {
         // Fee BPS > 100 should fail
         config.fees.default_fee_bps = 101;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_duplicate_chain_id_rejected() {
+        use multichain_rs::multi_evm::{EvmChainConfig, MultiEvmConfig};
+        use multichain_rs::types::ChainId;
+
+        let mut config = Config {
+            database: DatabaseConfig {
+                url: "postgres://localhost/test".to_string(),
+            },
+            evm: EvmConfig {
+                rpc_url: "http://localhost:8545".to_string(),
+                rpc_fallback_urls: vec![],
+                chain_id: 204,
+                bridge_address: "0x0000000000000000000000000000000000000001".to_string(),
+                private_key:
+                    "0x0000000000000000000000000000000000000000000000000000000000000001"
+                        .to_string(),
+                finality_blocks: 1,
+                this_chain_id: Some(2),
+                use_v2_events: None,
+            },
+            terra: TerraConfig {
+                rpc_url: "http://localhost:1317".to_string(),
+                lcd_url: "http://localhost:1316".to_string(),
+                chain_id: "columbus-5".to_string(),
+                bridge_address: "terra1...".to_string(),
+                mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
+                fee_recipient: None,
+                this_chain_id: None,
+            },
+            relayer: RelayerConfig {
+                poll_interval_ms: 1000,
+                retry_attempts: 3,
+                retry_delay_ms: 5000,
+            },
+            fees: FeeConfig {
+                default_fee_bps: 30,
+                fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
+            },
+            multi_evm: None,
+        };
+
+        // No multi-EVM — should pass
+        assert!(config.validate().is_ok());
+
+        // Multi-EVM with different chain — should pass
+        let chains = vec![EvmChainConfig {
+            name: "bsc".to_string(),
+            chain_id: 56,
+            this_chain_id: ChainId::from_u32(3),
+            rpc_url: "http://localhost:8546".to_string(),
+            rpc_fallback_urls: vec![],
+            bridge_address: "0x0000000000000000000000000000000000000002".to_string(),
+            finality_blocks: 0,
+            enabled: true,
+        }];
+        let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        config.multi_evm = Some(MultiEvmConfig::new(chains, pk.to_string()).unwrap());
+        assert!(config.validate().is_ok());
+
+        // Multi-EVM with DUPLICATE chain 204 — must fail
+        let chains_dup = vec![EvmChainConfig {
+            name: "opbnb".to_string(),
+            chain_id: 204,
+            this_chain_id: ChainId::from_u32(2),
+            rpc_url: "http://localhost:8547".to_string(),
+            rpc_fallback_urls: vec![],
+            bridge_address: "0x0000000000000000000000000000000000000003".to_string(),
+            finality_blocks: 0,
+            enabled: true,
+        }];
+        config.multi_evm = Some(MultiEvmConfig::new(chains_dup, pk.to_string()).unwrap());
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("204"),
+            "Error should mention the duplicate chain ID: {}",
+            err
+        );
     }
 }

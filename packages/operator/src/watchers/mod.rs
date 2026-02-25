@@ -53,29 +53,22 @@ impl WatcherManager {
 
         let terra_watcher = TerraWatcher::new(&config.terra, db).await?;
 
-        // Detect duplicate watchers (misconfiguration where the same chain
-        // appears in both primary EVM config and multi-EVM config)
-        let mut seen_chain_ids = std::collections::HashMap::new();
-        for watcher in &evm_watchers {
-            let chain_id = watcher.chain_id();
-            *seen_chain_ids.entry(chain_id).or_insert(0u32) += 1;
-        }
-        for (&chain_id, &count) in &seen_chain_ids {
-            if count > 1 {
-                warn!(
-                    chain_id,
-                    count,
-                    "DUPLICATE EVM watcher detected — chain appears {} times! \
-                     This wastes resources and may cause race conditions. \
-                     Check if chain {} is in both EVM_CHAIN_ID and EVM_CHAINS config.",
-                    count,
-                    chain_id
-                );
-            }
+        // Deduplicate watchers: if the same native chain ID appears more than
+        // once (e.g., in both primary EVM config and multi-EVM config), keep only
+        // the first instance to avoid race conditions on DB writes.
+        let mut seen_chain_ids = std::collections::HashSet::new();
+        let before_count = evm_watchers.len();
+        evm_watchers.retain(|w| seen_chain_ids.insert(w.chain_id()));
+        if evm_watchers.len() < before_count {
+            warn!(
+                removed = before_count - evm_watchers.len(),
+                "Removed duplicate EVM watchers — check if a chain appears in both \
+                 EVM_CHAIN_ID and EVM_CHAINS config"
+            );
         }
         info!(
             evm_watchers = evm_watchers.len(),
-            evm_chain_ids = ?seen_chain_ids.keys().collect::<Vec<_>>(),
+            evm_chain_ids = ?seen_chain_ids.into_iter().collect::<Vec<_>>(),
             "Watcher manager created"
         );
 
@@ -102,7 +95,7 @@ impl WatcherManager {
                 Ok(())
             }
             maybe_done = join_set.join_next() => {
-                match maybe_done {
+                let result = match maybe_done {
                     Some(Ok(Ok(()))) => {
                         error!("A watcher exited unexpectedly without error");
                         Err(eyre::eyre!("watcher exited unexpectedly"))
@@ -119,7 +112,13 @@ impl WatcherManager {
                         error!("All watcher tasks exited unexpectedly");
                         Err(eyre::eyre!("all watcher tasks exited unexpectedly"))
                     }
-                }
+                };
+                // Flush stderr so the error message above is visible in
+                // block-buffered environments (Docker, Render, systemd pipes)
+                // before the process exits.
+                use std::io::Write;
+                let _ = std::io::stderr().flush();
+                result
             }
         }
     }

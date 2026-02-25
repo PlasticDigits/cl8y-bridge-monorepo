@@ -29,13 +29,16 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 /// Insert a new EVM deposit
 pub async fn insert_evm_deposit(pool: &PgPool, deposit: &NewEvmDeposit) -> Result<i64> {
-    // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
+    // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value.
+    // ON CONFLICT handles the race where two codepaths (or a retry) attempt the same insert;
+    // the existing row is returned unchanged.
     let row = sqlx::query(
         r#"
         INSERT INTO evm_deposits (chain_id, tx_hash, log_index, nonce, dest_chain_key, 
             dest_token_address, dest_account, token, amount, block_number, block_hash, 
             dest_chain_type, src_account, src_v2_chain_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC, $10, $11, $12, $13, $14)
+        ON CONFLICT (chain_id, tx_hash, log_index) DO UPDATE SET chain_id = EXCLUDED.chain_id
         RETURNING id
         "#,
     )
