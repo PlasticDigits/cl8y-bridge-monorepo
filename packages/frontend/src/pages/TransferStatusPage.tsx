@@ -251,6 +251,11 @@ function bytes32ToBytes4(bytes32: `0x${string}`): string {
   return ('0x' + clean.slice(0, 8)) as string
 }
 
+function bytes32ToEvmAddress(bytes32: string): string {
+  if (!bytes32.startsWith('0x') || bytes32.length !== 66) return bytes32
+  return `0x${bytes32.slice(-40)}`
+}
+
 function buildTransferFromLookup(
   hash: string,
   source: {
@@ -322,6 +327,64 @@ function buildTransferFromLookup(
   }
 }
 
+function buildCanonicalTransferUpdatesFromSource(
+  current: TransferRecord,
+  source: {
+    amount: bigint
+    srcAccount: `0x${string}`
+    destAccount: `0x${string}`
+    token: `0x${string}`
+    srcChain?: `0x${string}`
+    destChain?: `0x${string}`
+    nonce?: bigint
+  },
+  sourceChain: BridgeChainConfig | null,
+  destChain: BridgeChainConfig | null
+): Partial<TransferRecord> | null {
+  const srcBytes4 = source.srcChain ? bytes32ToBytes4(source.srcChain) : current.sourceChainIdBytes4
+  const destBytes4 = source.destChain ? bytes32ToBytes4(source.destChain) : undefined
+
+  const srcEntry = srcBytes4 ? getBridgeChainEntryByBytes4(srcBytes4) : undefined
+  const destEntry = destBytes4 ? getBridgeChainEntryByBytes4(destBytes4) : undefined
+
+  const sourceKey =
+    (sourceChain && getChainKeyByConfig(sourceChain)) ||
+    srcEntry?.[0] ||
+    current.sourceChain
+  const destKey =
+    (destChain && getChainKeyByConfig(destChain)) ||
+    destEntry?.[0] ||
+    current.destChain
+
+  const resolvedDestBridge = destChain?.bridgeAddress || destEntry?.[1].bridgeAddress || current.destBridgeAddress
+
+  const srcIsCosmos = sourceChain?.type === 'cosmos' || sourceKey.includes('terra')
+  const destIsCosmos = destChain?.type === 'cosmos' || destKey.includes('terra')
+  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+
+  const candidate: Partial<TransferRecord> = {
+    sourceChain: sourceKey,
+    destChain: destKey,
+    direction,
+    amount: source.amount.toString(),
+    depositNonce: source.nonce !== undefined ? Number(source.nonce) : current.depositNonce,
+    srcAccount: source.srcAccount,
+    destAccount: source.destAccount,
+    destToken: source.token,
+    sourceChainIdBytes4: srcBytes4,
+    destBridgeAddress: resolvedDestBridge,
+  }
+
+  const changed: Partial<TransferRecord> = {}
+  for (const [k, v] of Object.entries(candidate) as [keyof TransferRecord, TransferRecord[keyof TransferRecord]][]) {
+    if (v !== undefined && current[k] !== v) {
+      ;(changed as Record<string, unknown>)[k as string] = v as unknown
+    }
+  }
+
+  return Object.keys(changed).length > 0 ? changed : null
+}
+
 export default function TransferStatusPage() {
   const { xchainHashId } = useParams<{ xchainHashId: string }>()
   const { getTransferByXchainHashId, updateTransferRecord } = useTransferStore()
@@ -358,6 +421,20 @@ export default function TransferStatusPage() {
     )
     setTransfer(synthetic)
   }, [xchainHashId, source, sourceChain, dest, destChain, lookupLoading, getTransferByXchainHashId])
+
+  // Reconcile stale local transfer fields from canonical on-chain source data.
+  // This prevents retries from using an incorrect destination chain/token/account.
+  useEffect(() => {
+    if (!xchainHashId || lookupLoading || !source) return
+    const stored = getTransferByXchainHashId(xchainHashId)
+    if (!stored) return
+
+    const updates = buildCanonicalTransferUpdatesFromSource(stored, source, sourceChain, destChain)
+    if (!updates) return
+
+    updateTransferRecord(stored.id, updates)
+    setTransfer((prev) => (prev ? { ...prev, ...updates } : prev))
+  }, [xchainHashId, lookupLoading, source, sourceChain, destChain, getTransferByXchainHashId, updateTransferRecord])
 
   // Sync stale localStorage lifecycle with on-chain data.
   // When the on-chain lookup shows a more advanced lifecycle than what's stored,
@@ -666,6 +743,44 @@ export default function TransferStatusPage() {
     [transfer?.lifecycle]
   )
 
+  const submitDiagnostics = useMemo(() => {
+    if (!transfer) return null
+
+    const canonicalDestBytes4 = source?.destChain ? bytes32ToBytes4(source.destChain) : undefined
+    const configuredDestBytes4 = BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]?.bytes4ChainId
+    const resolvedDestBytes4 = canonicalDestBytes4 ?? configuredDestBytes4
+    const resolvedDestEntry = resolvedDestBytes4 ? getBridgeChainEntryByBytes4(resolvedDestBytes4) : undefined
+
+    const canonicalToken = source?.token
+    const resolvedToken = canonicalToken ?? transfer.destToken ?? ''
+    const tokenAsAddress = resolvedToken.length === 66 ? bytes32ToEvmAddress(resolvedToken) : resolvedToken
+
+    const canonicalDestAccount = source?.destAccount
+    const resolvedDestAccount = canonicalDestAccount ?? transfer.destAccount ?? ''
+    const destAccountAsAddress =
+      resolvedDestAccount.length === 66 ? bytes32ToEvmAddress(resolvedDestAccount) : resolvedDestAccount
+
+    return {
+      destChainName:
+        resolvedDestEntry?.[1]?.name ??
+        BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]?.name ??
+        transfer.destChain,
+      destChainBytes4: resolvedDestBytes4 ?? 'unknown',
+      bridgeAddress:
+        resolvedDestEntry?.[1]?.bridgeAddress ??
+        BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]?.bridgeAddress ??
+        transfer.destBridgeAddress ??
+        'unknown',
+      nonce: source?.nonce !== undefined ? String(source.nonce) : String(transfer.depositNonce ?? 'unknown'),
+      amount: source ? source.amount.toString() : transfer.amount,
+      tokenBytes32: resolvedToken || 'unknown',
+      tokenAddress: tokenAsAddress || 'unknown',
+      destAccountBytes32: resolvedDestAccount || 'unknown',
+      destAccountAddress: destAccountAsAddress || 'unknown',
+      sourceOfTruth: source ? 'on-chain source deposit' : 'local transfer record',
+    }
+  }, [transfer, source])
+
   const isFailed = transfer?.lifecycle === 'failed'
 
   const cancelWindowRemaining = useApprovalCountdown(
@@ -762,6 +877,21 @@ export default function TransferStatusPage() {
                 This usually means the XChain Hash ID is invalid or was computed with incorrect parameters.
                 The hash may need to be recomputed from the original deposit receipt.
               </p>
+              {submitDiagnostics && (
+                <div className="mt-2 border border-red-700/70 bg-black/30 p-2 font-mono text-[10px] text-red-200/90">
+                  <p className="mb-1 text-red-200/80">
+                    Resolved submit params ({submitDiagnostics.sourceOfTruth})
+                  </p>
+                  <p>destChain: {submitDiagnostics.destChainName} ({submitDiagnostics.destChainBytes4})</p>
+                  <p>bridge: {submitDiagnostics.bridgeAddress}</p>
+                  <p>nonce: {submitDiagnostics.nonce}</p>
+                  <p>amount: {submitDiagnostics.amount}</p>
+                  <p>token(bytes32): {submitDiagnostics.tokenBytes32}</p>
+                  <p>token(address): {submitDiagnostics.tokenAddress}</p>
+                  <p>destAccount(bytes32): {submitDiagnostics.destAccountBytes32}</p>
+                  <p>destAccount(address): {submitDiagnostics.destAccountAddress}</p>
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {canAutoSubmit && (
                   <button
