@@ -1,0 +1,29 @@
+# CODEOWNERS — controls who must review PRs touching each path.
+#
+# The QA dev can land frontend-only PRs with standard review.
+# All backend, contract, and infrastructure changes require maintainer approval.
+
+# Default: maintainer reviews everything
+*                                       @PlasticDigits
+
+# Smart contracts — maintainer only
+/packages/contracts-evm/                @PlasticDigits
+/packages/contracts-terraclassic/       @PlasticDigits
+
+# Backend services — maintainer only
+/packages/operator/                     @PlasticDigits
+/packages/canceler/                     @PlasticDigits
+
+# E2E test infrastructure — maintainer only
+/packages/e2e/                          @PlasticDigits
+
+# Deployment scripts — maintainer only
+/scripts/                               @PlasticDigits
+
+# CI/CD — maintainer only
+/.github/workflows/                     @PlasticDigits
+
+# Infrastructure — maintainer only
+/docker-compose.yml                     @PlasticDigits
+/render.yaml                            @PlasticDigits
+/monitoring/                            @PlasticDigits
