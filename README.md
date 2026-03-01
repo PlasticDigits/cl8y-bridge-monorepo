@@ -366,7 +366,7 @@ cl8y-bridge-monorepo/
 │   ├── crosschain-flows.md     # Transfer flow diagrams
 │   ├── testing.md              # Testing guide
 │   ├── local-development.md    # Local dev setup
-│   ├── deployment.md           # Production deployment
+│   ├── deployment-guide.md     # Production deployment
 │   ├── multi-relayer.md        # Multi-relayer setup
 │   └── ...
 ├── packages/
@@ -385,7 +385,7 @@ cl8y-bridge-monorepo/
 │   └── e2e-test.sh             # Automated E2E tests
 ├── docker-compose.yml          # Local development infrastructure
 ├── Makefile                    # Common commands
-├── SPRINT_*.md                 # Sprint planning documents
+├── SPRINT*.md                  # Sprint planning documents
 └── README.md
 ```
 

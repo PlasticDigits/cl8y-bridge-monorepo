@@ -395,7 +395,7 @@ Per-token rate limiting for deposits and withdrawals.
 |----------|---------|
 | AccessManagerEnumerable | `0x745120275A70693cc1D55cD5C81e99b0D2C1dF57` |
 
-See [deployment.md](./deployment.md) for full deployment addresses.
+See [deployment-guide.md](./deployment-guide.md) for full deployment addresses.
 
 ### Deployment Scripts
 

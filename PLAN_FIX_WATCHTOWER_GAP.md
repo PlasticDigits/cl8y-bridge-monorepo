@@ -553,7 +553,7 @@ The current Terra Classic contract:
 #### Documentation
 - [ ] Create `docs/deployment-terraclassic-upgrade.md`
 - [ ] Create `docs/runbook-cancelers.md`
-- [ ] Update `docs/deployment.md`
+- [ ] Update `docs/deployment-guide.md`
 
 **Deliverables:**
 - `docs/deployment-terraclassic-upgrade.md`
