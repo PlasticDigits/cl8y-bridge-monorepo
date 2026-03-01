@@ -78,7 +78,7 @@ transaction hashes.
 
 ---
 
-## CLI Workflow (headless environment)
+## CLI Workflow (headless + Cursor)
 
 All your work can be done from the terminal using `gh` (GitHub CLI).
 
@@ -87,7 +87,7 @@ All your work can be done from the terminal using `gh` (GitHub CLI).
 Use these wrappers to avoid repetitive commands:
 
 ```bash
-# Create a frontend bug issue
+# Create a frontend bug issue (headless-safe default)
 ./scripts/qa/new-bug.sh
 # or provide title directly
 ./scripts/qa/new-bug.sh "bug: transfer button unresponsive on MetaMask mobile"
@@ -97,14 +97,37 @@ Use these wrappers to avoid repetitive commands:
   --evidence /path/to/screen-recording.mp4 \
   "bug: transfer button unresponsive on MetaMask mobile"
 
+# Cursor-specific bug flow (opens draft in Cursor, then press Enter to submit)
+./scripts/qa/new-bug-cursor.sh \
+  --evidence /path/to/screenshot.png \
+  "bug: transfer button unresponsive on MetaMask mobile"
+
 # Create a QA test-pass issue (auto title includes today's date)
 ./scripts/qa/new-test-pass.sh
 # or provide title directly
 ./scripts/qa/new-test-pass.sh "qa: test pass 2026-03-01"
+
+# Cursor-specific test-pass flow (opens draft in Cursor, then press Enter to submit)
+./scripts/qa/new-test-pass-cursors.sh
+# or provide title directly
+./scripts/qa/new-test-pass-cursors.sh "qa: test pass 2026-03-01"
 ```
 
-The scripts open `$EDITOR` with the correct markdown template, then submit via
-`gh issue create` with the correct labels.
+`new-bug.sh` is headless-friendly: it opens a temporary markdown draft in
+`$EDITOR` (fallback `vi`) and then submits via `gh issue create` with labels
+`bug`, `frontend`, `needs-triage`.
+
+`new-bug-cursor.sh` is the Cursor-specific variant: it opens the draft in
+Cursor and then asks for terminal confirmation before submit.
+
+`new-test-pass.sh` opens a temporary markdown draft in your configured editor
+(`$EDITOR`, fallback `vi`), then submits via `gh issue create`.
+
+`new-test-pass-cursors.sh` is the Cursor-specific variant: it opens the draft in
+Cursor and then asks for terminal confirmation before submit.
+
+Note: `new-test-pass-cursors.sh` uses the existing plural naming intentionally
+for team compatibility. Do not rename it unless the team agrees on a migration.
 
 If you use `--evidence`, files are uploaded to your public evidence repository
 (`cl8y-qa-evidence`) and links are prefilled in the issue body.
@@ -126,7 +149,7 @@ gh issue list --label "frontend,bug"
 gh issue list --label "qa"
 ```
 
-### Filing a bug (terminal-only)
+### Filing a bug (headless default)
 
 ```bash
 ./scripts/qa/new-bug.sh
@@ -135,25 +158,51 @@ gh issue list --label "qa"
 Use this template every time. It captures device, wallet, network, repro steps,
 severity, tx hash, and evidence links.
 
-### Recording a test pass (terminal-only)
+Expected flow:
+1. Run `./scripts/qa/new-bug.sh ...`
+2. Your editor opens a temp file like `/tmp/cl8y-bug-XXXXXX.md`
+3. Fill the report and save
+4. Exit the editor
+5. Script prints the created issue URL
+
+### Filing a bug (Cursor-specific flow)
+
+```bash
+./scripts/qa/new-bug-cursor.sh
+```
+
+Expected flow:
+1. Run `./scripts/qa/new-bug-cursor.sh ...`
+2. Cursor opens a temp file like `/tmp/cl8y-bug-XXXXXX.md`
+3. Fill the report in Cursor and save
+4. Return to terminal and press Enter at the prompt
+5. Script prints the created issue URL
+
+### Recording a test pass (headless default)
 
 ```bash
 ./scripts/qa/new-test-pass.sh
 ```
 
-### Manual fallback (without helper scripts)
+Expected flow:
+1. Run `./scripts/qa/new-test-pass.sh ...`
+2. Your editor opens a temp file like `/tmp/cl8y-test-pass-XXXXXX.md`
+3. Fill the report and save
+4. Exit the editor
+5. Script prints the created issue URL
+
+### Recording a test pass (Cursor-specific flow)
 
 ```bash
-cp docs/qa-templates/frontend-bug.md /tmp/frontend-bug.md
-$EDITOR /tmp/frontend-bug.md
-gh issue create --title "bug: short description" --body-file /tmp/frontend-bug.md \
-  --label bug --label frontend --label needs-triage
-
-cp docs/qa-templates/qa-test-pass.md /tmp/qa-test-pass.md
-$EDITOR /tmp/qa-test-pass.md
-gh issue create --title "qa: test pass 2026-03-01" --body-file /tmp/qa-test-pass.md \
-  --label qa --label test-pass
+./scripts/qa/new-test-pass-cursors.sh
 ```
+
+Expected flow:
+1. Run `./scripts/qa/new-test-pass-cursors.sh ...`
+2. Cursor opens a temp file like `/tmp/cl8y-test-pass-XXXXXX.md`
+3. Fill the report in Cursor and save
+4. Return to terminal and press Enter at the prompt
+5. Script prints the created issue URL
 
 After the issue is created, the report is stored in GitHub. Keeping local copies is optional.
 
@@ -300,8 +349,10 @@ npm run test:e2e         # Playwright E2E (limited — see below)
 gh issue list            # List issues
 gh issue view 42         # View issue details
 gh issue create          # Create new issue from markdown body file
-./scripts/qa/new-bug.sh # Bug issue helper (opens template in $EDITOR)
-./scripts/qa/new-test-pass.sh # Test-pass issue helper
+./scripts/qa/new-bug.sh # Bug issue helper (headless-safe; opens in $EDITOR or vi)
+./scripts/qa/new-bug-cursor.sh # Bug issue helper (Cursor-specific flow)
+./scripts/qa/new-test-pass.sh # Test-pass helper (headless-safe; opens in $EDITOR or vi)
+./scripts/qa/new-test-pass-cursors.sh # Test-pass helper (Cursor-specific flow)
 ./scripts/qa/upload-evidence.sh /path/to/file # Upload local evidence file
 gh pr create             # Create PR
 gh pr list               # List PRs
@@ -314,6 +365,20 @@ gh pr merge              # Merge (if approved)
 Playwright E2E tests exist but have limited coverage for manual QA scenarios.
 They cannot install wallet extensions, test mobile devices, or interact with
 real wallet signing flows. Your manual testing covers what automation cannot.
+
+### Recommended device testing tools
+
+- **Real devices first** (required for wallet-signing flows):
+  - iPhone + Android phone + tablet for in-app browser and WalletConnect behavior.
+- **Browser emulation** (fast UI-only checks):
+  - Chrome DevTools device toolbar
+  - Firefox Responsive Design Mode
+- **Cloud device labs** (optional extra coverage):
+  - BrowserStack or LambdaTest for broader browser/screen combinations.
+  - Still validate wallet-signing flows on physical devices before sign-off.
+- **Evidence capture**:
+  - Use native screenshot/screen-recording on each device.
+  - Attach links in issues (or upload local files with `./scripts/qa/upload-evidence.sh`).
 
 ---
 

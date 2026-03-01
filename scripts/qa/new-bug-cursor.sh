@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create a frontend bug issue from terminal template (headless-friendly).
+# Create a frontend bug issue from terminal template (Cursor-first flow).
 
 set -euo pipefail
 
@@ -34,15 +34,14 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  ./scripts/qa/new-bug.sh [title]
-  ./scripts/qa/new-bug.sh --evidence /path/to/file.png [--evidence /path/to/video.mp4] [title]
+  ./scripts/qa/new-bug-cursor.sh [title]
+  ./scripts/qa/new-bug-cursor.sh --evidence /path/to/file.png [--evidence /path/to/video.mp4] [title]
 
 Options:
   -e, --evidence  Local file to upload to QA evidence repo and add to issue body.
 
 Environment variables:
   QA_EVIDENCE_REPO  Override evidence repo (default: <your-login>/cl8y-qa-evidence)
-  EDITOR            Override editor command (default: vi)
 EOF
       exit 0
       ;;
@@ -64,7 +63,12 @@ fi
 
 TMP_FILE="$(mktemp -t cl8y-bug-XXXXXX.md)"
 trap 'rm -f "${TMP_FILE}"' EXIT
-cp "${TEMPLATE}" "${TMP_FILE}"
+awk -v title="${TITLE}" '
+  {
+    gsub("<!-- Auto-filled by script: bug: ... -->", title)
+    print
+  }
+' "${TEMPLATE}" > "${TMP_FILE}"
 
 if [[ ${#EVIDENCE_FILES[@]} -gt 0 ]]; then
   if [[ ! -x "${UPLOAD_SCRIPT}" ]]; then
@@ -88,8 +92,13 @@ if [[ ${#EVIDENCE_FILES[@]} -gt 0 ]]; then
   } >> "${TMP_FILE}"
 fi
 
-EDITOR_BIN="${EDITOR:-vi}"
-"${EDITOR_BIN}" "${TMP_FILE}"
+if ! command -v cursor >/dev/null 2>&1; then
+  echo "Error: Cursor CLI is required for this QA flow. Install/enable 'cursor' in PATH." >&2
+  exit 1
+fi
+
+cursor "${TMP_FILE}"
+read -r -p "Press Enter after saving the issue body in Cursor... " _
 
 gh issue create \
   --title "${TITLE}" \

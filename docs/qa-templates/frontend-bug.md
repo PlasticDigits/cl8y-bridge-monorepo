@@ -1,5 +1,8 @@
 ## Frontend Bug Report
 
+### Issue Title
+- <!-- Auto-filled by script: bug: ... -->
+
 ### Environment
 - Device Type: <!-- Desktop / Mobile (Android) / Mobile (iOS) / Tablet -->
 - Device Model: <!-- e.g. iPhone 15 Pro -->

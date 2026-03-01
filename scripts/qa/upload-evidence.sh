@@ -45,11 +45,19 @@ else
   encoded_content="$(base64 "${LOCAL_FILE}" | tr -d '\n')"
 fi
 
+payload_file="$(mktemp -t cl8y-evidence-payload-XXXXXX.json)"
+trap 'rm -f "${payload_file}"' EXIT
+
+# Avoid command-line length limits by sending request body via file.
+escaped_basename="$(printf '%s' "${basename_file}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+printf '{"message":"qa: add evidence %s","content":"%s"}' \
+  "${escaped_basename}" \
+  "${encoded_content}" > "${payload_file}"
+
 download_url="$(gh api \
   --method PUT \
   "/repos/${TARGET_REPO}/contents/${remote_path}" \
-  -f message="qa: add evidence ${basename_file}" \
-  -f content="${encoded_content}" \
+  --input "${payload_file}" \
   --jq '.content.download_url')"
 
 echo "${download_url}"
