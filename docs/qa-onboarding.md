@@ -82,6 +82,42 @@ transaction hashes.
 
 All your work can be done from the terminal using `gh` (GitHub CLI).
 
+### Recommended helper scripts
+
+Use these wrappers to avoid repetitive commands:
+
+```bash
+# Create a frontend bug issue
+./scripts/qa/new-bug.sh
+# or provide title directly
+./scripts/qa/new-bug.sh "bug: transfer button unresponsive on MetaMask mobile"
+# or auto-upload local evidence files and insert links
+./scripts/qa/new-bug.sh \
+  --evidence /path/to/screenshot.png \
+  --evidence /path/to/screen-recording.mp4 \
+  "bug: transfer button unresponsive on MetaMask mobile"
+
+# Create a QA test-pass issue (auto title includes today's date)
+./scripts/qa/new-test-pass.sh
+# or provide title directly
+./scripts/qa/new-test-pass.sh "qa: test pass 2026-03-01"
+```
+
+The scripts open `$EDITOR` with the correct markdown template, then submit via
+`gh issue create` with the correct labels.
+
+If you use `--evidence`, files are uploaded to your public evidence repository
+(`cl8y-qa-evidence`) and links are prefilled in the issue body.
+Set `QA_EVIDENCE_REPO="owner/repo"` if you need a non-default evidence repo.
+
+### Where the finished QA report goes
+
+You do not need to copy the completed report anywhere after editing.
+
+- The temporary markdown file is only a draft while editing.
+- After submit, the GitHub issue itself is the source of truth.
+- If you need to add more details later, use `gh issue comment <issue-number>`.
+
 ### Viewing your assigned issues
 
 ```bash
@@ -90,18 +126,65 @@ gh issue list --label "frontend,bug"
 gh issue list --label "qa"
 ```
 
-### Filing a bug
+### Filing a bug (terminal-only)
 
 ```bash
-gh issue create --template "frontend-bug.yml"
+./scripts/qa/new-bug.sh
 ```
 
-This opens the structured bug report form. Fill in device, wallet, steps, severity.
+Use this template every time. It captures device, wallet, network, repro steps,
+severity, tx hash, and evidence links.
 
-### Recording a test pass
+### Recording a test pass (terminal-only)
 
 ```bash
-gh issue create --template "qa-test-pass.yml"
+./scripts/qa/new-test-pass.sh
+```
+
+### Manual fallback (without helper scripts)
+
+```bash
+cp docs/qa-templates/frontend-bug.md /tmp/frontend-bug.md
+$EDITOR /tmp/frontend-bug.md
+gh issue create --title "bug: short description" --body-file /tmp/frontend-bug.md \
+  --label bug --label frontend --label needs-triage
+
+cp docs/qa-templates/qa-test-pass.md /tmp/qa-test-pass.md
+$EDITOR /tmp/qa-test-pass.md
+gh issue create --title "qa: test pass 2026-03-01" --body-file /tmp/qa-test-pass.md \
+  --label qa --label test-pass
+```
+
+After the issue is created, the report is stored in GitHub. Keeping local copies is optional.
+
+### Adding screenshots and videos in terminal-only flow
+
+In terminal-only flow, attach evidence as links. The easiest way is using
+`--evidence` on `new-bug.sh`, which uploads local files automatically.
+
+1. Upload from script and prefill issue body:
+
+```bash
+./scripts/qa/new-bug.sh --evidence /path/to/screenshot.png "bug: title"
+```
+
+2. Or upload manually and print the URL:
+
+```bash
+./scripts/qa/upload-evidence.sh /path/to/screenshot.png
+```
+
+3. Add URL to issue body under "Evidence"
+4. Use markdown image syntax for screenshots:
+
+```markdown
+![transfer-form-overlap](https://example.com/path/screenshot.png)
+```
+
+5. If needed after issue creation, append more evidence:
+
+```bash
+gh issue comment <issue-number> --body "More evidence: https://example.com/video.mp4"
 ```
 
 ### Working on a fix
@@ -216,7 +299,10 @@ npm run test:e2e         # Playwright E2E (limited — see below)
 # GitHub CLI
 gh issue list            # List issues
 gh issue view 42         # View issue details
-gh issue create          # Create new issue
+gh issue create          # Create new issue from markdown body file
+./scripts/qa/new-bug.sh # Bug issue helper (opens template in $EDITOR)
+./scripts/qa/new-test-pass.sh # Test-pass issue helper
+./scripts/qa/upload-evidence.sh /path/to/file # Upload local evidence file
 gh pr create             # Create PR
 gh pr list               # List PRs
 gh pr checks             # Check CI status
