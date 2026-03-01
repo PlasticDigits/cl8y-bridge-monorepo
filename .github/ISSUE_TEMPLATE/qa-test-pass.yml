@@ -99,7 +99,7 @@ body:
         - label: "Chain connection status indicators work"
         - label: "Token list displays correctly"
         - label: "Bridge config panel shows correct values"
-        - label: "Faucet claim works (testnet)"
+        - label: "Faucet claim works (mainnet test tokens)"
 
   - type: markdown
     attributes:

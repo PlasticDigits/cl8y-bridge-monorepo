@@ -70,10 +70,7 @@ body:
       options:
         - BSC Mainnet
         - opBNB Mainnet
-        - BSC Testnet
-        - opBNB Testnet
         - Terra Classic Mainnet
-        - Terra Classic Testnet
         - Local devnet
     validations:
       required: true

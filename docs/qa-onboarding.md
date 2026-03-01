@@ -45,7 +45,7 @@ transaction hashes.
 | **Transfer** | `/` | Bridge form, wallet connect, chain/token select, amount input, fee display, submit |
 | **Transfer Status** | `/status/:id` | Real-time status updates, auto-submit withdrawal, manual withdrawal fallback |
 | **Hash Verification** | `/verify` | Hash search, source/dest comparison, fraud alerts, recent verifications |
-| **Settings** | `/settings` | Chain connection status, token list, bridge config, faucet (testnet) |
+| **Settings** | `/settings` | Chain connection status, token list, bridge config, faucet (mainnet test tokens) |
 | **History** | `/history` | Past transfers list, status badges |
 
 ### Wallets to Test
@@ -72,7 +72,7 @@ transaction hashes.
 4. **Auto-submit withdrawal** — status page should auto-submit when wallet connected
 5. **Manual withdrawal** — fallback when auto-submit doesn't fire
 6. **Hash verification** — search a tx hash, compare source/dest
-7. **Faucet claim** — claim test tokens on testnet
+7. **Faucet claim** — claim test tokens on mainnet
 8. **Responsive layout** — every page on phones, tablets, desktops
 9. **Error states** — disconnect mid-transfer, reject signing, invalid inputs
 
@@ -241,7 +241,7 @@ When doing a test pass, aim to cover this matrix:
 | **Android** | Small phone (< 375px), mid-range, tablet |
 | **Desktop** | Chrome, Firefox, Safari (macOS), Edge |
 | **Wallets** | At least MetaMask + Station per pass, rotate others |
-| **Networks** | Testnet for full flows, mainnet for read-only checks |
+| **Networks** | Mainnet (with test tokens) for full flows and checks |
 
 You don't need to test every combination every time. Rotate coverage across
 test passes and note what was tested in the QA Test Pass issue.
