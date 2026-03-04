@@ -8,13 +8,46 @@ backend/contract-related privately.
 
 ---
 
+## Prerequisites
+
+Before cloning, make sure you have the following installed:
+
+| Tool | Install | Verify |
+|------|---------|--------|
+| **Node.js 18+** | [nodejs.org](https://nodejs.org/) or `nvm install 18` | `node -v` |
+| **npm** | Ships with Node.js | `npm -v` |
+| **Git** | `sudo apt install git` (Linux) / `brew install git` (macOS) | `git -v` |
+| **GitHub CLI (`gh`)** | [cli.github.com](https://cli.github.com/) or `brew install gh` | `gh --version` |
+
+### Authenticate `gh`
+
+```bash
+gh auth login
+# Choose: GitHub.com → HTTPS → Login with a web browser
+# Verify:
+gh auth status
+```
+
+You should see your GitHub username and the `PlasticDigits/cl8y-bridge-monorepo`
+repo should be accessible:
+
+```bash
+gh repo view PlasticDigits/cl8y-bridge-monorepo --json name
+```
+
+---
+
 ## Quick Start
 
 ```bash
 # Clone and install
-git clone <repo-url> && cd cl8y-bridge-monorepo
+git clone https://github.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-bridge-monorepo
 cd packages/frontend
 npm ci
+
+# Set up local environment
+cp .env.example .env.local
+# Edit .env.local — see "Environment Setup" below
 
 # Run the frontend locally
 npm run dev
@@ -29,6 +62,62 @@ npm run lint
 
 You only need to work inside `packages/frontend/`. The backend services (operator,
 canceler) and smart contracts are managed separately and deployed independently.
+
+---
+
+## Environment Setup
+
+The frontend reads config from `packages/frontend/.env.local`. Copy the example
+file and fill in the values for your target network.
+
+```bash
+cp packages/frontend/.env.example packages/frontend/.env.local
+```
+
+### Mainnet values (for testing against production)
+
+Use these values when `VITE_NETWORK=mainnet`:
+
+```env
+VITE_NETWORK=mainnet
+
+# Contract addresses
+VITE_TERRA_BRIDGE_ADDRESS=terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la
+VITE_EVM_BRIDGE_ADDRESS=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+VITE_EVM_ROUTER_ADDRESS=0xd7b3bf05987052009c350874e810df98da95d258
+
+# Token config (BSC test tokens)
+VITE_BRIDGE_TOKEN_ADDRESS=0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c
+VITE_LOCK_UNLOCK_ADDRESS=0xd7b3bf05987052009c350874e810df98da95d258
+
+# RPC endpoints
+VITE_EVM_RPC_URL=https://bsc-dataseed1.binance.org
+VITE_TERRA_LCD_URL=https://terra-classic-lcd.publicnode.com
+VITE_TERRA_RPC_URL=https://terra-classic-rpc.publicnode.com
+
+# WalletConnect — ask maintainer for the project ID
+VITE_WC_PROJECT_ID=
+
+# Faucets
+VITE_BSC_FAUCET_ADDRESS=0x1cb74534BC03fAcB2725eb47Bd1652c22b5f0663
+VITE_OPBNB_FAUCET_ADDRESS=0x988ba56b20c27A9efa8b67637C03529c7f9B75AE
+VITE_TERRA_FAUCET_ADDRESS=terra13p359fmv7zt7ll9cexmvns5qgu0tfqccwdeugl33pgtaku622rhszs3m9k
+
+VITE_DEV_MODE=false
+```
+
+### Local dev values
+
+When `VITE_NETWORK=local`, run `make deploy` from the repo root first, then
+copy the deployed addresses from the terminal output into `.env.local`. The RPC
+defaults (`localhost:8545`, `localhost:1317`) work out of the box.
+
+### `VITE_WC_PROJECT_ID`
+
+Required for WalletConnect QR flows. Get it from
+[cloud.walletconnect.com](https://cloud.walletconnect.com) or ask the
+maintainer for the shared project ID. MetaMask and other browser extensions
+work without it.
 
 ---
 
@@ -260,6 +349,18 @@ gh pr create --title "fix: transfer button unresponsive on MetaMask mobile" \
   --body "Fixes #42"
 ```
 
+**After creating the PR:** wait for the maintainer to review. Do not merge it
+yourself. If review comments come in, push fixes and the PR updates
+automatically:
+
+```bash
+# Address review feedback
+# ... edit files ...
+git add -A
+git commit -m "fix: address review feedback"
+git push
+```
+
 ### Checking CI status on your PR
 
 ```bash
@@ -301,6 +402,25 @@ to file as public issues.
 
 ---
 
+## Branch Protection & Merge Rules
+
+`main` is protected. You **cannot** push directly to it or merge without approval.
+
+| Rule | Effect |
+|------|--------|
+| **PRs required** | All changes to `main` must go through a pull request |
+| **1 approving review** | The maintainer (`@PlasticDigits`) must approve before merge |
+| **CODEOWNERS enforced** | `@PlasticDigits` is auto-requested as reviewer on every PR |
+| **Stale reviews dismissed** | If you push new commits after approval, the review resets |
+| **No force pushes** | Force-pushing to `main` is blocked |
+| **No branch deletion** | `main` cannot be deleted |
+
+**What this means for you:** create a branch, push it, open a PR, and wait for
+review. You should **never** merge your own PRs — the maintainer reviews and
+merges them.
+
+---
+
 ## Branch & PR Conventions
 
 | Convention | Rule |
@@ -308,8 +428,36 @@ to file as public issues.
 | Branch naming | `fix/issue-NUMBER-short-description` or `qa/test-pass-DATE` |
 | Commit messages | `fix: description (#NUMBER)` or `test: description` |
 | PR scope | One issue per PR, frontend only |
-| PR checklist | Fill out the PR template (device, wallet, screenshots) |
-| Reviews | Frontend-only PRs need 1 review; anything else needs maintainer |
+| PR checklist | Fill out the PR template (see below) |
+| Reviews | Maintainer (`@PlasticDigits`) reviews and merges all PRs |
+
+### PR Template
+
+When you run `gh pr create`, GitHub auto-fills the body from the repo's PR
+template. Here's what you need to fill in:
+
+```markdown
+## What
+<!-- Brief description of the change -->
+
+## Why
+<!-- Link to the GitHub issue this fixes: Fixes #123 -->
+
+## Testing
+- [ ] Tested on desktop (browser: ___)
+- [ ] Tested on mobile (device: ___)
+- [ ] Wallet tested: ___
+- [ ] No console errors
+- [ ] Screenshots attached (if UI change)
+
+## Checklist
+- [ ] Only touches `packages/frontend/`
+- [ ] No hardcoded secrets, keys, or addresses
+- [ ] Lint passes (`npm run lint`)
+- [ ] Unit tests pass (`npm run test:unit`)
+```
+
+Fill every checkbox honestly. The maintainer will check these during review.
 
 ---
 
@@ -357,7 +505,7 @@ gh issue create          # Create new issue from markdown body file
 gh pr create             # Create PR
 gh pr list               # List PRs
 gh pr checks             # Check CI status
-gh pr merge              # Merge (if approved)
+gh pr view               # View your PR details (maintainer merges after approval)
 ```
 
 ### A note on Playwright
