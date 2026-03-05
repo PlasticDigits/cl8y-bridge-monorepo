@@ -135,7 +135,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       lcdUrl: 'https://terra-classic-lcd.publicnode.com',
       lcdFallbacks: [
         'https://terra-classic-lcd.publicnode.com',
-        'https://api-lunc-lcd.binodes.com',
+        'https://columbus-lcd.terra.dev',
         'https://lcd.terra-classic.hexxagon.io',
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
