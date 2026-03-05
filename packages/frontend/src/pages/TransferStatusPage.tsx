@@ -621,6 +621,13 @@ export default function TransferStatusPage() {
     dest == null &&
     !autoSubmitActive
 
+  // Fallback: autoPhase detected the submission wasn't confirmed but source lookup
+  // failed (source == null), so hashSubmittedButMissing is false. Still show a retry option.
+  const hashSubmitAutoError =
+    transfer?.lifecycle === 'hash-submitted' &&
+    autoPhase === 'error' &&
+    !hashSubmittedButMissing
+
   const [retryingHash, setRetryingHash] = useState(false)
 
   const handleRetryHashSubmission = useCallback(() => {
@@ -1037,7 +1044,27 @@ export default function TransferStatusPage() {
                   </div>
                 </div>
               )}
-              {(!isBroken || !fix) && !hashSubmittedButMissing && (
+              {(!isBroken || !fix) && hashSubmitAutoError && (
+                <div className="mt-2 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">
+                    Submission Not Confirmed
+                  </p>
+                  <p className="text-red-400/80 text-xs mt-1">
+                    {autoError || 'The hash submission was not confirmed on the destination chain. The transaction may have reverted or was lost.'}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2 items-center">
+                    <button
+                      type="button"
+                      onClick={handleRetryHashSubmission}
+                      disabled={retryingHash}
+                      className="btn-primary text-xs"
+                    >
+                      {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {(!isBroken || !fix) && !hashSubmittedButMissing && !hashSubmitAutoError && (
                 <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
                   <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
                     Waiting for Operator Approval

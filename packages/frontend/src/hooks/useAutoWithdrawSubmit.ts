@@ -67,6 +67,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
   const [error, setError] = useState<string | null>(null)
   const submittedRef = useRef(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const notConfirmedCountRef = useRef(0)
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -431,15 +432,37 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
               updateTransferRecord(transfer.id, { lifecycle: 'executed' })
               setPhase('complete')
             }
+            notConfirmedCountRef.current = 0
             if (pollingRef.current) {
               clearInterval(pollingRef.current)
               pollingRef.current = null
             }
           } else if (result.approved || result.approvedAt > 0n) {
+            notConfirmedCountRef.current = 0
             if (transfer.lifecycle === 'hash-submitted') {
               updateTransferRecord(transfer.id, { lifecycle: 'approved' })
               setPhase('waiting-execution')
             }
+          } else if (result.submittedAt === 0n) {
+            notConfirmedCountRef.current++
+            if (notConfirmedCountRef.current >= 3) {
+              console.warn(
+                `${LOG} Withdrawal not found on-chain after ${notConfirmedCountRef.current} polls — ` +
+                'submission may have reverted'
+              )
+              setPhase('error')
+              setError(
+                'Hash submission was not confirmed on the destination chain. ' +
+                'The transaction may have reverted or was lost.'
+              )
+              submittedRef.current = false
+              if (pollingRef.current) {
+                clearInterval(pollingRef.current)
+                pollingRef.current = null
+              }
+            }
+          } else {
+            notConfirmedCountRef.current = 0
           }
         } else if (destChainConfig.type === 'cosmos') {
           // Terra destination: query via LCD
@@ -458,15 +481,36 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
               updateTransferRecord(transfer.id, { lifecycle: 'executed' })
               setPhase('complete')
             }
+            notConfirmedCountRef.current = 0
             if (pollingRef.current) {
               clearInterval(pollingRef.current)
               pollingRef.current = null
             }
           } else if (result?.approved) {
+            notConfirmedCountRef.current = 0
             if (transfer.lifecycle === 'hash-submitted') {
               updateTransferRecord(transfer.id, { lifecycle: 'approved' })
               setPhase('waiting-execution')
             }
+          } else if (!result) {
+            notConfirmedCountRef.current++
+            if (notConfirmedCountRef.current >= 3) {
+              console.warn(
+                `${LOG} Terra withdrawal not found after ${notConfirmedCountRef.current} polls`
+              )
+              setPhase('error')
+              setError(
+                'Hash submission was not confirmed on the destination chain. ' +
+                'The transaction may have reverted or was lost.'
+              )
+              submittedRef.current = false
+              if (pollingRef.current) {
+                clearInterval(pollingRef.current)
+                pollingRef.current = null
+              }
+            }
+          } else {
+            notConfirmedCountRef.current = 0
           }
         }
       } catch {
@@ -494,6 +538,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
   const resetForRetry = useCallback(() => {
     submittedRef.current = false
+    notConfirmedCountRef.current = 0
     if (pollingRef.current) {
       clearInterval(pollingRef.current)
       pollingRef.current = null
