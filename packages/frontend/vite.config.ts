@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
 
 const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
+const commitCount = execSync('git rev-list --count HEAD').toString().trim()
+const appVersion = `v0.1.${commitCount}`
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -75,6 +77,7 @@ export default defineConfig({
     'process.env': {},
     global: 'globalThis',
     __GIT_SHA__: JSON.stringify(gitSha),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   // Optimize dependency pre-bundling
   optimizeDeps: {
