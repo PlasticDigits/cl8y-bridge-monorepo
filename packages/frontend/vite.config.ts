@@ -1,11 +1,25 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
-import { readFileSync } from 'fs'
+
+const GITHUB_REPO = 'PlasticDigits/cl8y-bridge-monorepo'
+const VERSION_OFFSET = 190
 
 const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
-const buildNumber = readFileSync('build-number.txt', 'utf-8').trim()
-const appVersion = `v0.1.${buildNumber}`
+
+let commitCount = parseInt(execSync('git rev-list --count HEAD').toString().trim(), 10)
+if (commitCount <= 1) {
+  try {
+    const headers = execSync(
+      `curl -sI "https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1&sha=main"`,
+      { timeout: 5000 },
+    ).toString()
+    const match = headers.match(/page=(\d+)>;\s*rel="last"/)
+    if (match) commitCount = parseInt(match[1], 10)
+  } catch { /* build continues with commitCount = 1 */ }
+}
+
+const appVersion = `v0.1.${commitCount - VERSION_OFFSET}`
 
 // https://vitejs.dev/config/
 export default defineConfig({
