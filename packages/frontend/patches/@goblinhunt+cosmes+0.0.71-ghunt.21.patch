@@ -1,0 +1,188 @@
+diff --git a/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/luncdash/LUNCDashController.js b/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/luncdash/LUNCDashController.js
+index 641a1e0..37c6857 100644
+--- a/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/luncdash/LUNCDashController.js
++++ b/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/luncdash/LUNCDashController.js
+@@ -50,17 +50,22 @@ export class LUNCDashController extends WalletController {
+         const address = wc.accounts[0];
+         for (let i = 0; i < chains.length; i++) {
+             const { chainId, rpc, gasPrice } = chains[i];
++            let key;
+             try {
+-                // Since Station's WalletConnect doesn't support getting pub keys, we
+-                // need to query the account to get it. However, if the wallet does
+-                // not contain funds, the RPC will throw errors.
+-                const key = await WalletError.wrap(this.getPubKey(chainId, rpc, address));
+-                wallets.set(chainId, new LUNCDashWalletConnectV1(undefined, wc, chainId, key, address, rpc, gasPrice));
++                key = await WalletError.wrap(this.getPubKey(chainId, rpc, address));
+             }
+             catch (err) {
+-                // We simply log and ignore the error for now
+-                console.warn(err);
++                // Account may not have a pub key on-chain yet (no outgoing tx).
++                // Use a placeholder — LuncDash WalletConnect handles signing in the
++                // wallet app, so the pub key is not needed for transactions.
++                console.warn(`[LUNCDash] Could not fetch on-chain pub key for ${address} on ${chainId}. ` +
++                    `Using placeholder; wallet will still function via WalletConnect.`, err);
++                key = new Secp256k1PubKey({
++                    chainId,
++                    key: new Uint8Array(33),
++                });
+             }
++            wallets.set(chainId, new LUNCDashWalletConnectV1(undefined, wc, chainId, key, address, rpc, gasPrice));
+         }
+         this.wc.cacheSession(wc);
+         return { wallets, wc: this.wc };
+diff --git a/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/station/StationController.js b/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/station/StationController.js
+index 021a61a..51cd705 100644
+--- a/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/station/StationController.js
++++ b/node_modules/@goblinhunt/cosmes/dist/wallet/wallets/station/StationController.js
+@@ -49,17 +49,22 @@ export class StationController extends WalletController {
+         const address = wc.accounts[0];
+         for (let i = 0; i < chains.length; i++) {
+             const { chainId, rpc, gasPrice } = chains[i];
++            let key;
+             try {
+-                // Since Station's WalletConnect doesn't support getting pub keys, we
+-                // need to query the account to get it. However, if the wallet does
+-                // not contain funds, the RPC will throw errors.
+-                const key = await WalletError.wrap(this.getPubKey(chainId, rpc, address));
+-                wallets.set(chainId, new StationWalletConnectV1(undefined, wc, chainId, key, address, rpc, gasPrice));
++                key = await WalletError.wrap(this.getPubKey(chainId, rpc, address));
+             }
+             catch (err) {
+-                // We simply log and ignore the error for now
+-                console.warn(err);
++                // Account may not have a pub key on-chain yet (no outgoing tx).
++                // Use a placeholder — Station WalletConnect handles signing in the
++                // wallet app, so the pub key is not needed for transactions.
++                console.warn(`[Station] Could not fetch on-chain pub key for ${address} on ${chainId}. ` +
++                    `Using placeholder; wallet will still function via WalletConnect.`, err);
++                key = new Secp256k1PubKey({
++                    chainId,
++                    key: new Uint8Array(33),
++                });
+             }
++            wallets.set(chainId, new StationWalletConnectV1(undefined, wc, chainId, key, address, rpc, gasPrice));
+         }
+         this.wc.cacheSession(wc);
+         return { wallets, wc: this.wc };
+diff --git a/node_modules/@goblinhunt/cosmes/src/wallet/wallets/luncdash/LUNCDashController.ts b/node_modules/@goblinhunt/cosmes/src/wallet/wallets/luncdash/LUNCDashController.ts
+index 707d1df..fb101ac 100644
+--- a/node_modules/@goblinhunt/cosmes/src/wallet/wallets/luncdash/LUNCDashController.ts
++++ b/node_modules/@goblinhunt/cosmes/src/wallet/wallets/luncdash/LUNCDashController.ts
+@@ -64,29 +64,37 @@ export class LUNCDashController extends WalletController {
+     const address = wc.accounts[0];
+     for (let i = 0; i < chains.length; i++) {
+       const { chainId, rpc, gasPrice } = chains[i];
++      let key: Secp256k1PubKey;
+       try {
+-        // Since Station's WalletConnect doesn't support getting pub keys, we
+-        // need to query the account to get it. However, if the wallet does
+-        // not contain funds, the RPC will throw errors.
+-        const key = await WalletError.wrap(
++        key = await WalletError.wrap(
+           this.getPubKey(chainId, rpc, address)
+         );
+-        wallets.set(
+-          chainId,
+-          new LUNCDashWalletConnectV1(
+-            undefined,
+-            wc,
+-            chainId,
+-            key,
+-            address,
+-            rpc,
+-            gasPrice
+-          )
+-        );
+       } catch (err) {
+-        // We simply log and ignore the error for now
+-        console.warn(err);
++        // Account may not have a pub key on-chain yet (no outgoing tx).
++        // Use a placeholder — LuncDash WalletConnect handles signing in the
++        // wallet app, so the pub key is not needed for transactions.
++        console.warn(
++          `[LUNCDash] Could not fetch on-chain pub key for ${address} on ${chainId}. ` +
++          `Using placeholder; wallet will still function via WalletConnect.`,
++          err
++        );
++        key = new Secp256k1PubKey({
++          chainId,
++          key: new Uint8Array(33),
++        });
+       }
++      wallets.set(
++        chainId,
++        new LUNCDashWalletConnectV1(
++          undefined,
++          wc,
++          chainId,
++          key,
++          address,
++          rpc,
++          gasPrice
++        )
++      );
+     }
+     this.wc.cacheSession(wc);
+     return { wallets, wc: this.wc };
+diff --git a/node_modules/@goblinhunt/cosmes/src/wallet/wallets/station/StationController.ts b/node_modules/@goblinhunt/cosmes/src/wallet/wallets/station/StationController.ts
+index d372281..e88620d 100644
+--- a/node_modules/@goblinhunt/cosmes/src/wallet/wallets/station/StationController.ts
++++ b/node_modules/@goblinhunt/cosmes/src/wallet/wallets/station/StationController.ts
+@@ -63,29 +63,37 @@ export class StationController extends WalletController {
+     const address = wc.accounts[0];
+     for (let i = 0; i < chains.length; i++) {
+       const { chainId, rpc, gasPrice } = chains[i];
++      let key: Secp256k1PubKey;
+       try {
+-        // Since Station's WalletConnect doesn't support getting pub keys, we
+-        // need to query the account to get it. However, if the wallet does
+-        // not contain funds, the RPC will throw errors.
+-        const key = await WalletError.wrap(
++        key = await WalletError.wrap(
+           this.getPubKey(chainId, rpc, address)
+         );
+-        wallets.set(
+-          chainId,
+-          new StationWalletConnectV1(
+-            undefined,
+-            wc,
+-            chainId,
+-            key,
+-            address,
+-            rpc,
+-            gasPrice
+-          )
+-        );
+       } catch (err) {
+-        // We simply log and ignore the error for now
+-        console.warn(err);
++        // Account may not have a pub key on-chain yet (no outgoing tx).
++        // Use a placeholder — Station WalletConnect handles signing in the
++        // wallet app, so the pub key is not needed for transactions.
++        console.warn(
++          `[Station] Could not fetch on-chain pub key for ${address} on ${chainId}. ` +
++          `Using placeholder; wallet will still function via WalletConnect.`,
++          err
++        );
++        key = new Secp256k1PubKey({
++          chainId,
++          key: new Uint8Array(33),
++        });
+       }
++      wallets.set(
++        chainId,
++        new StationWalletConnectV1(
++          undefined,
++          wc,
++          chainId,
++          key,
++          address,
++          rpc,
++          gasPrice
++        )
++      );
+     }
+     this.wc.cacheSession(wc);
+     return { wallets, wc: this.wc };
