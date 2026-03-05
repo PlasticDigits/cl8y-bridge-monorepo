@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
 
 const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
-const commitCount = execSync('git rev-list --count HEAD').toString().trim()
-const appVersion = `v0.1.${commitCount}`
+const buildNumber = readFileSync('build-number.txt', 'utf-8').trim()
+const appVersion = `v0.1.${buildNumber}`
 
 // https://vitejs.dev/config/
 export default defineConfig({
