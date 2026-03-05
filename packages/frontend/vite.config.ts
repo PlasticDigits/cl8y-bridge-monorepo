@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { execSync } from 'child_process'
+
+const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -71,6 +74,7 @@ export default defineConfig({
     // Required for some wallet libraries
     'process.env': {},
     global: 'globalThis',
+    __GIT_SHA__: JSON.stringify(gitSha),
   },
   // Optimize dependency pre-bundling
   optimizeDeps: {
