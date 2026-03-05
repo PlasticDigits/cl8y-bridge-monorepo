@@ -132,7 +132,7 @@ transaction hashes.
 | Page | Route | What to test |
 |------|-------|-------------|
 | **Transfer** | `/` | Bridge form, wallet connect, chain/token select, amount input, fee display, submit |
-| **Transfer Status** | `/status/:id` | Real-time status updates, auto-submit withdrawal, manual withdrawal fallback |
+| **Transfer Status** | `/transfer/:xchainHashId` | Real-time status updates, auto-submit withdrawal, manual withdrawal fallback |
 | **Hash Verification** | `/verify` | Hash search, source/dest comparison, fraud alerts, recent verifications |
 | **Settings** | `/settings` | Chain connection status, token list, bridge config, faucet (mainnet test tokens) |
 | **History** | `/history` | Past transfers list, status badges |
