@@ -427,7 +427,7 @@ merges them.
 |-----------|------|
 | Branch naming | `fix/issue-NUMBER-short-description` or `qa/test-pass-DATE` |
 | Commit messages | `fix: description (#NUMBER)` or `test: description` |
-| PR scope | One issue per PR, frontend only |
+| PR scope | One issue per PR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one PR and list both with `Fixes #A, Fixes #B` |
 | PR checklist | Fill out the PR template (see below) |
 | Reviews | Maintainer (`@PlasticDigits`) reviews and merges all PRs |
 
