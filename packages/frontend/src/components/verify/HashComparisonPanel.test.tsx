@@ -1,8 +1,16 @@
+import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { HashComparisonPanel } from './HashComparisonPanel'
 import type { DepositData, PendingWithdrawData } from '../../hooks/useTransferLookup'
 import type { Hex } from 'viem'
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+function wrap(ui: React.ReactElement) {
+  return <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+}
 
 const mkDeposit = (): DepositData => ({
   chainId: 31337,
@@ -35,7 +43,7 @@ const mkWithdraw = (overrides?: Partial<PendingWithdrawData>): PendingWithdrawDa
 
 describe('HashComparisonPanel', () => {
   it('should show loading spinner when loading', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={null}
         sourceChainName={null}
@@ -46,13 +54,13 @@ describe('HashComparisonPanel', () => {
         loading={true}
         error={null}
       />
-    )
+    ))
     // Spinner renders an SVG with role "status"
     expect(screen.getByRole('status')).toBeInTheDocument()
   })
 
   it('should show error message when error is set', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={null}
         sourceChainName={null}
@@ -63,12 +71,12 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error="RPC timeout"
       />
-    )
+    ))
     expect(screen.getByText('RPC timeout')).toBeInTheDocument()
   })
 
   it('should show placeholder when no data', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={null}
         sourceChainName={null}
@@ -79,12 +87,12 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     expect(screen.getByText(/Enter an XChain Hash ID/)).toBeInTheDocument()
   })
 
   it('should render source and dest cards when both present', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={mkDeposit()}
         sourceChainName="Anvil"
@@ -95,13 +103,13 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     expect(screen.getByText('Source (Deposit)')).toBeInTheDocument()
     expect(screen.getByText('Destination (Withdraw)')).toBeInTheDocument()
   })
 
   it('should show cancel info when dest is cancelled', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={mkDeposit()}
         sourceChainName="Anvil"
@@ -112,12 +120,12 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     expect(screen.getByText('Withdrawal canceled')).toBeInTheDocument()
   })
 
   it('should show cancel info even when approvedAt is 0', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={null}
         sourceChainName={null}
@@ -128,13 +136,13 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     // Should still show cancel info, using submittedAt as fallback
     expect(screen.getByText('Withdrawal canceled')).toBeInTheDocument()
   })
 
   it('should show match comparison indicator when matches is true', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={mkDeposit()}
         sourceChainName="Anvil"
@@ -145,12 +153,12 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     expect(screen.getByText('Hash matches')).toBeInTheDocument()
   })
 
   it('should show mismatch comparison indicator when matches is false', () => {
-    render(
+    render(wrap(
       <HashComparisonPanel
         source={mkDeposit()}
         sourceChainName="Anvil"
@@ -161,7 +169,7 @@ describe('HashComparisonPanel', () => {
         loading={false}
         error={null}
       />
-    )
+    ))
     expect(screen.getByText('Hash mismatch')).toBeInTheDocument()
   })
 })

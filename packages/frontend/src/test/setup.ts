@@ -38,6 +38,36 @@ if (typeof window !== 'undefined') {
     } as unknown as typeof IntersectionObserver
   }
 
+  // HTMLCanvasElement.getContext polyfill (jsdom returns null; needed by react-blockies)
+  const noop = () => {}
+  HTMLCanvasElement.prototype.getContext = (() => ({
+    fillStyle: '',
+    fillRect: noop,
+    clearRect: noop,
+    getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Array(w * h * 4).fill(0) }),
+    putImageData: noop,
+    createImageData: () => ([]),
+    setTransform: noop,
+    drawImage: noop,
+    save: noop,
+    restore: noop,
+    beginPath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    closePath: noop,
+    stroke: noop,
+    translate: noop,
+    scale: noop,
+    rotate: noop,
+    arc: noop,
+    fill: noop,
+    measureText: () => ({ width: 0 }),
+    transform: noop,
+    rect: noop,
+    clip: noop,
+    canvas: { width: 0, height: 0 },
+  })) as unknown as typeof HTMLCanvasElement.prototype.getContext
+
   // matchMedia polyfill
   if (!window.matchMedia) {
     window.matchMedia = (query: string) => ({

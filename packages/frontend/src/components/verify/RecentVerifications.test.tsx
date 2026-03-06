@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { RecentVerifications, recordVerification } from './RecentVerifications'
 
 const STORAGE_KEY = 'cl8y-bridge-verifications'
@@ -20,7 +21,7 @@ describe('RecentVerifications', () => {
       { hash: '0x' + 'b'.repeat(64), timestamp: Date.now() - 1000 },
     ]
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
-    render(<RecentVerifications />)
+    render(<RecentVerifications />, { wrapper: MemoryRouter })
     expect(screen.getByText('Recent Verifications')).toBeInTheDocument()
   })
 
@@ -30,7 +31,7 @@ describe('RecentVerifications', () => {
       timestamp: Date.now() - i * 1000,
     }))
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
-    render(<RecentVerifications limit={3} />)
+    render(<RecentVerifications limit={3} />, { wrapper: MemoryRouter })
     // Should show exactly 3 items
     const codeElements = screen.getAllByRole('generic').filter(
       (el) => el.tagName === 'CODE'
