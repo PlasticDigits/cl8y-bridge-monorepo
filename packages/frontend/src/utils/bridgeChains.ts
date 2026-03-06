@@ -87,15 +87,6 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
     },
   },
   mainnet: {
-    ethereum: {
-      chainId: 1,
-      type: 'evm',
-      name: 'Ethereum',
-      rpcUrl: import.meta.env.VITE_ETH_RPC_URL || 'https://eth.llamarpc.com',
-      rpcFallbacks: ['https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com'],
-      bridgeAddress: import.meta.env.VITE_ETH_BRIDGE_ADDRESS || import.meta.env.VITE_EVM_BRIDGE_ADDRESS || '',
-      // bytes4ChainId TBD — not yet deployed; will be assigned on deployment
-    },
     bsc: {
       chainId: 56,
       type: 'evm',
@@ -114,6 +105,14 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       ],
       bridgeAddress: import.meta.env.VITE_BSC_BRIDGE_ADDRESS || import.meta.env.VITE_EVM_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000038',
+    },
+    ethereum: {
+      chainId: 1,
+      type: 'evm',
+      name: 'Ethereum',
+      rpcUrl: import.meta.env.VITE_ETH_RPC_URL || 'https://eth.llamarpc.com',
+      rpcFallbacks: ['https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com'],
+      bridgeAddress: import.meta.env.VITE_ETH_BRIDGE_ADDRESS || import.meta.env.VITE_EVM_BRIDGE_ADDRESS || '',
     },
     opbnb: {
       chainId: 204,
@@ -135,7 +134,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       lcdUrl: 'https://terra-classic-lcd.publicnode.com',
       lcdFallbacks: [
         'https://terra-classic-lcd.publicnode.com',
-        'https://api-lunc-lcd.binodes.com',
+        'https://columbus-lcd.terra.dev',
         'https://lcd.terra-classic.hexxagon.io',
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
