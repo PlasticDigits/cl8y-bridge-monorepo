@@ -17,6 +17,14 @@ vi.mock('../../hooks/useBridgeConfig', () => ({
 
 vi.mock('react-blockies', () => ({ default: () => null }))
 
+vi.mock('../../utils/bridgeChains', () => ({
+  getChainDisplayInfo: (id: string) => ({ name: id, icon: '○' }),
+}))
+
+vi.mock('../../utils/chainlist', () => ({
+  isIconImagePath: () => false,
+}))
+
 const mockUseTokenDetails = vi.mocked(useBridgeConfigModule.useTokenDetails)
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
