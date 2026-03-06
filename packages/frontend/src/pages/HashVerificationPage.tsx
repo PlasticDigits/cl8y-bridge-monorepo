@@ -195,6 +195,7 @@ export default function HashVerificationPage() {
     const normalized = normalizeXchainHashId(hashFromUrl)
     recordVerification(normalized)
     verify(normalized)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hashFromUrl])
 
   // Check if this hash has a local transfer record that needs submission

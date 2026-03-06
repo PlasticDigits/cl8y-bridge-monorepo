@@ -487,6 +487,7 @@ function TerraClaimButton({
       setStatus('error')
       setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terraConnected, terraAddress, chain.faucetAddress, tokenAddress])
 
   if (!chain.faucetAddress) {

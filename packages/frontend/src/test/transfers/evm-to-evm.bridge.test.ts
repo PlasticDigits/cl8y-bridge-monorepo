@@ -50,7 +50,7 @@ import {
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
-let envVars: Record<string, string> = {}
+const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
 const ANVIL1_RPC = 'http://localhost:8546'
 

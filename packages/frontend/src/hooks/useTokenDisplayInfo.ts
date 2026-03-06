@@ -52,6 +52,7 @@ export function useTerraTokenDisplayInfo(tokenId: string | undefined) {
       addressForBlockie,
       hasLogo,
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenId, tokenlist, cw20Info])
 }
 

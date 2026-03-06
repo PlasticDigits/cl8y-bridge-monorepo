@@ -398,6 +398,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
       setError(msg)
       submittedRef.current = false
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, updateTransferRecord, getDestChainConfig, resolveDestToken])
 
   /**

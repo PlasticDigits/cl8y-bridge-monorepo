@@ -378,7 +378,7 @@ function buildCanonicalTransferUpdatesFromSource(
   const changed: Partial<TransferRecord> = {}
   for (const [k, v] of Object.entries(candidate) as [keyof TransferRecord, TransferRecord[keyof TransferRecord]][]) {
     if (v !== undefined && current[k] !== v) {
-      ;(changed as Record<string, unknown>)[k as string] = v as unknown
+      (changed as Record<string, unknown>)[k as string] = v as unknown
     }
   }
 

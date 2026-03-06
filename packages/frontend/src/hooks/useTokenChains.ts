@@ -29,6 +29,7 @@ export function useTokenChains(
   evmTokenAddressFromRegistry: string | undefined
 ) {
   const tier = DEFAULT_NETWORK as NetworkTier
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const chains = BRIDGE_CHAINS[tier] ?? {}
   const evmChainEntries = Object.entries(chains).filter(
     (entry): entry is [string, typeof chains[string] & { bytes4ChainId: string }] =>
