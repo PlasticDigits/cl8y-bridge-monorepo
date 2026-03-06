@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   getAllBridgeChains,
   getBridgeChainByChainId,
@@ -9,11 +9,6 @@ import {
 } from './bridgeChains'
 
 describe('bridgeChains', () => {
-  beforeEach(() => {
-    // Reset env vars
-    vi.stubEnv('VITE_NETWORK', 'local')
-  })
-
   it('should return all bridge chains for current network', () => {
     const chains = getAllBridgeChains()
     expect(chains.length).toBeGreaterThan(0)

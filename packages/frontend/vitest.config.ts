@@ -8,6 +8,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    env: {
+      VITE_NETWORK: 'local',
+    },
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: [
       'node_modules/',
