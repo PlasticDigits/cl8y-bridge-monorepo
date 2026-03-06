@@ -8,7 +8,7 @@
 # Checks:
 #   1. Formatting (Rust + Solidity) - ALL packages
 #   2. Clippy linting (Rust) - ALL packages
-#   3. Frontend TypeScript type check
+#   3. Frontend TypeScript type check + ESLint
 #   4. Secret detection (gitleaks)
 #   5. Full E2E tests (starts infra, runs tests, tears down) [disabled]
 #
@@ -146,6 +146,14 @@ if [ -d "$REPO_ROOT/packages/frontend" ]; then
         CHECKS_PASSED=false
     else
         echo "    ✓ frontend typecheck clean"
+    fi
+
+    echo "  → Running ESLint..."
+    if ! (cd "$REPO_ROOT/packages/frontend" && npx eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0 2>/dev/null); then
+        echo "❌ Frontend has lint errors. Run: cd packages/frontend && npm run lint"
+        CHECKS_PASSED=false
+    else
+        echo "    ✓ frontend lint clean"
     fi
 fi
 
