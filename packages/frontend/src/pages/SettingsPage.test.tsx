@@ -63,10 +63,11 @@ describe('SettingsPage', () => {
     expect(tablist).toBeInTheDocument()
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(3)
+    expect(tabs).toHaveLength(4)
     expect(tabs[0]).toHaveTextContent('Chains')
     expect(tabs[1]).toHaveTextContent('Tokens')
     expect(tabs[2]).toHaveTextContent('Bridge Config')
+    expect(tabs[3]).toHaveTextContent('Faucet')
   })
 
   it('shows Chains tab as active by default', () => {
