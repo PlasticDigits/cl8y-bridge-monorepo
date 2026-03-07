@@ -30,7 +30,7 @@ export function normalizeXchainHashId(value: string): string {
 export function isValidAmount(value: string, allowDecimals = true): boolean {
   if (!value || value.trim() === '') return false
   const num = parseFloat(value)
-  if (Number.isNaN(num) || num < 0) return false
+  if (Number.isNaN(num) || num <= 0) return false
   if (!allowDecimals && !Number.isInteger(num)) return false
   return true
 }

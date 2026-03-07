@@ -486,7 +486,7 @@ export function TransferForm() {
     [amountDecimals, destDecimals]
   )
 
-  const { displayMaxLabel, displayMinLabel } = useMemo(() => {
+  const { displayMaxLabel, displayMinLabel, effectiveMinInSrc } = useMemo(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
@@ -526,6 +526,7 @@ export function TransferForm() {
         effectiveMin != null && effectiveMin > 0n
           ? formatCompact(effectiveMin.toString(), srcDecimals)
           : undefined,
+      effectiveMinInSrc: effectiveMin,
     }
   }, [
     isSourceTerra,
@@ -538,6 +539,15 @@ export function TransferForm() {
     amountDecimals,
     toSourceUnits,
   ])
+
+  const isBelowMin = useMemo(() => {
+    if (!amount || !isValidAmount(amount)) return false
+    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    if (effectiveMinInSrc != null && effectiveMinInSrc > 0n) {
+      return parsed < effectiveMinInSrc
+    }
+    return false
+  }, [amount, amountDecimals, effectiveMinInSrc])
 
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
@@ -920,6 +930,10 @@ export function TransferForm() {
     setTxHash(null)
 
     if (!isWalletConnected || !amount || !isValidAmount(amount)) return
+    if (isBelowMin) {
+      setError(`Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel})` : ''}`)
+      return
+    }
     if (submitGuardError) {
       setError(submitGuardError)
       return
@@ -1184,6 +1198,7 @@ export function TransferForm() {
           !isWalletConnected ||
           !amount ||
           !isValidAmount(amount) ||
+          isBelowMin ||
           isSubmitting ||
           isTokenInfoLoading ||
           isRouteValidationLoading ||

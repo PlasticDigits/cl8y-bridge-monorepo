@@ -64,6 +64,9 @@ describe('validation', () => {
     it('accepts decimal', () => {
       expect(isValidAmount('100.5')).toBe(true)
     })
+    it('rejects zero', () => {
+      expect(isValidAmount('0')).toBe(false)
+    })
     it('rejects negative', () => {
       expect(isValidAmount('-1')).toBe(false)
     })
