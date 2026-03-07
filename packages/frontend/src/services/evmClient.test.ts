@@ -47,7 +47,7 @@ describe('evmClient', () => {
       chainId: 1,
       type: 'evm',
       name: 'Ethereum',
-      rpcUrl: 'https://eth.llamarpc.com',
+      rpcUrl: 'https://ethereum-rpc.publicnode.com',
       bridgeAddress: '0x5678',
     }
 

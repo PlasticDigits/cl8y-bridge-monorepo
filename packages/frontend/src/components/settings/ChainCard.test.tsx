@@ -47,16 +47,15 @@ describe('ChainCard', () => {
         name="Ethereum"
         chainId={1}
         type="evm"
-        rpcUrls={['https://eth.llamarpc.com', 'https://rpc.ankr.com/eth', 'https://ethereum-rpc.publicnode.com']}
+        rpcUrls={['https://ethereum-rpc.publicnode.com', 'https://rpc.ankr.com/eth']}
       />
     )
-    expect(screen.getByText('RPC: 3 endpoints')).toBeInTheDocument()
+    expect(screen.getByText('RPC: 2 endpoints')).toBeInTheDocument()
     const details = document.querySelector('details')
     expect(details).toBeInTheDocument()
     expect(details).not.toHaveAttribute('open')
-    expect(screen.getByText('https://eth.llamarpc.com')).toBeInTheDocument()
-    expect(screen.getByText('https://rpc.ankr.com/eth')).toBeInTheDocument()
     expect(screen.getByText('https://ethereum-rpc.publicnode.com')).toBeInTheDocument()
+    expect(screen.getByText('https://rpc.ankr.com/eth')).toBeInTheDocument()
   })
 
   it('renders explorer link when provided', () => {

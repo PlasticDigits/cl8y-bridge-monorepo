@@ -307,7 +307,7 @@ VITE_EVM_BRIDGE_ADDRESS=0x...
 VITE_EVM_ROUTER_ADDRESS=0x...
 
 # EVM RPC URLs (optional, defaults in constants.ts)
-VITE_ETH_RPC_URL=https://eth.llamarpc.com
+VITE_ETH_RPC_URL=https://ethereum-rpc.publicnode.com
 VITE_BSC_RPC_URL=https://bsc-dataseed1.binance.org
 VITE_OPBNB_TESTNET_RPC_URL=https://opbnb-testnet-rpc.bnbchain.org
 

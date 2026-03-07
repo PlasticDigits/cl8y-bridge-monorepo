@@ -9,7 +9,7 @@ export const supportedChains: ChainInfo[] = [
     chainId: 1,
     type: 'evm',
     icon: '⟠',
-    rpcUrl: 'https://eth.llamarpc.com',
+    rpcUrl: 'https://ethereum-rpc.publicnode.com',
     explorerUrl: 'https://etherscan.io',
     nativeCurrency: {
       name: 'Ether',
