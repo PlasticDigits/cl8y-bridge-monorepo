@@ -39,6 +39,7 @@ export interface PendingWithdrawData {
   approved: boolean
   cancelled: boolean
   executed: boolean
+  srcDecimals?: number
   /** Seconds remaining in cancel window (0 if expired). From chain or computed. */
   cancelWindowRemaining?: number
 }

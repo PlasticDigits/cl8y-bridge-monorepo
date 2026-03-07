@@ -26,7 +26,7 @@ import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { useStepProgress } from '../hooks/useStepProgress'
-import { formatCountdownMmSs, formatCancelWindowRange } from '../utils/format'
+import { formatCountdownMmSs, formatCancelWindowRange, formatAmount } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
@@ -37,7 +37,7 @@ import {
   type NetworkTier,
 } from '../utils/bridgeChains'
 import type { BridgeChainConfig } from '../types/chain'
-import { DEFAULT_NETWORK } from '../utils/constants'
+import { DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 
@@ -213,7 +213,10 @@ function TransferDetails({ transfer }: { transfer: TransferRecord }) {
       {/* Amount */}
       <div>
         <p className="text-xs uppercase tracking-wide text-gray-400">Amount</p>
-        <p className="text-white">{transfer.amount}</p>
+        <p className="text-white">
+          {formatAmount(transfer.amount, transfer.srcDecimals ?? DECIMALS.LUNC)}
+          {transfer.tokenSymbol ? ` ${transfer.tokenSymbol}` : ''}
+        </p>
       </div>
 
       {/* Source tx */}
@@ -268,7 +271,7 @@ function buildTransferFromLookup(
     nonce?: bigint
   } | null,
   sourceChain: BridgeChainConfig | null,
-  dest: { amount: bigint; executed: boolean; approved: boolean } | null,
+  dest: { amount: bigint; executed: boolean; approved: boolean; srcDecimals?: number } | null,
   destChain: BridgeChainConfig | null
 ): TransferRecord {
   const lifecycle: TransferRecord['lifecycle'] = dest?.executed
@@ -324,6 +327,7 @@ function buildTransferFromLookup(
     destToken: source?.token,
     destBridgeAddress: resolvedDestBridgeAddress,
     sourceChainIdBytes4: resolvedSourceBytes4,
+    srcDecimals: dest?.srcDecimals,
   }
 }
 

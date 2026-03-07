@@ -206,6 +206,7 @@ export async function queryEvmPendingWithdraw(
       approved,
       cancelled,
       executed: pendingWithdraw.executed,
+      srcDecimals: Number(pendingWithdraw.srcDecimals),
       cancelWindowRemaining,
     }
   } catch (err) {
