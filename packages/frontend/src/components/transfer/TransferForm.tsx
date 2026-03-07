@@ -16,6 +16,7 @@ import {
   encodeTerraAddress,
   encodeEvmAddress,
 } from '../../hooks/useBridgeDeposit'
+import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidation'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
@@ -456,6 +457,7 @@ export function TransferForm() {
   }, [amount])
 
   const isSubmitting =
+    evmStatus === 'switching-chain' ||
     evmStatus === 'checking-allowance' ||
     evmStatus === 'approving' ||
     evmStatus === 'waiting-approval' ||
@@ -918,6 +920,10 @@ export function TransferForm() {
     setTxHash(null)
 
     if (!isWalletConnected || !amount || !isValidAmount(amount)) return
+    if (submitGuardError) {
+      setError(submitGuardError)
+      return
+    }
 
     // Freeze chain state at deposit time so that subsequent UI changes
     // (e.g. swap button) don't corrupt the TransferRecord.
@@ -1049,6 +1055,30 @@ export function TransferForm() {
   const isTokenInfoLoading =
     (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)) ||
     (isSourceTerra && (isRegistryLoading || isDestMappingsLoading))
+  const {
+    isValid: isRouteValid,
+    error: routeValidationError,
+    isLoading: isRouteValidationLoading,
+  } = useTransferRouteValidation({
+    enabled:
+      !!selectedTokenId &&
+      !!sourceChainConfig &&
+      !!destChainConfig &&
+      !isChainsLoading &&
+      !isTokenInfoLoading,
+    tokenLabel: selectedSymbol,
+    sourceChainConfig,
+    destChainConfig,
+    sourceTokenAddress: tokenConfig?.address,
+    sourceMappingAddress: readySourceMappings?.[selectedTokenId],
+    destTokenAddress: destChainConfig?.type === 'evm' ? (destTokenAddr || undefined) : undefined,
+    destMappingAddress: destChainConfig?.type === 'evm' ? (tokenDestMappingAddr || undefined) : undefined,
+    destTokenId: destChainConfig?.type === 'cosmos' ? ((terraCw20Address ?? selectedTokenId) || undefined) : undefined,
+  })
+  const submitGuardError =
+    !isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid
+      ? routeValidationError
+      : null
 
   const buttonText = isChainsLoading
     ? 'Discovering chains...'
@@ -1056,6 +1086,12 @@ export function TransferForm() {
     ? `Connect ${walletLabel} Wallet`
     : isTokenInfoLoading
     ? 'Loading token info...'
+    : isRouteValidationLoading
+    ? 'Validating route...'
+    : submitGuardError
+    ? 'Route misconfigured'
+    : evmStatus === 'switching-chain'
+    ? `Switching to ${sourceChainConfig?.name ?? 'source chain'}...`
     : isSubmitting
     ? 'Processing...'
     : direction === 'terra-to-evm'
@@ -1079,6 +1115,14 @@ export function TransferForm() {
           <button type="button" onClick={() => setError(null)} className="text-red-200 text-xs mt-2 underline underline-offset-2">
             Dismiss
           </button>
+        </div>
+      )}
+      {!error && submitGuardError && (
+        <div className="bg-amber-900/30 border-2 border-amber-700 p-3">
+          <p className="text-amber-200 text-sm">{submitGuardError}</p>
+          <p className="text-amber-300/70 text-xs mt-1">
+            This route is blocked until the token mapping resolves to a real destination token.
+          </p>
         </div>
       )}
 
@@ -1135,7 +1179,16 @@ export function TransferForm() {
       <button
         type="submit"
         data-testid="submit-transfer"
-        disabled={isChainsLoading || !isWalletConnected || !amount || !isValidAmount(amount) || isSubmitting || isTokenInfoLoading}
+        disabled={
+          isChainsLoading ||
+          !isWalletConnected ||
+          !amount ||
+          !isValidAmount(amount) ||
+          isSubmitting ||
+          isTokenInfoLoading ||
+          isRouteValidationLoading ||
+          !isRouteValid
+        }
         onClick={() => sounds.playButtonPress()}
         className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
       >

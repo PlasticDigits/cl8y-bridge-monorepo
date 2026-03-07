@@ -79,6 +79,7 @@ const ERC20_ABI = [
 
 export type DepositStatus =
   | 'idle'
+  | 'switching-chain'
   | 'checking-allowance'
   | 'approving'
   | 'waiting-approval'
@@ -365,7 +366,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       // This is essential for multi-EVM: if the user selects Anvil1 as source
       // but the wallet is on Anvil, we need to switch before sending any txns.
       if (params?.sourceNativeChainId && walletChainId !== params.sourceNativeChainId) {
-        setState({ status: 'checking-allowance' }) // show some progress
+        setState({ status: 'switching-chain' })
         try {
           await switchChainAsync({ chainId: params.sourceNativeChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
         } catch (switchError) {
@@ -378,6 +379,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
           return
         }
       }
+
+      setState({ status: 'checking-allowance' })
       const amountWei = parseUnits(amount, tokenDecimals)
 
       // Pre-flight: verify the token contract exists on the SOURCE chain.
