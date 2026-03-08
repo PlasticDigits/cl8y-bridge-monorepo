@@ -423,7 +423,7 @@ function TerraClaimButton({
   tokenAddress: string
 }) {
   const queryClient = useQueryClient()
-  const { address: terraAddress, connected: terraConnected } = useWalletStore()
+  const { address: terraAddress, connected: terraConnected, luncBalance } = useWalletStore()
   const [status, setStatus] = useState<'idle' | 'claiming' | 'success' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
@@ -496,6 +496,18 @@ function TerraClaimButton({
 
   if (!terraConnected) {
     return <span className="text-xs text-gray-500">Connect Terra</span>
+  }
+
+  const hasNoGas = luncBalance === '0' || luncBalance === ''
+
+  if (hasNoGas) {
+    return (
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[10px] text-amber-400 max-w-[120px] text-right" title="Terra wallet has zero LUNC — gas is required to claim faucet tokens">
+          No LUNC for gas
+        </span>
+      </div>
+    )
   }
 
   const isOnCooldown = countdown !== null && countdown > 0
