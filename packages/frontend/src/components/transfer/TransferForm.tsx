@@ -486,7 +486,7 @@ export function TransferForm() {
     [amountDecimals, destDecimals]
   )
 
-  const { displayMaxLabel, displayMinLabel, effectiveMinInSrc, effectiveMaxInSrc } = useMemo(() => {
+  const { displayMaxLabel, displayBridgeMax, displayMinLabel, effectiveMinInSrc, effectiveMaxInSrc } = useMemo(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
