@@ -9,6 +9,7 @@ import {
   computeXchainHashId,
   chainIdToBytes32,
   evmAddressToBytes32,
+  terraAddressToBytes32,
   tokenUlunaBytes32,
   keccak256Uluna,
   normalizeHash,
@@ -194,6 +195,32 @@ describe('hashVerification', () => {
       )
 
       expect(hashFromDeposit).toBe(hashFromWithdraw)
+    })
+  })
+
+  describe('terraAddressToBytes32', () => {
+    it('should decode a standard 44-char wallet address (20 bytes, left-padded)', () => {
+      const addr = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
+      const result = terraAddressToBytes32(addr)
+      expect(result).toHaveLength(66)
+      expect(result).toMatch(/^0x[0-9a-f]{64}$/)
+      expect(result.slice(2, 26)).toBe('000000000000000000000000')
+    })
+
+    it('should decode a 64-char CW20 contract address (32 bytes)', () => {
+      const addr = 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh'
+      const result = terraAddressToBytes32(addr)
+      expect(result).toHaveLength(66)
+      expect(result).toMatch(/^0x[0-9a-f]{64}$/)
+      expect(result.slice(2, 26)).not.toBe('000000000000000000000000')
+    })
+
+    it('should reject an address with invalid length', () => {
+      expect(() => terraAddressToBytes32('terra1abc')).toThrow('Invalid Terra address format')
+    })
+
+    it('should reject non-terra prefix', () => {
+      expect(() => terraAddressToBytes32('cosmos1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v')).toThrow('Invalid Terra address format')
     })
   })
 

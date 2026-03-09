@@ -214,30 +214,25 @@ function convertBits(data: number[], fromBits: number, toBits: number, pad: bool
 
 /**
  * Convert Terra bech32 address to bytes32.
- * Decodes the bech32 address to its raw pubkey hash (20 bytes), then left-pads to 32 bytes.
+ * Handles both standard wallet addresses (20-byte, 44 chars) and
+ * CW20/CosmWasm contract addresses (32-byte, 64 chars).
+ * Decodes the bech32 data and left-pads to 32 bytes when needed.
  *
  * Terra Classic uses standard bech32 (not segwit/bech32m), so there is no witness version byte.
  * All 5-bit data values are converted directly to 8-bit bytes.
  */
 export function terraAddressToBytes32(bech32Address: string): Hex {
-  if (!bech32Address.startsWith('terra1') || bech32Address.length !== 44) {
+  if (!bech32Address.startsWith('terra1') || (bech32Address.length !== 44 && bech32Address.length !== 64)) {
     throw new Error(`Invalid Terra address format: ${bech32Address}`)
   }
 
-  // Decode bech32 to get the 5-bit data
   const { data5bit } = bech32Decode(bech32Address)
-
-  // Terra Classic: no witness version byte. Convert all 5-bit values to 8-bit bytes.
-  // Use pad=false because the trailing bits should be zero-padding from encoding.
-  // However, some valid bech32 addresses may have non-zero trailing bits that are
-  // artifacts of the 5-to-8-bit conversion. Use pad=true to be permissive.
   const rawBytes = convertBits(data5bit, 5, 8, false)
 
-  if (rawBytes.length !== 20) {
-    throw new Error(`Expected 20-byte pubkey hash, got ${rawBytes.length} bytes`)
+  if (rawBytes.length !== 20 && rawBytes.length !== 32) {
+    throw new Error(`Expected 20-byte or 32-byte address, got ${rawBytes.length} bytes`)
   }
 
-  // Left-pad to 32 bytes (same as EVM address encoding)
   const hex = rawBytes.map((b) => b.toString(16).padStart(2, '0')).join('')
   return `0x${hex.padStart(64, '0')}` as Hex
 }
