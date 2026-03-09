@@ -486,7 +486,7 @@ export function TransferForm() {
     [amountDecimals, destDecimals]
   )
 
-  const { displayMaxLabel, displayBridgeMax, displayMinLabel, effectiveMinInSrc } = useMemo(() => {
+  const { displayMaxLabel, displayMinLabel, effectiveMinInSrc, effectiveMaxInSrc } = useMemo(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
@@ -530,6 +530,7 @@ export function TransferForm() {
           ? formatCompact(effectiveMin.toString(), srcDecimals)
           : undefined,
       effectiveMinInSrc: effectiveMin,
+      effectiveMaxInSrc: effectiveMax,
     }
   }, [
     isSourceTerra,
@@ -551,6 +552,13 @@ export function TransferForm() {
     }
     return false
   }, [amount, amountDecimals, effectiveMinInSrc])
+
+  const isAboveMax = useMemo(() => {
+    if (!amount || !isValidAmount(amount)) return false
+    if (effectiveMaxInSrc <= 0n) return false
+    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    return parsed > effectiveMaxInSrc
+  }, [amount, amountDecimals, effectiveMaxInSrc])
 
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
@@ -937,6 +945,10 @@ export function TransferForm() {
       setError(`Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel})` : ''}`)
       return
     }
+    if (isAboveMax) {
+      setError(`Amount exceeds the maximum${displayMaxLabel ? ` (${displayMaxLabel})` : ''}`)
+      return
+    }
     if (submitGuardError) {
       setError(submitGuardError)
       return
@@ -1127,8 +1139,8 @@ export function TransferForm() {
         </div>
       )}
       {error && (
-        <div className="bg-red-900/30 border-2 border-red-700 p-3">
-          <p className="text-red-300 text-sm">{error}</p>
+        <div className="bg-red-900/30 border-2 border-red-700 p-3 overflow-hidden">
+          <p className="text-red-300 text-sm break-all">{error}</p>
           <button type="button" onClick={() => setError(null)} className="text-red-200 text-xs mt-2 underline underline-offset-2">
             Dismiss
           </button>
@@ -1205,6 +1217,7 @@ export function TransferForm() {
           !amount ||
           !isValidAmount(amount) ||
           isBelowMin ||
+          isAboveMax ||
           isSubmitting ||
           isTokenInfoLoading ||
           isRouteValidationLoading ||
