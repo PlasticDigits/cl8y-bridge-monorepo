@@ -130,6 +130,11 @@ describe('terraBridgeQueries', () => {
       expect(result!.nonce).toBe(2n)
       expect(result!.approved).toBe(false)
       expect(result!.cancelled).toBe(false)
+      // srcChain bytes4 must be padded to bytes32 (left-aligned) for hash computation
+      expect(result!.srcChain).toMatch(/^0x[a-f0-9]{64}$/i)
+      expect(result!.srcChain).toBe(
+        '0x00007a6900000000000000000000000000000000000000000000000000000000'
+      )
       // Token should be keccak256("uluna")
       expect(result!.token).toBe(
         '0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da'

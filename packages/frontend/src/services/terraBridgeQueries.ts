@@ -167,7 +167,8 @@ export async function queryTerraPendingWithdraw(
     }
 
     // Decode base64 Binary fields to hex
-    const srcChainHex = base64ToHex(response.src_chain)
+    // src_chain is bytes4 from contract — must pad to bytes32 for hash computation
+    const srcChainHex = bytes4Base64ToBytes32Hex(response.src_chain)
     const srcAccountHex = base64ToHex(response.src_account)
     const destAccountHex = base64ToHex(response.dest_account)
 
