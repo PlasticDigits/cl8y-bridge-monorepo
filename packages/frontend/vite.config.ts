@@ -10,11 +10,11 @@ const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
 let commitCount = parseInt(execSync('git rev-list --count HEAD').toString().trim(), 10)
 if (commitCount <= 1) {
   try {
-    const headers = execSync(
-      `curl -sI "https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1&sha=main"`,
-      { timeout: 5000 },
-    ).toString()
-    const match = headers.match(/page=(\d+)>;\s*rel="last"/)
+    const linkHeader = execSync(
+      `node -e "fetch('https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1&sha=main',{headers:{'User-Agent':'cl8y-build'}}).then(r=>console.log(r.headers.get('link')||'')).catch(()=>console.log(''))"`,
+      { timeout: 10000 },
+    ).toString().trim()
+    const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/)
     if (match) commitCount = parseInt(match[1], 10)
   } catch { /* build continues with commitCount = 1 */ }
 }
