@@ -157,6 +157,88 @@ describe('parseTerraLockReceipt', () => {
     expect(result!.amount).toBe('9970000')
   })
 
+  it('should use deposit event amount when CW20 fee transfer overwrites generic amount (#9)', async () => {
+    // Reproduces the bug from issue #9 / #29: CW20 deposits where the contract
+    // does NOT emit lock_amount. The bridge deposit event has the correct net
+    // amount, but a subsequent CW20 fee transfer event also has an `amount`
+    // attribute (the fee). Without the fix, the fee overwrites the net amount.
+    //
+    // Real-world example: 1 TESTA (18 decimals)
+    //   net = 997000000000000000 (0.997 TESTA)
+    //   fee = 3000000000000000   (0.003 TESTA = 0.3%)
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      mockOkFetch({
+        tx_response: {
+          code: 0,
+          events: [
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'deposit_cw20_lock' },
+                { key: 'nonce', value: '42' },
+                { key: 'amount', value: '997000000000000000' },
+                { key: 'token', value: 'terra1testa...' },
+                { key: 'dest_chain_id', value: '56' },
+                { key: 'recipient', value: '0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266' },
+                { key: 'sender', value: 'terra1sender...' },
+              ],
+            },
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'transfer' },
+                { key: 'amount', value: '3000000000000000' },
+                { key: 'from', value: 'terra1bridge...' },
+                { key: 'to', value: 'terra1feerecipient...' },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    const result = await parseTerraLockReceipt('CW20_NO_LOCK_AMOUNT', MOCK_LCD_URL, NO_RETRY)
+    expect(result).not.toBeNull()
+    expect(result!.nonce).toBe(42)
+    // Must be net amount from deposit event, NOT the fee from the transfer event
+    expect(result!.amount).toBe('997000000000000000')
+    expect(result!.token).toBe('terra1testa...')
+  })
+
+  it('should use deposit event amount even when fee transfer appears first', async () => {
+    // Edge case: fee transfer event appears before the deposit event
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      mockOkFetch({
+        tx_response: {
+          code: 0,
+          events: [
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'transfer' },
+                { key: 'amount', value: '5999994000000000' },
+              ],
+            },
+            {
+              type: 'wasm',
+              attributes: [
+                { key: 'action', value: 'deposit_cw20_lock' },
+                { key: 'nonce', value: '7' },
+                { key: 'amount', value: '1993998006000000000' },
+                { key: 'token', value: 'terra1testa...' },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    const result = await parseTerraLockReceipt('CW20_FEE_FIRST', MOCK_LCD_URL, NO_RETRY)
+    expect(result).not.toBeNull()
+    expect(result!.nonce).toBe(7)
+    expect(result!.amount).toBe('1993998006000000000')
+  })
+
   it('should return null when LCD returns non-200', async () => {
     global.fetch = vi.fn().mockResolvedValue(mockFailFetch(404))
 

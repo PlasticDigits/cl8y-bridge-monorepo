@@ -120,6 +120,7 @@ async function attemptParse(
     let nonce: number | undefined
     let amount: string | undefined
     let lockAmount: string | undefined
+    let depositEventAmount: string | undefined
     let token: string | undefined
     let destChainId: number | undefined
     let recipient: string | undefined
@@ -130,6 +131,12 @@ async function attemptParse(
 
     for (const event of events) {
       if (event.type === 'wasm' || event.type === 'wasm-lock') {
+        // Process each event as a unit so we can distinguish the bridge
+        // deposit event (which contains the nonce) from CW20 fee transfer
+        // events whose `amount` is the fee, not the net deposit.
+        let eventHasNonce = false
+        let eventAmount: string | undefined
+
         for (const attr of event.attributes) {
           // Attributes may be base64-encoded or plain text depending on LCD version
           const key = tryDecodeBase64(attr.key)
@@ -140,12 +147,13 @@ async function attemptParse(
             case 'nonce':
             case 'deposit_nonce':
               nonce = parseInt(value, 10)
+              eventHasNonce = true
               break
             case 'lock_amount':
               lockAmount = value
               break
             case 'amount':
-              amount = value
+              eventAmount = value
               break
             case 'token':
             case 'denom':
@@ -171,6 +179,13 @@ async function attemptParse(
               break
           }
         }
+
+        if (eventHasNonce && eventAmount !== undefined) {
+          depositEventAmount = eventAmount
+        }
+        if (eventAmount !== undefined) {
+          amount = eventAmount
+        }
       }
 
       // Also check message events for sender
@@ -183,9 +198,11 @@ async function attemptParse(
       }
     }
 
-    // Prefer lock_amount (net amount from bridge) over generic amount
-    // (which may be from CW20 fee transfers that appear later in the events)
-    amount = lockAmount ?? amount
+    // Priority: lock_amount > amount from the deposit event (with nonce) > any amount.
+    // CW20 fee transfer events also emit `amount` (the fee), which can appear
+    // after the bridge deposit event and overwrite the generic `amount`. Using
+    // depositEventAmount avoids this overwrite.
+    amount = lockAmount ?? depositEventAmount ?? amount
 
     // Also extract from the tx body messages if events didn't have all fields
     if (!sender || !amount || !destChainId || !recipient) {
