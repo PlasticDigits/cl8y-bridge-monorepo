@@ -24,35 +24,144 @@ function isSequenceMismatchError(error: unknown): boolean {
   return false
 }
 
-function handleSwapTransactionError(error: unknown): Error {
-  if (error instanceof Error) {
-    const m = error.message.toLowerCase()
-    if (m.includes('user rejected') || m.includes('rejected') || m.includes('user denied')) {
-      return new Error('Transaction rejected by user')
-    }
-    if (
-      m.includes('sequence') ||
-      m.includes('account sequence mismatch') ||
-      m.includes('signature verification failed')
-    ) {
-      return new Error(
-        'Transaction sequence mismatch. Please wait a few seconds and try again, ' +
-          'or disconnect and reconnect your wallet.'
-      )
-    }
-    if (m.includes('insufficient funds') || m.includes('spendable balance')) {
-      const feeUluna = Math.ceil(parseFloat(gasLimits.gasPriceUluna) * gasLimits.bridge)
-      const feeLunc = (feeUluna / 1e6).toFixed(2)
-      return new Error(
-        `Insufficient LUNC for gas fees. Terra Classic transactions require ~${feeLunc} LUNC for gas. Add more LUNC to your wallet and try again.`
-      )
-    }
-    if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network')) {
-      return new Error(`Network error: ${error.message}. Please check your connection and try again.`)
-    }
-    return new Error(`Transaction failed: ${error.message}`)
+/**
+ * Error code constants for machine-readable classification.
+ * Callers can check `error.message.startsWith(CODE)` or use `isTerraContractError`.
+ */
+export const TERRA_TX_ERROR = {
+  USER_REJECTED: 'USER_REJECTED',
+  SEQUENCE_MISMATCH: 'SEQUENCE_MISMATCH',
+  INSUFFICIENT_GAS: 'INSUFFICIENT_GAS',
+  NONCE_ALREADY_APPROVED: 'NONCE_ALREADY_APPROVED',
+  WITHDRAW_ALREADY_SUBMITTED: 'WITHDRAW_ALREADY_SUBMITTED',
+  BRIDGE_PAUSED: 'BRIDGE_PAUSED',
+  TOKEN_NOT_SUPPORTED: 'TOKEN_NOT_SUPPORTED',
+  RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',
+  INSUFFICIENT_LIQUIDITY: 'INSUFFICIENT_LIQUIDITY',
+  NETWORK_ERROR: 'NETWORK_ERROR',
+  CONTRACT_ERROR: 'CONTRACT_ERROR',
+  UNKNOWN: 'UNKNOWN',
+} as const
+
+export type TerraTxErrorCode = typeof TERRA_TX_ERROR[keyof typeof TERRA_TX_ERROR]
+
+export class TerraTxError extends Error {
+  code: TerraTxErrorCode
+  rawMessage: string
+
+  constructor(code: TerraTxErrorCode, userMessage: string, rawMessage: string) {
+    super(userMessage)
+    this.name = 'TerraTxError'
+    this.code = code
+    this.rawMessage = rawMessage
   }
-  return new Error(`Transaction failed: ${String(error)}`)
+}
+
+export function isTerraContractError(error: unknown, code: TerraTxErrorCode): boolean {
+  return error instanceof TerraTxError && error.code === code
+}
+
+function handleSwapTransactionError(error: unknown): TerraTxError {
+  const raw = error instanceof Error ? error.message : String(error)
+  const m = raw.toLowerCase()
+
+  if (m.includes('user rejected') || m.includes('rejected') || m.includes('user denied')) {
+    return new TerraTxError(TERRA_TX_ERROR.USER_REJECTED, 'Transaction rejected by user', raw)
+  }
+
+  if (
+    m.includes('sequence') ||
+    m.includes('account sequence mismatch') ||
+    m.includes('signature verification failed')
+  ) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.SEQUENCE_MISMATCH,
+      'Transaction sequence mismatch. Please wait a few seconds and try again, ' +
+        'or disconnect and reconnect your wallet.',
+      raw
+    )
+  }
+
+  if (m.includes('insufficient funds') || m.includes('spendable balance')) {
+    const feeUluna = Math.ceil(parseFloat(gasLimits.gasPriceUluna) * gasLimits.bridge)
+    const feeLunc = (feeUluna / 1e6).toFixed(2)
+    return new TerraTxError(
+      TERRA_TX_ERROR.INSUFFICIENT_GAS,
+      `Insufficient LUNC for gas fees. Terra Classic transactions require ~${feeLunc} LUNC for gas. ` +
+        'Add more LUNC to your wallet and try again.',
+      raw
+    )
+  }
+
+  if (m.includes('nonce already approved')) {
+    const nonceMatch = raw.match(/nonce\s+(\d+)/i)
+    const nonceStr = nonceMatch ? ` (nonce ${nonceMatch[1]})` : ''
+    return new TerraTxError(
+      TERRA_TX_ERROR.NONCE_ALREADY_APPROVED,
+      `This withdrawal${nonceStr} was already approved by the operator. ` +
+        'The transfer may have completed — please check your destination wallet balance.',
+      raw
+    )
+  }
+
+  if (m.includes('withdraw already submitted') || m.includes('withdrawalreadysubmitted')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED,
+      'This withdrawal has already been submitted on-chain. ' +
+        'It may be awaiting operator approval — do not retry.',
+      raw
+    )
+  }
+
+  if (m.includes('bridge paused') || m.includes('bridgepaused')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.BRIDGE_PAUSED,
+      'The bridge is currently paused for maintenance. Please try again later.',
+      raw
+    )
+  }
+
+  if (m.includes('token not supported') || m.includes('tokennotsupported')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.TOKEN_NOT_SUPPORTED,
+      'This token is not supported or has been disabled on the bridge.',
+      raw
+    )
+  }
+
+  if (m.includes('rate limit exceeded') || m.includes('ratelimitexceeded')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.RATE_LIMIT_EXCEEDED,
+      'The bridge rate limit has been reached. Please try a smaller amount or wait before retrying.',
+      raw
+    )
+  }
+
+  if (m.includes('insufficient liquidity') || m.includes('insufficientliquidity')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.INSUFFICIENT_LIQUIDITY,
+      'Insufficient liquidity on the destination chain for this withdrawal amount.',
+      raw
+    )
+  }
+
+  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('network')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.NETWORK_ERROR,
+      `Network error: ${raw}. Please check your connection and try again.`,
+      raw
+    )
+  }
+
+  if (m.includes('execute wasm contract failed') || m.includes('execute msg')) {
+    return new TerraTxError(
+      TERRA_TX_ERROR.CONTRACT_ERROR,
+      `Bridge contract rejected the transaction: ${raw}`,
+      raw
+    )
+  }
+
+  return new TerraTxError(TERRA_TX_ERROR.UNKNOWN, `Transaction failed: ${raw}`, raw)
 }
 
 export async function executeContractWithCoins(

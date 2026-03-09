@@ -634,13 +634,43 @@ export default function TransferStatusPage() {
 
   const [retryingHash, setRetryingHash] = useState(false)
 
-  const handleRetryHashSubmission = useCallback(() => {
+  const handleRetryHashSubmission = useCallback(async () => {
     if (!transfer) return
     setRetryingHash(true)
+
+    // For evm-to-terra: check if the withdrawal already exists on Terra before
+    // resetting lifecycle. This prevents wasting gas on duplicate nonce submissions.
+    if (transfer.direction === 'evm-to-terra' && transfer.xchainHashId) {
+      const tier = DEFAULT_NETWORK as NetworkTier
+      const destChainConfig = BRIDGE_CHAINS[tier][transfer.destChain]
+      if (destChainConfig?.type === 'cosmos' && destChainConfig.bridgeAddress) {
+        const lcdUrls = destChainConfig.lcdFallbacks || (destChainConfig.lcdUrl ? [destChainConfig.lcdUrl] : [])
+        if (lcdUrls.length > 0) {
+          try {
+            const { queryTerraPendingWithdraw } = await import('../services/terraBridgeQueries')
+            const existing = await queryTerraPendingWithdraw(
+              lcdUrls, destChainConfig.bridgeAddress,
+              transfer.xchainHashId as `0x${string}`, destChainConfig
+            )
+            if (existing) {
+              const newLifecycle = existing.executed ? 'executed'
+                : existing.approved ? 'approved' : 'hash-submitted'
+              console.info(`${LOG} Retry: withdrawal already exists on Terra (${newLifecycle})`)
+              updateTransferRecord(transfer.id, { lifecycle: newLifecycle })
+              setTransfer((prev) => prev ? { ...prev, lifecycle: newLifecycle } : null)
+              setRetryingHash(false)
+              return
+            }
+          } catch {
+            // LCD failed — fall through to normal retry
+          }
+        }
+      }
+    }
+
     resetForRetry()
     updateTransferRecord(transfer.id, { lifecycle: 'deposited' })
     setTransfer((prev) => prev ? { ...prev, lifecycle: 'deposited' } : null)
-    // Re-trigger on-chain lookup after a short delay to pick up the new submission
     setTimeout(() => {
       setRetryingHash(false)
       if (xchainHashId && isValidXchainHashId(xchainHashId)) {

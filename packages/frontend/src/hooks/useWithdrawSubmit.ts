@@ -17,6 +17,7 @@ import {
   submitWithdrawOnTerra,
   type WithdrawSubmitTerraParams,
 } from '../services/terra/withdrawSubmit'
+import { TerraTxError } from '../services/terra/transaction'
 
 export type WithdrawSubmitStatus =
   | 'idle'
@@ -98,6 +99,9 @@ export function useWithdrawSubmit() {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'WithdrawSubmit failed'
         setState({ status: 'error', txHash: null, error: message })
+        // Re-throw TerraTxError so callers can inspect the error code
+        // (e.g. NONCE_ALREADY_APPROVED) and recover instead of showing a generic error.
+        if (err instanceof TerraTxError) throw err
         return null
       }
     },

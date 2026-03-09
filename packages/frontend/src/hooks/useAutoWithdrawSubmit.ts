@@ -31,6 +31,7 @@ import {
   evmAddressToBytes32Array,
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
+import { isTerraContractError, TERRA_TX_ERROR } from '../services/terra/transaction'
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
@@ -361,6 +362,33 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           }
         }
 
+        // Before submitting, check if this withdrawal already exists on-chain.
+        // This prevents wasting gas on duplicate submissions after a prior
+        // success that the UI failed to detect (e.g. due to hash mismatch).
+        if (transfer.xchainHashId) {
+          const lcdUrls = destChainConfig.lcdFallbacks || (destChainConfig.lcdUrl ? [destChainConfig.lcdUrl] : [])
+          if (lcdUrls.length > 0) {
+            try {
+              const existing = await queryTerraPendingWithdraw(
+                lcdUrls, bridgeAddress, transfer.xchainHashId as Hex, destChainConfig
+              )
+              if (existing) {
+                console.info(
+                  `${LOG} Withdrawal already exists on-chain: approved=${existing.approved}, executed=${existing.executed}`
+                )
+                const newLifecycle = existing.executed ? 'executed'
+                  : existing.approved ? 'approved' : 'hash-submitted'
+                updateTransferRecord(transfer.id, { lifecycle: newLifecycle })
+                setPhase(existing.executed ? 'complete' : existing.approved ? 'waiting-execution' : 'waiting-approval')
+                if (!existing.executed) startPolling()
+                return
+              }
+            } catch {
+              // LCD check failed — proceed with submission attempt
+            }
+          }
+        }
+
         console.info(
           `${LOG} Submitting Terra withdrawSubmit: bridge=${bridgeAddress}, ` +
           `token=${terraToken}, recipient=${terraRecipient}, amount=${transfer.amount}, nonce=${transfer.depositNonce}`
@@ -392,6 +420,22 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         }
       }
     } catch (err) {
+      // If the contract says the withdrawal already exists or the nonce was
+      // already approved, the prior submission actually succeeded — recover by
+      // updating lifecycle and resuming polling instead of showing an error.
+      if (
+        isTerraContractError(err, TERRA_TX_ERROR.NONCE_ALREADY_APPROVED) ||
+        isTerraContractError(err, TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED)
+      ) {
+        console.info(
+          `${LOG} Withdrawal already on-chain (${err instanceof Error ? err.message : err}), recovering...`
+        )
+        updateTransferRecord(transfer.id, { lifecycle: 'hash-submitted' })
+        setPhase('waiting-approval')
+        startPolling()
+        return
+      }
+
       const msg = err instanceof Error ? err.message : 'Auto-submit failed'
       console.error(`${LOG} triggerSubmit error for transfer ${transfer.id}:`, msg, err)
       setPhase('error')

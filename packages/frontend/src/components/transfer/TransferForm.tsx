@@ -645,23 +645,47 @@ export function TransferForm() {
           console.warn('[TransferForm] Failed to parse deposit receipt:', err)
         }
 
-        // Compute transfer hash if we have the nonce
+        // Get source chain bytes4 for the record
+        const tier = DEFAULT_NETWORK as NetworkTier
+        const chains = BRIDGE_CHAINS[tier]
+        const srcChainConfig = chains[frozenSource]
+        const destChainConfig = chains[frozenDest]
+
+        // Query the destination token from TokenRegistry BEFORE computing the hash.
+        // The EVM contract hashes with destToken (not the source ERC20 address), so we
+        // must use the same value here for the hashes to match across chains.
+        let destTokenBytes32: string | undefined
+        const srcClient = srcChainConfig?.type === 'evm' ? getEvmClient(srcChainConfig) : null
+        if (srcClient && tokenAddr && srcChainConfig?.bridgeAddress && destChainConfig?.bytes4ChainId) {
+          try {
+            const dt = await getDestToken(
+              srcClient,
+              srcChainConfig.bridgeAddress as Address,
+              tokenAddr as Address,
+              destChainConfig.bytes4ChainId as `0x${string}`
+            )
+            if (dt) destTokenBytes32 = dt
+          } catch (err) {
+            console.warn('[TransferForm] Failed to query destToken from registry:', err)
+          }
+        }
+
+        // Compute transfer hash if we have the nonce.
+        // CRITICAL: use the destination token (destTokenBytes32) for the token field,
+        // matching the EVM contract's HashLib.computeXchainHashId which hashes with
+        // tokenRegistry.getDestToken(). The Deposit event's `token` field is the
+        // SOURCE ERC20 address and must NOT be used here.
         let xchainHashId: string | undefined
         if (depositNonce !== undefined) {
           try {
-            const tier = DEFAULT_NETWORK as NetworkTier
-            const chains = BRIDGE_CHAINS[tier]
-            const srcChainConfig = chains[frozenSource]
-            const destChainConfig = chains[frozenDest]
-
             if (srcChainConfig?.bytes4ChainId && destChainConfig?.bytes4ChainId) {
-              // Convert bytes4 hex to chain ID number for chainIdToBytes32
               const srcChainIdNum = parseInt(srcChainConfig.bytes4ChainId.slice(2), 16)
               const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
 
               const srcChainB32 = chainIdToBytes32(srcChainIdNum)
               const destChainB32 = chainIdToBytes32(destChainIdNum)
-              const tokenB32 = tokenAddr ? evmAddressToBytes32(tokenAddr as `0x${string}`) : '0x' + '0'.repeat(64)
+              const tokenB32 = destTokenBytes32
+                || (tokenAddr ? evmAddressToBytes32(tokenAddr as `0x${string}`) : '0x' + '0'.repeat(64))
               const srcAccB32 = srcAccountHex || (evmAddress ? evmAddressToBytes32(evmAddress as `0x${string}`) : '0x' + '0'.repeat(64))
               const destAccB32 = destAccountHex || '0x' + '0'.repeat(64)
 
@@ -677,30 +701,6 @@ export function TransferForm() {
             }
           } catch (err) {
             console.warn('[TransferForm] Failed to compute transfer hash:', err)
-          }
-        }
-
-        // Get source chain bytes4 for the record
-        const tier = DEFAULT_NETWORK as NetworkTier
-        const chains = BRIDGE_CHAINS[tier]
-        const srcChainConfig = chains[frozenSource]
-        const destChainConfig = chains[frozenDest]
-
-        // V2 fix: query the correct destination token from TokenRegistry
-        // Use source-chain-specific client (not wallet-bound publicClient)
-        let destTokenBytes32: string | undefined
-        const srcClient = srcChainConfig?.type === 'evm' ? getEvmClient(srcChainConfig) : null
-        if (srcClient && tokenAddr && srcChainConfig?.bridgeAddress && destChainConfig?.bytes4ChainId) {
-          try {
-            const dt = await getDestToken(
-              srcClient,
-              srcChainConfig.bridgeAddress as Address,
-              tokenAddr as Address,
-              destChainConfig.bytes4ChainId as `0x${string}`
-            )
-            if (dt) destTokenBytes32 = dt
-          } catch (err) {
-            console.warn('[TransferForm] Failed to query destToken from registry:', err)
           }
         }
 
