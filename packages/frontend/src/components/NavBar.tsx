@@ -38,7 +38,7 @@ export function NavBar() {
               end
               onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
-                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1 min-[360px]:px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[9px] min-[360px]:text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
@@ -52,7 +52,7 @@ export function NavBar() {
               to="/history"
               onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
-                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1 min-[360px]:px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[9px] min-[360px]:text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
@@ -66,7 +66,7 @@ export function NavBar() {
               to="/verify"
               onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
-                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1 min-[360px]:px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[9px] min-[360px]:text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
@@ -80,7 +80,7 @@ export function NavBar() {
               to="/settings"
               onClick={() => sounds.playButtonPress()}
               className={({ isActive }) =>
-                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
+                `max-[479px]:flex-1 flex items-center justify-center gap-1.5 text-center px-1 min-[360px]:px-1.5 min-[480px]:px-2.5 xl:px-3.5 py-2 text-[9px] min-[360px]:text-[11px] min-[480px]:text-xs xl:text-sm font-medium whitespace-nowrap uppercase tracking-[0.04em] min-[480px]:tracking-wide border ${
                   isActive
                     ? 'bg-[#202614] text-[#d5ff7f] border-[#b8ff3d]/60 shadow-[2px_2px_0_#000]'
                     : 'text-slate-200 border-transparent hover:border-white/40 hover:bg-zinc-800'
