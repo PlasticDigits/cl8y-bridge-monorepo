@@ -486,7 +486,7 @@ export function TransferForm() {
     [amountDecimals, destDecimals]
   )
 
-  const { displayMaxLabel, displayMinLabel, effectiveMinInSrc } = useMemo(() => {
+  const { displayMaxLabel, displayBridgeMax, displayMinLabel, effectiveMinInSrc } = useMemo(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
@@ -519,9 +519,12 @@ export function TransferForm() {
       if (raw > 0n) effectiveMin = toSourceUnits(raw)
     }
 
+    const bridgeLimit = bridgeRemainingInSrc ?? maxTransferInSrc
     return {
       displayMaxLabel:
         effectiveMax > 0n ? formatCompact(effectiveMax.toString(), srcDecimals) : undefined,
+      displayBridgeMax:
+        bridgeLimit != null && bridgeLimit > 0n ? formatCompact(bridgeLimit.toString(), srcDecimals) : undefined,
       displayMinLabel:
         effectiveMin != null && effectiveMin > 0n
           ? formatCompact(effectiveMin.toString(), srcDecimals)
@@ -1146,6 +1149,9 @@ export function TransferForm() {
         onChange={handleSourceChange}
         balance={balanceDisplay}
         balanceLabel={selectedSymbol}
+        bridgeMax={displayBridgeMax}
+        periodEndsAt={destTokenDetails?.withdrawRateLimit?.periodEndsAt}
+        fetchedAtWallMs={destTokenDetails?.withdrawRateLimit?.fetchedAtWallMs}
         disabled={isSubmitting}
       />
       <AmountInput
