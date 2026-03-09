@@ -23,6 +23,71 @@ import type { BridgeChainConfig } from '../types/chain'
 import type { Hex } from 'viem'
 import { keccak256, toBytes } from 'viem'
 
+// ─── Token dest mapping cache (24h TTL) ───
+
+interface TokenDestMappingCacheEntry {
+  hex: Hex
+  fetchedAt: number
+}
+
+const tokenDestMappingCache = new Map<string, TokenDestMappingCacheEntry>()
+const TOKEN_DEST_MAPPING_TTL_MS = 24 * 60 * 60 * 1000
+
+interface TokenDestMappingResponse {
+  token: string
+  dest_chain: string
+  dest_token: string
+  dest_decimals: number
+}
+
+const ZERO_BYTES32 = ('0x' + '0'.repeat(64)) as Hex
+
+/**
+ * Resolve the source chain's token bytes32 via the Terra contract's token_dest_mapping.
+ * For EVM→Terra withdrawals, the hash uses the EVM token address (left-padded to bytes32).
+ * This queries token_dest_mapping(terraToken, srcChain) to get that bytes32.
+ * Results are cached for 24 hours.
+ */
+export async function resolveSourceTokenBytes32(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  terraToken: string,
+  srcChainBase64: string
+): Promise<Hex | null> {
+  const cacheKey = `${bridgeAddress}:${terraToken}:${srcChainBase64}`
+  const cached = tokenDestMappingCache.get(cacheKey)
+  if (cached && Date.now() - cached.fetchedAt < TOKEN_DEST_MAPPING_TTL_MS) {
+    return cached.hex
+  }
+
+  try {
+    const res = await queryContract<TokenDestMappingResponse>(
+      lcdUrls,
+      bridgeAddress,
+      {
+        token_dest_mapping: {
+          token: terraToken,
+          dest_chain: srcChainBase64,
+        },
+      }
+    )
+
+    if (!res?.dest_token) return null
+    const hex = base64ToHex(res.dest_token) as Hex
+    if (hex === ZERO_BYTES32) return null
+
+    tokenDestMappingCache.set(cacheKey, { hex, fetchedAt: Date.now() })
+    return hex
+  } catch {
+    return null
+  }
+}
+
+/** Clear the token dest mapping cache. Exported for tests. */
+export function clearTokenDestMappingCache(): void {
+  tokenDestMappingCache.clear()
+}
+
 // Terra contract query message types
 interface TerraDepositHashQuery {
   xchain_hash_id: {
@@ -172,9 +237,17 @@ export async function queryTerraPendingWithdraw(
     const srcAccountHex = base64ToHex(response.src_account)
     const destAccountHex = base64ToHex(response.dest_account)
 
-    // Token encoding: CW20 addresses (terra1...) decode to bytes32; native denoms use keccak256
+    // Token encoding: use token_dest_mapping to get the source chain's token bytes32.
+    // The hash was computed on the source chain using its local token address,
+    // so we must resolve the same bytes32 via the contract's mapping.
+    // Falls back to terraAddressToBytes32 (CW20) or keccak256 (native denom) if no mapping.
     let tokenHex: Hex
-    if (response.token.startsWith('terra1') && response.token.length >= 44) {
+    const mappedToken = await resolveSourceTokenBytes32(
+      lcdUrls, bridgeAddress, response.token, response.src_chain
+    )
+    if (mappedToken) {
+      tokenHex = mappedToken
+    } else if (response.token.startsWith('terra1') && response.token.length >= 44) {
       try {
         tokenHex = terraAddressToBytes32(response.token)
       } catch (e) {
