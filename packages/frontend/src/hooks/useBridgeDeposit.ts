@@ -369,6 +369,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         setState({ status: 'switching-chain' })
         try {
           await switchChainAsync({ chainId: params.sourceNativeChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
+          // Brief pause so the user sees "Switching to <chain>..." before moving on
+          await new Promise((r) => setTimeout(r, 1200))
         } catch (switchError) {
           const msg = switchError instanceof Error ? switchError.message : 'Failed to switch chain'
           if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
