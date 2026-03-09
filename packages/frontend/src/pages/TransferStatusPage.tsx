@@ -824,11 +824,21 @@ export default function TransferStatusPage() {
 
   const isFailed = transfer?.lifecycle === 'failed'
 
-  const cancelWindowRemaining = useApprovalCountdown(
+  const { cancelWindowRemaining, executed: approvalPollDetectedExecuted } = useApprovalCountdown(
     transfer?.xchainHashId as `0x${string}` | undefined,
     transfer?.destChain,
     transfer?.lifecycle === 'approved'
   )
+
+  // Advance lifecycle when the 1-second approval countdown poll detects execution.
+  // This acts as a reliable fallback for the useAutoWithdrawSubmit polling, which
+  // can miss the transition due to stale closures in its setInterval callback.
+  useEffect(() => {
+    if (!approvalPollDetectedExecuted || !transfer) return
+    if (transfer.lifecycle === 'executed') return
+    updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+    setTransfer((prev) => prev ? { ...prev, lifecycle: 'executed' } : null)
+  }, [approvalPollDetectedExecuted, transfer, updateTransferRecord])
 
   const { data: bridgeConfigs } = useBridgeConfig()
   const destChainCancelWindow = transfer?.destChain
