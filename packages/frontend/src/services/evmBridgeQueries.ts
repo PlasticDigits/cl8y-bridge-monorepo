@@ -7,6 +7,7 @@
 
 import type { Address, Hex, PublicClient } from 'viem'
 import { evmAddressToBytes32 } from './hashVerification'
+import { getDestToken } from './evm/tokenRegistry'
 import type { DepositData, PendingWithdrawData } from '../hooks/useTransferLookup'
 
 // Bridge view ABI (minimal for getDeposit, getPendingWithdraw, getThisChainId)
@@ -95,6 +96,10 @@ function bytes4ToBytes32(b: `0x${string}`): Hex {
  * Query deposit record from EVM bridge contract.
  * Returns null if deposit not found (timestamp is 0).
  * Uses getThisChainId for srcChain to match the contract's hash computation.
+ *
+ * The `token` field is resolved to the **destination** token via TokenRegistry,
+ * matching the canonical hash computation (HashLib.computeXchainHashId uses destToken).
+ * The source ERC20 address is preserved in `srcToken` for display.
  */
 export async function queryEvmDeposit(
   client: PublicClient,
@@ -124,7 +129,14 @@ export async function queryEvmDeposit(
 
     const srcChainHex = bytes4ToBytes32(thisChainId as `0x${string}`)
     const destChainHex = bytes4ToBytes32(deposit.destChain as `0x${string}`)
-    const tokenBytes = evmAddressToBytes32(deposit.token as Address)
+    const srcTokenBytes = evmAddressToBytes32(deposit.token as Address)
+
+    // Resolve the destination token via TokenRegistry — this is the token
+    // bytes32 that the contract used when computing the xchainHashId.
+    const destChainBytes4 = deposit.destChain as `0x${string}`
+    const destTokenBytes = await getDestToken(
+      client, bridgeAddress, deposit.token as Address, destChainBytes4
+    )
 
     return {
       chainId,
@@ -132,7 +144,8 @@ export async function queryEvmDeposit(
       destChain: destChainHex,
       srcAccount: deposit.srcAccount as Hex,
       destAccount: deposit.destAccount as Hex,
-      token: tokenBytes,
+      token: destTokenBytes ?? srcTokenBytes,
+      srcToken: srcTokenBytes,
       amount: deposit.amount,
       nonce: deposit.nonce,
       timestamp: deposit.timestamp,

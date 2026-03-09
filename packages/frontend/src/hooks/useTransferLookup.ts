@@ -19,7 +19,10 @@ export interface DepositData {
   destChain: Hex
   srcAccount: Hex
   destAccount: Hex
+  /** Canonical token bytes32 used in the xchainHashId (= destination token). */
   token: Hex
+  /** Source chain's local token address as bytes32 (for display only). */
+  srcToken?: Hex
   amount: bigint
   nonce: bigint
   timestamp: bigint

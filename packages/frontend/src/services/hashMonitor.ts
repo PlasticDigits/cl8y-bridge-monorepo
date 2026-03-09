@@ -12,6 +12,7 @@ import { getEvmClient } from './evmClient'
 import { BRIDGE_VIEW_ABI } from './evmBridgeQueries'
 import { queryContract } from './lcdClient'
 import { base64ToHex, computeXchainHashIdFromDeposit, evmAddressToBytes32 } from './hashVerification'
+import { getDestToken } from './evm/tokenRegistry'
 import { getDeployedEvmBridgeChainEntries, getCosmosBridgeChains } from '../utils/bridgeChains'
 
 /** EVM Deposit event for getLogs. Matches IBridge.Deposit. */
@@ -112,8 +113,30 @@ export async function fetchEvmDepositHashes(
     ])
 
     const thisChainId = parseInt((thisChainIdRaw as Hex).slice(2).slice(0, 8), 16)
+
+    // Batch-resolve dest tokens for unique (srcToken, destChain) pairs.
+    // The hash uses the destination token, not the source ERC20 from the Deposit event.
+    const destTokenCache = new Map<string, Hex | null>()
+    const uniquePairs = new Map<string, { token: Address; destChainBytes4: `0x${string}` }>()
     for (const log of logs) {
-      const tokenBytes = evmAddressToBytes32(log.token)
+      const destChainBytes4 = log.destChain.slice(0, 10) as `0x${string}`
+      const key = `${log.token.toLowerCase()}:${destChainBytes4}`
+      if (!uniquePairs.has(key)) {
+        uniquePairs.set(key, { token: log.token, destChainBytes4 })
+      }
+    }
+    await Promise.all(
+      Array.from(uniquePairs.entries()).map(async ([key, { token, destChainBytes4 }]) => {
+        const resolved = await getDestToken(client, bridgeAddress, token, destChainBytes4)
+        destTokenCache.set(key, resolved)
+      })
+    )
+
+    for (const log of logs) {
+      const destChainBytes4 = log.destChain.slice(0, 10) as `0x${string}`
+      const cacheKey = `${log.token.toLowerCase()}:${destChainBytes4}`
+      const destTokenBytes = destTokenCache.get(cacheKey)
+      const tokenBytes = destTokenBytes ?? evmAddressToBytes32(log.token)
       const hash = computeXchainHashIdFromDeposit(
         thisChainId,
         log.destChain,
