@@ -28,6 +28,12 @@ const mockChainsForTransfer = [
   { id: 'anvil', name: 'Anvil (Local)', chainId: 31337, type: 'evm' as const, icon: '🔨', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
 ]
 
+const mockUseBridgeDeposit = vi.fn()
+const mockSetActiveTransfer = vi.fn()
+const mockUpdateActiveTransfer = vi.fn()
+const mockRecordTransfer = vi.fn()
+const mockResetEvm = vi.fn()
+
 vi.mock('wagmi', () => ({
   useAccount: () => ({
     isConnected: false,
@@ -66,7 +72,7 @@ vi.mock('../../hooks/useTokenDestMapping', () => ({
 }))
 
 vi.mock('../../hooks/useSourceChainTokenMappings', () => ({
-  useSourceChainTokenMappings: () => ({ mappings: {} }),
+  useSourceChainTokenMappings: () => ({ mappings: {}, decimalsMap: {}, isLoading: false }),
 }))
 
 vi.mock('../../hooks/useBridgeConfig', () => ({
@@ -91,14 +97,7 @@ vi.mock('react-blockies', () => ({
 }))
 
 vi.mock('../../hooks/useBridgeDeposit', () => ({
-  useBridgeDeposit: () => ({
-    status: 'idle',
-    depositTxHash: undefined,
-    error: undefined,
-    tokenBalance: undefined,
-    deposit: vi.fn(),
-    reset: vi.fn(),
-  }),
+  useBridgeDeposit: () => mockUseBridgeDeposit(),
   computeTerraChainBytes4: vi.fn(() => '0x00000002'),
   computeEvmChainBytes4: vi.fn(() => '0x00007a69'),
   computeTerraChainKey: vi.fn(() => '0x00000002'),
@@ -119,7 +118,9 @@ vi.mock('../../hooks/useTerraDeposit', () => ({
 
 vi.mock('../../stores/transfer', () => ({
   useTransferStore: () => ({
-    recordTransfer: vi.fn(),
+    recordTransfer: mockRecordTransfer,
+    setActiveTransfer: mockSetActiveTransfer,
+    updateActiveTransfer: mockUpdateActiveTransfer,
   }),
 }))
 
@@ -139,6 +140,14 @@ vi.mock('../../hooks/useDiscoveredChains', () => ({
 describe('TransferForm', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseBridgeDeposit.mockReturnValue({
+      status: 'idle',
+      depositTxHash: undefined,
+      error: undefined,
+      tokenBalance: undefined,
+      deposit: vi.fn(),
+      reset: mockResetEvm,
+    })
   })
 
   describe('Rendering', () => {
@@ -200,7 +209,6 @@ describe('TransferForm', () => {
       await user.click(sourceSelect)
       const options = screen.getAllByRole('option')
       const optionTexts = options.map((o) => o.textContent)
-      // Should include both Terra and EVM chains
       expect(optionTexts.some((t) => t?.includes('Terra'))).toBe(true)
       expect(optionTexts.some((t) => t?.includes('Ethereum') || t?.includes('BNB') || t?.includes('Anvil'))).toBe(true)
     })
@@ -248,7 +256,6 @@ describe('TransferForm', () => {
     it('should swap source and destination on button click', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      // Use specific IDs to locate chain selectors (TokenSelect also has role=combobox)
       const sourceSelect = document.getElementById('source-chain-select')!
       const destSelect = document.getElementById('dest-chain-select')!
       const initialSourceText = sourceSelect.textContent
@@ -256,7 +263,6 @@ describe('TransferForm', () => {
       const swapButton = screen.getAllByRole('button').find((btn) => btn.querySelector('svg') && !btn.textContent?.includes('Bridge'))
       expect(swapButton).toBeInTheDocument()
       await user.click(swapButton!)
-      // After swap, source shows previous dest and vice versa
       expect(sourceSelect.textContent).toBe(initialDestText)
       expect(destSelect.textContent).toBe(initialSourceText)
     })
@@ -264,15 +270,12 @@ describe('TransferForm', () => {
     it('should support selecting EVM source for evm-to-evm transfer', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      // Use specific IDs to locate chain selectors (TokenSelect also has role=combobox)
       const sourceSelect = document.getElementById('source-chain-select')!
       const destSelect = document.getElementById('dest-chain-select')!
 
-      // Select BSC as source via custom dropdown
       await user.click(sourceSelect)
       await user.click(screen.getByRole('option', { name: /BNB Chain/ }))
 
-      // Dest should have other chains but not BSC (same chain filtered out)
       await user.click(destSelect)
       const destOptions = screen.getAllByRole('option')
       const destChainIds = destOptions.map((o) => o.getAttribute('data-chainid'))
@@ -284,10 +287,8 @@ describe('TransferForm', () => {
     it('should filter out cosmos dest when source is cosmos', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
-      // Use specific ID to locate dest chain selector (TokenSelect also has role=combobox)
       const destSelect = document.getElementById('dest-chain-select')!
 
-      // Source defaults to terra (cosmos), open dest dropdown and check only EVM chains
       await user.click(destSelect)
       const destOptions = screen.getAllByRole('option')
       const destChainIds = destOptions.map((o) => o.getAttribute('data-chainid'))
@@ -323,6 +324,26 @@ describe('TransferForm', () => {
     it('should show estimated time', () => {
       renderWithRouter(<TransferForm />)
       expect(screen.getByText(/~\d+ minutes/)).toBeInTheDocument()
+    })
+  })
+
+  describe('EVM active transfer cleanup', () => {
+    it('clears active transfer when EVM deposit fails', () => {
+      mockUseBridgeDeposit.mockReturnValue({
+        status: 'error',
+        depositTxHash: undefined,
+        error: 'hash submission failed',
+        tokenBalance: undefined,
+        deposit: vi.fn(),
+        reset: mockResetEvm,
+      })
+
+      renderWithRouter(<TransferForm />)
+
+      expect(mockUpdateActiveTransfer).toHaveBeenCalledWith({ status: 'failed' })
+      expect(mockSetActiveTransfer).toHaveBeenCalledWith(null)
+      expect(mockResetEvm).toHaveBeenCalled()
+      expect(screen.getByText('hash submission failed')).toBeInTheDocument()
     })
   })
 })
