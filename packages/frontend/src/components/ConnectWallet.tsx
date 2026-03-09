@@ -49,39 +49,71 @@ export function ConnectWallet() {
     setLogoLoadFailed(false)
   }, [chainLogoPath])
 
+  const [showDropdown, setShowDropdown] = useState(false)
   if (isConnected && address) {
     return (
-      <button
-        onClick={() => {
-          sounds.playButtonPress()
-          disconnect()
-        }}
-        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
-      >
-        <div className="text-right hidden sm:block">
-          <p className="text-sm font-mono font-medium text-white">
+      <div className="relative">
+        <button
+          onClick={() => {
+            sounds.playButtonPress()
+            setShowDropdown(!showDropdown)
+          }}
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
+        >
+          <div className="text-right hidden sm:block">
+            <p className="text-sm font-mono font-medium text-white">
+              {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
+              <span className="text-emerald-300">{gasSymbol}</span>
+            </p>
+            <p className="text-xs text-gray-500">{formatAddress(address, 6)}</p>
+          </div>
+          <div className="sm:hidden text-xs font-mono font-medium text-white">
             {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
             <span className="text-emerald-300">{gasSymbol}</span>
-          </p>
-          <p className="text-xs text-gray-500">{formatAddress(address, 6)}</p>
-        </div>
-        <div className="sm:hidden text-xs font-mono font-medium text-white">
-          {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)}{' '}
-          <span className="text-emerald-300">{gasSymbol}</span>
-        </div>
-        <div className="w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden rounded-sm bg-black/90 p-1 border-2 border-black shadow-[2px_2px_0_#000]">
-          {chainLogoPath && !logoLoadFailed ? (
-            <img
-              src={chainLogoPath}
-              alt={chain?.name ?? 'Chain'}
-              className="h-full w-full object-contain"
-              onError={() => setLogoLoadFailed(true)}
-            />
-          ) : (
-            <span className="text-[9px] font-black text-white leading-none tracking-tight">{gasSymbol}</span>
-          )}
-        </div>
-      </button>
+          </div>
+          <div className="w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden rounded-sm bg-black/90 p-1 border-2 border-black shadow-[2px_2px_0_#000]">
+            {chainLogoPath && !logoLoadFailed ? (
+              <img
+                src={chainLogoPath}
+                alt={chain?.name ?? 'Chain'}
+                className="h-full w-full object-contain"
+                onError={() => setLogoLoadFailed(true)}
+              />
+            ) : (
+              <span className="text-[9px] font-black text-white leading-none tracking-tight">{gasSymbol}</span>
+            )}
+          </div>
+        </button>
+
+        {showDropdown && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
+            <div className="absolute right-0 mt-2 w-48 glass border-2 border-white/35 rounded-none shadow-[4px_4px_0_#000] overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
+              <div className="p-2">
+                <div className="px-3 py-2 sm:hidden">
+                  <p className="text-sm font-mono text-white">
+                    {isGasBalanceLoading ? '--' : formatGasBalance(gasBalance?.formatted)} {gasSymbol}
+                  </p>
+                  <p className="text-xs text-gray-500">{formatAddress(address, 8)}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    sounds.playButtonPress()
+                    disconnect()
+                    setShowDropdown(false)
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-300 hover:bg-white/5 hover:text-red-400 rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     )
   }
 
