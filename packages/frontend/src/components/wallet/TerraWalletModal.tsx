@@ -1,8 +1,9 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet'
 import { Modal } from '../ui'
 import { TerraWalletOption, getTerraWalletIcon } from './TerraWalletOption'
 import { DEV_MODE } from '../../utils/constants'
+import { detectInAppBrowser } from '../../utils/detectInAppBrowser'
 
 const WC_WALLETS = new Set<WalletName>([WalletName.LUNCDASH, WalletName.GALAXYSTATION])
 
@@ -25,6 +26,7 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   } = useWallet()
 
   const isWcConnecting = connecting && connectingWallet != null && WC_WALLETS.has(connectingWallet)
+  const inAppBrowser = useMemo(() => detectInAppBrowser(), [])
 
   // Modal already handles Escape key - this just adds cancelConnection on close
   const closeModal = useCallback(() => {
@@ -122,6 +124,17 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
           />
         ))}
         <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">Mobile / WalletConnect</p>
+        {inAppBrowser.isInAppBrowser && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-300">
+            <p className="font-medium">
+              In-app browser detected{inAppBrowser.browserName ? ` (${inAppBrowser.browserName})` : ''}
+            </p>
+            <p className="text-xs text-amber-400/80 mt-1">
+              WalletConnect deep links may not work here. For the best experience,
+              copy this page URL and open it in your device&apos;s default browser.
+            </p>
+          </div>
+        )}
         {wallets.slice(4).map((w) => (
           <div key={w.walletName}>
             <TerraWalletOption
