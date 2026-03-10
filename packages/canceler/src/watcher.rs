@@ -68,6 +68,8 @@ sol! {
             address recipient,
             uint256 amount,
             uint64 nonce,
+            uint8 srcDecimals,
+            uint8 destDecimals,
             uint256 operatorGas,
             uint256 submittedAt,
             uint256 approvedAt,
