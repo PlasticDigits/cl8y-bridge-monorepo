@@ -124,12 +124,50 @@ These pages are the user's window into the bridge's integrity.
 - [ ] Enabled/disabled status shown
 - [ ] Token addresses are copyable
 
+#### 3.2.1 Token Verification
+- [ ] Per-token "Verify" button triggers onchain verification
+- [ ] "Verify All" button runs verification across all tokens in sequence
+- [ ] Loading spinners shown during verification
+- [ ] Passing token shows green ✓ checks for each onchain query
+- [ ] Failing token shows red ✗ for the failing check with error detail
+- [ ] Summary badge shows "X/Y Verified" when all pass
+- [ ] Summary badge shows "Z Failed" when any fail
+- [ ] Per-chain breakdown shows individual checks: Token registered, Dest mapping, Incoming decimals
+- [ ] Verification passes for a correctly registered token (happy path)
+- [ ] Verification fails for a token with missing registration or wrong mapping
+- [ ] Spot-check: query `isTokenRegistered` / `getDestToken` / `getSrcTokenDecimals` directly via RPC and compare with displayed results
+- [ ] Spot-check: query Terra LCD `incoming_token_mapping` / dest mapping and compare with displayed results
+
 ### 3.3 Bridge Config Tab
 - [ ] Bridge fee percentage displayed (0.5%)
 - [ ] Min/max transfer limits shown per token
 - [ ] Rate limit information displayed
 - [ ] Contract addresses shown
 - [ ] Network tier (mainnet/testnet) indicated
+
+#### 3.3.1 Roles & Addresses
+- [ ] Admin address displayed and matches onchain `owner()` (EVM) / `config.admin` (Terra)
+- [ ] Fee collector address displayed and matches onchain `getFeeConfig` (EVM) / `fee_config` (Terra)
+- [ ] Operators list lazy-loads and shows all registered operator addresses
+- [ ] Operators match onchain `getOperators` (EVM) / `operators` (Terra)
+- [ ] Cancelers list lazy-loads and shows all registered canceler addresses
+- [ ] Cancelers match onchain `getCancelers` (EVM) / `cancelers` (Terra)
+- [ ] All role addresses are copyable
+- [ ] Spot-check: query admin, fee collector, operators, cancelers directly via RPC/LCD and compare
+
+#### 3.3.2 Token Details (More/Less Expand)
+- [ ] "More" button expands to show token details per chain
+- [ ] "Less" button collapses the expanded details
+- [ ] Min transfer amount displayed and matches onchain data
+- [ ] Max transfer amount displayed and matches onchain data
+- [ ] Withdraw rate limit (24h) displayed and matches onchain data
+- [ ] Local token address shown (shortened) with copy button
+- [ ] Destinations list shows each destination chain with icon, chain name, and token address
+- [ ] Destination token addresses match onchain dest mappings (`getDestToken` / Terra dest mapping)
+- [ ] Destination token symbols shown and match the source token symbol (same bridged asset)
+- [ ] "Verified" status with ✓ icon shown when destination token symbol/name matches source
+- [ ] "Invalid" status with ✗ icon shown when destination token symbol/name differs significantly from source
+- [ ] Spot-check: query destination token contract `symbol()` / `name()` onchain and compare with displayed values
 
 ### 3.4 Faucet Tab
 - [ ] Test token faucet cards displayed for each token (Test A, Test B, Test Dec)
