@@ -11,9 +11,9 @@ import type { Address, Hex, PublicClient } from 'viem'
 import { getEvmClient } from './evmClient'
 import { BRIDGE_VIEW_ABI } from './evmBridgeQueries'
 import { queryContract } from './lcdClient'
-import { base64ToHex, computeXchainHashIdFromDeposit, evmAddressToBytes32 } from './hashVerification'
+import { base64ToHex, computeXchainHashIdFromDeposit, evmAddressToBytes32, hexToBase64 } from './hashVerification'
 import { getDestToken } from './evm/tokenRegistry'
-import { getDeployedEvmBridgeChainEntries, getCosmosBridgeChains } from '../utils/bridgeChains'
+import { getDeployedEvmBridgeChainEntries, getCosmosBridgeChains, getBridgeChainEntryByBytes4 } from '../utils/bridgeChains'
 
 /** EVM Deposit event for getLogs. Matches IBridge.Deposit. */
 const DEPOSIT_EVENT_ABI = [
@@ -47,6 +47,8 @@ export interface MonitorHashEntry {
   approved?: boolean
   cancelled?: boolean
   executed?: boolean
+  /** Destination chain bytes4 ID (from deposit events), used to look up execution status */
+  destChainBytes4?: string
 }
 
 /**
@@ -151,6 +153,7 @@ export async function fetchEvmDepositHashes(
         source: 'deposit',
         chainKey,
         chainName,
+        destChainBytes4,
       })
     }
   } catch {
@@ -313,6 +316,7 @@ export async function fetchTerraWithdrawHashes(
 
 interface TerraDepositInfoResponse {
   xchain_hash_id: string
+  dest_chain?: string
 }
 
 /**
@@ -350,11 +354,18 @@ export async function fetchTerraDepositHashes(
       for (const r of results) {
         if (r?.xchain_hash_id) {
           const hash = base64ToHex(r.xchain_hash_id) as Hex
+          let destChainBytes4: string | undefined
+          if (r.dest_chain) {
+            const destBytes = atob(r.dest_chain)
+            const hex = Array.from(destBytes, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+            destChainBytes4 = `0x${hex.padStart(8, '0')}`
+          }
           entries.push({
             hash,
             source: 'deposit',
             chainKey,
             chainName,
+            destChainBytes4,
           })
         }
       }
@@ -366,11 +377,163 @@ export async function fetchTerraDepositHashes(
   return entries
 }
 
+interface TerraPendingWithdrawSingleResponse {
+  exists: boolean
+  approved: boolean
+  cancelled: boolean
+  executed: boolean
+  submitted_at: number
+}
+
+/**
+ * Resolve execution status for deposit-only entries by querying the destination
+ * chain's bridge. Executed EVM withdrawals are removed from getPendingWithdrawHashes
+ * but remain queryable via getPendingWithdraw(hash). Similarly, Terra withdrawals
+ * are queryable via the pending_withdraw query.
+ */
+async function resolveDepositExecutionStatus(
+  byHash: Map<string, MonitorHashEntry>
+): Promise<void> {
+  // Collect entries needing resolution: deposits without executed/cancelled status
+  const needsResolution: MonitorHashEntry[] = []
+  for (const entry of byHash.values()) {
+    if (!entry.executed && !entry.cancelled && entry.destChainBytes4) {
+      needsResolution.push(entry)
+    }
+  }
+
+  if (needsResolution.length === 0) return
+
+  // Group by destination chain bytes4
+  const byDestChain = new Map<string, MonitorHashEntry[]>()
+  for (const entry of needsResolution) {
+    const key = entry.destChainBytes4!.toLowerCase()
+    const group = byDestChain.get(key) ?? []
+    group.push(entry)
+    byDestChain.set(key, group)
+  }
+
+  const lookupPromises: Promise<void>[] = []
+
+  for (const [destBytes4, entries] of byDestChain) {
+    const chainEntry = getBridgeChainEntryByBytes4(destBytes4)
+    if (!chainEntry) continue
+
+    const [, destConfig] = chainEntry
+
+    if (destConfig.type === 'evm' && destConfig.bridgeAddress) {
+      lookupPromises.push(
+        resolveEvmExecutionStatus(destConfig, entries, byHash)
+      )
+    } else if (destConfig.type === 'cosmos' && destConfig.bridgeAddress) {
+      const lcdUrls = destConfig.lcdFallbacks ?? (destConfig.lcdUrl ? [destConfig.lcdUrl] : [])
+      if (lcdUrls.length > 0) {
+        lookupPromises.push(
+          resolveCosmosExecutionStatus(lcdUrls, destConfig.bridgeAddress, entries, byHash)
+        )
+      }
+    }
+  }
+
+  await Promise.allSettled(lookupPromises)
+}
+
+/**
+ * Query getPendingWithdraw(hash) on an EVM destination chain for each entry
+ * and update the merged map with execution/cancellation status.
+ */
+async function resolveEvmExecutionStatus(
+  destConfig: import('../types/chain').BridgeChainConfig,
+  entries: MonitorHashEntry[],
+  byHash: Map<string, MonitorHashEntry>
+): Promise<void> {
+  try {
+    const client = getEvmClient(destConfig)
+    const bridgeAddress = destConfig.bridgeAddress as Address
+
+    const results = await Promise.allSettled(
+      entries.map((entry) =>
+        client.readContract({
+          address: bridgeAddress,
+          abi: BRIDGE_VIEW_ABI,
+          functionName: 'getPendingWithdraw',
+          args: [entry.hash],
+        })
+      )
+    )
+
+    for (let i = 0; i < entries.length; i++) {
+      const result = results[i]
+      if (result?.status !== 'fulfilled' || !result.value) continue
+
+      const pw = result.value as {
+        submittedAt: bigint
+        approved: boolean
+        cancelled: boolean
+        executed: boolean
+      }
+
+      if (pw.submittedAt === 0n) continue
+
+      const key = entries[i]!.hash.toLowerCase()
+      const existing = byHash.get(key)
+      if (!existing) continue
+
+      if (pw.executed) existing.executed = true
+      if (pw.cancelled) existing.cancelled = true
+      if (pw.approved) existing.approved = pw.approved
+      if (!existing.timestamp && pw.submittedAt > 0n) {
+        existing.timestamp = Number(pw.submittedAt)
+      }
+    }
+  } catch {
+    // RPC or contract call failed — skip this destination chain
+  }
+}
+
+/**
+ * Query pending_withdraw on a Cosmos destination chain for each entry
+ * and update the merged map with execution/cancellation status.
+ */
+async function resolveCosmosExecutionStatus(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  entries: MonitorHashEntry[],
+  byHash: Map<string, MonitorHashEntry>
+): Promise<void> {
+  const results = await Promise.allSettled(
+    entries.map((entry) =>
+      queryContract<TerraPendingWithdrawSingleResponse>(lcdUrls, bridgeAddress, {
+        pending_withdraw: { xchain_hash_id: hexToBase64(entry.hash) },
+      })
+    )
+  )
+
+  for (let i = 0; i < entries.length; i++) {
+    const result = results[i]
+    if (result?.status !== 'fulfilled' || !result.value) continue
+
+    const pw = result.value
+    if (!pw.exists) continue
+
+    const key = entries[i]!.hash.toLowerCase()
+    const existing = byHash.get(key)
+    if (!existing) continue
+
+    if (pw.executed) existing.executed = true
+    if (pw.cancelled) existing.cancelled = true
+    if (pw.approved) existing.approved = pw.approved
+    if (!existing.timestamp && pw.submitted_at > 0) {
+      existing.timestamp = pw.submitted_at
+    }
+  }
+}
+
 /**
  * Fetch deposit and withdraw hashes from all configured bridge chains.
  * - EVM: deposits (getLogs), withdraws (getPendingWithdrawHashes) on each EVM chain
  * - Terra: deposits (deposit_by_nonce), withdraws (pending_withdrawals paginated) on each Cosmos chain
- * Merges and deduplicates by hash.
+ * Merges and deduplicates by hash, then resolves execution status from destination chains.
  */
 export async function fetchAllXchainHashIds(
   options?: {
@@ -448,11 +611,11 @@ export async function fetchAllXchainHashIds(
       if (!existing) {
         byHash.set(key, e)
       } else {
-        // Prefer the entry with more complete status (executed/cancelled from destination chain)
         if (e.executed) existing.executed = true
         if (e.cancelled) existing.cancelled = true
         if (e.approved !== undefined) existing.approved = e.approved
         if (e.timestamp && !existing.timestamp) existing.timestamp = e.timestamp
+        if (e.destChainBytes4 && !existing.destChainBytes4) existing.destChainBytes4 = e.destChainBytes4
       }
     }
   }
@@ -462,9 +625,14 @@ export async function fetchAllXchainHashIds(
   for (const list of terraDepositResults) merge(list)
   for (const list of terraWithdrawResults) merge(list)
 
+  // Phase 2: Resolve execution status for deposit-only entries by querying
+  // the destination chain's bridge contract. EVM executed withdrawals are
+  // removed from getPendingWithdrawHashes but still queryable via
+  // getPendingWithdraw(hash). Terra entries are queryable via pending_withdraw.
+  await resolveDepositExecutionStatus(byHash)
+
   const results = Array.from(byHash.values())
 
-  // Sort by timestamp desc (newest first), fallback to hash for stable order
   results.sort((a, b) => {
     const ta = a.timestamp ?? 0
     const tb = b.timestamp ?? 0

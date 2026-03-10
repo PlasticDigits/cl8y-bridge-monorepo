@@ -353,9 +353,17 @@ const MAX_LIMIT: u32 = 30;
 
 /// List pending withdrawals with cursor-based pagination.
 ///
-/// Returns all non-executed entries from `PENDING_WITHDRAWS`, ordered by hash.
+/// Returns all entries from `PENDING_WITHDRAWS`, ordered by hash.
 /// Operators use this to find unapproved submissions to approve.
 /// Cancelers use this to find approved-but-not-executed entries to verify.
+///
+/// TODO: Remove executed/cancelled entries from PENDING_WITHDRAWS storage after
+/// execution/cancellation (mirroring the EVM contract's _pendingWithdrawHashes.remove()).
+/// Currently executed entries remain in storage and are returned by this query.
+/// The frontend works around this by querying pending_withdraw(hash) on destination
+/// chains, but cleaning up storage here would reduce gas costs for pagination and
+/// avoid unbounded state growth. When implemented, add a filter here to skip
+/// executed entries, or remove them from the map in execute_withdraw_execute.
 pub fn query_pending_withdrawals(
     deps: Deps,
     env: Env,
