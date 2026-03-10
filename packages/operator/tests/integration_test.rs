@@ -1686,3 +1686,34 @@ async fn test_pending_withdrawals_filtering() {
         "Only one entry should be unapproved, non-cancelled, non-executed"
     );
 }
+
+#[tokio::test]
+async fn test_v2_withdraw_execute_mint_serialization() {
+    use multichain_rs::terra::contracts::{
+        build_withdraw_execute_mint_msg_v2, build_withdraw_execute_unlock_msg_v2,
+    };
+
+    let hash = [3u8; 32];
+
+    let mint_msg = build_withdraw_execute_mint_msg_v2(hash);
+    let mint_json = serde_json::to_string(&mint_msg).unwrap();
+    assert!(
+        mint_json.contains("withdraw_execute_mint"),
+        "Mint message must contain withdraw_execute_mint, got: {mint_json}"
+    );
+    assert!(
+        !mint_json.contains("withdraw_execute_unlock"),
+        "Mint message must NOT contain withdraw_execute_unlock"
+    );
+
+    let unlock_msg = build_withdraw_execute_unlock_msg_v2(hash);
+    let unlock_json = serde_json::to_string(&unlock_msg).unwrap();
+    assert!(
+        unlock_json.contains("withdraw_execute_unlock"),
+        "Unlock message must contain withdraw_execute_unlock, got: {unlock_json}"
+    );
+    assert!(
+        !unlock_json.contains("withdraw_execute_mint"),
+        "Unlock message must NOT contain withdraw_execute_mint"
+    );
+}

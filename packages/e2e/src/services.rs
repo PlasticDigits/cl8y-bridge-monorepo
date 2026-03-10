@@ -122,7 +122,7 @@ impl ServiceManager {
         // Run the compiled binary directly (avoids cargo's output buffering)
         let operator_binary = self
             .project_root
-            .join("packages/operator/target/release/cl8y-relayer");
+            .join("packages/operator/target/release/cl8y-operator");
 
         if !operator_binary.exists() {
             return Err(eyre!("Operator binary not found at {:?}", operator_binary));
@@ -499,45 +499,27 @@ impl ServiceManager {
             ));
         }
 
-        // Multi-EVM config: when evm2 is configured, add EVM_CHAINS_COUNT and per-chain vars
+        // Multi-EVM config: add the second EVM chain as EVM_CHAINS entry.
+        // The primary chain (anvil) is already configured via EVM_CHAIN_ID/EVM_RPC_URL/etc.
+        // Only add the peer chain to EVM_CHAINS to avoid duplicate chain detection.
         if let Some(evm2) = &config.evm2 {
             let operator_pk = format!("0x{}", hex::encode(operator_private_key.as_slice()));
-            env.push(("EVM_CHAINS_COUNT".to_string(), "2".to_string()));
-            // Chain 1: anvil
-            env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil".to_string()));
+            env.push(("EVM_CHAINS_COUNT".to_string(), "1".to_string()));
+            env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil1".to_string()));
             env.push((
                 "EVM_CHAIN_1_CHAIN_ID".to_string(),
-                config.evm.chain_id.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_THIS_CHAIN_ID".to_string(),
-                config.evm.v2_chain_id.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_RPC_URL".to_string(),
-                config.evm.rpc_url.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_BRIDGE_ADDRESS".to_string(),
-                format!("{}", config.evm.contracts.bridge),
-            ));
-            env.push(("EVM_CHAIN_1_FINALITY_BLOCKS".to_string(), "0".to_string()));
-            // Chain 2: anvil1
-            env.push(("EVM_CHAIN_2_NAME".to_string(), "anvil1".to_string()));
-            env.push((
-                "EVM_CHAIN_2_CHAIN_ID".to_string(),
                 evm2.chain_id.to_string(),
             ));
             env.push((
-                "EVM_CHAIN_2_THIS_CHAIN_ID".to_string(),
+                "EVM_CHAIN_1_THIS_CHAIN_ID".to_string(),
                 evm2.v2_chain_id.to_string(),
             ));
-            env.push(("EVM_CHAIN_2_RPC_URL".to_string(), evm2.rpc_url.to_string()));
+            env.push(("EVM_CHAIN_1_RPC_URL".to_string(), evm2.rpc_url.to_string()));
             env.push((
-                "EVM_CHAIN_2_BRIDGE_ADDRESS".to_string(),
+                "EVM_CHAIN_1_BRIDGE_ADDRESS".to_string(),
                 format!("{}", evm2.contracts.bridge),
             ));
-            env.push(("EVM_CHAIN_2_FINALITY_BLOCKS".to_string(), "0".to_string()));
+            env.push(("EVM_CHAIN_1_FINALITY_BLOCKS".to_string(), "0".to_string()));
             env.push(("EVM_PRIVATE_KEY".to_string(), operator_pk));
         }
 
@@ -622,41 +604,23 @@ impl ServiceManager {
             ));
         }
 
-        // Multi-EVM config: when evm2 is configured, add EVM_CHAINS_COUNT and per-chain vars
+        // Multi-EVM config: add the second EVM chain as EVM_CHAINS entry.
+        // The primary chain is already configured via EVM_CHAIN_ID/EVM_RPC_URL/etc.
         if let Some(evm2) = &config.evm2 {
             let canceler_pk = format!("0x{}", hex::encode(canceler_private_key.as_slice()));
-            env.push(("EVM_CHAINS_COUNT".to_string(), "2".to_string()));
-            // Chain 1: anvil
-            env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil".to_string()));
+            env.push(("EVM_CHAINS_COUNT".to_string(), "1".to_string()));
+            env.push(("EVM_CHAIN_1_NAME".to_string(), "anvil1".to_string()));
             env.push((
                 "EVM_CHAIN_1_CHAIN_ID".to_string(),
-                config.evm.chain_id.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_THIS_CHAIN_ID".to_string(),
-                config.evm.v2_chain_id.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_RPC_URL".to_string(),
-                config.evm.rpc_url.to_string(),
-            ));
-            env.push((
-                "EVM_CHAIN_1_BRIDGE_ADDRESS".to_string(),
-                format!("{}", config.evm.contracts.bridge),
-            ));
-            // Chain 2: anvil1
-            env.push(("EVM_CHAIN_2_NAME".to_string(), "anvil1".to_string()));
-            env.push((
-                "EVM_CHAIN_2_CHAIN_ID".to_string(),
                 evm2.chain_id.to_string(),
             ));
             env.push((
-                "EVM_CHAIN_2_THIS_CHAIN_ID".to_string(),
+                "EVM_CHAIN_1_THIS_CHAIN_ID".to_string(),
                 evm2.v2_chain_id.to_string(),
             ));
-            env.push(("EVM_CHAIN_2_RPC_URL".to_string(), evm2.rpc_url.to_string()));
+            env.push(("EVM_CHAIN_1_RPC_URL".to_string(), evm2.rpc_url.to_string()));
             env.push((
-                "EVM_CHAIN_2_BRIDGE_ADDRESS".to_string(),
+                "EVM_CHAIN_1_BRIDGE_ADDRESS".to_string(),
                 format!("{}", evm2.contracts.bridge),
             ));
             env.push(("EVM_PRIVATE_KEY".to_string(), canceler_pk));

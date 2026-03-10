@@ -525,6 +525,8 @@ pub struct TerraApprovalInfo {
     pub approved_at: u64,
     /// Whether cancelled
     pub cancelled: bool,
+    /// Cross-chain hash ID (base64-encoded)
+    pub xchain_hash_id: Vec<u8>,
 }
 
 /// Poll Terra bridge for an **approved** pending withdrawal matching the given nonce.
@@ -651,6 +653,18 @@ pub async fn poll_terra_for_approval(
                                     "Found approved Terra withdrawal"
                                 );
 
+                                let xchain_hash_id = entry
+                                    .get("xchain_hash_id")
+                                    .and_then(|h| h.as_str())
+                                    .and_then(|b64| {
+                                        base64::Engine::decode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            b64,
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
+
                                 return Ok(TerraApprovalInfo {
                                     nonce,
                                     token: entry
@@ -672,6 +686,7 @@ pub async fn poll_terra_for_approval(
                                         .get("cancelled")
                                         .and_then(|c| c.as_bool())
                                         .unwrap_or(false),
+                                    xchain_hash_id,
                                 });
                             }
                         }

@@ -515,6 +515,357 @@ pub async fn test_cw20_evm_to_terra_cycle(
     TestResult::pass(name, start.elapsed())
 }
 
+/// Regression test: CW20 MintBurn operator execution (EVM → Terra)
+///
+/// Verifies that the operator correctly calls `withdraw_execute_mint` (not unlock)
+/// for CW20 MintBurn tokens. This is a regression test for the bug where the
+/// operator always called `withdraw_execute_unlock`, causing on-chain reverts
+/// with "Invalid token type for operation: expected lock_unlock".
+///
+/// Flow:
+/// 1. Deposit ERC20 tokens on EVM bridge targeting Terra
+/// 2. Submit WithdrawSubmit on Terra (user-initiated V2 step)
+/// 3. Wait for operator to approve
+/// 4. Wait for operator to execute (after cancel window)
+/// 5. Verify pending withdrawal has `executed: true` on-chain
+/// 6. Verify CW20 balance increased on Terra
+pub async fn test_cw20_operator_mintburn_execution(
+    config: &E2eConfig,
+    cw20_address: Option<&str>,
+) -> TestResult {
+    use super::operator_helpers::{
+        approve_erc20, calculate_evm_fee, encode_terra_address, execute_deposit, get_erc20_balance,
+        get_terra_chain_key, poll_terra_for_approval, query_deposit_nonce, verify_token_setup,
+        DEFAULT_TRANSFER_AMOUNT, TERRA_APPROVAL_TIMEOUT,
+    };
+    use crate::services::{find_project_root, ServiceManager};
+    use alloy::primitives::U256;
+
+    let start = Instant::now();
+    let name = "cw20_operator_mintburn_execution";
+
+    let cw20 = match cw20_address {
+        Some(addr) if !addr.is_empty() => addr,
+        _ => {
+            return TestResult::skip(name, "No CW20 address configured");
+        }
+    };
+
+    let terra_bridge = match &config.terra.bridge_address {
+        Some(addr) if !addr.is_empty() => addr.clone(),
+        _ => {
+            return TestResult::skip(name, "Terra bridge address not configured");
+        }
+    };
+
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
+    if !manager.is_operator_running() {
+        return TestResult::skip(name, "Operator service is not running");
+    }
+
+    let terra_client = TerraClient::new(&config.terra);
+    let test_account = config.test_accounts.evm_address;
+    let terra_recipient = &config.test_accounts.terra_address;
+
+    let token = config.evm.contracts.test_token;
+    if token == alloy::primitives::Address::ZERO {
+        return TestResult::skip(name, "No EVM test token configured");
+    }
+
+    // Step 1: Get initial CW20 balance on Terra
+    let balance_query = serde_json::json!({
+        "balance": { "address": terra_recipient }
+    });
+    let initial_cw20_balance = match terra_client
+        .query_contract_cli::<serde_json::Value>(cw20, &balance_query)
+        .await
+    {
+        Ok(result) => {
+            let b = result
+                .get("balance")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0")
+                .parse::<u128>()
+                .unwrap_or(0);
+            info!("Initial CW20 balance: {}", b);
+            b
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query initial CW20 balance: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Step 2: Get initial ERC20 balance on EVM
+    let initial_evm_balance = match get_erc20_balance(config, token, test_account).await {
+        Ok(b) => {
+            info!("Initial ERC20 balance: {}", b);
+            b
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to get initial EVM balance: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    let transfer_amount = DEFAULT_TRANSFER_AMOUNT;
+    if initial_evm_balance < U256::from(transfer_amount) {
+        return TestResult::fail(
+            name,
+            format!(
+                "Insufficient ERC20 balance: have {}, need {}",
+                initial_evm_balance, transfer_amount
+            ),
+            start.elapsed(),
+        );
+    }
+
+    // Step 3: Get deposit nonce
+    let nonce_before = match query_deposit_nonce(config).await {
+        Ok(n) => {
+            info!("Deposit nonce before: {}", n);
+            n
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query deposit nonce: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Step 4: Get Terra chain key
+    let terra_chain_key = match get_terra_chain_key(config).await {
+        Ok(key) => key,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to get Terra chain key: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Step 5: Verify token setup
+    if let Err(e) = verify_token_setup(config, token, terra_chain_key).await {
+        return TestResult::fail(
+            name,
+            format!("Token setup verification failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    // Step 6: Approve + deposit on EVM
+    let lock_unlock = config.evm.contracts.lock_unlock;
+    if let Err(e) = approve_erc20(config, token, lock_unlock, transfer_amount).await {
+        return TestResult::fail(
+            name,
+            format!("Token approval failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    let dest_account = encode_terra_address(terra_recipient);
+    if let Err(e) = execute_deposit(
+        config,
+        token,
+        transfer_amount,
+        terra_chain_key,
+        dest_account,
+    )
+    .await
+    {
+        return TestResult::fail(
+            name,
+            format!("Deposit execution failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Step 7: Calculate net amount (post-fee)
+    let fee_amount = calculate_evm_fee(config, test_account, transfer_amount)
+        .await
+        .unwrap_or(0);
+    let net_amount = transfer_amount - fee_amount;
+    info!("Post-fee net amount: {} (fee={})", net_amount, fee_amount);
+
+    // Step 8: Submit WithdrawSubmit on Terra
+    let evm_chain_id: [u8; 4] = [0, 0, 0, 1];
+    let mut src_account_bytes32 = [0u8; 32];
+    src_account_bytes32[12..32].copy_from_slice(test_account.as_slice());
+
+    match super::operator_helpers::submit_withdraw_on_terra(
+        &terra_client,
+        &terra_bridge,
+        evm_chain_id,
+        src_account_bytes32,
+        cw20,
+        terra_recipient,
+        net_amount,
+        nonce_before,
+    )
+    .await
+    {
+        Ok(tx_hash) => {
+            info!("WithdrawSubmit succeeded: {}", tx_hash);
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("WithdrawSubmit failed: {}", e),
+                start.elapsed(),
+            );
+        }
+    }
+
+    // Step 9: Wait for operator approval
+    info!("Waiting for operator to approve withdrawal...");
+    let approval_info = match poll_terra_for_approval(
+        &terra_client,
+        &terra_bridge,
+        nonce_before,
+        TERRA_APPROVAL_TIMEOUT,
+    )
+    .await
+    {
+        Ok(info) => {
+            info!("Operator approved withdrawal, nonce={}", info.nonce);
+            info
+        }
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Operator did not approve within timeout: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Step 10: Wait for operator to execute (cancel window + buffer)
+    // Query the cancel window from the contract, or use a default
+    let cancel_window_query = serde_json::json!({ "cancel_window": {} });
+    let cancel_window_secs: u64 = terra_client
+        .query_contract_cli::<serde_json::Value>(&terra_bridge, &cancel_window_query)
+        .await
+        .ok()
+        .and_then(|v| v.get("cancel_window").and_then(|w| w.as_u64()))
+        .unwrap_or(30);
+    let execution_wait = cancel_window_secs + 30; // cancel window + buffer for operator poll
+    info!(
+        "Waiting {}s for operator execution (cancel_window={}s + 30s buffer)...",
+        execution_wait, cancel_window_secs
+    );
+    tokio::time::sleep(Duration::from_secs(execution_wait)).await;
+
+    // Step 11: Verify pending withdrawal has executed: true
+    let xchain_hash_hex = format!("0x{}", hex::encode(&approval_info.xchain_hash_id));
+    let xchain_hash_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&approval_info.xchain_hash_id);
+    let pw_query = serde_json::json!({
+        "pending_withdraw": { "xchain_hash_id": xchain_hash_b64 }
+    });
+
+    let max_poll_attempts = 10;
+    let mut executed = false;
+    for attempt in 0..max_poll_attempts {
+        match terra_client
+            .query_contract_cli::<serde_json::Value>(&terra_bridge, &pw_query)
+            .await
+        {
+            Ok(result) => {
+                executed = result
+                    .get("executed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if executed {
+                    info!(
+                        "Pending withdrawal {} is executed (attempt {})",
+                        xchain_hash_hex,
+                        attempt + 1
+                    );
+                    break;
+                }
+                info!(
+                    "Pending withdrawal {} not yet executed (attempt {}/{})",
+                    xchain_hash_hex,
+                    attempt + 1,
+                    max_poll_attempts
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to query pending withdrawal (attempt {}): {}",
+                    attempt + 1,
+                    e
+                );
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+
+    if !executed {
+        return TestResult::fail(
+            name,
+            format!(
+                "Operator did not execute withdrawal {} within timeout. \
+                 This is the regression scenario: operator may be calling \
+                 withdraw_execute_unlock instead of withdraw_execute_mint for MintBurn tokens.",
+                xchain_hash_hex
+            ),
+            start.elapsed(),
+        );
+    }
+
+    // Step 12: Verify CW20 balance increased
+    let final_cw20_balance = match terra_client
+        .query_contract_cli::<serde_json::Value>(cw20, &balance_query)
+        .await
+    {
+        Ok(result) => result
+            .get("balance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .parse::<u128>()
+            .unwrap_or(0),
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to query final CW20 balance: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    let balance_increase = final_cw20_balance.saturating_sub(initial_cw20_balance);
+    if balance_increase == 0 {
+        return TestResult::fail(
+            name,
+            format!(
+                "CW20 balance did not increase: {} -> {}",
+                initial_cw20_balance, final_cw20_balance
+            ),
+            start.elapsed(),
+        );
+    }
+
+    info!(
+        "CW20 MintBurn execution verified: balance {} -> {} (+{}), net_amount={}",
+        initial_cw20_balance, final_cw20_balance, balance_increase, net_amount
+    );
+
+    TestResult::pass(name, start.elapsed())
+}
+
 /// Test complete CW20 Terra → EVM transfer cycle
 ///
 /// Verifies the full flow of CW20 tokens from Terra to EVM:
@@ -614,6 +965,7 @@ pub async fn run_cw20_integration_tests(
         test_cw20_lock_unlock_pattern(config, cw20_address).await,
         test_cw20_evm_to_terra_cycle(config, cw20_address).await,
         test_cw20_terra_to_evm_cycle(config, cw20_address).await,
+        test_cw20_operator_mintburn_execution(config, cw20_address).await,
     ]
 }
 

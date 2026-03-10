@@ -77,6 +77,12 @@ pub struct GasPrices {
     pub uusd: Option<String>,
 }
 
+/// Returns true if the error represents an on-chain revert (tx included in block but failed).
+/// Network/timeout errors return false — the tx may have succeeded.
+fn is_onchain_revert(e: &eyre::Report) -> bool {
+    e.to_string().contains("Transaction failed in block")
+}
+
 impl TerraClient {
     /// Create a new Terra client from mnemonic
     pub fn new(lcd_url: &str, chain_id: &str, mnemonic: &str) -> Result<Self> {
@@ -436,8 +442,10 @@ impl TerraClient {
                                         return Ok(txhash);
                                     }
                                     Err(e) => {
-                                        warn!(txhash = %txhash, error = %e, "Failed to confirm transaction, but broadcast succeeded");
-                                        // Return success anyway - the tx was accepted
+                                        if is_onchain_revert(&e) {
+                                            return Err(e);
+                                        }
+                                        warn!(txhash = %txhash, error = %e, "Could not confirm transaction, but broadcast was accepted");
                                         return Ok(txhash);
                                     }
                                 }
@@ -624,5 +632,17 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("cancel_withdraw_approval"));
         assert!(json.contains("xchain_hash_id"));
+    }
+
+    #[test]
+    fn test_is_onchain_revert_classification() {
+        let revert_err = eyre::eyre!("Transaction failed in block (code 5): Invalid token type for operation");
+        assert!(is_onchain_revert(&revert_err), "On-chain revert must be classified as revert");
+
+        let timeout_err = eyre::eyre!("Timeout waiting for transaction ABC to be confirmed");
+        assert!(!is_onchain_revert(&timeout_err), "Timeout must NOT be classified as revert");
+
+        let network_err = eyre::eyre!("reqwest::Error: connection refused");
+        assert!(!is_onchain_revert(&network_err), "Network error must NOT be classified as revert");
     }
 }

@@ -163,13 +163,14 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
         results.push(evm_to_evm::test_real_evm2_to_evm1_return_trip(config, evm_token_opt).await);
     }
 
-    // CW20 Cross-Chain Transfer Tests (4) - IMPLEMENTED in cw20.rs
+    // CW20 Cross-Chain Transfer Tests - IMPLEMENTED in cw20.rs
     // These tests use the CW20 address from config (set during setup)
     let cw20_address = config.terra.cw20_address.as_deref();
     results.push(cw20::test_cw20_deployment(config, cw20_address).await);
     results.push(cw20::test_cw20_balance_query(config, cw20_address).await);
     results.push(cw20::test_cw20_mint_burn_pattern(config, cw20_address).await);
     results.push(cw20::test_cw20_lock_unlock_pattern(config, cw20_address).await);
+    results.push(cw20::test_cw20_operator_mintburn_execution(config, cw20_address).await);
 
     // ========================================
     // Live Operator/Canceler Execution Tests

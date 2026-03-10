@@ -419,21 +419,12 @@ impl E2eSetup {
             tokio::time::sleep(std::time::Duration::from_secs(6)).await;
 
             // Add uluna (native Luna) to Terra bridge
-            // For native tokens, we use the denom as the token identifier
-            // The EVM token address should be the mapped ERC20 on the EVM side
-            // Using a placeholder address that should match the test token or a dedicated Luna wrapper
-            let evm_token = deployed
-                .test_token
-                .map(|t| format!("{:0>64}", hex::encode(t.as_slice())))
-                .unwrap_or_else(|| "0".repeat(64));
-
             let add_uluna_msg = serde_json::json!({
                 "add_token": {
                     "token": "uluna",
                     "is_native": true,
-                    "evm_token_address": evm_token,
-                    "terra_decimals": 6,
-                    "evm_decimals": 18
+                    "token_type": "lock_unlock",
+                    "terra_decimals": 6
                 }
             });
 
@@ -468,21 +459,13 @@ impl E2eSetup {
                 // Wait for previous tx to confirm
                 tokio::time::sleep(std::time::Duration::from_secs(6)).await;
 
-                // Add token to Terra bridge
-                // The EVM token address must be 64-char hex (32 bytes, left-padded)
-                // EVM address is 20 bytes, so pad with 24 zeros (48 chars)
-                let evm_token = deployed
-                    .test_token
-                    .map(|t| format!("{:0>64}", hex::encode(t.as_slice())))
-                    .unwrap_or_else(|| "0".repeat(64));
-
+                // Add CW20 token to Terra bridge as mint_burn type
                 let add_token_msg = serde_json::json!({
                     "add_token": {
                         "token": addr,
                         "is_native": false,
-                        "evm_token_address": evm_token,
-                        "terra_decimals": 6,
-                        "evm_decimals": 18
+                        "token_type": "mint_burn",
+                        "terra_decimals": 6
                     }
                 });
 

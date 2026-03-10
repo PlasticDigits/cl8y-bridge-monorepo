@@ -216,6 +216,9 @@ pub enum QueryMsg {
         /// Max entries to return (default 30, max 100)
         limit: Option<u32>,
     },
+
+    /// V2: Get token type ("lock_unlock" or "mint_burn")
+    TokenType { token: String },
 }
 
 // ============================================================================
@@ -380,7 +383,6 @@ pub fn build_withdraw_execute_unlock_msg_v2(xchain_hash_id: [u8; 32]) -> Execute
 /// Build a WithdrawExecuteMint message (V2)
 ///
 /// For mintable tokens on Terra.
-#[allow(dead_code)]
 pub fn build_withdraw_execute_mint_msg_v2(xchain_hash_id: [u8; 32]) -> ExecuteMsgV2 {
     use base64::Engine;
     let encoder = base64::engine::general_purpose::STANDARD;

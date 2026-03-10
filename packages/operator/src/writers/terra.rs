@@ -25,7 +25,8 @@ use tracing::{debug, info, warn};
 use crate::config::TerraConfig;
 use crate::contracts::evm_bridge::Bridge as EvmBridge;
 use crate::contracts::terra_bridge::{
-    build_withdraw_approve_msg_v2, build_withdraw_execute_unlock_msg_v2,
+    build_withdraw_approve_msg_v2, build_withdraw_execute_mint_msg_v2,
+    build_withdraw_execute_unlock_msg_v2,
 };
 use crate::db;
 use crate::hash::bytes32_to_hex;
@@ -44,6 +45,8 @@ struct PendingExecution {
     delay_seconds: u64,
     /// Number of execution attempts
     attempts: u32,
+    /// Terra token denom or CW20 address for token type lookup
+    token: String,
 }
 
 /// Terra transaction writer for submitting approvals and executions
@@ -506,6 +509,7 @@ impl TerraWriter {
                                         approved_at: Instant::now(),
                                         delay_seconds: self.cancel_window,
                                         attempts: 0,
+                                        token: token.to_string(),
                                     },
                                 );
 
@@ -715,18 +719,53 @@ impl TerraWriter {
         Ok(tx_hash)
     }
 
-    /// Submit WithdrawExecuteUnlock on Terra (after cancel window)
-    async fn submit_execute_withdraw(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
-        let msg = build_withdraw_execute_unlock_msg_v2(xchain_hash_id);
+    /// Query the token type from the Terra bridge contract.
+    /// Returns "lock_unlock" or "mint_burn".
+    async fn query_token_type(&self, token: &str) -> Result<String> {
+        let query = serde_json::json!({ "token_type": { "token": token } });
+        let query_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            serde_json::to_string(&query)?,
+        );
+        let url = format!(
+            "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+            self.lcd_url, self.contract_address, query_b64
+        );
+        let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
+        let token_type = response["data"]["token_type"]
+            .as_str()
+            .unwrap_or("lock_unlock")
+            .to_string();
+        Ok(token_type)
+    }
+
+    /// Submit WithdrawExecuteUnlock or WithdrawExecuteMint on Terra (after cancel window),
+    /// choosing the correct message based on on-chain token type.
+    async fn submit_execute_withdraw(
+        &self,
+        xchain_hash_id: [u8; 32],
+        token: &str,
+    ) -> Result<String> {
+        let token_type = self.query_token_type(token).await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, token = %token, "Failed to query token type, defaulting to lock_unlock");
+                "lock_unlock".to_string()
+            });
+
+        let msg = if token_type == "mint_burn" {
+            build_withdraw_execute_mint_msg_v2(xchain_hash_id)
+        } else {
+            build_withdraw_execute_unlock_msg_v2(xchain_hash_id)
+        };
 
         let msg_json = serde_json::to_string(&msg)?;
-        debug!(msg = %msg_json, "WithdrawExecuteUnlock message (V2)");
+        debug!(msg = %msg_json, token = %token, token_type = %token_type, "Submitting withdraw execution (V2)");
 
         let tx_hash = self
             .terra_client
             .execute_contract(&self.contract_address, &msg, vec![])
             .await
-            .map_err(|e| eyre!("Failed to execute WithdrawExecuteUnlock: {}", e))?;
+            .map_err(|e| eyre!("Failed to execute withdraw ({}): {}", token_type, e))?;
 
         Ok(tx_hash)
     }
@@ -744,7 +783,7 @@ impl TerraWriter {
             let elapsed = now.duration_since(pending.approved_at);
 
             if elapsed.as_secs() >= pending.delay_seconds {
-                match self.submit_execute_withdraw(*hash).await {
+                match self.submit_execute_withdraw(*hash, &pending.token).await {
                     Ok(tx_hash) => {
                         info!(
                             xchain_hash_id = %bytes32_to_hex(hash),
