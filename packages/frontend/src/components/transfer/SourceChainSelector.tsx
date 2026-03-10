@@ -10,6 +10,7 @@ export interface SourceChainSelectorProps {
   bridgeMax?: string
   periodEndsAt?: number
   fetchedAtWallMs?: number
+  windowActive?: boolean
   disabled?: boolean
 }
 export function SourceChainSelector({
@@ -21,11 +22,13 @@ export function SourceChainSelector({
   bridgeMax,
   periodEndsAt,
   fetchedAtWallMs,
+  windowActive,
   disabled,
 }: SourceChainSelectorProps) {
   const [countdown, setCountdown] = useState('')
   useEffect(() => {
     if (!periodEndsAt || !fetchedAtWallMs) { setCountdown(''); return }
+    if (!windowActive) { setCountdown('N/A'); return }
     const tick = () => {
       const elapsed = Date.now() - fetchedAtWallMs
       const remainMs = periodEndsAt * 1000 - (fetchedAtWallMs + elapsed)
@@ -42,7 +45,7 @@ export function SourceChainSelector({
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [periodEndsAt, fetchedAtWallMs])
+  }, [periodEndsAt, fetchedAtWallMs, windowActive])
   return (
     <div data-testid="source-chain">
       <ChainSelect

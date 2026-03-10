@@ -1164,6 +1164,7 @@ export function TransferForm() {
         bridgeMax={displayBridgeMax}
         periodEndsAt={destTokenDetails?.withdrawRateLimit?.periodEndsAt}
         fetchedAtWallMs={destTokenDetails?.withdrawRateLimit?.fetchedAtWallMs}
+        windowActive={destTokenDetails?.withdrawRateLimit?.windowActive}
         disabled={isSubmitting}
       />
       <AmountInput

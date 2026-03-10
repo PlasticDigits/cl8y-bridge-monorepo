@@ -263,13 +263,13 @@ function WithdrawRateLimitDisplay({
   decimals: number
 }) {
   const [countdownSec, setCountdownSec] = useState<number | null>(() => {
-    if (!info) return null
+    if (!info || !info.windowActive) return null
     const chainNow = info.fetchedAt + (Date.now() - info.fetchedAtWallMs) / 1000
     return Math.max(0, Math.floor(info.periodEndsAt - chainNow))
   })
 
   useEffect(() => {
-    if (!info) return
+    if (!info || !info.windowActive) { setCountdownSec(null); return }
     const tick = () => {
       const chainNow = info.fetchedAt + (Date.now() - info.fetchedAtWallMs) / 1000
       setCountdownSec(Math.max(0, Math.floor(info.periodEndsAt - chainNow)))
@@ -278,7 +278,7 @@ function WithdrawRateLimitDisplay({
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [info?.fetchedAt, info?.fetchedAtWallMs, info?.periodEndsAt])
+  }, [info?.fetchedAt, info?.fetchedAtWallMs, info?.periodEndsAt, info?.windowActive])
 
   return (
     <div className="mt-1.5 pl-1 border-l border-amber-500/30 space-y-1">
@@ -290,10 +290,10 @@ function WithdrawRateLimitDisplay({
         Remaining: {info ? formatAmount(info.remainingAmount, decimals) : '—'}
       </p>
       <p className="text-gray-400">
-        Resets in: {info && countdownSec != null ? (
+        Resets in: {info && info.windowActive && countdownSec != null ? (
           <span className="text-amber-300 tabular-nums">{formatDuration(countdownSec)}</span>
         ) : (
-          '—'
+          <span className="text-gray-500">N/A</span>
         )}
       </p>
     </div>

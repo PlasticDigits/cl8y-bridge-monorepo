@@ -157,6 +157,7 @@ describe('BridgeConfigPanel', () => {
           periodEndsAt,
           fetchedAt: now,
           fetchedAtWallMs: Date.now(),
+          windowActive: true,
         },
       },
       isLoading: false,

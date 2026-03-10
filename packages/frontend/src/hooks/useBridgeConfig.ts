@@ -101,6 +101,13 @@ const TOKEN_REGISTRY_EXTRA_ABI = [
     ],
   },
   {
+    name: 'RATE_LIMIT_WINDOW',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
     name: 'getTokenBridgeLimits',
     type: 'function',
     stateMutability: 'view',
@@ -159,6 +166,7 @@ export interface WithdrawRateLimitInfo {
   periodEndsAt: number // Unix seconds (chain time)
   fetchedAt: number // Chain timestamp when data was fetched
   fetchedAtWallMs: number // Wall clock ms (Date.now()) when fetched – for countdown extrapolation
+  windowActive: boolean // true when used > 0 (an active rate-limit window exists)
 }
 
 export interface BridgeTokenDetails {
@@ -578,6 +586,7 @@ export function useTokenDetails(
             const periodEndsAt = parseCosmosTimestamp(usage.period_ends_at)
             if (periodEndsAt != null) {
               const now = Math.floor(Date.now() / 1000)
+              const windowActive = usage.used_amount !== '0' && BigInt(usage.used_amount) > 0n
               withdrawRateLimit = {
                 maxPerPeriod,
                 usedAmount: usage.used_amount,
@@ -585,6 +594,7 @@ export function useTokenDetails(
                 periodEndsAt,
                 fetchedAt: now,
                 fetchedAtWallMs: Date.now(),
+                windowActive,
               }
             }
           }
@@ -603,7 +613,7 @@ export function useTokenDetails(
       const bridgeAddr = chainConfig.bridgeAddress as `0x${string}`
       const tokenAddr = tokenId as `0x${string}`
       const registryAddr = await getTokenRegistryAddress(client, bridgeAddr)
-      const [destChainsBytes, block, windowResult, bridgeLimits] = await Promise.all([
+      const [destChainsBytes, block, windowResult, rateLimitWindow, bridgeLimits] = await Promise.all([
         client.readContract({
           address: registryAddr,
           abi: TOKEN_REGISTRY_EXTRA_ABI,
@@ -617,6 +627,11 @@ export function useTokenDetails(
           functionName: 'getWithdrawRateLimitWindow',
           args: [tokenAddr],
         }).catch(() => null) as Promise<[bigint, bigint, bigint] | null>,
+        client.readContract({
+          address: registryAddr,
+          abi: TOKEN_REGISTRY_EXTRA_ABI,
+          functionName: 'RATE_LIMIT_WINDOW',
+        }).catch(() => null) as Promise<bigint | null>,
         client.readContract({
           address: registryAddr,
           abi: TOKEN_REGISTRY_EXTRA_ABI,
@@ -642,9 +657,10 @@ export function useTokenDetails(
       let withdrawRateLimit: WithdrawRateLimitInfo | null = null
       if (windowResult && windowResult[2] > 0n) {
         const [windowStart, used, maxPerPeriod] = windowResult
-        const RATE_LIMIT_WINDOW = 86400 // 24h
-        const periodEndsAt = Number(windowStart) + RATE_LIMIT_WINDOW
+        const windowDuration = rateLimitWindow != null ? Number(rateLimitWindow) : 86400
+        const periodEndsAt = Number(windowStart) + windowDuration
         const blockTs = block?.timestamp ?? Math.floor(Date.now() / 1000)
+        const windowActive = used > 0n
         withdrawRateLimit = {
           maxPerPeriod: maxPerPeriod.toString(),
           usedAmount: used.toString(),
@@ -652,6 +668,7 @@ export function useTokenDetails(
           periodEndsAt,
           fetchedAt: Number(blockTs),
           fetchedAtWallMs: Date.now(),
+          windowActive,
         }
       }
       // Per-token limits from getTokenBridgeLimits (0 = no limit)
