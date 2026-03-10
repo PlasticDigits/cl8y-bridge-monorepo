@@ -779,10 +779,12 @@ export default function TransferStatusPage() {
     }
   }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord])
 
-  const currentStepIdx = useMemo(
-    () => getStepIndex(transfer?.lifecycle),
-    [transfer?.lifecycle]
-  )
+  const currentStepIdx = useMemo(() => {
+    const baseIdx = getStepIndex(transfer?.lifecycle)
+    // If deposit succeeded but hash submission failed, show step 1 (hash-submitted) not step 0 (deposit)
+    if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
+    return baseIdx
+  }, [transfer?.lifecycle, autoPhase])
 
   const submitDiagnostics = useMemo(() => {
     if (!transfer) return null
