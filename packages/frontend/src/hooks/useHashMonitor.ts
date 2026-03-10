@@ -46,7 +46,7 @@ function mergeWithVerificationRecords(
     const storedData = byHash.get(e.hash.toLowerCase())
     return {
       hash: e.hash,
-      status: storedData?.status ?? inferStatus(e),
+      status: inferStatus(e) !== 'pending' ? inferStatus(e) : (storedData?.status ?? 'pending'),
       sourceChain: storedData?.sourceChain,
       destChain: storedData?.destChain,
       matches: storedData?.matches,
