@@ -95,8 +95,8 @@ const TOKENS: TokenConfig[] = [
     symbol: 'testa',
     label: 'Test A (testa-cb)',
     addresses: {
-      bsc: '0xD68393098E9252A2c377F3474C38B249D7bd5D92',
-      opbnb: '0xB3a6385f4B4879cb5CB3188A574cCA0E82614bE1',
+      bsc: '0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c',
+      opbnb: '0xF073d5685594F465a66EA54516f0D2f76b6cc6F3',
       terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
     },
     decimals: { bsc: 18, opbnb: 18, terra: 18 },
@@ -105,8 +105,8 @@ const TOKENS: TokenConfig[] = [
     symbol: 'testb',
     label: 'Test B (testb-cb)',
     addresses: {
-      bsc: '0x65FFbA340768BadEc8002C76a542931757372d58',
-      opbnb: '0x741dCAcE81e0F161f6A8f424B66d4b2bee3F29F6',
+      bsc: '0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52',
+      opbnb: '0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e',
       terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
     },
     decimals: { bsc: 18, opbnb: 18, terra: 18 },
@@ -115,8 +115,8 @@ const TOKENS: TokenConfig[] = [
     symbol: 'tdec',
     label: 'Test Dec (tdec-cb)',
     addresses: {
-      bsc: '0xC62351E2445AB732289e07Be795149Bc774bB043',
-      opbnb: '0xcd733526bf0b48ad7fad597fc356ff8dc3aa103d',
+      bsc: '0xe159c7a58d694fafba82221905d5a49e7f314330',
+      opbnb: '0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd',
       terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
     },
     decimals: { bsc: 18, opbnb: 12, terra: 6 },

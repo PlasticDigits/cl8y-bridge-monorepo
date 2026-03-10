@@ -555,10 +555,13 @@ export function TransferForm() {
 
   const isAboveMax = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
-    if (effectiveMaxInSrc <= 0n) return false
+    if (effectiveMaxInSrc <= 0n) {
+      // Distinguish "balance not loaded" (don't block) from "balance is 0" (block)
+      return isSourceTerra || (tokenBalance !== undefined && !!tokenConfig)
+    }
     const parsed = BigInt(parseAmount(amount, amountDecimals))
     return parsed > effectiveMaxInSrc
-  }, [amount, amountDecimals, effectiveMaxInSrc])
+  }, [amount, amountDecimals, effectiveMaxInSrc, isSourceTerra, tokenBalance, tokenConfig])
 
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
