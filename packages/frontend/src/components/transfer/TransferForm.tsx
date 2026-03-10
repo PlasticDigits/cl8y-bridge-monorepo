@@ -73,7 +73,6 @@ const TOKEN_CONFIGS: Record<string, { address: Address; lockUnlockAddress: Addre
     : undefined,
 }
 
-/** Derive the transfer direction from the selected source and dest chain types */
 function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefined): TransferDirection {
   if (!source || !dest) return 'terra-to-evm'
   if (source.type === 'cosmos' && dest.type === 'evm') return 'terra-to-evm'
@@ -81,13 +80,10 @@ function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefi
   return 'evm-to-evm'
 }
 
-/** Get valid destination chains for a given source chain */
 function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): ChainInfo[] {
   const source = allChains.find((c) => c.id === sourceChainId)
   return allChains.filter((c) => {
-    // Can't bridge to the same chain
     if (c.id === sourceChainId) return false
-    // Cosmos → Cosmos not supported
     if (source?.type === 'cosmos' && c.type === 'cosmos') return false
     return true
   })
@@ -95,24 +91,19 @@ function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): Chai
 
 const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address
 
-/** Build selectable token options from registry for the given direction */
 function buildTransferTokens(
   registryTokens: { token: string; is_native: boolean; evm_token_address?: string; terra_decimals: number; evm_decimals?: number; enabled: boolean }[] | undefined,
   isSourceTerra: boolean,
   fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined,
   tokenlist: TokenlistData | null,
-  /** When source is EVM: per-chain token address from Terra token_dest_mapping */
   sourceChainMappings?: Record<string, string>,
-  /** When source is Terra and dest is EVM: only show tokens with a dest mapping */
   destChainMappings?: Record<string, string>
 ): TokenOption[] {
   const symbolFromList = (token: string) =>
     tokenlist ? getTokenFromList(tokenlist, token)?.symbol : null
   if (isSourceTerra) {
-    // Wait for tokenlist to load so we never flash raw addresses as symbols
     if (!tokenlist) return []
     let enabledTokens = (registryTokens ?? []).filter((t) => t.enabled)
-    // Filter to tokens that have a destination mapping on the selected EVM chain
     if (destChainMappings && Object.keys(destChainMappings).length > 0) {
       enabledTokens = enabledTokens.filter((t) => t.token in destChainMappings)
     }
@@ -124,10 +115,7 @@ function buildTransferTokens(
     if (fromRegistry.length > 0) return fromRegistry
     return []
   }
-  // Wait for tokenlist so we never flash raw addresses as symbols
   if (!tokenlist) return []
-  // EVM source: use per-chain token_dest_mapping to determine which tokens
-  // exist on the selected source chain. Only show tokens with a mapping.
   if (sourceChainMappings && Object.keys(sourceChainMappings).length > 0) {
     return Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
       const reg = registryTokens?.find((t) => t.token === terraToken)
@@ -139,7 +127,6 @@ function buildTransferTokens(
       }
     })
   }
-  // Fallback: try legacy evm_token_address from registry (for older contracts)
   const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
   if (baseRegistry.length > 0) {
     return baseRegistry.map((t) => ({
@@ -155,11 +142,6 @@ function buildTransferTokens(
   return []
 }
 
-/**
- * Convert a bytes32 hex string (64 chars) or 20-byte address to a checksummed EVM address.
- * The Terra bridge stores EVM addresses left-padded to 32 bytes.
- * Invalid/short input returns zero address to avoid crashing on malformed registry data.
- */
 function bytes32ToAddress(hex: string): Address {
   const clean = hex.replace(/^0x/, '').toLowerCase()
   if (!/^[0-9a-f]*$/.test(clean) || clean.length < 40) {
@@ -173,14 +155,11 @@ function bytes32ToAddress(hex: string): Address {
   }
 }
 
-/** Get EVM token config for deposit/balance from selected token id */
 function getEvmTokenConfig(
   selectedTokenId: string,
   registryTokens: { token: string; evm_token_address?: string; evm_decimals?: number }[] | undefined,
   fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined,
-  /** When source is EVM: use per-chain address from token_dest_mapping */
   sourceChainMappings?: Record<string, string>,
-  /** Per-chain decimals from token_dest_mapping */
   sourceChainDecimals?: Record<string, number>
 ): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
@@ -200,7 +179,6 @@ function getEvmTokenConfig(
   return undefined
 }
 
-/** Get Terra token decimals for selected token */
 function getTerraTokenDecimals(
   selectedTokenId: string,
   registryTokens: { token: string; terra_decimals: number }[] | undefined
@@ -215,13 +193,11 @@ export function TransferForm() {
   const { data: registryTokens, isLoading: isRegistryLoading } = useTokenRegistry()
   const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
-  const { recordTransfer } = useTransferStore()
+  const { recordTransfer, setActiveTransfer, updateActiveTransfer } = useTransferStore()
   const navigate = useNavigate()
   const publicClient = usePublicClient()
 
   const { chains: allChains, isLoading: isChainsLoading } = useDiscoveredChains()
-
-  // Default to Terra -> first EVM (or first chain if no EVM); anvil for local, bsc for mainnet/testnet
   const [sourceChain, setSourceChain] = useState(() => {
     const chains = getChainsForTransfer()
     const terra = chains.find((c) => c.type === 'cosmos')
@@ -248,12 +224,6 @@ export function TransferForm() {
   )
   const direction = useMemo(() => deriveDirection(sourceChainInfo, destChainInfo), [sourceChainInfo, destChainInfo])
 
-  // --- Frozen chain state for deposit recording ---
-  // When a deposit is initiated, we freeze the source/dest chain values so that
-  // if the user changes the chain selectors (e.g. via the swap button) while the
-  // deposit tx is in flight, the TransferRecord still captures the correct chains.
-  // Without this, swapping chains during a pending deposit causes the record to be
-  // stored with swapped source/dest, leading to withdrawSubmit on the wrong chain.
   const frozenChainsRef = useRef<{
     sourceChain: string
     destChain: string
@@ -261,10 +231,8 @@ export function TransferForm() {
     sourceChainIdBytes4: string | undefined
   } | null>(null)
 
-  // Compute valid destination chains based on source selection
   const destChains = useMemo(() => getValidDestChains(allChains, sourceChain), [allChains, sourceChain])
 
-  // When source changes, ensure dest is still valid
   useEffect(() => {
     const validIds = destChains.map((c) => c.id)
     if (!validIds.includes(destChain) && validIds.length > 0 && validIds[0] !== undefined) {
@@ -293,7 +261,6 @@ export function TransferForm() {
     sourceChainBytes4,
     !!isSourceEvm && !!sourceChainBytes4
   )
-  // Query dest chain mappings for token filtering (Terra→EVM) and dest decimals (all→EVM).
   const { mappings: destChainMappings, decimalsMap: destChainDecimals, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
     registryTokens,
     destChainBytes4,
@@ -301,8 +268,6 @@ export function TransferForm() {
   )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
-  // Only apply chain mapping filters once ALL queries are done.
-  // Partial results would exclude tokens whose queries are still in flight.
   const readySourceMappings = isSourceEvm && !isSourceMappingsLoading ? sourceChainMappings : undefined
   const readyDestMappings = isSourceTerra && isDestEvmChain && !isDestMappingsLoading ? destChainMappings : undefined
   const transferTokens = useMemo(
@@ -358,7 +323,6 @@ export function TransferForm() {
     return reg?.evm_token_address ? bytes32ToAddress(reg.evm_token_address) : ''
   }, [destChainConfig?.type, tokenDestMappingAddr, registryTokens, selectedTokenId])
 
-  // Destination chain limits (max transfer, withdraw rate limit) cap the MAX amount
   const destChainUnifiedConfig = useMemo(
     () => bridgeConfigData?.find((c) => c.chainId === destChain) ?? null,
     [bridgeConfigData, destChain]
@@ -372,8 +336,6 @@ export function TransferForm() {
   )
 
   const terraDisplay = useTerraTokenDisplayInfo(selectedTokenId || undefined)
-
-  // Resolve terra1 address for CW20 tokens (e.g. TDEC); native uluna uses bank balance
   const terraCw20Address = useMemo(() => {
     if (!selectedTokenId || selectedTokenId === 'uluna') return null
     if (selectedTokenId.startsWith('terra1')) return selectedTokenId
@@ -404,9 +366,6 @@ export function TransferForm() {
     !!isDestEvmChain && !!destTokenAddr
   )
 
-  // Derive source chain bridge address and native chain ID for multi-EVM support.
-  // When the source is an EVM chain (e.g. anvil1), we must deposit on THAT chain's bridge,
-  // not a fixed base chain bridge. We also need the native chain ID for auto-switching.
   const sourceBridgeConfig = useMemo(() => {
     const tier = DEFAULT_NETWORK as NetworkTier
     const config = BRIDGE_CHAINS[tier][sourceChain]
@@ -442,7 +401,6 @@ export function TransferForm() {
 
   const isWalletConnected = isSourceTerra ? isTerraConnected : isEvmConnected
 
-  // Auto-fill recipient from connected wallet on the destination side
   const recipientAddr = useMemo(() => {
     if (recipient) return recipient
     if (isDestEvm) return evmAddress ?? ''
@@ -600,22 +558,42 @@ export function TransferForm() {
     toSourceUnits,
   ])
 
-  // EVM deposit success: parse receipt, compute transfer hash, store record, redirect.
-  // IMPORTANT: Uses frozenChainsRef (captured at deposit time) to avoid reading stale/swapped
-  // sourceChain/destChain from React state — the user may have clicked the swap button
-  // while the deposit was in flight.
+  useEffect(() => {
+    if (!isSourceTerra && amount && tokenConfig) {
+      setActiveTransfer({
+        id: `evm-deposit-${Date.now()}`,
+        direction,
+        sourceChain,
+        destChain,
+        amount: parseAmount(amount, amountDecimals),
+        status: 'pending',
+        txHash: depositTxHash ?? null,
+        recipient: recipientAddr,
+        startedAt: Date.now(),
+        srcDecimals: amountDecimals,
+        tokenSymbol: tokenConfig.symbol || getTokenDisplaySymbol(selectedTokenId),
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evmStatus === 'approving' || evmStatus === 'waiting-approval' || evmStatus === 'depositing' || evmStatus === 'waiting-deposit'])
+
+  useEffect(() => {
+    if ((evmStatus === 'waiting-approval' || evmStatus === 'waiting-deposit') && depositTxHash) {
+      updateActiveTransfer({ txHash: depositTxHash })
+    }
+  }, [evmStatus, depositTxHash, updateActiveTransfer])
+
   useEffect(() => {
     if (evmStatus === 'success' && depositTxHash) {
       setTxHash(depositTxHash)
+      updateActiveTransfer({ txHash: depositTxHash, status: 'confirmed' })
 
-      // Read frozen chains from ref — these were captured in handleSubmit before the deposit started
       const frozen = frozenChainsRef.current
       const frozenSource = frozen?.sourceChain ?? sourceChain
       const frozenDest = frozen?.destChain ?? destChain
       const frozenDirection = frozen?.direction ?? direction
       const frozenSrcBytes4 = frozen?.sourceChainIdBytes4
 
-      // Try to parse the deposit receipt for nonce and other fields
       const parseAndRecord = async () => {
         let depositNonce: number | undefined
         let depositAmount: string = parseAmount(amount, amountDecimals)
@@ -623,7 +601,6 @@ export function TransferForm() {
         let srcAccountHex: string | undefined
         let destAccountHex: string | undefined
 
-        // Parse deposit event from tx receipt using source-chain-specific client
         try {
           const tier0 = DEFAULT_NETWORK as NetworkTier
           const srcChainCfg = BRIDGE_CHAINS[tier0][frozenSource]
@@ -645,15 +622,11 @@ export function TransferForm() {
           console.warn('[TransferForm] Failed to parse deposit receipt:', err)
         }
 
-        // Get source chain bytes4 for the record
         const tier = DEFAULT_NETWORK as NetworkTier
         const chains = BRIDGE_CHAINS[tier]
         const srcChainConfig = chains[frozenSource]
         const destChainConfig = chains[frozenDest]
 
-        // Query the destination token from TokenRegistry BEFORE computing the hash.
-        // The EVM contract hashes with destToken (not the source ERC20 address), so we
-        // must use the same value here for the hashes to match across chains.
         let destTokenBytes32: string | undefined
         const srcClient = srcChainConfig?.type === 'evm' ? getEvmClient(srcChainConfig) : null
         if (srcClient && tokenAddr && srcChainConfig?.bridgeAddress && destChainConfig?.bytes4ChainId) {
@@ -670,11 +643,6 @@ export function TransferForm() {
           }
         }
 
-        // Compute transfer hash if we have the nonce.
-        // CRITICAL: use the destination token (destTokenBytes32) for the token field,
-        // matching the EVM contract's HashLib.computeXchainHashId which hashes with
-        // tokenRegistry.getDestToken(). The Deposit event's `token` field is the
-        // SOURCE ERC20 address and must NOT be used here.
         let xchainHashId: string | undefined
         if (depositNonce !== undefined) {
           try {
@@ -721,8 +689,6 @@ export function TransferForm() {
           tokenSymbol: tokenConfig?.symbol || getTokenDisplaySymbol(selectedTokenId),
           srcDecimals: amountDecimals,
           destToken: destTokenBytes32 || tokenAddr,
-          // For EVM->Terra: store the raw Terra denom so auto-submit can pass it to the Terra contract.
-          // For other directions: store the dest token address as-is.
           destTokenId: frozenDirection === 'evm-to-terra'
             ? (selectedTokenId || 'uluna')
             : (destTokenBytes32 ? undefined : tokenAddr),
@@ -730,10 +696,9 @@ export function TransferForm() {
           sourceChainIdBytes4: frozenSrcBytes4 ?? srcChainConfig?.bytes4ChainId,
         })
 
-        // Clear frozen state after recording
         frozenChainsRef.current = null
+        setActiveTransfer(null)
 
-        // Redirect to transfer status page (hash only)
         if (xchainHashId) {
           navigate(`/transfer/${xchainHashId}`)
         }
@@ -743,20 +708,17 @@ export function TransferForm() {
       resetEvm()
     } else if (evmStatus === 'error' && evmError) {
       setError(evmError)
+      updateActiveTransfer({ status: 'failed' })
+      setActiveTransfer(null)
       frozenChainsRef.current = null
       resetEvm()
     }
-  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction, navigate, publicClient, evmAddress, tokenConfig, recipientAddr, selectedTokenId])
+  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction, navigate, publicClient, evmAddress, tokenConfig, recipientAddr, selectedTokenId, updateActiveTransfer, setActiveTransfer, isSourceTerra])
 
-  // Terra deposit success: parse receipt for nonce, use canonical xchain_hash_id + dest_token_address
-  // from the Terra contract's own event attributes (not recomputed by the frontend).
-  // Uses frozenChainsRef for the same reason as the EVM handler above.
   useEffect(() => {
     if (terraStatus === 'success' && terraTxHash) {
       setTxHash(terraTxHash)
 
-      // Read frozen chains — for Terra deposits, direction is always terra-to-evm
-      // but destChain could have been swapped.
       const frozen = frozenChainsRef.current
       const frozenDest = frozen?.destChain ?? destChain
       const frozenSource = frozen?.sourceChain ?? sourceChain
@@ -781,10 +743,6 @@ export function TransferForm() {
           ? evmAddressToBytes32(recipientAddr as `0x${string}`)
           : recipientAddr
 
-        // Parse Terra receipt -- extract nonce, amount, and critically the canonical
-        // dest_token_address and xchain_hash_id that the Terra contract computed.
-        // This eliminates the race condition where registryTokens/destTokenAddr
-        // might not be loaded yet, and the wrong EVM token would be used.
         const parsed = await parseTerraLockReceipt(terraTxHash)
         const netAmount = parsed?.amount ?? parseAmount(amount, terraDecimals)
         const depositNonce = parsed?.nonce
@@ -804,13 +762,8 @@ export function TransferForm() {
           )
         }
 
-        // Use the canonical dest_token_address from the Terra contract's event.
-        // This is the exact bytes32 EVM token address that Terra used to compute
-        // the deposit hash. Using this guarantees hash consistency.
         let destTokenB32: string | undefined = parsed?.destTokenAddress
         if (!destTokenB32) {
-          // Fallback for older contracts that don't emit dest_token_address:
-          // try destTokenAddr from useTokenDestMapping, then registry
           if (destTokenAddr) {
             destTokenB32 =
               destTokenAddr.length === 66
@@ -825,8 +778,6 @@ export function TransferForm() {
           }
         }
 
-        // Use the canonical xchain_hash_id from the Terra contract's event.
-        // Only recompute as fallback for older contracts.
         let xchainHashId: string | undefined = parsed?.xchainHashId
         if (!xchainHashId && depositNonce !== undefined && destChainConfig?.bytes4ChainId) {
           try {
@@ -894,7 +845,6 @@ export function TransferForm() {
           sourceChainIdBytes4: frozen?.sourceChainIdBytes4 ?? chains[frozenSource]?.bytes4ChainId,
         })
 
-        // Clear frozen state after recording
         frozenChainsRef.current = null
 
         if (xchainHashId) {
@@ -919,11 +869,9 @@ export function TransferForm() {
     setError(null)
   }, [sourceChain, destChain])
 
-  // Check if the swap would produce an invalid route (cosmos→cosmos)
   const isSwapDisabled = useMemo(() => {
     const destInfo = getChainById(destChain)
     const sourceInfo = getChainById(sourceChain)
-    // Disable swap if swapping would result in cosmos→cosmos
     return destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos'
   }, [sourceChain, destChain])
 
@@ -954,8 +902,6 @@ export function TransferForm() {
       return
     }
 
-    // Freeze chain state at deposit time so that subsequent UI changes
-    // (e.g. swap button) don't corrupt the TransferRecord.
     const tier0 = DEFAULT_NETWORK as NetworkTier
     const srcConfig0 = BRIDGE_CHAINS[tier0][sourceChain]
     frozenChainsRef.current = {
@@ -965,14 +911,10 @@ export function TransferForm() {
       sourceChainIdBytes4: srcConfig0?.bytes4ChainId,
     }
 
-    // Look up destination chain's V2 bytes4 chain ID from BRIDGE_CHAINS config.
-    // The V2 protocol uses predetermined chain IDs (e.g. anvil=1, terra=2, anvil1=3),
-    // NOT native chain IDs (e.g. 31337, 31338).
     const tier = DEFAULT_NETWORK as NetworkTier
     const destConfig = BRIDGE_CHAINS[tier][destChain]
 
     if (direction === 'terra-to-evm') {
-      // Terra → EVM: deposit on Terra bridge (V2)
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
         return
@@ -999,7 +941,6 @@ export function TransferForm() {
           getTokenDisplaySymbol(selectedTokenId || 'uluna'),
       })
     } else if (direction === 'evm-to-terra') {
-      // EVM → Terra: depositERC20 on Bridge (V2) with bytes4 Terra chain ID
       if (!recipientAddr || !recipientAddr.startsWith('terra1')) {
         setError('Please provide a Terra recipient address or connect your Terra wallet')
         return
@@ -1008,11 +949,23 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
+      setActiveTransfer({
+        id: `evm-deposit-${Date.now()}`,
+        direction,
+        sourceChain,
+        destChain,
+        amount: parseAmount(amount, tokenConfig.decimals),
+        status: 'pending',
+        txHash: null,
+        recipient: recipientAddr,
+        startedAt: Date.now(),
+        srcDecimals: tokenConfig.decimals,
+        tokenSymbol: tokenConfig.symbol || getTokenDisplaySymbol(selectedTokenId),
+      })
       const destChainBytes4 = computeTerraChainBytes4()
       const destAccount = encodeTerraAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     } else {
-      // EVM → EVM: depositERC20 on Bridge (V2) with bytes4 dest chain ID
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
         return
@@ -1021,14 +974,24 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      // Use V2 bytes4 chain ID from config only.
-      // Do NOT derive from native chain ID (e.g., 31337/31338), since cross-chain
-      // routing/hashing must use V2 IDs.
       const destChainBytes4 = destConfig?.bytes4ChainId as Hex | undefined
       if (!destChainBytes4) {
         setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
         return
       }
+      setActiveTransfer({
+        id: `evm-deposit-${Date.now()}`,
+        direction,
+        sourceChain,
+        destChain,
+        amount: parseAmount(amount, tokenConfig.decimals),
+        status: 'pending',
+        txHash: null,
+        recipient: recipientAddr,
+        startedAt: Date.now(),
+        srcDecimals: tokenConfig.decimals,
+        tokenSymbol: tokenConfig.symbol || getTokenDisplaySymbol(selectedTokenId),
+      })
       const destAccount = encodeEvmAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     }
@@ -1040,14 +1003,12 @@ export function TransferForm() {
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
 
-  // Use onchain/tokenlist display hooks for symbol (not raw address)
   const selectedSymbol =
     isSourceTerra
       ? terraDisplay.displayLabel || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC'
       : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || '—')
   const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
 
-  // "You will receive" shows DESTINATION token - use display hooks for symbol, link to dest chain
   const feeBreakdownProps = useMemo(() => {
     const destChainInfo = allChains.find((c) => c.id === destChain)
     const destType = destChainInfo?.type ?? 'evm'
