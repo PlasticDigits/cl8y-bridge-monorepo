@@ -185,6 +185,7 @@ export default function HashVerificationPage() {
 
   const handleSelectHash = (hash: string) => {
     navigate(`/verify?hash=${encodeURIComponent(hash)}`, { replace: true })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // Auto-verify when navigating with ?hash= in URL (e.g. from transfer status page)
