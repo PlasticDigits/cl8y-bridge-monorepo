@@ -707,7 +707,7 @@ export default function TransferStatusPage() {
   const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { switchChainAsync } = useSwitchChain()
-  const { connected: isTerraConnected } = useWallet()
+  const { connected: isTerraConnected, luncBalance } = useWallet()
   const [fixSubmitting, setFixSubmitting] = useState(false)
   const [fixSubmitError, setFixSubmitError] = useState<string | null>(null)
 
@@ -763,6 +763,9 @@ export default function TransferStatusPage() {
         const srcChainBytes4 = hexToUint8Array(fixParams.srcChainBytes4)
         const srcAccountBytes32 = hexToUint8Array(fixParams.srcAccount)
 
+        if (!luncBalance || luncBalance === '0') {
+          throw new Error('Your Terra wallet has no LUNC for gas fees. Fund your wallet with LUNC and retry.')
+        }
         const terraTxHash = await submitOnTerra({
           bridgeAddress: correctDestChain.bridgeAddress!,
           srcChainBytes4,
@@ -791,7 +794,7 @@ export default function TransferStatusPage() {
     } finally {
       setFixSubmitting(false)
     }
-  }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord])
+  }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord, luncBalance])
 
   const currentStepIdx = useMemo(() => {
     const baseIdx = getStepIndex(transfer?.lifecycle)
