@@ -91,28 +91,39 @@ export function HashComparisonPanel({
       )}
 
       {terraRateLimitStatus?.kind === 'permanently-blocked' && (
-        <div className="border-2 border-amber-700/80 bg-amber-950/30 p-4">
-          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
-            Rate limit exceeded (permanently blocked)
+        <div className="border-2 border-red-700 bg-[#221313] p-4 shadow-[3px_3px_0_#000]">
+          <p className="text-red-400 text-xs font-semibold uppercase tracking-wide">
+            Execution blocked
           </p>
-          <p className="text-amber-400/80 text-xs mt-0.5">
-            The transfer amount exceeds the Terra contract&apos;s per-period rate limit. The operator cannot
-            execute until the limit is raised. Contact support for assistance.
+          <p className="text-red-400/80 text-xs mt-0.5">
+            The transfer amount exceeds the maximum daily rate limit. It cannot be executed even after
+            the rate window resets. Contact support for assistance.
           </p>
         </div>
       )}
       {terraRateLimitStatus?.kind === 'temporarily-blocked' && (
-        <div className="border-2 border-amber-700/80 bg-amber-950/30 p-4">
+        <div className="border-2 border-amber-700 bg-[#221c13] p-4 shadow-[3px_3px_0_#000]">
           <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
-            Rate limit exceeded (temporarily blocked)
+            Rate limit window full
           </p>
           <p className="text-amber-400/80 text-xs mt-0.5">
             The current rate limit window is full. The operator will retry automatically after the
             window resets at{' '}
-            <span className="font-mono tabular-nums">
+            <span className="font-mono tabular-nums text-amber-300">
               {new Date(terraRateLimitStatus.periodEndsAt * 1000).toLocaleString()}
             </span>
             .
+          </p>
+        </div>
+      )}
+      {terraRateLimitStatus?.kind === 'unknown' && dest?.approved && !dest?.executed && (
+        <div className="border-2 border-amber-700 bg-[#221c13] p-4 shadow-[3px_3px_0_#000]">
+          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+            Execution may be delayed
+          </p>
+          <p className="text-amber-400/80 text-xs mt-0.5">
+            Rate limit status could not be determined. The transfer is approved but not yet executed
+            — it may be waiting for the rate limit window to reset.
           </p>
         </div>
       )}

@@ -27,7 +27,7 @@ import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { useStepProgress } from '../hooks/useStepProgress'
-import { formatCountdownMmSs, formatCancelWindowRange, formatAmount } from '../utils/format'
+import { formatCountdownMmSs, formatCancelWindowRange, formatAmount, formatDuration } from '../utils/format'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
@@ -873,6 +873,34 @@ export default function TransferStatusPage() {
     !!showRateLimitInfo
   )
 
+  // Client-side cancel window override: when approved long ago, treat as expired even if chain returns stale data
+  const cancelWindowSeconds = destChainCancelWindow ?? 300
+  const approvedAtSec = dest?.approvedAt != null ? Number(dest.approvedAt) : 0
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const computedRemaining = approvedAtSec > 0 ? cancelWindowSeconds - (nowSec - approvedAtSec) : null
+  const effectiveCancelWindowRemaining =
+    computedRemaining != null && computedRemaining <= 0
+      ? 0
+      : cancelWindowRemaining != null && computedRemaining != null
+        ? Math.min(cancelWindowRemaining, Math.max(0, computedRemaining))
+        : cancelWindowRemaining
+
+  // When rate limit blocks execution, don't show "Cancel Window Active" (it's false)
+  const showRateLimitBlocked =
+    rateLimitStatus?.kind === 'permanently-blocked' ||
+    rateLimitStatus?.kind === 'temporarily-blocked' ||
+    (rateLimitStatus?.kind === 'unknown' &&
+      effectiveCancelWindowRemaining != null &&
+      effectiveCancelWindowRemaining <= 0)
+  const rateLimitWindowSecondsRemaining =
+    rateLimitStatus?.kind === 'temporarily-blocked'
+      ? Math.max(0, rateLimitStatus.periodEndsAt - nowSec)
+      : null
+
   if (!transfer) {
     const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)
     const isLookingUp = isValidHash && lookupLoading
@@ -1161,53 +1189,71 @@ export default function TransferStatusPage() {
           )}
 
           {!isFailed && transfer.lifecycle === 'approved' && (
-            <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
-              <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
-                Cancel Window Active
-              </p>
-              <p className="text-blue-400/70 text-xs mt-1">
-                Approved. Waiting for the cancel window to expire before tokens are released
-                {destChainCancelWindow != null && (
-                  <span className="ml-1">({formatCancelWindowRange(destChainCancelWindow)})</span>
-                )}
-                .
-                {cancelWindowRemaining != null && cancelWindowRemaining > 0 ? (
-                  <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
-                    {formatCountdownMmSs(cancelWindowRemaining)} remaining
-                  </span>
-                ) : cancelWindowRemaining != null && cancelWindowRemaining <= 0 ? (
-                  <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
-                    Executing…
-                  </span>
-                ) : null}
-              </p>
-              {rateLimitStatus?.kind === 'permanently-blocked' && (
-                <div className="mt-2 border-t border-amber-700/50 pt-2">
-                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
-                    Rate limit exceeded (permanently blocked)
+            <>
+              {showRateLimitBlocked ? (
+                rateLimitStatus?.kind === 'permanently-blocked' ? (
+                  <div className="mt-2 border-2 border-red-700 bg-[#221313] p-3 shadow-[3px_3px_0_#000]">
+                    <p className="text-red-400 text-xs font-semibold uppercase tracking-wide">
+                      Execution blocked
+                    </p>
+                    <p className="text-red-400/80 text-xs mt-0.5">
+                      The transfer amount exceeds the maximum daily rate limit. It cannot be executed even after the
+                      rate window resets. Contact support for assistance.
+                    </p>
+                  </div>
+                ) : rateLimitStatus?.kind === 'temporarily-blocked' ? (
+                  <div className="mt-2 border-2 border-amber-700 bg-[#221c13] p-3 shadow-[3px_3px_0_#000]">
+                    <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+                      Rate limit window full — 24h countdown
+                    </p>
+                    <p className="text-amber-400/80 text-xs mt-0.5">
+                      The operator will retry automatically after the window resets.
+                      {rateLimitWindowSecondsRemaining != null && (
+                        <span className="ml-1 font-mono text-base font-semibold tabular-nums text-amber-300">
+                          {formatDuration(rateLimitWindowSecondsRemaining)} remaining
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-2 border-2 border-amber-700 bg-[#221c13] p-3 shadow-[3px_3px_0_#000]">
+                    <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+                      Execution may be delayed
+                    </p>
+                    <p className="text-amber-400/80 text-xs mt-0.5">
+                      If this has been stuck for a while, the transfer may be blocked by rate limits.
+                      Check the{' '}
+                      <Link to={`/verify?hash=${encodeURIComponent(transfer.xchainHashId ?? '')}`} className="text-amber-300 hover:underline">
+                        Verify page
+                      </Link>{' '}
+                      for more details.
+                    </p>
+                  </div>
+                )
+              ) : (
+                <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
+                  <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+                    Cancel Window Active
                   </p>
-                  <p className="text-amber-400/80 text-xs mt-0.5">
-                    The transfer amount exceeds the Terra contract&apos;s per-period rate limit. The operator cannot
-                    execute until the limit is raised. Contact support for assistance.
-                  </p>
-                </div>
-              )}
-              {rateLimitStatus?.kind === 'temporarily-blocked' && (
-                <div className="mt-2 border-t border-amber-700/50 pt-2">
-                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
-                    Rate limit exceeded (temporarily blocked)
-                  </p>
-                  <p className="text-amber-400/80 text-xs mt-0.5">
-                    The current rate limit window is full. The operator will retry automatically after the
-                    window resets at{' '}
-                    <span className="font-mono tabular-nums">
-                      {new Date(rateLimitStatus.periodEndsAt * 1000).toLocaleString()}
-                    </span>
+                  <p className="text-blue-400/70 text-xs mt-1">
+                    Approved. Waiting for the cancel window to expire before tokens are released
+                    {destChainCancelWindow != null && (
+                      <span className="ml-1">({formatCancelWindowRange(destChainCancelWindow)})</span>
+                    )}
                     .
+                    {effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining > 0 ? (
+                      <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                        {formatCountdownMmSs(effectiveCancelWindowRemaining)} remaining
+                      </span>
+                    ) : effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining <= 0 ? (
+                      <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                        Executing…
+                      </span>
+                    ) : null}
                   </p>
                 </div>
               )}
-            </div>
+            </>
           )}
 
           {transfer.lifecycle === 'executed' && (

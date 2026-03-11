@@ -249,10 +249,26 @@ export type TerraRateLimitStatus =
   | { kind: 'ok' }
   | { kind: 'unknown'; error?: string }
 
+/** Parse CosmWasm Timestamp (nanoseconds string, seconds number, or {seconds} object) to unix seconds. */
+function parsePeriodEndsAt(pe: string | { seconds: string } | number): number {
+  if (typeof pe === 'object' && pe !== null && 'seconds' in pe) {
+    return parseInt(String((pe as { seconds: string }).seconds), 10) || 0
+  }
+  if (typeof pe === 'number') {
+    return pe > 1e15 ? Math.floor(pe / 1e9) : pe
+  }
+  const parsed = parseInt(String(pe), 10)
+  return parsed > 1e15 ? Math.floor(parsed / 1e9) : (parsed || 0)
+}
+
 /**
  * Query Terra rate limit status for a pending withdraw.
  * Determines if the transfer is permanently blocked (amount > period limit)
  * or temporarily blocked (amount > remaining in window, will retry after reset).
+ *
+ * The contract's RateLimit query returns Option<RateLimitResponse> — null when no
+ * explicit rate limit is configured. In that case, we fall back to PeriodUsage data
+ * which always returns remaining_amount (Uint128::MAX when unlimited).
  */
 export async function queryTerraRateLimitStatus(
   lcdUrls: string[],
@@ -264,7 +280,7 @@ export async function queryTerraRateLimitStatus(
 ): Promise<TerraRateLimitStatus> {
   try {
     const [rateCfg, usage] = await Promise.all([
-      queryContract<{ max_per_transaction?: string; max_per_period?: string }>(
+      queryContract<{ max_per_transaction?: string; max_per_period?: string } | null>(
         lcdUrls,
         bridgeAddress,
         { rate_limit: { token } }
@@ -276,38 +292,53 @@ export async function queryTerraRateLimitStatus(
       }>(lcdUrls, bridgeAddress, { period_usage: { token } }).catch(() => null),
     ])
 
-    if (!rateCfg || !usage) return { kind: 'unknown' }
-
-    const maxPerPeriod = BigInt(rateCfg.max_per_period ?? '0')
-    if (maxPerPeriod === 0n) return { kind: 'ok' }
+    if (!usage) {
+      console.warn('[RateLimit] period_usage query failed for', token)
+      return { kind: 'unknown', error: 'period_usage query failed' }
+    }
 
     const payoutAmount = normalizeDecimals(amount, srcDecimals, destDecimals)
     const remainingAmount = BigInt(usage.remaining_amount)
 
-    if (payoutAmount > maxPerPeriod) {
-      return { kind: 'permanently-blocked', maxPerPeriod: maxPerPeriod.toString() }
+    // Uint128::MAX (~3.4e38) indicates no explicit rate limit configured
+    const UINT128_THRESHOLD = 10n ** 30n
+
+    if (rateCfg && typeof rateCfg === 'object') {
+      const maxPerPeriod = BigInt(rateCfg.max_per_period ?? '0')
+      if (maxPerPeriod === 0n) return { kind: 'ok' }
+
+      const permanentlyBlocked =
+        payoutAmount > maxPerPeriod || amount > maxPerPeriod
+
+      if (permanentlyBlocked) {
+        return { kind: 'permanently-blocked', maxPerPeriod: maxPerPeriod.toString() }
+      }
+
+      if (payoutAmount > remainingAmount) {
+        return {
+          kind: 'temporarily-blocked',
+          periodEndsAt: parsePeriodEndsAt(usage.period_ends_at),
+          remainingAmount: usage.remaining_amount,
+        }
+      }
+      return { kind: 'ok' }
     }
 
-    if (payoutAmount > remainingAmount) {
-      let periodEndsAt: number
-      const pe = usage.period_ends_at
-      if (typeof pe === 'object' && pe !== null && 'seconds' in pe) {
-        periodEndsAt = parseInt(String((pe as { seconds: string }).seconds), 10)
-      } else if (typeof pe === 'number') {
-        periodEndsAt = pe > 1e15 ? Math.floor(pe / 1e9) : pe
-      } else {
-        const parsed = parseInt(String(pe), 10)
-        periodEndsAt = parsed > 1e15 ? Math.floor(parsed / 1e9) : parsed
-      }
+    // rateCfg is null — no explicit rate limit configured.
+    // The contract may still enforce default limits (0.1% of supply) during execution,
+    // but period_usage shows remaining=Uint128::MAX when no explicit limit is set.
+    // Use remaining_amount to detect if the window is actually constrained.
+    if (remainingAmount < UINT128_THRESHOLD && payoutAmount > remainingAmount) {
       return {
         kind: 'temporarily-blocked',
-        periodEndsAt: periodEndsAt || 0,
+        periodEndsAt: parsePeriodEndsAt(usage.period_ends_at),
         remainingAmount: usage.remaining_amount,
       }
     }
 
     return { kind: 'ok' }
   } catch (err) {
+    console.warn('[RateLimit] query error:', err)
     return { kind: 'unknown', error: err instanceof Error ? err.message : String(err) }
   }
 }

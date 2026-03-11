@@ -67,6 +67,8 @@ export function useTerraRateLimitStatus(
       !dest.executed &&
       !!dest.destTokenDenom,
     staleTime: 30_000,
+    refetchInterval: 30_000,
+    placeholderData: (previousData) => previousData,
   })
 
   return { data: data ?? null, isLoading }
