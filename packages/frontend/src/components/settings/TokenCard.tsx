@@ -180,8 +180,13 @@ export function TokenCard({ token, verification, onVerify }: TokenCardProps) {
   }
 
   const shortAddr = (addr: string) => (addr ? shortenAddress(addr) : '—')
-  const decimalsForChain = (c: TokenChainInfo) =>
-    c.type === 'cosmos' ? token.terra_decimals : token.evm_decimals
+  const decimalsForChain = (c: TokenChainInfo): number | string => {
+    if (c.type === 'cosmos') return token.terra_decimals
+    // EVM: prefer per-chain decimals from token_dest_mapping, fallback to registry evm_decimals
+    if (c.decimals !== undefined) return c.decimals
+    if (token.evm_decimals !== undefined) return token.evm_decimals
+    return '—'
+  }
 
   const handleVerifyClick = () => {
     if (verification?.overallStatus === 'loading') return

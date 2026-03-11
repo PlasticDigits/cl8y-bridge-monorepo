@@ -18,6 +18,8 @@ export interface TokenChainInfo {
   rpcUrl?: string
   /** Base explorer URL for building token/address links */
   explorerUrl: string
+  /** Token decimals on this chain (from token_dest_mapping for EVM, from registry for cosmos) */
+  decimals?: number
 }
 
 /**
@@ -43,7 +45,7 @@ export function useTokenChains(
         if (!terraTokenId || !config.bytes4ChainId) return null
         const result = await queryTokenDestMapping(terraTokenId, config.bytes4ChainId)
         if (!result) return null
-        return bytes32ToAddress(result.hex as `0x${string}`)
+        return { address: bytes32ToAddress(result.hex as `0x${string}`), decimals: result.decimals }
       },
       enabled: !!terraTokenId && !!config.bytes4ChainId,
       staleTime: 60_000,
@@ -62,7 +64,7 @@ export function useTokenChains(
   return useMemo((): TokenChainInfo[] => {
     const result: TokenChainInfo[] = []
 
-    // Cosmos/Terra chain always
+    // Cosmos/Terra chain always (decimals from registry, passed by caller)
     for (const [chainId, config] of Object.entries(chains)) {
       if (config.type === 'cosmos') {
         result.push({
@@ -79,7 +81,9 @@ export function useTokenChains(
     // EVM chains from token_dest_mapping or fallback
     evmChainEntries.forEach(([chainId, config], idx) => {
       const query = evmQueries[idx]
-      const addr = query?.data ?? (fallbackEvmAddr && !query?.isLoading ? fallbackEvmAddr : null)
+      const queryData = query?.data
+      const addr = queryData ? queryData.address : (fallbackEvmAddr && !query?.isLoading ? fallbackEvmAddr : null)
+      const decimals = queryData?.decimals
       if (addr) {
         result.push({
           chainId,
@@ -88,6 +92,7 @@ export function useTokenChains(
           address: addr,
           rpcUrl: config.rpcUrl,
           explorerUrl: getExplorerUrlForChain(chainId),
+          decimals,
         })
       }
     })
