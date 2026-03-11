@@ -59,7 +59,7 @@ export type AutoSubmitBlockReason =
 
 export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
   const { address: evmAddress, chain: evmChain } = useAccount()
-  const { connected: isTerraConnected } = useWallet()
+  const { connected: isTerraConnected, luncBalance } = useWallet()
   const { switchChainAsync } = useSwitchChain()
   const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
@@ -394,6 +394,9 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           `token=${terraToken}, recipient=${terraRecipient}, amount=${transfer.amount}, nonce=${transfer.depositNonce}`
         )
 
+        if (!luncBalance || luncBalance === '0') {
+          throw new Error('Terra wallet has no LUNC for gas fees')
+        }
         const terraTxHash = await submitOnTerra({
           bridgeAddress,
           srcChainBytes4: srcChainBytes4Data,
