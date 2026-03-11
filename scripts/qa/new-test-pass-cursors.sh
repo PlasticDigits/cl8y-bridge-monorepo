@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TEMPLATE="${REPO_ROOT}/docs/qa-templates/qa-test-pass.md"
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "Error: gh CLI is required (https://cli.github.com/)." >&2
+if ! command -v glab >/dev/null 2>&1; then
+  echo "Error: glab CLI is required (https://gitlab.com/gitlab-org/cli)." >&2
   exit 1
 fi
 
@@ -31,8 +31,9 @@ cp "${TEMPLATE}" "${TMP_FILE}"
 cursor "${TMP_FILE}"
 read -r -p "Press Enter after saving the issue body in Cursor... " _
 
-gh issue create \
+glab issue create \
   --title "${TITLE}" \
-  --body-file "${TMP_FILE}" \
+  --description "$(cat "${TMP_FILE}")" \
   --label qa \
-  --label test-pass
+  --label test-pass \
+  --yes
