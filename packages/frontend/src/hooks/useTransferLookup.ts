@@ -43,6 +43,9 @@ export interface PendingWithdrawData {
   cancelled: boolean
   executed: boolean
   srcDecimals?: number
+  destDecimals?: number
+  /** Terra token denom (e.g. "uluna") for rate limit queries. */
+  destTokenDenom?: string
   /** Seconds remaining in cancel window (0 if expired). From chain or computed. */
   cancelWindowRemaining?: number
 }

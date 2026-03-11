@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useAccount, useSwitchChain } from 'wagmi'
 import { useHashVerification } from '../hooks/useHashVerification'
+import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
 import { useTransferStore } from '../stores/transfer'
 import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
@@ -205,6 +206,17 @@ export default function HashVerificationPage() {
   // dest is null means no PendingWithdraw found on dest chain => not submitted
   const notSubmittedOnChain = inputHash && !loading && source && !dest
 
+  const showRateLimitInfo =
+    dest &&
+    destChain?.type === 'cosmos' &&
+    dest.approved &&
+    !dest.executed
+  const { data: terraRateLimitStatus } = useTerraRateLimitStatus(
+    dest ?? null,
+    destChain ?? null,
+    !!showRateLimitInfo
+  )
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="shell-panel-strong relative overflow-hidden">
@@ -253,6 +265,7 @@ export default function HashVerificationPage() {
           matches={matches}
           loading={loading}
           error={error}
+          terraRateLimitStatus={terraRateLimitStatus}
         />
 
         {/* WithdrawSubmit prompt when hash not submitted to destination */}

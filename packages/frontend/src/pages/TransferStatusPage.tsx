@@ -24,6 +24,7 @@ import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
+import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { useStepProgress } from '../hooks/useStepProgress'
 import { formatCountdownMmSs, formatCancelWindowRange, formatAmount } from '../utils/format'
@@ -37,7 +38,7 @@ import {
   type NetworkTier,
 } from '../utils/bridgeChains'
 import type { BridgeChainConfig } from '../types/chain'
-import { DEFAULT_NETWORK, DECIMALS } from '../utils/constants'
+import { DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL } from '../utils/constants'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 
@@ -410,6 +411,19 @@ export default function TransferStatusPage() {
     if (!isValidXchainHashId(xchainHashId)) return
     lookup(normalizeXchainHashId(xchainHashId) as `0x${string}`)
   }, [xchainHashId, lookup])
+
+  // Poll lookup when transfer is non-terminal (fixes #42: EVM→Terra frontend doesn't detect completion).
+  // RecentTransfers/useTransferStatusRefresh only runs on the homepage; when user is on this page,
+  // we must poll ourselves to detect when the operator completes the transfer on the destination chain.
+  useEffect(() => {
+    if (!xchainHashId || !isValidXchainHashId(xchainHashId)) return
+    const lifecycle = transfer?.lifecycle
+    if (lifecycle === 'executed' || lifecycle === 'failed') return
+
+    const hash = normalizeXchainHashId(xchainHashId) as `0x${string}`
+    const id = setInterval(() => lookup(hash), POLLING_INTERVAL)
+    return () => clearInterval(id)
+  }, [xchainHashId, transfer?.lifecycle, lookup])
 
   // Build transfer from lookup when we have chain data and no store match
   useEffect(() => {
@@ -847,6 +861,18 @@ export default function TransferStatusPage() {
     ? bridgeConfigs?.find((c) => c.chainId === transfer.destChain)?.cancelWindowSeconds ?? null
     : null
 
+  const showRateLimitInfo =
+    !isFailed &&
+    transfer?.lifecycle === 'approved' &&
+    destChain?.type === 'cosmos' &&
+    dest &&
+    !dest.executed
+  const { data: rateLimitStatus } = useTerraRateLimitStatus(
+    dest ?? null,
+    destChain ?? null,
+    !!showRateLimitInfo
+  )
+
   if (!transfer) {
     const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)
     const isLookingUp = isValidHash && lookupLoading
@@ -1155,6 +1181,32 @@ export default function TransferStatusPage() {
                   </span>
                 ) : null}
               </p>
+              {rateLimitStatus?.kind === 'permanently-blocked' && (
+                <div className="mt-2 border-t border-amber-700/50 pt-2">
+                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+                    Rate limit exceeded (permanently blocked)
+                  </p>
+                  <p className="text-amber-400/80 text-xs mt-0.5">
+                    The transfer amount exceeds the Terra contract&apos;s per-period rate limit. The operator cannot
+                    execute until the limit is raised. Contact support for assistance.
+                  </p>
+                </div>
+              )}
+              {rateLimitStatus?.kind === 'temporarily-blocked' && (
+                <div className="mt-2 border-t border-amber-700/50 pt-2">
+                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+                    Rate limit exceeded (temporarily blocked)
+                  </p>
+                  <p className="text-amber-400/80 text-xs mt-0.5">
+                    The current rate limit window is full. The operator will retry automatically after the
+                    window resets at{' '}
+                    <span className="font-mono tabular-nums">
+                      {new Date(rateLimitStatus.periodEndsAt * 1000).toLocaleString()}
+                    </span>
+                    .
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

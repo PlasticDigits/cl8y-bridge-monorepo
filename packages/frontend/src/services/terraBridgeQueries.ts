@@ -58,8 +58,8 @@ interface TerraPendingWithdrawResponse {
   recipient: string // Terra bech32 address
   amount: string // Uint128 as string
   nonce: number // u64
-  src_decimals: number // u8
-  dest_decimals: number // u8
+  src_decimals?: number // u8
+  dest_decimals?: number // u8
   submitted_at: number // u64 (seconds)
   approved_at: number // u64 (seconds)
   approved: boolean
@@ -217,10 +217,97 @@ export async function queryTerraPendingWithdraw(
       approved: response.approved,
       cancelled: response.cancelled,
       executed: response.executed,
+      srcDecimals: response.src_decimals,
+      destDecimals: response.dest_decimals,
+      destTokenDenom: response.token,
       cancelWindowRemaining: response.cancel_window_remaining,
     }
   } catch (err) {
     // Contract query failed (e.g., withdraw not found, LCD error)
     return null
+  }
+}
+
+/** Normalize amount from source to destination decimals (matches Terra contract logic). */
+function normalizeDecimals(
+  amount: bigint,
+  srcDecimals: number,
+  destDecimals: number
+): bigint {
+  if (srcDecimals === destDecimals) return amount
+  if (srcDecimals > destDecimals) {
+    const divisor = 10 ** (srcDecimals - destDecimals)
+    return amount / BigInt(divisor)
+  }
+  const multiplier = 10 ** (destDecimals - srcDecimals)
+  return amount * BigInt(multiplier)
+}
+
+export type TerraRateLimitStatus =
+  | { kind: 'permanently-blocked'; maxPerPeriod: string }
+  | { kind: 'temporarily-blocked'; periodEndsAt: number; remainingAmount: string }
+  | { kind: 'ok' }
+  | { kind: 'unknown'; error?: string }
+
+/**
+ * Query Terra rate limit status for a pending withdraw.
+ * Determines if the transfer is permanently blocked (amount > period limit)
+ * or temporarily blocked (amount > remaining in window, will retry after reset).
+ */
+export async function queryTerraRateLimitStatus(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  token: string,
+  amount: bigint,
+  srcDecimals: number,
+  destDecimals: number
+): Promise<TerraRateLimitStatus> {
+  try {
+    const [rateCfg, usage] = await Promise.all([
+      queryContract<{ max_per_transaction?: string; max_per_period?: string }>(
+        lcdUrls,
+        bridgeAddress,
+        { rate_limit: { token } }
+      ).catch(() => null),
+      queryContract<{
+        used_amount: string
+        remaining_amount: string
+        period_ends_at: string | { seconds: string } | number
+      }>(lcdUrls, bridgeAddress, { period_usage: { token } }).catch(() => null),
+    ])
+
+    if (!rateCfg || !usage) return { kind: 'unknown' }
+
+    const maxPerPeriod = BigInt(rateCfg.max_per_period ?? '0')
+    if (maxPerPeriod === 0n) return { kind: 'ok' }
+
+    const payoutAmount = normalizeDecimals(amount, srcDecimals, destDecimals)
+    const remainingAmount = BigInt(usage.remaining_amount)
+
+    if (payoutAmount > maxPerPeriod) {
+      return { kind: 'permanently-blocked', maxPerPeriod: maxPerPeriod.toString() }
+    }
+
+    if (payoutAmount > remainingAmount) {
+      let periodEndsAt: number
+      const pe = usage.period_ends_at
+      if (typeof pe === 'object' && pe !== null && 'seconds' in pe) {
+        periodEndsAt = parseInt(String((pe as { seconds: string }).seconds), 10)
+      } else if (typeof pe === 'number') {
+        periodEndsAt = pe > 1e15 ? Math.floor(pe / 1e9) : pe
+      } else {
+        const parsed = parseInt(String(pe), 10)
+        periodEndsAt = parsed > 1e15 ? Math.floor(parsed / 1e9) : parsed
+      }
+      return {
+        kind: 'temporarily-blocked',
+        periodEndsAt: periodEndsAt || 0,
+        remainingAmount: usage.remaining_amount,
+      }
+    }
+
+    return { kind: 'ok' }
+  } catch (err) {
+    return { kind: 'unknown', error: err instanceof Error ? err.message : String(err) }
   }
 }

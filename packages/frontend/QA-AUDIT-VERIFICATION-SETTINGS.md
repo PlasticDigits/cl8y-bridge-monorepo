@@ -253,7 +253,7 @@ These pages are the user's window into the bridge's integrity.
 | #44 | Open | Countdown timer hardcodes 24h on EVM, doesn't update on chain switch |
 | #46 | PR #49 | Monitor hash click scrolls to wrong position |
 | #47 | PR #49 | Monitor hashes show Pending when complete |
-| #42 | Open (dev) | EVM → Terra frontend doesn't detect completion |
+| #42 | Fixed | EVM → Terra: polling for completion + rate limit status (permanent vs temporary block) |
 
 ---
 

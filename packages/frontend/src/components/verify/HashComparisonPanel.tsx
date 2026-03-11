@@ -1,6 +1,7 @@
 import type { DepositData, PendingWithdrawData } from '../../hooks/useTransferLookup'
 import type { HashStatus } from '../../types/transfer'
 import type { BridgeChainConfig } from '../../types/chain'
+import type { TerraRateLimitStatus } from '../../services/terraBridgeQueries'
 import { SourceHashCard } from './SourceHashCard'
 import { DestHashCard } from './DestHashCard'
 import { HashFieldsTable } from './HashFieldsTable'
@@ -20,6 +21,8 @@ export interface HashComparisonPanelProps {
   matches: boolean | null
   loading: boolean
   error: string | null
+  /** Terra rate limit status when dest is approved but not executed (for EVM→Terra). */
+  terraRateLimitStatus?: TerraRateLimitStatus | null
 }
 
 export function HashComparisonPanel({
@@ -33,6 +36,7 @@ export function HashComparisonPanel({
   matches,
   loading,
   error,
+  terraRateLimitStatus,
 }: HashComparisonPanelProps) {
 
   if (loading) {
@@ -84,6 +88,33 @@ export function HashComparisonPanel({
               : Number(dest.submittedAt) * 1000
           }
         />
+      )}
+
+      {terraRateLimitStatus?.kind === 'permanently-blocked' && (
+        <div className="border-2 border-amber-700/80 bg-amber-950/30 p-4">
+          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+            Rate limit exceeded (permanently blocked)
+          </p>
+          <p className="text-amber-400/80 text-xs mt-0.5">
+            The transfer amount exceeds the Terra contract&apos;s per-period rate limit. The operator cannot
+            execute until the limit is raised. Contact support for assistance.
+          </p>
+        </div>
+      )}
+      {terraRateLimitStatus?.kind === 'temporarily-blocked' && (
+        <div className="border-2 border-amber-700/80 bg-amber-950/30 p-4">
+          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
+            Rate limit exceeded (temporarily blocked)
+          </p>
+          <p className="text-amber-400/80 text-xs mt-0.5">
+            The current rate limit window is full. The operator will retry automatically after the
+            window resets at{' '}
+            <span className="font-mono tabular-nums">
+              {new Date(terraRateLimitStatus.periodEndsAt * 1000).toLocaleString()}
+            </span>
+            .
+          </p>
+        </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
