@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Upload local QA evidence file to a dedicated public GitHub repo.
+# Upload local QA evidence file to a dedicated public GitLab repo.
 # Prints a direct download URL on success.
 
 set -euo pipefail
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "Error: gh CLI is required (https://cli.github.com/)." >&2
+if ! command -v glab >/dev/null 2>&1; then
+  echo "Error: glab CLI is required (https://gitlab.com/gitlab-org/cli)." >&2
   exit 1
 fi
 
@@ -20,7 +20,7 @@ Usage:
   ./scripts/qa/upload-evidence.sh /absolute/or/relative/path/to/file
 
 Environment variables:
-  QA_EVIDENCE_REPO  Override repo (default: <your-login>/cl8y-qa-evidence)
+  QA_EVIDENCE_REPO  Override repo (default: PlasticDigits/cl8y-qa-evidence)
 EOF
   exit 1
 fi
@@ -31,8 +31,7 @@ if [[ ! -f "${LOCAL_FILE}" ]]; then
   exit 1
 fi
 
-owner_login="$(gh api user --jq .login)"
-TARGET_REPO="${QA_EVIDENCE_REPO:-${owner_login}/cl8y-qa-evidence}"
+TARGET_REPO="${QA_EVIDENCE_REPO:-PlasticDigits/cl8y-qa-evidence}"
 
 timestamp="$(date +%s)"
 today="$(date +%F)"
@@ -48,16 +47,18 @@ fi
 payload_file="$(mktemp -t cl8y-evidence-payload-XXXXXX.json)"
 trap 'rm -f "${payload_file}"' EXIT
 
-# Avoid command-line length limits by sending request body via file.
+encoded_repo="$(printf '%s' "${TARGET_REPO}" | sed 's|/|%2F|g')"
+encoded_path="$(printf '%s' "${remote_path}" | sed 's|/|%2F|g')"
+
 escaped_basename="$(printf '%s' "${basename_file}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-printf '{"message":"qa: add evidence %s","content":"%s"}' \
+printf '{"branch":"main","commit_message":"qa: add evidence %s","content":"%s","encoding":"base64"}' \
   "${escaped_basename}" \
   "${encoded_content}" > "${payload_file}"
 
-download_url="$(gh api \
-  --method PUT \
-  "/repos/${TARGET_REPO}/contents/${remote_path}" \
+glab api \
+  --method POST \
+  "projects/${encoded_repo}/repository/files/${encoded_path}" \
   --input "${payload_file}" \
-  --jq '.content.download_url')"
+  --silent
 
-echo "${download_url}"
+echo "https://gitlab.com/${TARGET_REPO}/-/raw/main/${remote_path}"

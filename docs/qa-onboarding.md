@@ -3,7 +3,7 @@
 This guide covers everything you need to do manual QA on the CL8Y Bridge frontend.
 
 Your role: test the bridge UI across real devices, real wallets, and real user flows.
-File bugs via GitHub issues, fix frontend issues via PRs, and escalate anything
+File bugs via GitLab issues, fix frontend issues via MRs, and escalate anything
 backend/contract-related privately.
 
 ---
@@ -17,22 +17,22 @@ Before cloning, make sure you have the following installed:
 | **Node.js 18+** | [nodejs.org](https://nodejs.org/) or `nvm install 18` | `node -v` |
 | **npm** | Ships with Node.js | `npm -v` |
 | **Git** | `sudo apt install git` (Linux) / `brew install git` (macOS) | `git -v` |
-| **GitHub CLI (`gh`)** | [cli.github.com](https://cli.github.com/) or `brew install gh` | `gh --version` |
+| **GitLab CLI (`glab`)** | [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli) or `brew install glab` | `glab --version` |
 
-### Authenticate `gh`
+### Authenticate `glab`
 
 ```bash
-gh auth login
-# Choose: GitHub.com → HTTPS → Login with a web browser
+glab auth login
+# Choose: gitlab.com → HTTPS → Login with a web browser
 # Verify:
-gh auth status
+glab auth status
 ```
 
-You should see your GitHub username and the `PlasticDigits/cl8y-bridge-monorepo`
-repo should be accessible:
+You should see your GitLab username and the `PlasticDigits/cl8y-bridge-monorepo`
+project should be accessible:
 
 ```bash
-gh repo view PlasticDigits/cl8y-bridge-monorepo --json name
+glab repo view PlasticDigits/cl8y-bridge-monorepo
 ```
 
 ---
@@ -41,7 +41,7 @@ gh repo view PlasticDigits/cl8y-bridge-monorepo --json name
 
 ```bash
 # Clone and install
-git clone https://github.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-bridge-monorepo
+git clone https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-bridge-monorepo
 cd packages/frontend
 npm ci
 
@@ -169,7 +169,7 @@ transaction hashes.
 
 ## CLI Workflow (headless + Cursor)
 
-All your work can be done from the terminal using `gh` (GitHub CLI).
+All your work can be done from the terminal using `glab` (GitLab CLI).
 
 ### Recommended helper scripts
 
@@ -203,14 +203,14 @@ Use these wrappers to avoid repetitive commands:
 ```
 
 `new-bug.sh` is headless-friendly: it opens a temporary markdown draft in
-`$EDITOR` (fallback `vi`) and then submits via `gh issue create` with labels
+`$EDITOR` (fallback `vi`) and then submits via `glab issue create` with labels
 `bug`, `frontend`, `needs-triage`.
 
 `new-bug-cursor.sh` is the Cursor-specific variant: it opens the draft in
 Cursor and then asks for terminal confirmation before submit.
 
 `new-test-pass.sh` opens a temporary markdown draft in your configured editor
-(`$EDITOR`, fallback `vi`), then submits via `gh issue create`.
+(`$EDITOR`, fallback `vi`), then submits via `glab issue create`.
 
 `new-test-pass-cursors.sh` is the Cursor-specific variant: it opens the draft in
 Cursor and then asks for terminal confirmation before submit.
@@ -220,22 +220,22 @@ for team compatibility. Do not rename it unless the team agrees on a migration.
 
 If you use `--evidence`, files are uploaded to your public evidence repository
 (`cl8y-qa-evidence`) and links are prefilled in the issue body.
-Set `QA_EVIDENCE_REPO="owner/repo"` if you need a non-default evidence repo.
+Set `QA_EVIDENCE_REPO="group/project"` if you need a non-default evidence repo.
 
 ### Where the finished QA report goes
 
 You do not need to copy the completed report anywhere after editing.
 
 - The temporary markdown file is only a draft while editing.
-- After submit, the GitHub issue itself is the source of truth.
-- If you need to add more details later, use `gh issue comment <issue-number>`.
+- After submit, the GitLab issue itself is the source of truth.
+- If you need to add more details later, use `glab issue note <issue-number> --message "..."` .
 
 ### Viewing your assigned issues
 
 ```bash
-gh issue list --assignee @me
-gh issue list --label "frontend,bug"
-gh issue list --label "qa"
+glab issue list --assignee @me
+glab issue list --label "frontend,bug"
+glab issue list --label "qa"
 ```
 
 ### Filing a bug (headless default)
@@ -293,7 +293,7 @@ Expected flow:
 4. Return to terminal and press Enter at the prompt
 5. Script prints the created issue URL
 
-After the issue is created, the report is stored in GitHub. Keeping local copies is optional.
+After the issue is created, the report is stored in GitLab. Keeping local copies is optional.
 
 ### Adding screenshots and videos in terminal-only flow
 
@@ -322,7 +322,7 @@ In terminal-only flow, attach evidence as links. The easiest way is using
 5. If needed after issue creation, append more evidence:
 
 ```bash
-gh issue comment <issue-number> --body "More evidence: https://example.com/video.mp4"
+glab issue note <issue-number> --message "More evidence: https://example.com/video.mp4"
 ```
 
 ### Working on a fix
@@ -344,12 +344,12 @@ git add -A
 git commit -m "fix: transfer button unresponsive on MetaMask mobile (#42)"
 git push -u origin HEAD
 
-# Create a PR
-gh pr create --title "fix: transfer button unresponsive on MetaMask mobile" \
-  --body "Fixes #42"
+# Create an MR
+glab mr create --title "fix: transfer button unresponsive on MetaMask mobile" \
+  --description "Fixes #42"
 ```
 
-**After creating the PR:** wait for the maintainer to review. Do not merge it
+**After creating the MR:** wait for the maintainer to review. Do not merge it
 yourself. If review comments come in, push fixes and the PR updates
 automatically:
 
@@ -361,11 +361,11 @@ git commit -m "fix: address review feedback"
 git push
 ```
 
-### Checking CI status on your PR
+### Checking CI status on your MR
 
 ```bash
-gh pr checks
-gh pr status
+glab ci status
+glab mr view
 ```
 
 ### Reviewing what's deployed
@@ -376,7 +376,7 @@ The frontend auto-deploys to Render from `main`. Check the live site after merge
 
 ## Security Escalation Protocol
 
-**CRITICAL: Never post the following in public GitHub issues:**
+**CRITICAL: Never post the following in public GitLab issues:**
 
 - Smart contract vulnerabilities or exploit details
 - Operator/canceler bugs that could affect fund safety
@@ -408,40 +408,40 @@ to file as public issues.
 
 | Rule | Effect |
 |------|--------|
-| **PRs required** | All changes to `main` must go through a pull request |
+| **MRs required** | All changes to `main` must go through a merge request |
 | **1 approving review** | The maintainer (`@PlasticDigits`) must approve before merge |
-| **CODEOWNERS enforced** | `@PlasticDigits` is auto-requested as reviewer on every PR |
+| **CODEOWNERS enforced** | `@PlasticDigits` is auto-requested as reviewer on every MR |
 | **Stale reviews dismissed** | If you push new commits after approval, the review resets |
 | **No force pushes** | Force-pushing to `main` is blocked |
 | **No branch deletion** | `main` cannot be deleted |
 
-**What this means for you:** create a branch, push it, open a PR, and wait for
-review. You should **never** merge your own PRs — the maintainer reviews and
+**What this means for you:** create a branch, push it, open an MR, and wait for
+review. You should **never** merge your own MRs — the maintainer reviews and
 merges them.
 
 ---
 
-## Branch & PR Conventions
+## Branch & MR Conventions
 
 | Convention | Rule |
 |-----------|------|
 | Branch naming | `fix/issue-NUMBER-short-description` or `qa/test-pass-DATE` |
 | Commit messages | `fix: description (#NUMBER)` or `test: description` |
-| PR scope | One issue per PR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one PR and list both with `Fixes #A, Fixes #B` |
-| PR checklist | Fill out the PR template (see below) |
-| Reviews | Maintainer (`@PlasticDigits`) reviews and merges all PRs |
+| MR scope | One issue per MR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one MR and list both with `Fixes #A, Fixes #B` |
+| MR checklist | Fill out the MR template (see below) |
+| Reviews | Maintainer (`@PlasticDigits`) reviews and merges all MRs |
 
-### PR Template
+### MR Template
 
-When you run `gh pr create`, GitHub auto-fills the body from the repo's PR
-template. Here's what you need to fill in:
+When you run `glab mr create`, GitLab auto-fills the description from the
+project's MR template. Here's what you need to fill in:
 
 ```markdown
 ## What
 <!-- Brief description of the change -->
 
 ## Why
-<!-- Link to the GitHub issue this fixes: Fixes #123 -->
+<!-- Link to the GitLab issue this fixes: Fixes #123 -->
 
 ## Testing
 - [ ] Tested on desktop (browser: ___)
@@ -493,19 +493,19 @@ npm run lint             # ESLint
 npm run test:unit        # Unit tests (vitest)
 npm run test:e2e         # Playwright E2E (limited — see below)
 
-# GitHub CLI
-gh issue list            # List issues
-gh issue view 42         # View issue details
-gh issue create          # Create new issue from markdown body file
-./scripts/qa/new-bug.sh # Bug issue helper (headless-safe; opens in $EDITOR or vi)
+# GitLab CLI
+glab issue list           # List issues
+glab issue view 42        # View issue details
+glab issue create         # Create new issue
+./scripts/qa/new-bug.sh   # Bug issue helper (headless-safe; opens in $EDITOR or vi)
 ./scripts/qa/new-bug-cursor.sh # Bug issue helper (Cursor-specific flow)
 ./scripts/qa/new-test-pass.sh # Test-pass helper (headless-safe; opens in $EDITOR or vi)
 ./scripts/qa/new-test-pass-cursors.sh # Test-pass helper (Cursor-specific flow)
 ./scripts/qa/upload-evidence.sh /path/to/file # Upload local evidence file
-gh pr create             # Create PR
-gh pr list               # List PRs
-gh pr checks             # Check CI status
-gh pr view               # View your PR details (maintainer merges after approval)
+glab mr create            # Create MR
+glab mr list              # List MRs
+glab ci status            # Check CI status
+glab mr view              # View your MR details (maintainer merges after approval)
 ```
 
 ### A note on Playwright

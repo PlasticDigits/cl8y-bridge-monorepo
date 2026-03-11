@@ -8,8 +8,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TEMPLATE="${REPO_ROOT}/docs/qa-templates/frontend-bug.md"
 UPLOAD_SCRIPT="${SCRIPT_DIR}/upload-evidence.sh"
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "Error: gh CLI is required (https://cli.github.com/)." >&2
+if ! command -v glab >/dev/null 2>&1; then
+  echo "Error: glab CLI is required (https://gitlab.com/gitlab-org/cli)." >&2
   exit 1
 fi
 
@@ -41,7 +41,7 @@ Options:
   -e, --evidence  Local file to upload to QA evidence repo and add to issue body.
 
 Environment variables:
-  QA_EVIDENCE_REPO  Override evidence repo (default: <your-login>/cl8y-qa-evidence)
+  QA_EVIDENCE_REPO  Override evidence repo (default: PlasticDigits/cl8y-qa-evidence)
   EDITOR            Override editor command (default: vi)
 EOF
       exit 0
@@ -91,9 +91,10 @@ fi
 EDITOR_BIN="${EDITOR:-vi}"
 "${EDITOR_BIN}" "${TMP_FILE}"
 
-gh issue create \
+glab issue create \
   --title "${TITLE}" \
-  --body-file "${TMP_FILE}" \
+  --description "$(cat "${TMP_FILE}")" \
   --label bug \
   --label frontend \
-  --label needs-triage
+  --label needs-triage \
+  --yes
