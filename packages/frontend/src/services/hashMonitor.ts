@@ -385,57 +385,180 @@ interface TerraPendingWithdrawSingleResponse {
   submitted_at: number
 }
 
+interface EvmPendingWithdrawResult {
+  submittedAt: bigint
+  approved: boolean
+  cancelled: boolean
+  executed: boolean
+}
+
 /**
- * Resolve execution status for deposit-only entries by querying the destination
- * chain's bridge. Executed EVM withdrawals are removed from getPendingWithdrawHashes
- * but remain queryable via getPendingWithdraw(hash). Similarly, Terra withdrawals
- * are queryable via the pending_withdraw query.
+ * Query getPendingWithdraw(hash) on a single EVM chain.
+ * Returns null if the hash doesn't exist on that chain (submittedAt === 0).
+ */
+async function queryEvmPendingWithdraw(
+  destConfig: import('../types/chain').BridgeChainConfig,
+  hash: Hex
+): Promise<EvmPendingWithdrawResult | null> {
+  try {
+    const client = getEvmClient(destConfig)
+    const result = await client.readContract({
+      address: destConfig.bridgeAddress as Address,
+      abi: BRIDGE_VIEW_ABI,
+      functionName: 'getPendingWithdraw',
+      args: [hash],
+    })
+    const pw = result as EvmPendingWithdrawResult
+    if (pw.submittedAt === 0n) return null
+    return pw
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Query pending_withdraw on a single Cosmos chain.
+ * Returns null if the hash doesn't exist.
+ */
+async function queryTerraPendingWithdrawSingle(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  hash: Hex
+): Promise<TerraPendingWithdrawSingleResponse | null> {
+  try {
+    const result = await queryContract<TerraPendingWithdrawSingleResponse>(lcdUrls, bridgeAddress, {
+      pending_withdraw: { xchain_hash_id: hexToBase64(hash) },
+    })
+    if (!result?.exists) return null
+    return result
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve execution status for unresolved entries by querying destination chains.
+ * For entries with a known destChainBytes4, queries just that chain.
+ * For entries without destChainBytes4, queries ALL chains (brute-force).
  */
 async function resolveDepositExecutionStatus(
   byHash: Map<string, MonitorHashEntry>
 ): Promise<void> {
-  // Collect entries needing resolution: deposits without executed/cancelled status
   const needsResolution: MonitorHashEntry[] = []
   for (const entry of byHash.values()) {
-    if (!entry.executed && !entry.cancelled && entry.destChainBytes4) {
+    if (!entry.executed && !entry.cancelled) {
       needsResolution.push(entry)
     }
   }
 
   if (needsResolution.length === 0) return
 
-  // Group by destination chain bytes4
-  const byDestChain = new Map<string, MonitorHashEntry[]>()
+  const withDest: MonitorHashEntry[] = []
+  const withoutDest: MonitorHashEntry[] = []
   for (const entry of needsResolution) {
-    const key = entry.destChainBytes4!.toLowerCase()
-    const group = byDestChain.get(key) ?? []
-    group.push(entry)
-    byDestChain.set(key, group)
-  }
-
-  const lookupPromises: Promise<void>[] = []
-
-  for (const [destBytes4, entries] of byDestChain) {
-    const chainEntry = getBridgeChainEntryByBytes4(destBytes4)
-    if (!chainEntry) continue
-
-    const [, destConfig] = chainEntry
-
-    if (destConfig.type === 'evm' && destConfig.bridgeAddress) {
-      lookupPromises.push(
-        resolveEvmExecutionStatus(destConfig, entries, byHash)
-      )
-    } else if (destConfig.type === 'cosmos' && destConfig.bridgeAddress) {
-      const lcdUrls = destConfig.lcdFallbacks ?? (destConfig.lcdUrl ? [destConfig.lcdUrl] : [])
-      if (lcdUrls.length > 0) {
-        lookupPromises.push(
-          resolveCosmosExecutionStatus(lcdUrls, destConfig.bridgeAddress, entries, byHash)
-        )
-      }
+    if (entry.destChainBytes4) {
+      withDest.push(entry)
+    } else {
+      withoutDest.push(entry)
     }
   }
 
-  await Promise.allSettled(lookupPromises)
+  // Targeted resolution for entries with known destination
+  if (withDest.length > 0) {
+    const byDestChain = new Map<string, MonitorHashEntry[]>()
+    for (const entry of withDest) {
+      const key = entry.destChainBytes4!.toLowerCase()
+      const group = byDestChain.get(key) ?? []
+      group.push(entry)
+      byDestChain.set(key, group)
+    }
+
+    const lookupPromises: Promise<void>[] = []
+    for (const [destBytes4, entries] of byDestChain) {
+      lookupPromises.push(resolveEntriesOnChain(destBytes4, entries, byHash))
+    }
+    await Promise.allSettled(lookupPromises)
+  }
+
+  // Brute-force resolution: query every configured chain for entries with no destChainBytes4
+  if (withoutDest.length > 0) {
+    await resolveEntriesBruteForce(withoutDest, byHash)
+  }
+}
+
+/**
+ * Resolve entries against a specific destination chain (by bytes4 ID).
+ */
+async function resolveEntriesOnChain(
+  destBytes4: string,
+  entries: MonitorHashEntry[],
+  byHash: Map<string, MonitorHashEntry>
+): Promise<void> {
+  const chainEntry = getBridgeChainEntryByBytes4(destBytes4)
+  if (!chainEntry) return
+
+  const [, destConfig] = chainEntry
+
+  if (destConfig.type === 'evm' && destConfig.bridgeAddress) {
+    await resolveEvmExecutionStatus(destConfig, entries, byHash)
+  } else if (destConfig.type === 'cosmos' && destConfig.bridgeAddress) {
+    const lcdUrls = destConfig.lcdFallbacks ?? (destConfig.lcdUrl ? [destConfig.lcdUrl] : [])
+    if (lcdUrls.length > 0) {
+      await resolveCosmosExecutionStatus(lcdUrls, destConfig.bridgeAddress, entries, byHash)
+    }
+  }
+}
+
+/**
+ * Brute-force resolve entries by querying every configured chain.
+ * Used for entries that have no destChainBytes4 (e.g. old deposits).
+ */
+async function resolveEntriesBruteForce(
+  entries: MonitorHashEntry[],
+  byHash: Map<string, MonitorHashEntry>
+): Promise<void> {
+  const evmChains = getDeployedEvmBridgeChainEntries()
+  const cosmosChains = getCosmosBridgeChains().filter(
+    (c) => c.bridgeAddress && (c.lcdUrl || (c.lcdFallbacks && c.lcdFallbacks.length > 0))
+  )
+
+  for (const entry of entries) {
+    const key = entry.hash.toLowerCase()
+    const existing = byHash.get(key)
+    if (!existing || existing.executed || existing.cancelled) continue
+
+    // Try each EVM chain
+    for (const { config } of evmChains) {
+      if (!config.bridgeAddress) continue
+      const pw = await queryEvmPendingWithdraw(config, entry.hash)
+      if (pw) {
+        if (pw.executed) existing.executed = true
+        if (pw.cancelled) existing.cancelled = true
+        if (pw.approved) existing.approved = pw.approved
+        if (!existing.timestamp && pw.submittedAt > 0n) {
+          existing.timestamp = Number(pw.submittedAt)
+        }
+        break
+      }
+    }
+
+    if (existing.executed || existing.cancelled) continue
+
+    // Try each Cosmos chain
+    for (const chain of cosmosChains) {
+      const lcdUrls = chain.lcdFallbacks ?? (chain.lcdUrl ? [chain.lcdUrl] : [])
+      const pw = await queryTerraPendingWithdrawSingle(lcdUrls, chain.bridgeAddress!, entry.hash)
+      if (pw) {
+        if (pw.executed) existing.executed = true
+        if (pw.cancelled) existing.cancelled = true
+        if (pw.approved) existing.approved = pw.approved
+        if (!existing.timestamp && pw.submitted_at > 0) {
+          existing.timestamp = pw.submitted_at
+        }
+        break
+      }
+    }
+  }
 }
 
 /**
@@ -466,12 +589,7 @@ async function resolveEvmExecutionStatus(
       const result = results[i]
       if (result?.status !== 'fulfilled' || !result.value) continue
 
-      const pw = result.value as {
-        submittedAt: bigint
-        approved: boolean
-        cancelled: boolean
-        executed: boolean
-      }
+      const pw = result.value as EvmPendingWithdrawResult
 
       if (pw.submittedAt === 0n) continue
 
@@ -527,6 +645,72 @@ async function resolveCosmosExecutionStatus(
       existing.timestamp = pw.submitted_at
     }
   }
+}
+
+/**
+ * Recheck a list of pending hashes against ALL configured chains.
+ * Returns updated entries with resolved execution status and a flag
+ * for hashes not found on any chain (`notFound`).
+ *
+ * Called periodically by useHashMonitor to update stale pending entries.
+ */
+export async function recheckPendingHashes(
+  hashes: Hex[]
+): Promise<Map<string, { executed?: boolean; cancelled?: boolean; approved?: boolean; timestamp?: number; notFound?: boolean }>> {
+  const updates = new Map<string, { executed?: boolean; cancelled?: boolean; approved?: boolean; timestamp?: number; notFound?: boolean }>()
+  if (hashes.length === 0) return updates
+
+  const evmChains = getDeployedEvmBridgeChainEntries()
+  const cosmosChains = getCosmosBridgeChains().filter(
+    (c) => c.bridgeAddress && (c.lcdUrl || (c.lcdFallbacks && c.lcdFallbacks.length > 0))
+  )
+
+  for (const hash of hashes) {
+    let found = false
+    let executed = false
+    let cancelled = false
+    let approved = false
+    let timestamp: number | undefined
+
+    // Try each EVM chain
+    for (const { config } of evmChains) {
+      if (!config.bridgeAddress) continue
+      const pw = await queryEvmPendingWithdraw(config, hash)
+      if (pw) {
+        found = true
+        executed = pw.executed
+        cancelled = pw.cancelled
+        approved = pw.approved
+        if (pw.submittedAt > 0n) timestamp = Number(pw.submittedAt)
+        if (executed || cancelled) break
+      }
+    }
+
+    if (!executed && !cancelled) {
+      // Try each Cosmos chain
+      for (const chain of cosmosChains) {
+        const lcdUrls = chain.lcdFallbacks ?? (chain.lcdUrl ? [chain.lcdUrl] : [])
+        const pw = await queryTerraPendingWithdrawSingle(lcdUrls, chain.bridgeAddress!, hash)
+        if (pw) {
+          found = true
+          executed = pw.executed
+          cancelled = pw.cancelled
+          approved = pw.approved
+          if (pw.submitted_at > 0) timestamp = pw.submitted_at
+          if (executed || cancelled) break
+        }
+      }
+    }
+
+    const key = hash.toLowerCase()
+    if (found) {
+      updates.set(key, { executed, cancelled, approved, timestamp })
+    } else {
+      updates.set(key, { notFound: true })
+    }
+  }
+
+  return updates
 }
 
 /**
