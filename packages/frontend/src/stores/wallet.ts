@@ -55,6 +55,9 @@ export interface WalletState {
   /** Timestamp when connecting started, used to detect stale WalletConnect attempts */
   connectingSince: number | null;
   
+  // Connection error (displayed in wallet modal)
+  connectionError: string | null;
+  
   // Modal state (for triggering wallet modal from other components)
   showWalletModal: boolean;
   
@@ -66,6 +69,7 @@ export interface WalletState {
   setBalances: (balances: { lunc?: string }) => void;
   setConnecting: (connecting: boolean) => void;
   cancelConnection: () => void;
+  clearConnectionError: () => void;
   setShowWalletModal: (show: boolean) => void;
 }
 
@@ -95,6 +99,7 @@ export const useWalletStore = create<WalletState>()(
       luncBalance: '0',
       connectingWallet: null,
       connectingSince: null,
+      connectionError: null,
       showWalletModal: false,
 
       // Connect dev wallet (DEV_MODE only) using cosmes MnemonicWallet
@@ -116,7 +121,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Connect to wallet
       connect: async (walletName: WalletName, walletTypeParam: WalletType = WalletType.EXTENSION) => {
-        set({ connecting: true, connectingWallet: walletName, connectingSince: Date.now() });
+        set({ connecting: true, connectingWallet: walletName, connectingSince: Date.now(), connectionError: null });
         
         try {
           const effectiveWalletType = walletName === WalletName.LUNCDASH 
@@ -131,6 +136,7 @@ export const useWalletStore = create<WalletState>()(
             connecting: false,
             connectingWallet: null,
             connectingSince: null,
+            connectionError: null,
             address: result.address,
             walletType: result.walletType,
             connectionType: result.connectionType,
@@ -139,8 +145,9 @@ export const useWalletStore = create<WalletState>()(
           
           console.log('Terra wallet connected:', result.address, result.walletType);
         } catch (error) {
+          const message = error instanceof Error ? error.message : 'Connection failed';
           console.error('Wallet connection failed:', error);
-          set({ connecting: false, connectingWallet: null, connectingSince: null });
+          set({ connecting: false, connectingWallet: null, connectingSince: null, connectionError: message });
           throw error;
         }
       },
@@ -217,7 +224,12 @@ export const useWalletStore = create<WalletState>()(
 
       // Cancel pending connection
       cancelConnection: () => {
-        set({ connecting: false, connectingWallet: null, connectingSince: null });
+        set({ connecting: false, connectingWallet: null, connectingSince: null, connectionError: null });
+      },
+
+      // Clear connection error (e.g. when user dismisses or retries)
+      clearConnectionError: () => {
+        set({ connectionError: null });
       },
 
       // Control wallet modal visibility

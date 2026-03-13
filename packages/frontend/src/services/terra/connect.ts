@@ -2,6 +2,7 @@ import { ConnectedWallet, WalletName, WalletType } from '@goblinhunt/cosmes/wall
 import type { TerraWalletType } from './types'
 import { CONTROLLERS, TERRA_CLASSIC_CHAIN_ID, getChainInfo } from './controllers'
 import { createDevTerraWallet } from './devWallet'
+import { suggestTerraClassicChain } from './suggestChain'
 
 const connectedWallets: Map<string, ConnectedWallet> = new Map()
 
@@ -20,6 +21,10 @@ export async function connectTerraWallet(
   try {
     const chainInfo = getChainInfo()
     console.log(`[Wallet] Connecting ${walletName} (${walletType}) to chain ${chainInfo.chainId}`)
+
+    if (walletType === WalletType.EXTENSION) {
+      await suggestTerraClassicChain(walletName)
+    }
 
     const wallets = await controller.connect(walletType, [chainInfo])
 
@@ -58,22 +63,6 @@ export async function connectTerraWallet(
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
 
-    if (walletName === WalletName.KEPLR) {
-      if (errorMessage.includes('not installed') || errorMessage.includes('Keplr')) {
-        throw new Error('Keplr wallet is not installed. Please install the Keplr extension.')
-      }
-    }
-
-    if (walletName === WalletName.STATION) {
-      if (errorMessage.includes('not installed') || errorMessage.includes('Station')) {
-        throw new Error('Station wallet is not installed. Please install the Station extension.')
-      }
-    }
-
-    if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
-      throw new Error('Connection rejected by user')
-    }
-
     const displayNames: Partial<Record<WalletName, string>> = {
       [WalletName.STATION]: 'Station',
       [WalletName.KEPLR]: 'Keplr',
@@ -81,6 +70,43 @@ export async function connectTerraWallet(
       [WalletName.GALAXYSTATION]: 'Galaxy Station',
       [WalletName.LEAP]: 'Leap',
       [WalletName.COSMOSTATION]: 'Cosmostation',
+    }
+
+    const notInstalledMsg = errorMessage.includes('not installed')
+
+    if (walletName === WalletName.KEPLR) {
+      if (notInstalledMsg || errorMessage.includes('Keplr')) {
+        throw new Error('Keplr wallet is not installed. Please install the Keplr extension.')
+      }
+    }
+
+    if (walletName === WalletName.STATION) {
+      if (notInstalledMsg || errorMessage.includes('Station')) {
+        throw new Error('Station wallet is not installed. Please install the Station extension.')
+      }
+    }
+
+    if (walletName === WalletName.LEAP) {
+      if (notInstalledMsg || errorMessage.includes('Leap')) {
+        throw new Error('Leap wallet is not installed. Please install the Leap extension.')
+      }
+    }
+
+    if (walletName === WalletName.COSMOSTATION) {
+      if (notInstalledMsg || errorMessage.includes('Cosmostation')) {
+        throw new Error('Cosmostation wallet is not installed. Please install the Cosmostation extension.')
+      }
+    }
+
+    if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
+      throw new Error('Connection rejected by user')
+    }
+
+    if (errorMessage.includes('no chain info') || errorMessage.includes('Unknown chain')) {
+      throw new Error(
+        `${displayNames[walletName] || 'Wallet'} does not support Terra Classic. ` +
+        'Try updating your wallet extension to the latest version.'
+      )
     }
 
     throw new Error(`Failed to connect ${displayNames[walletName] || 'wallet'}: ${errorMessage}`)
