@@ -31,9 +31,12 @@ cp "${TEMPLATE}" "${TMP_FILE}"
 cursor "${TMP_FILE}"
 read -r -p "Press Enter after saving the issue body in Cursor... " _
 
+ASSIGNEE="${ASSIGNEE:-}"
+
 glab issue create \
   --title "${TITLE}" \
   --description "$(cat "${TMP_FILE}")" \
   --label qa \
   --label test-pass \
+  ${ASSIGNEE:+--assignee "${ASSIGNEE}"} \
   --yes

@@ -26,9 +26,12 @@ cp "${TEMPLATE}" "${TMP_FILE}"
 EDITOR_BIN="${EDITOR:-vi}"
 "${EDITOR_BIN}" "${TMP_FILE}"
 
+ASSIGNEE="${ASSIGNEE:-}"
+
 glab issue create \
   --title "${TITLE}" \
   --description "$(cat "${TMP_FILE}")" \
   --label qa \
   --label test-pass \
+  ${ASSIGNEE:+--assignee "${ASSIGNEE}"} \
   --yes
