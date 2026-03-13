@@ -6,7 +6,7 @@ import { useHashMonitor, type HashMonitorRecord } from '../../hooks/useHashMonit
 import { StatusBadge } from './StatusBadge'
 import { CopyButton, HashWithBlockie } from '../ui'
 
-export type MonitorFilter = 'all' | 'verified' | 'pending' | 'canceled' | 'fraudulent'
+export type MonitorFilter = 'all' | 'verified' | 'pending' | 'canceled' | 'fraudulent' | 'unknown'
 
 export interface HashMonitorSectionProps {
   onSelectHash?: (hash: string) => void
@@ -32,6 +32,7 @@ function matchesFilter(record: HashMonitorRecord, filter: MonitorFilter): boolea
   if (filter === 'pending') return record.status === 'pending'
   if (filter === 'canceled') return record.status === 'canceled'
   if (filter === 'fraudulent') return isFraudulent(record)
+  if (filter === 'unknown') return record.status === 'unknown'
   return true
 }
 
@@ -41,6 +42,7 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
   const {
     allRecords,
     loading,
+    rechecking,
     error,
     pageSize,
     refresh,
@@ -58,6 +60,7 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
   const canceledCount = allRecords.filter((r) => r.status === 'canceled').length
   const pendingCount = allRecords.filter((r) => r.status === 'pending').length
   const verifiedCount = allRecords.filter((r) => r.status === 'verified').length
+  const unknownCount = allRecords.filter((r) => r.status === 'unknown').length
 
   const goToPage = (p: number) => {
     setPage(Math.min(filteredPages - 1, Math.max(0, p)))
@@ -74,16 +77,16 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
             disabled={loading}
             className="border border-white/20 bg-[#161616] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-300 hover:border-white/35 hover:text-white disabled:opacity-50"
           >
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? 'Loading…' : rechecking ? 'Rechecking…' : 'Refresh'}
           </button>
           <div className="flex flex-wrap gap-2 border border-white/20 bg-black/35 p-1.5">
-            {(['all', 'verified', 'pending', 'canceled', 'fraudulent'] as const).map((f) => (
+            {(['all', 'verified', 'pending', 'canceled', 'fraudulent', 'unknown'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
                 onClick={() => {
                   setFilter(f)
-                setPage(0)
+                  setPage(0)
                 }}
                 className={`border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
                   filter === f
@@ -96,6 +99,7 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
                 {f === 'pending' && `Pending (${pendingCount})`}
                 {f === 'canceled' && `Canceled (${canceledCount})`}
                 {f === 'fraudulent' && `Fraudulent (${fraudulentCount})`}
+                {f === 'unknown' && `Not Found (${unknownCount})`}
               </button>
             ))}
           </div>
@@ -105,7 +109,9 @@ export function HashMonitorSection({ onSelectHash }: HashMonitorSectionProps) {
       <p className="text-xs text-gray-300">
         {filter === 'all'
           ? 'All hashes from deposits and withdraws across chains (via RPC). Filter to identify verified, pending, canceled, or fraudulent entries.'
-          : STATUS_HELP[filter]}
+          : filter === 'unknown'
+            ? STATUS_HELP.unknown
+            : STATUS_HELP[filter]}
       </p>
 
       {error && (

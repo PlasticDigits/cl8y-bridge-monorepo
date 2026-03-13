@@ -51,6 +51,7 @@ export function useWallet() {
     luncBalance,
     connectingWallet,
     connectingSince,
+    connectionError,
     showWalletModal,
     connect: storeConnect,
     connectSimulated: storeConnectSimulated,
@@ -59,6 +60,7 @@ export function useWallet() {
     setBalances,
     setConnecting,
     cancelConnection,
+    clearConnectionError,
     setShowWalletModal,
   } = useWalletStore();
 
@@ -195,6 +197,7 @@ export function useWallet() {
     connectionType,
     chainId,
     connectingWallet,
+    connectionError,
     showWalletModal,
     
     // Balances
@@ -213,6 +216,7 @@ export function useWallet() {
     refreshBalances,
     setConnecting,
     cancelConnection,
+    clearConnectionError,
     setShowWalletModal,
   };
 }

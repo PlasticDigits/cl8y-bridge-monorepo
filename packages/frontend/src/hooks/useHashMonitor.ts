@@ -3,14 +3,22 @@
  *
  * Fetches all transfer hashes from deposits and withdraws via RPC/LCD,
  * merges with localStorage verification records, and provides paginated data.
+ *
+ * Periodically rechecks pending hashes against on-chain state so that
+ * entries whose withdrawals have been executed/cancelled are updated
+ * without requiring a full page refresh.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { fetchAllXchainHashIds, type MonitorHashEntry } from '../services/hashMonitor'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { fetchAllXchainHashIds, recheckPendingHashes, type MonitorHashEntry } from '../services/hashMonitor'
 import { getVerificationRecords } from '../components/verify/RecentVerifications'
 import type { HashStatus } from '../types/transfer'
+import type { Hex } from 'viem'
 
 const PAGE_SIZE = 20
+
+/** How often to recheck pending hashes against on-chain state (ms). */
+const RECHECK_INTERVAL_MS = 30_000
 
 export interface HashMonitorRecord {
   hash: string
@@ -74,6 +82,8 @@ export function useHashMonitor() {
   const [records, setRecords] = useState<HashMonitorRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [rechecking, setRechecking] = useState(false)
+  const recheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -90,10 +100,76 @@ export function useHashMonitor() {
     }
   }, [])
 
+  /**
+   * Recheck only the pending hashes against on-chain state.
+   * Updates records in place without a full refetch.
+   */
+  const recheckPending = useCallback(async () => {
+    setRecords((prev) => {
+      const pending = prev.filter((r) => r.status === 'pending')
+      if (pending.length === 0) return prev
+
+      const pendingHashes = pending.map((r) => r.hash as Hex)
+      setRechecking(true)
+
+      recheckPendingHashes(pendingHashes)
+        .then((updates) => {
+          if (updates.size === 0) return
+
+          setRecords((current) =>
+            current.map((r) => {
+              const update = updates.get(r.hash.toLowerCase())
+              if (!update) return r
+
+              if (update.notFound) {
+                return { ...r, status: 'unknown' as HashStatus }
+              }
+
+              let newStatus: HashStatus = r.status ?? 'pending'
+              if (update.executed) newStatus = 'verified'
+              else if (update.cancelled) newStatus = 'canceled'
+
+              return {
+                ...r,
+                status: newStatus,
+                executed: update.executed ?? r.executed,
+                cancelled: update.cancelled ?? r.cancelled,
+                approved: update.approved ?? r.approved,
+                timestamp: update.timestamp ? update.timestamp * 1000 : r.timestamp,
+              }
+            })
+          )
+        })
+        .catch(() => {
+          // Recheck failed silently; will retry next interval
+        })
+        .finally(() => {
+          setRechecking(false)
+        })
+
+      return prev
+    })
+  }, [])
+
+  // Initial fetch
   useEffect(() => {
     refresh()
   }, [refresh])
 
+  // Periodic recheck of pending hashes
+  useEffect(() => {
+    recheckTimerRef.current = setInterval(() => {
+      recheckPending()
+    }, RECHECK_INTERVAL_MS)
+
+    return () => {
+      if (recheckTimerRef.current) {
+        clearInterval(recheckTimerRef.current)
+      }
+    }
+  }, [recheckPending])
+
+  // Listen for manual verification events from the verify page
   useEffect(() => {
     const handler = () => {
       setRecords((prev) => {
@@ -119,8 +195,10 @@ export function useHashMonitor() {
   return {
     allRecords: records,
     loading,
+    rechecking,
     error,
     pageSize: PAGE_SIZE,
     refresh,
+    recheckPending,
   }
 }

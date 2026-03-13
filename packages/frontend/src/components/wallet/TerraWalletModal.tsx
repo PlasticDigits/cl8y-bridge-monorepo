@@ -16,6 +16,7 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   const {
     connecting,
     connectingWallet,
+    connectionError,
     isStationAvailable,
     isKeplrAvailable,
     isLeapAvailable,
@@ -23,6 +24,7 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     connect,
     connectSimulated,
     cancelConnection,
+    clearConnectionError,
   } = useWallet()
 
   const isWcConnecting = connecting && connectingWallet != null && WC_WALLETS.has(connectingWallet)
@@ -35,11 +37,12 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   }, [connecting, cancelConnection, onClose])
 
   const handleConnect = async (walletName: WalletName, walletType: WalletType = WalletType.EXTENSION) => {
+    clearConnectionError()
     try {
       await connect(walletName, walletType)
       onClose()
     } catch {
-      // Error is shown via useWallet / store
+      // connectionError is set by the store; displayed below
     }
   }
 
@@ -90,6 +93,25 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={closeModal} title="Connect Wallet">
       <div className="p-6 space-y-3">
+        {connectionError && (
+          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
+            <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <p>{connectionError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={clearConnectionError}
+              className="text-red-400 hover:text-red-300 shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
         {DEV_MODE && (
           <>
             <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Dev Mode</p>
