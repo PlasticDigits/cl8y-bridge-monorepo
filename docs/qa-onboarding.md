@@ -327,6 +327,8 @@ glab issue note <issue-number> --message "More evidence: https://example.com/vid
 
 ### Working on a fix
 
+> **Target branch:** Always branch from and merge into `main`. Do not use `master` — our repo uses `main` as the default branch.
+
 ```bash
 # Create a branch from main
 git checkout main && git pull
@@ -403,6 +405,8 @@ to file as public issues.
 ---
 
 ## Branch Protection & Merge Rules
+
+> **Important:** Our default branch is `main`, **not** `master`. When creating merge requests, always target `main`. QA devs occasionally target `master` by mistake — double-check the target branch before submitting.
 
 `main` is protected. You **cannot** push directly to it or merge without approval.
 
