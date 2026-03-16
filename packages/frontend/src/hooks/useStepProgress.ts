@@ -2,19 +2,19 @@ import { useState, useEffect, useRef } from 'react'
 
 /**
  * Expected wall-clock durations per transfer lifecycle step.
- * deposited    – waiting for auto-submit (chain switch + tx)
- * hash-submitted – waiting for operator withdrawApprove
- * approved     – cancel window (BRIDGE_CONFIG.withdrawDelay = 300s)
- * executed     – terminal, not animated
+ * deposited      – confirming deposit on-chain + auto-submit (~30s)
+ * hash-submitted – waiting for operator to approve (~30–90s)
+ * approved       – cancel window (~300s) + operator execution (~30s)
+ * executed       – terminal, not animated
  */
 const STEP_EXPECTED_MS: Record<string, number> = {
-  deposited: 90_000,
+  deposited: 30_000,
   'hash-submitted': 90_000,
-  approved: 300_000,
+  approved: 330_000,
   executed: 0,
 }
 
-const MIN_EXPECTED_MS = 90_000
+const MIN_EXPECTED_MS = 30_000
 
 /**
  * Returns a 0–100 progress value for a transfer step with a

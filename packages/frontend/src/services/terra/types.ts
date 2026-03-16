@@ -17,6 +17,7 @@ declare global {
     station?: {
       connect: () => Promise<void>
       disconnect: () => Promise<void>
+      keplr?: KeplrLikeExtension
     }
     keplr?: KeplrLikeExtension
     leap?: KeplrLikeExtension

@@ -47,11 +47,11 @@ const LOG = '[TransferStatus]'
 type NonceResolutionStatus = 'idle' | 'resolving' | 'resolved' | 'failed'
 
 // Lifecycle step definitions
-const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; activeDescription: string }[] = [
-  { key: 'deposited', label: 'Deposit', doneDescription: 'Tokens locked on source chain', activeDescription: 'Locking tokens on source chain' },
-  { key: 'hash-submitted', label: 'Submit Hash', doneDescription: 'Withdrawal submitted to destination', activeDescription: 'Submitting withdrawal to destination' },
-  { key: 'approved', label: 'Approval', doneDescription: 'Operator verified deposit', activeDescription: 'Operator verifying deposit' },
-  { key: 'executed', label: 'Complete', doneDescription: 'Tokens delivered to recipient', activeDescription: 'Delivering tokens to recipient' },
+const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; activeDescription: string; estimatedTime: string | null }[] = [
+  { key: 'deposited', label: 'Deposit', doneDescription: 'Tokens locked on source chain', activeDescription: 'Confirming deposit on source chain', estimatedTime: 'Usually ~30 seconds' },
+  { key: 'hash-submitted', label: 'Submit Hash', doneDescription: 'Withdrawal submitted to destination', activeDescription: 'Submitting withdrawal to destination', estimatedTime: 'Usually ~30 seconds' },
+  { key: 'approved', label: 'Approval', doneDescription: 'Operator verified deposit', activeDescription: 'Cancel window active', estimatedTime: '~5 min cancel window, then operator ~30s' },
+  { key: 'executed', label: 'Complete', doneDescription: 'Tokens delivered to recipient', activeDescription: 'Delivering tokens to recipient', estimatedTime: null },
 ]
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
@@ -149,6 +149,11 @@ function StepIndicator({
         <p className={`text-xs ${descriptionTone}`}>
           {isDone ? step.doneDescription : isActive ? step.activeDescription : step.doneDescription}
         </p>
+        {isActive && !isError && step.estimatedTime && (
+          <p className="mt-0.5 text-[11px] text-yellow-400/60 italic">
+            {step.estimatedTime}
+          </p>
+        )}
         {showBar && (
           <div className="mt-2 h-1.5 w-full overflow-hidden border border-white/15 bg-black/50">
             <div
@@ -1185,9 +1190,9 @@ export default function TransferStatusPage() {
                   <p className="text-blue-400/70 text-xs mt-1">
                     The operator is verifying your deposit on the source chain.
                     {destChainCancelWindow != null ? (
-                      <> After approval, the cancel window is {formatCancelWindowRange(destChainCancelWindow)} before tokens are released.</>
+                      <> After approval, the cancel window is {formatCancelWindowRange(destChainCancelWindow)}. The operator usually executes within ~30 seconds after the cancel period ends.</>
                     ) : (
-                      <> This usually takes a few minutes depending on the destination chain.</>
+                      <> After approval, a ~5 minute cancel window will start. The operator usually executes within ~30 seconds after it ends.</>
                     )}
                   </p>
                   {isBroken && fixLoading && (
@@ -1259,9 +1264,14 @@ export default function TransferStatusPage() {
                         {formatCountdownMmSs(effectiveCancelWindowRemaining)} remaining
                       </span>
                     ) : effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining <= 0 ? (
-                      <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
-                        Executing…
-                      </span>
+                      <>
+                        <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                          Executing…
+                        </span>
+                        <span className="ml-1 text-cyan-400/60 text-[11px] italic">
+                          Operator usually completes within ~30 seconds
+                        </span>
+                      </>
                     ) : null}
                   </p>
                 </div>

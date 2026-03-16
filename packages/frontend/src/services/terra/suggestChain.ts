@@ -2,6 +2,7 @@ import { WalletName } from '@goblinhunt/cosmes/wallet'
 import { NETWORKS, DEFAULT_NETWORK } from '../../utils/constants'
 
 const WALLETS_WITH_SUGGEST_CHAIN: Set<WalletName> = new Set([
+  WalletName.STATION,
   WalletName.KEPLR,
   WalletName.LEAP,
   WalletName.COSMOSTATION,
@@ -50,9 +51,12 @@ export async function suggestTerraClassicChain(walletName: WalletName): Promise<
   const chainInfo = getTerraClassicChainInfo()
 
   type WalletExt = { experimentalSuggestChain?: (info: unknown) => Promise<void> }
+  type StationExt = { keplr?: WalletExt }
 
   let ext: WalletExt | undefined
-  if (walletName === WalletName.KEPLR) {
+  if (walletName === WalletName.STATION) {
+    ext = (window.station as StationExt | undefined)?.keplr as WalletExt | undefined
+  } else if (walletName === WalletName.KEPLR) {
     ext = window.keplr as WalletExt | undefined
   } else if (walletName === WalletName.LEAP) {
     ext = window.leap as WalletExt | undefined

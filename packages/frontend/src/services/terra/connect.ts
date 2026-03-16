@@ -35,7 +35,10 @@ export async function connectTerraWallet(
             'Please try disconnecting and reconnecting.'
         )
       }
-      throw new Error('No wallets connected')
+      throw new Error(
+        `${walletName} could not connect to Terra Classic (${chainInfo.chainId}). ` +
+          'The wallet may not support this chain. Try updating your wallet extension.'
+      )
     }
 
     const wallet = wallets.get(TERRA_CLASSIC_CHAIN_ID)
