@@ -68,6 +68,16 @@
       },
       "gradient": "from-orange-500 to-slate-700",
       "iconColor": "text-orange-400"
+    },
+    {
+      "symbol": "CL8Y",
+      "name": "CeramicLiberty.com",
+      "address": "terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3",
+      "type": "cw20",
+      "decimals": 18,
+      "gradient": "from-amber-600 to-slate-800",
+      "iconColor": "text-amber-500",
+      "website": "https://ceramicliberty.com"
     }
   ]
 }

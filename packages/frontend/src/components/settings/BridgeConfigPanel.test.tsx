@@ -138,7 +138,7 @@ describe('BridgeConfigPanel', () => {
   it('shows withdraw rate limit (24h) with countdown when token has rate limit', async () => {
     const user = userEvent.setup()
     vi.mocked(useBridgeConfigModule.useChainTokens).mockReturnValue({
-      data: [{ id: '0xabc', symbol: 'TKNA', localAddress: '0xabc', isEvm: true }],
+      data: [{ id: '0xabc', symbol: 'TKNA', localAddress: '0xabc', isEvm: true, decimals: 18 }],
       isLoading: false,
       error: null,
     })

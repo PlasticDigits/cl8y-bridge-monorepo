@@ -9,6 +9,7 @@ export interface TokenlistEntry {
   denom?: string
   address?: string
   type: 'native' | 'cw20'
+  decimals?: number
 }
 
 export interface TokenlistData {
@@ -20,6 +21,7 @@ export interface TokenlistData {
     denom?: string
     address?: string
     type: 'native' | 'cw20'
+    decimals?: number
   }>
 }
 

@@ -47,11 +47,11 @@ const LOG = '[TransferStatus]'
 type NonceResolutionStatus = 'idle' | 'resolving' | 'resolved' | 'failed'
 
 // Lifecycle step definitions
-const STEPS: { key: TransferLifecycle; label: string; description: string }[] = [
-  { key: 'deposited', label: 'Deposit', description: 'Tokens locked on source chain' },
-  { key: 'hash-submitted', label: 'Submit Hash', description: 'Withdrawal submitted to destination' },
-  { key: 'approved', label: 'Approval', description: 'Operator verified deposit' },
-  { key: 'executed', label: 'Complete', description: 'Tokens delivered to recipient' },
+const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; activeDescription: string }[] = [
+  { key: 'deposited', label: 'Deposit', doneDescription: 'Tokens locked on source chain', activeDescription: 'Locking tokens on source chain' },
+  { key: 'hash-submitted', label: 'Submit Hash', doneDescription: 'Withdrawal submitted to destination', activeDescription: 'Submitting withdrawal to destination' },
+  { key: 'approved', label: 'Approval', doneDescription: 'Operator verified deposit', activeDescription: 'Operator verifying deposit' },
+  { key: 'executed', label: 'Complete', doneDescription: 'Tokens delivered to recipient', activeDescription: 'Delivering tokens to recipient' },
 ]
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
@@ -147,7 +147,7 @@ function StepIndicator({
           {step.label}
         </p>
         <p className={`text-xs ${descriptionTone}`}>
-          {step.description}
+          {isDone ? step.doneDescription : isActive ? step.activeDescription : step.doneDescription}
         </p>
         {showBar && (
           <div className="mt-2 h-1.5 w-full overflow-hidden border border-white/15 bg-black/50">
@@ -283,9 +283,6 @@ function buildTransferFromLookup(
     ? 'hash-submitted'
     : 'deposited'
   const amount = (source?.amount ?? dest?.amount ?? 0n).toString()
-  const srcIsCosmos = sourceChain?.type === 'cosmos'
-  const destIsCosmos = destChain?.type === 'cosmos'
-  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
 
   // Resolve chain KEYs (e.g. 'bsc', 'terra') instead of display names
   const resolvedSourceChainKey = sourceChain ? (getChainKeyByConfig(sourceChain) ?? sourceChain.name ?? 'unknown') : 'unknown'
@@ -296,6 +293,7 @@ function buildTransferFromLookup(
 
   let resolvedDestChainKey: string | null = null
   let resolvedDestBridgeAddress: string | undefined
+  let resolvedDestChainConfig: BridgeChainConfig | null = destChain
   if (destChain) {
     resolvedDestChainKey = getChainKeyByConfig(destChain) ?? null
     resolvedDestBridgeAddress = destChain.bridgeAddress
@@ -307,8 +305,16 @@ function buildTransferFromLookup(
       const [destChainKey, destConfig] = entry
       resolvedDestChainKey = destChainKey
       resolvedDestBridgeAddress = destConfig.bridgeAddress
+      resolvedDestChainConfig = destConfig
     }
   }
+
+  // Compute direction AFTER resolving chains — destChain param may be null when
+  // the withdrawal hasn't been submitted yet, but the source deposit event tells
+  // us which chain the tokens are destined for.
+  const srcIsCosmos = sourceChain?.type === 'cosmos' || resolvedSourceChainKey.includes('terra')
+  const destIsCosmos = resolvedDestChainConfig?.type === 'cosmos' || (resolvedDestChainKey ?? '').includes('terra')
+  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
 
   return {
     id: hash,
@@ -622,7 +628,7 @@ export default function TransferStatusPage() {
     canAutoSubmit,
     triggerSubmit,
     resetForRetry,
-  } = useAutoWithdrawSubmit(transfer)
+  } = useAutoWithdrawSubmit(transfer, lookupLoading)
 
   // Detect: hash-submitted in localStorage but not on destination chain (tx reverted/lost).
   // Suppress when auto-submit is actively processing (submit just succeeded, polling will catch up).
@@ -1045,7 +1051,9 @@ export default function TransferStatusPage() {
               {nonceStatus !== 'failed' && (
                 <div className="mt-2 border-2 border-yellow-700 bg-[#222012] p-3 shadow-[3px_3px_0_#000]">
                   <p className="text-yellow-300 text-xs font-semibold uppercase tracking-wide">
-                    {nonceStatus === 'resolving'
+                    {autoBlockReason === 'syncing'
+                      ? 'Verifying On-Chain Status...'
+                      : nonceStatus === 'resolving'
                       ? 'Resolving Deposit Nonce...'
                       : autoPhase === 'switching-chain'
                       ? 'Switching Chain...'
@@ -1058,7 +1066,9 @@ export default function TransferStatusPage() {
                       : 'Waiting for Hash Submission'}
                   </p>
                   <p className="text-yellow-400/70 text-xs mt-1">
-                    {nonceStatus === 'resolving'
+                    {autoBlockReason === 'syncing'
+                      ? 'Checking destination chain for existing submissions before proceeding...'
+                      : nonceStatus === 'resolving'
                       ? 'Querying the Terra LCD for deposit nonce and amount. This may take a few seconds...'
                       : autoPhase === 'switching-chain'
                       ? 'Please approve the chain switch in your wallet.'

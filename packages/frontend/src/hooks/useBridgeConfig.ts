@@ -149,6 +149,7 @@ export interface BridgeTokenSummary {
   symbol: string
   localAddress: string
   isEvm: boolean
+  decimals: number
 }
 
 export interface BridgeTokenDest {
@@ -450,15 +451,17 @@ export function useChainTokens(
           const batch = await Promise.all(
             res.tokens.map(async (t) => {
               let symbol = getTokenDisplaySymbol(t.token)
+              let decimals = 6 // default for native Cosmos tokens
               if (t.token.startsWith('terra1')) {
                 try {
-                  const info = await queryContract<{ symbol?: string }>(
+                  const info = await queryContract<{ symbol?: string; decimals?: number }>(
                     lcdUrls,
                     t.token,
                     { token_info: {} },
                     8000
                   )
                   if (info?.symbol?.trim()) symbol = info.symbol.trim()
+                  if (info?.decimals != null) decimals = info.decimals
                 } catch {
                   /* fallback to getTokenDisplaySymbol */
                 }
@@ -468,6 +471,7 @@ export function useChainTokens(
                 symbol,
                 localAddress: t.token,
                 isEvm: false,
+                decimals,
               }
             })
           )
@@ -487,19 +491,29 @@ export function useChainTokens(
       }) as `0x${string}`[]
       const results = await Promise.all(
         tokenAddrs.map(async (addr) => {
-          const info = await client.readContract({
-            address: addr,
-            abi: [
-              { name: 'symbol', type: 'function', inputs: [], outputs: [{ type: 'string' }], stateMutability: 'view' },
-            ],
-            functionName: 'symbol',
-          }).catch(() => null) as string | null
-          const symbol = info ?? addr.slice(0, 10) + '...'
+          const [symbolResult, decimalsResult] = await Promise.all([
+            client.readContract({
+              address: addr,
+              abi: [
+                { name: 'symbol', type: 'function', inputs: [], outputs: [{ type: 'string' }], stateMutability: 'view' },
+              ],
+              functionName: 'symbol',
+            }).catch(() => null) as Promise<string | null>,
+            client.readContract({
+              address: addr,
+              abi: [
+                { name: 'decimals', type: 'function', inputs: [], outputs: [{ type: 'uint8' }], stateMutability: 'view' },
+              ],
+              functionName: 'decimals',
+            }).catch(() => null) as Promise<number | null>,
+          ])
+          const symbol = symbolResult ?? addr.slice(0, 10) + '...'
           return {
             id: addr,
             symbol,
             localAddress: addr,
             isEvm: true,
+            decimals: decimalsResult ?? 18,
           }
         })
       )

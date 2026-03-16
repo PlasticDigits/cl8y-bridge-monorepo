@@ -207,13 +207,15 @@ The hash is computed identically in Solidity (`HashLib.computeTransferHash`), Ru
 | Token Type | Encoding | Example |
 |-----------|----------|---------|
 | ERC20 address | Left-padded to 32 bytes: `bytes32(uint256(uint160(addr)))` | `0x0000...aabb` |
-| CW20 address | Bech32-decode → 20 bytes → left-padded to 32 | `terra1abc...` → `0x0000...` |
+| CW20 contract address | Bech32-decode → 32 bytes (used directly, no padding needed) | `terra1xyz...` → `0xabcd...` |
+| Cosmos SDK account | Bech32-decode → 20 bytes → left-padded to 32 | `terra1abc...` → `0x0000...` |
 | Native denom | `keccak256(denom_bytes)` | `keccak256("uluna")` |
 
 **Critical rules:**
 - The `token` field is **always the destination token**, not the source token
 - The `amount` is **always net (post-fee)**, not the gross deposit amount
-- Addresses are **always left-padded** (20-byte address in positions 12..31)
+- ERC20 and Cosmos SDK account addresses (20 bytes) are **left-padded** (positions 12..31)
+- CosmWasm contract addresses are already 32 bytes (SHA-256 derived) and need no padding
 - Chain IDs are **4-byte big-endian, left-aligned** in 32 bytes
 
 ### Parity Test Coverage

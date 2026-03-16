@@ -318,7 +318,7 @@ function TokenRow({
   detailsError: Error | null
 }) {
   const logoSymbol = token.symbol || getTokenDisplaySymbol(token.id)
-  const decimals = chain.type === 'cosmos' ? DECIMALS.LUNC : 18
+  const decimals = token.decimals ?? (chain.type === 'cosmos' ? DECIMALS.LUNC : 18)
   return (
     <li className="rounded border border-white/10 bg-black/20 p-2">
       <div className="flex items-center justify-between gap-2">

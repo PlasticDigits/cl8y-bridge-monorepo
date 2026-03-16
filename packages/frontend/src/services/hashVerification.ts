@@ -274,7 +274,8 @@ function bech32Encode(hrp: string, data5bit: number[]): string {
 
 /**
  * Convert bytes32 hex back to a Terra bech32 address.
- * Reverses terraAddressToBytes32: extracts the last 20 bytes, bech32-encodes with "terra" HRP.
+ * Handles both 20-byte standard addresses (left-padded with 12 zero bytes)
+ * and 32-byte CosmWasm contract addresses (all bytes significant).
  */
 export function bytes32ToTerraAddress(bytes32Hex: string): string {
   const clean = bytes32Hex.startsWith('0x') ? bytes32Hex.slice(2) : bytes32Hex
@@ -282,22 +283,38 @@ export function bytes32ToTerraAddress(bytes32Hex: string): string {
     throw new Error(`Expected 64-char hex (bytes32), got ${clean.length}`)
   }
 
-  // Extract last 20 bytes (40 hex chars) — the canonical address
-  const addrHex = clean.slice(-40)
-  const padding = clean.slice(0, clean.length - 40)
-  if (padding && !/^0+$/.test(padding)) {
-    throw new Error('Invalid bytes32 for Terra address: non-zero padding in first 12 bytes')
-  }
+  const padding = clean.slice(0, 24) // first 12 bytes
+  const is20Byte = /^0+$/.test(padding)
 
-  // Convert hex to bytes
+  const hexSlice = is20Byte ? clean.slice(24) : clean
   const rawBytes: number[] = []
-  for (let i = 0; i < 40; i += 2) {
-    rawBytes.push(parseInt(addrHex.slice(i, i + 2), 16))
+  for (let i = 0; i < hexSlice.length; i += 2) {
+    rawBytes.push(parseInt(hexSlice.slice(i, i + 2), 16))
   }
 
-  // Convert 8-bit bytes to 5-bit groups
   const data5bit = convertBits(rawBytes, 8, 5, true)
-
-  // Bech32-encode with "terra" HRP
   return bech32Encode('terra', data5bit)
+}
+
+/**
+ * Resolve a token bytes32 to the local Terra token identifier.
+ * Checks native denoms from the tokenlist (keccak256(denom) → denom string),
+ * then falls back to bech32-encoding as a CW20 contract address.
+ */
+export function resolveTokenFromBytes32(
+  tokenBytes32: string,
+  tokenlist?: { tokens: Array<{ type?: string; denom?: string }> } | null,
+): string {
+  const clean = (tokenBytes32.startsWith('0x') ? tokenBytes32.slice(2) : tokenBytes32).toLowerCase()
+
+  if (tokenlist?.tokens) {
+    for (const t of tokenlist.tokens) {
+      if (t.type === 'native' && t.denom) {
+        const denomHash = keccak256(toBytes(t.denom)).slice(2)
+        if (denomHash === clean) return t.denom
+      }
+    }
+  }
+
+  return bytes32ToTerraAddress(tokenBytes32)
 }

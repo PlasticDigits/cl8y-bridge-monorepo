@@ -32,7 +32,8 @@ import {
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
 import { isTerraContractError, TERRA_TX_ERROR } from '../services/terra/transaction'
-import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
+import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
+import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
 import { getEvmClient } from '../services/evmClient'
@@ -55,14 +56,16 @@ export type AutoSubmitBlockReason =
   | 'missing-nonce'
   | 'wallet-disconnected'
   | 'wrong-lifecycle'
+  | 'syncing'
   | null
 
-export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
+export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoading?: boolean) {
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { connected: isTerraConnected, luncBalance } = useWallet()
   const { switchChainAsync } = useSwitchChain()
   const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
+  const { data: tokenlist } = useTokenList()
 
   const [phase, setPhase] = useState<AutoSubmitPhase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -77,19 +80,26 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
     }
   }, [])
 
-  // Derive blockReason from transfer + wallet state (no side effects)
+  // Derive blockReason from transfer + wallet state (no side effects).
+  // Uses destChainConfig.type as the primary signal (resilient to stale direction),
+  // with transfer.direction as fallback.
   const blockReason = useMemo((): AutoSubmitBlockReason => {
     if (!transfer) return null
     if (transfer.lifecycle !== 'deposited') return 'wrong-lifecycle'
+    if (lookupLoading) return 'syncing'
     if (!transfer.depositNonce && transfer.depositNonce !== 0) return 'missing-nonce'
-    if (transfer.direction === 'terra-to-evm' || transfer.direction === 'evm-to-evm') {
+    const destConfig = (() => {
+      const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
+      return BRIDGE_CHAINS[tier][transfer.destChain] ?? null
+    })()
+    const destIsCosmos = destConfig?.type === 'cosmos' || transfer.direction === 'evm-to-terra'
+    if (destIsCosmos) {
+      if (!isTerraConnected) return 'wallet-disconnected'
+    } else {
       if (!evmAddress) return 'wallet-disconnected'
     }
-    if (transfer.direction === 'evm-to-terra') {
-      if (!isTerraConnected) return 'wallet-disconnected'
-    }
     return null
-  }, [transfer, evmAddress, isTerraConnected])
+  }, [transfer, evmAddress, isTerraConnected, lookupLoading])
 
   // Determine if auto-submit is possible (pure function, no state updates)
   const canAutoSubmit = useCallback((): boolean => {
@@ -215,7 +225,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
         return
       }
 
-      if (transfer.direction === 'terra-to-evm' || transfer.direction === 'evm-to-evm') {
+      // Branch on the actual destination chain config type rather than
+      // transfer.direction, which can be stale/incorrect in synthetic records.
+      const destIsEvm = destChainConfig.type === 'evm'
+      const destIsCosmos = destChainConfig.type === 'cosmos'
+
+      if (destIsEvm) {
         // Destination is EVM — require a numeric chain ID
         if (typeof destChainConfig.chainId !== 'number') {
           const msg = `Destination chain "${transfer.destChain}" has no numeric chainId`
@@ -305,7 +320,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
           setError('WithdrawSubmit transaction failed')
           submittedRef.current = false
         }
-      } else if (transfer.direction === 'evm-to-terra') {
+      } else if (destIsCosmos) {
         // Destination is Terra
         setPhase('submitting-hash')
 
@@ -348,8 +363,20 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null) {
 
         // Resolve the Terra denom for the token parameter.
         // The Terra contract expects a native denom (e.g. "uluna") or CW20 address (terra1...),
-        // NOT the EVM source token address. Use destTokenId if stored, otherwise fallback.
-        const terraToken = transfer.destTokenId || 'uluna'
+        // NOT the EVM source token address. Use destTokenId if stored, otherwise resolve
+        // from the deposit's dest token bytes32 via tokenlist native denom hashes.
+        let terraToken = transfer.destTokenId || ''
+        if (!terraToken && transfer.destToken) {
+          try {
+            terraToken = resolveTokenFromBytes32(transfer.destToken, tokenlist)
+          } catch {
+            console.warn(`${LOG} Could not resolve Terra token from destToken bytes32`)
+          }
+        }
+        if (!terraToken) {
+          terraToken = 'uluna'
+          console.warn(`${LOG} No destTokenId or destToken — falling back to uluna`)
+        }
 
         // Resolve the recipient as a terra1... bech32 address.
         // transfer.destAccount may be bytes32 hex from the EVM deposit event.
