@@ -381,6 +381,32 @@ At the end of each section, record totals. At the end of the report, record gran
 
 **Section totals:** __ PASS / __ FAIL / __ SKIP
 
+
+---
+
+## 19. Multi-Browser & Multi-Device
+
+> Tests for split-wallet scenarios where the user has BSC wallet on one browser/device and Terra wallet on another.
+
+| # | Test Case | Result | Notes |
+|---|-----------|--------|-------|
+| 19.1 | Desktop A (BSC) + Desktop B (Terra): complete BSC→Terra transfer | | |
+| 19.2 | Desktop A (BSC) + Desktop B (Terra): hash auto-submit fires on browser B | | |
+| 19.3 | Desktop A (Terra) + Desktop B (BSC): complete Terra→BSC transfer | | |
+| 19.4 | Desktop A (Terra) + Desktop B (BSC): hash auto-submit fires on browser B | | |
+| 19.5 | Desktop + Mobile: BSC on desktop, Terra on mobile Keplr browser | | |
+| 19.6 | Desktop + Mobile: hash submission from mobile after desktop deposit | | |
+| 19.7 | Mobile + Mobile: BSC on MetaMask browser, Terra on Keplr browser | | |
+| 19.8 | Refresh browser B mid-transfer: shows "Verifying On-Chain Status..." then correct step | | |
+| 19.9 | Navigate directly to /transfer/<hash> in browser B: correct direction shown | | |
+| 19.10 | Browser B has no localStorage entry for transfer: manual hash submission via /verify works | | |
+| 19.11 | Retry hash submission in browser B after initial failure | | |
+| 19.12 | Both browsers connected to same wallet: no duplicate submissions | | |
+| 19.13 | Browser A disconnects after deposit: browser B can still submit hash | | |
+| 19.14 | Transfer status page polls correctly in browser B without original deposit context | | |
+
+**Section totals:** __ PASS / __ FAIL / __ SKIP
+
 ---
 
 ## Devices Tested
