@@ -36,14 +36,15 @@ This plan covers adding Solana as a third chain type to CL8Y Bridge, enabling tr
 - `CHAIN_TYPE_SOLANA = 3` is already reserved in `AddressCodecLib.sol`, `address_codec.rs`, and `multichain-rs`
 - `@solana/kit` v5.5, `@solana-program/token`, and `@solana-program/system` are already installed in the frontend
 - The operator/canceler follow a clean EVM/Terra split pattern that extends naturally to a third chain type
-- The `UniversalAddress` format uses 20-byte raw addresses — Solana's 32-byte pubkeys require adaptation
+- The `UniversalAddress` format uses 20-byte raw addresses — Solana's 32-byte pubkeys require a refactor to variable-length (Option B), gated by regression tests written first
 
 **Scope of work:**
 
 | Area | Effort | New Code |
 |------|--------|----------|
 | Solana programs + tests | Large | `packages/contracts-solana/` |
-| Address codec (all codebases) | Medium | Modify `multichain-rs`, `AddressCodecLib.sol`, Terra `address_codec.rs` |
+| Address codec regression tests | Small | Regression tests in all three codebases (write FIRST) |
+| Address codec refactor (Option B) | Medium | Modify `multichain-rs`, `AddressCodecLib.sol`, Terra `address_codec.rs` |
 | Operator watcher + writer | Medium | `watchers/solana.rs`, `writers/solana.rs` |
 | Canceler | Medium | `watcher.rs` Solana arm |
 | Frontend wallets + UI | Medium | Solana wallet modal, chain config, hooks |
@@ -85,7 +86,7 @@ The current `UniversalAddress` format allocates 20 bytes for the raw address:
 | Chain Type (4 bytes) | Raw Address (20 bytes) | Reserved (8 bytes) |
 ```
 
-Solana public keys are 32 bytes (Ed25519). This is the most significant cross-cutting change required — see [Phase 2](#5-address-codec-adaptation-phase-2).
+Solana public keys are 32 bytes (Ed25519). This requires refactoring `UniversalAddress` to support variable-length raw addresses (Option B). Critically, `AddressCodecLib.sol` is **not imported** by any bridge contract and `UniversalAddress` is **not used** in any Terra execute handler, so the blast radius is limited to the codec modules, their tests, and the shared library. The refactor is gated by writing regression tests first — see [Phase 2](#5-address-codec-adaptation-phase-2).
 
 ---
 
@@ -312,35 +313,184 @@ This works for EVM (20-byte addresses) and Cosmos (20-byte canonical addresses f
 | Option | Description | Impact |
 |--------|-------------|--------|
 | **A: Extend into reserved** | Use reserved 8 bytes for Solana, giving 28 bytes — still not enough | Insufficient |
-| **B: Variable-length raw address** | Chain type determines whether raw is 20 or 32 bytes, pack 32-byte into address+reserved | Breaking change to all codebases |
-| **C: Separate encoding path** | For the `bytes32` hash fields (srcAccount, destAccount, token), Solana uses full 32-byte pubkey directly; `UniversalAddress` remains 20-byte for EVM/Cosmos display/routing | Least disruptive |
+| **B: Variable-length raw address** | `UniversalAddress` supports 20 or 32-byte raw addresses based on chain type | Cross-cutting change, but manageable with regression tests first |
+| **C: Separate encoding path** | Solana uses full 32-byte pubkey in hash fields; `UniversalAddress` stays 20-byte for EVM/Cosmos only | Avoids modifying existing code but creates a dual-path design that diverges over time |
 
-**Recommended: Option C** — separate the hash encoding (which already uses `bytes32` slots) from the `UniversalAddress` struct used for display/routing.
+**Chosen: Option B** — make `UniversalAddress` natively support variable-length raw addresses. This avoids a permanent architectural split where Solana addresses live outside the universal type system.
 
-### 5c. Design: Option C in Detail
+### 5c. Risk Assessment for Option B
 
-The 7-field transfer hash already uses `bytes32` for all address fields. For Solana:
+Although Option B touches all four codebases, the actual blast radius is smaller than it appears:
 
-- **Hash computation**: `srcAccount` / `destAccount` / `token` are the raw 32-byte Solana pubkey, occupying the full `bytes32` slot
-- **UniversalAddress (display/routing)**: Either expand the struct or use a `SolanaAddress` newtype that wraps `[u8; 32]` directly
+| Codebase | `UniversalAddress` / `AddressCodecLib` usage in core logic | Risk |
+|----------|----------------------------------------------------------|------|
+| **EVM contracts** | `AddressCodecLib.sol` is **not imported** by any bridge contract (`Bridge.sol`, `TokenRegistry.sol`, etc.) — only by its own test file `AddressCodecLib.t.sol` | **Low** — bridge logic is unaffected |
+| **Terra contracts** | `UniversalAddress` is re-exported from `lib.rs` but **not used** in any execute handler (`execute/*.rs`) | **Low** — bridge logic is unaffected |
+| **multichain-rs** | Used in `address_codec.rs` definition, re-exported from `lib.rs`; referenced in operator EVM watcher comment | **Medium** — shared library, but operator/canceler use raw `[u8; 32]` for hash computation, not `UniversalAddress` |
+| **E2E tests** | `e2e/src/tests/address_codec.rs` — extensive usage | **Medium** — tests will break and need updating |
 
-This means the hash computation path doesn't need `UniversalAddress` at all — it works with raw `[u8; 32]` slices, which is already the case.
+The hash computation path (`hash.rs`, `HashLib.sol`) already operates on raw `[u8; 32]` / `bytes32` values and does **not** go through `UniversalAddress`. This means the most critical bridge functionality is unaffected by Option B changes.
 
-The routing/display path needs:
-- EVM `ChainRegistry.sol` and Terra bridge must accept 32-byte Solana addresses in `destAccount` without left-pad truncation
-- Frontend must display base58-encoded 32-byte addresses for Solana
+### 5d. Regression Test Plan — MUST Complete Before Any Modifications
 
-### 5d. Changes Per Codebase
+**Write and verify regression tests FIRST, before touching any `UniversalAddress` or `AddressCodecLib` code.** These tests lock in the current behavior so any Option B refactor that breaks EVM/Cosmos roundtrips is caught immediately.
 
-| Codebase | File | Change |
-|----------|------|--------|
-| `multichain-rs` | `address_codec.rs` | Add `SolanaAddress` newtype wrapping `[u8; 32]`; add `parse_solana_address(base58) -> [u8; 32]` and `encode_solana_address([u8; 32]) -> String`; add `fn to_hash_bytes(&self) -> [u8; 32]` for Solana that returns the full pubkey |
-| `contracts-evm` | `AddressCodecLib.sol` | Add `encodeSolana(bytes32 pubkey) -> bytes32` that stores the full 32-byte key; update `isValidChainType` |
-| `contracts-terraclassic` | `address_codec.rs` | Add `encode_solana` / `decode_solana` functions; ensure deposit/withdraw handlers accept 32-byte dest accounts for Solana chain type |
-| `contracts-solana` | `address_codec.rs` | Native — pubkeys are already 32 bytes; encode EVM/Cosmos addresses as left-padded 32-byte for hashing |
-| Frontend | New service | `services/solana/address.ts` — base58 ↔ bytes32 conversion |
+#### 5d-i. Regression Tests for `multichain-rs` (`packages/multichain-rs/src/address_codec.rs`)
 
-### 5e. Hash Encoding Rules (Updated for Solana)
+Add a new test module `regression_tests` (or extend existing tests) that captures exact byte-level output for known inputs. These must all pass before AND after the refactor.
+
+| Test | Input | Asserts |
+|------|-------|---------|
+| `regression_evm_to_bytes32` | `from_evm("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")` | `to_bytes32()` produces exact known `[u8; 32]` (hardcoded) |
+| `regression_evm_roundtrip` | `from_evm(addr) → to_bytes32() → from_bytes32() → to_evm_string()` | Recovers original address |
+| `regression_cosmos_to_bytes32` | `from_cosmos("terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v")` | `to_bytes32()` produces exact known `[u8; 32]` (hardcoded) |
+| `regression_cosmos_roundtrip` | `from_cosmos(addr) → to_bytes32() → from_bytes32() → to_terra_string()` | Recovers original address |
+| `regression_bytes32_layout_evm` | `from_evm(addr).to_bytes32()` | Bytes 0..4 == `[0,0,0,1]`, bytes 4..24 == raw address, bytes 24..32 == `[0;8]` |
+| `regression_bytes32_layout_cosmos` | `from_cosmos(addr).to_bytes32()` | Bytes 0..4 == `[0,0,0,2]`, bytes 4..24 == raw address, bytes 24..32 == `[0;8]` |
+| `regression_strict_validation` | `from_bytes32_strict` with non-zero reserved | Returns error |
+| `regression_chain_type_checks` | `is_evm()`, `is_cosmos()`, `is_valid_chain_type()` | Correct for EVM, Cosmos, unknown |
+| `regression_new_with_reserved` | `new_with_reserved(EVM, addr, reserved)` | Reserved bytes preserved in `to_bytes32()` output |
+| `regression_display_format` | `format!("{}", evm_addr)`, `format!("{}", cosmos_addr)` | Matches current `"EVM:..."` / `"COSMOS:..."` format |
+
+#### 5d-ii. Regression Tests for Terra Contract (`packages/contracts-terraclassic/bridge/src/address_codec.rs`)
+
+Same test matrix as multichain-rs (the Terra contract has its own copy of the struct). Key additions:
+
+| Test | Input | Asserts |
+|------|-------|---------|
+| `regression_from_addr` | `from_addr(&Addr::unchecked("terra1..."))` | Matches `from_cosmos` output |
+| `regression_cosmwasm_serde` | Serialize/deserialize through CosmWasm `StdResult` | No data loss |
+
+#### 5d-iii. Regression Tests for EVM (`packages/contracts-evm/test/AddressCodecLib.t.sol`)
+
+Add Foundry tests that hardcode expected encoded `bytes32` values:
+
+| Test | Input | Asserts |
+|------|-------|---------|
+| `test_Regression_EncodeEvm_ExactBytes` | `encodeEvm(0xf39F...2266)` | Returns exact known `bytes32` (hardcoded literal) |
+| `test_Regression_EncodeCosmos_ExactBytes` | `encodeCosmos(known_raw)` | Returns exact known `bytes32` (hardcoded literal) |
+| `test_Regression_Decode_Layout` | `decode(known_encoded)` | `chainType`, `rawAddr`, `reserved` match expected |
+| `test_Regression_RoundtripFuzz_Evm` | Fuzz `encodeEvm → decodeAsEvm` | Always recovers input (already exists, keep passing) |
+| `test_Regression_RoundtripFuzz_Cosmos` | Fuzz `encodeCosmos → decodeAsCosmos` | Always recovers input (already exists, keep passing) |
+
+#### 5d-iv. Cross-Codebase Parity Regression
+
+Add tests that verify the **same input produces the same bytes32 across all three codebases** (Solidity, multichain-rs, Terra CosmWasm). Use hardcoded reference values:
+
+```
+EVM address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Expected bytes32: 0x00000001f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000
+
+Cosmos raw: (bech32 decode of terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v)
+Expected bytes32: 0x00000002<20-byte-canonical>0000000000000000
+```
+
+All three codebases must produce identical output for these inputs, both before and after the refactor.
+
+### 5e. Design: Option B in Detail
+
+#### Struct Changes
+
+The `UniversalAddress` struct changes to support variable-length raw addresses while maintaining backward compatibility for EVM and Cosmos:
+
+**multichain-rs** (`packages/multichain-rs/src/address_codec.rs`):
+
+```rust
+pub struct UniversalAddress {
+    pub chain_type: u32,
+    raw: RawAddress,  // internal enum, access via methods
+}
+
+enum RawAddress {
+    Short([u8; 20]),  // EVM, Cosmos — 20-byte addresses
+    Full([u8; 32]),   // Solana — 32-byte pubkeys
+}
+
+impl UniversalAddress {
+    // Existing constructors — unchanged signatures, unchanged output
+    pub fn new(chain_type: u32, raw_address: [u8; 20]) -> Result<Self>;
+    pub fn from_evm(addr: &str) -> Result<Self>;
+    pub fn from_cosmos(addr: &str) -> Result<Self>;
+
+    // New Solana constructor
+    pub fn from_solana(pubkey: &[u8; 32]) -> Result<Self>;
+    pub fn from_solana_base58(addr: &str) -> Result<Self>;
+
+    // Existing accessors — still work for EVM/Cosmos, error for Solana
+    pub fn raw_address_20(&self) -> Result<&[u8; 20]>;
+
+    // New generic accessor
+    pub fn raw_address_bytes(&self) -> &[u8];  // returns 20 or 32 bytes
+
+    // Existing serialization — unchanged for EVM/Cosmos
+    pub fn to_bytes32(&self) -> [u8; 32];
+    // For EVM/Cosmos: | chain_type (4) | address (20) | reserved (8) |
+    // For Solana:     | chain_type (4) | pubkey (28) |  ← first 28 bytes of pubkey
+    //                 (NOT suitable for lossless roundtrip — use to_bytes for that)
+
+    // New: variable-length serialization (lossless for all chain types)
+    pub fn to_bytes(&self) -> Vec<u8>;
+    // EVM/Cosmos: 32 bytes (same as to_bytes32)
+    // Solana:     36 bytes — | chain_type (4) | pubkey (32) |
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self>;
+
+    // For hash computation — always 32 bytes, NO chain type prefix
+    // EVM/Cosmos: | 0x00 (12) | address (20) |
+    // Solana:     | pubkey (32) |
+    pub fn to_hash_bytes(&self) -> [u8; 32];
+
+    // Existing formatters — unchanged
+    pub fn to_evm_string(&self) -> Result<String>;
+    pub fn to_cosmos_string(&self, hrp: &str) -> Result<String>;
+
+    // New Solana formatter
+    pub fn to_solana_string(&self) -> Result<String>;  // base58 encoded
+}
+```
+
+**Key backward-compatibility guarantees:**
+
+1. `from_evm().to_bytes32()` produces **identical bytes** to current implementation
+2. `from_cosmos().to_bytes32()` produces **identical bytes** to current implementation
+3. `from_bytes32()` correctly decodes existing EVM/Cosmos encoded addresses
+4. `to_evm_string()`, `to_cosmos_string()`, `to_terra_string()` — unchanged
+5. All existing tests pass without modification
+
+#### Solidity Changes (`AddressCodecLib.sol`)
+
+```solidity
+// New: encode a Solana pubkey — uses the full bytes32 for the address
+// Chain type is NOT embedded (no room in 32 bytes for 4-byte prefix + 32-byte pubkey)
+// Callers must track the chain type externally when using Solana addresses
+function encodeSolana(bytes32 pubkey) internal pure returns (bytes32 encoded) {
+    return pubkey;
+}
+
+// New: overload encode for 32-byte raw addresses (Solana)
+function encode32(uint32 chainType, bytes32 rawAddr) internal pure returns (bytes32 encoded) {
+    // For 32-byte addresses, the full bytes32 IS the address
+    // Chain type is tracked externally (e.g., via ChainRegistry)
+    if (chainType == 0) revert InvalidChainType(chainType);
+    return rawAddr;
+}
+
+// Updated validation
+function isSolana(bytes32 encoded) internal pure returns (bool);
+
+// Updated: decode is chain-type-aware
+// Caller must know whether this is a 20-byte or 32-byte address
+function getChainType(bytes32 encoded) internal pure returns (uint32 chainType);
+```
+
+**Note on EVM Solidity constraints:** Since Solana pubkeys are 32 bytes, they occupy the entire `bytes32` slot with no room for a chain type prefix. The EVM contracts handle this by:
+- Using `ChainRegistry` to know which chain ID maps to which chain type
+- The `destAccount` field in deposit/withdraw already stores raw `bytes32` — for Solana this is the full pubkey
+
+#### Terra CosmWasm Changes
+
+Mirror the multichain-rs struct changes. The Terra contract's copy in `bridge/src/address_codec.rs` gets the same `RawAddress` enum and new Solana methods.
+
+### 5f. Hash Encoding Rules (Updated for Solana)
 
 | Address Type | In Hash `bytes32` | Encoding |
 |-------------|-------------------|----------|
@@ -349,6 +499,8 @@ The routing/display path needs:
 | Solana (32-byte pubkey) | `{32 bytes}` | Full pubkey, no padding |
 | Native denom (Terra) | `keccak256(denom)` | Full 32-byte hash |
 | SPL Mint (Solana) | `{32 bytes}` | Full mint pubkey |
+
+These hash encoding rules are **unchanged from Option C** — the hash path already works with raw `[u8; 32]` and does not embed chain type prefixes. The difference with Option B is that the `UniversalAddress` type itself natively supports Solana, so there is no need for a separate `SolanaAddress` type or dual code paths at the application layer.
 
 ---
 
@@ -390,18 +542,31 @@ pub struct SolanaWatcher {
     db: PgPool,
     last_signature: Option<Signature>,
     poll_interval: Duration,
+    commitment: CommitmentConfig, // finalized recommended
 }
 
 impl SolanaWatcher {
     pub async fn run(mut self) -> Result<()> {
         loop {
-            // 1. getSignaturesForAddress(program_id, { until: last_signature })
-            // 2. For each signature, getTransaction to parse instruction data
-            // 3. Filter for deposit_native / deposit_spl instructions
+            // 1. getSignaturesForAddress(program_id, { until: last_signature, limit: 1000 })
+            //    - "until" excludes the named signature and returns newer ones
+            //    - Max limit is 1000 per call; paginate with "before" if needed
+            //    - Results come newest-first; reverse for chronological processing
+            // 2. For each signature, getTransaction with:
+            //    - encoding: "jsonParsed" (parses known programs like SPL Token)
+            //    - maxSupportedTransactionVersion: 0 (REQUIRED — without this,
+            //      versioned transactions return an error)
+            //    - commitment: "finalized"
+            // 3. Parse instruction data:
+            //    - Our bridge program instructions are NOT auto-parsed by jsonParsed
+            //      (only known programs like SPL Token are parsed)
+            //    - Decode instruction data manually from base64/base58
+            //    - Filter for deposit_native / deposit_spl discriminators
+            //    - Anchor events are emitted as base64 in logMessages ("Program data: ...")
             // 4. Extract: nonce, sender, dest_chain, dest_account, token, amount, fee
             // 5. Compute transfer_hash
             // 6. INSERT INTO solana_deposits (idempotent on nonce)
-            // 7. Update last_signature
+            // 7. Update last_signature to the newest processed signature
             tokio::time::sleep(self.poll_interval).await;
         }
     }
@@ -410,12 +575,55 @@ impl SolanaWatcher {
 
 **RPC methods used:**
 
-| Method | Purpose |
-|--------|---------|
-| `getSignaturesForAddress` | Find transactions involving the bridge program |
-| `getTransaction` | Get full transaction data with parsed instructions |
-| `getSlot` | Current slot height (for block tracking) |
-| `getAccountInfo` | Read PDA state (deposit records, pending withdrawals) |
+| Method | Purpose | Key Constraints |
+|--------|---------|-----------------|
+| `getSignaturesForAddress` | Find transactions involving the bridge program | Max 1000 per call; paginate with `before` param; `until` for cursor-based polling |
+| `getTransaction` | Get full transaction data with parsed instructions | **Must** pass `maxSupportedTransactionVersion: 0` or versioned txs return an error; use `jsonParsed` encoding for auto-parsed SPL Token inner instructions |
+| `getSlot` | Current slot height (for block tracking) | Returns different values per commitment level |
+| `getAccountInfo` | Read a single PDA (deposit record, pending withdrawal) | Use `base64` encoding; returns `null` value if account doesn't exist |
+| `getMultipleAccounts` | Batch-read multiple PDAs in one call | More efficient than individual `getAccountInfo` for verifying multiple deposits |
+
+**Methods NOT available on public RPC:**
+
+| Method | Why Not | Workaround |
+|--------|---------|------------|
+| `getProgramAccounts` | **Blocked on public RPCs** for most programs ("excluded from account secondary indexes") | Use dedicated RPC provider (Helius, Triton, QuickNode) which enable this; or derive PDA addresses from known nonces and use `getMultipleAccounts` |
+
+### 6c-i. Solana Finality & Commitment Levels
+
+Verified empirically against mainnet RPC:
+
+| Commitment | Lag vs Processed | Wall-clock Lag | Use For |
+|------------|-----------------|----------------|---------|
+| `processed` | 0 slots | ~0s | Not recommended — can be rolled back |
+| `confirmed` | 0-2 slots | ~0-1s | Operator approval submission (fast, supermajority voted) |
+| `finalized` | ~32 slots | **~13s** | **Recommended for deposit detection** — fully finalized, cannot be rolled back |
+
+The ~13-second finality lag means the watcher will detect deposits ~13s after they're included in a block. This is acceptable given the 5-minute withdrawal delay window.
+
+### 6c-ii. Anchor Event Parsing
+
+Anchor programs emit events as base64-encoded data in transaction log messages with the prefix `"Program data: "`. The watcher must:
+
+1. Scan `meta.logMessages` for lines matching `"Program data: <base64>"`
+2. Base64-decode the data
+3. Match the first 8 bytes against the Anchor event discriminator (`sha256("event:DepositEvent")[..8]`)
+4. Deserialize the remaining bytes using Borsh (Anchor's default serialization)
+
+This is preferable to parsing raw instruction data, because events can include computed values (like `transfer_hash`) that aren't in the instruction input.
+
+### 6c-iii. Batch RPC Support
+
+The Solana JSON-RPC supports **batch requests** (multiple JSON-RPC calls in a single HTTP POST). The watcher should batch `getTransaction` calls when processing multiple signatures from `getSignaturesForAddress`:
+
+```json
+[
+  {"jsonrpc":"2.0","id":1,"method":"getTransaction","params":["sig1",{"encoding":"jsonParsed","maxSupportedTransactionVersion":0,"commitment":"finalized"}]},
+  {"jsonrpc":"2.0","id":2,"method":"getTransaction","params":["sig2",{"encoding":"jsonParsed","maxSupportedTransactionVersion":0,"commitment":"finalized"}]}
+]
+```
+
+This avoids N sequential HTTP roundtrips when processing a batch of deposits.
 
 ### 6d. SolanaWriter Design
 
@@ -449,8 +657,12 @@ SOLANA_WS_URL=wss://api.mainnet-beta.solana.com
 SOLANA_PROGRAM_ID=<bridge program pubkey>
 SOLANA_KEYPAIR_PATH=/path/to/operator-keypair.json
 SOLANA_POLL_INTERVAL_MS=2000
-SOLANA_BYTES4_CHAIN_ID=0x00000005  # or whatever ID is chosen
+SOLANA_COMMITMENT=finalized             # finalized recommended (see 6c-i)
+SOLANA_BYTES4_CHAIN_ID=0x00000005       # or whatever ID is chosen
+SOLANA_MAX_SIGNATURES_PER_POLL=1000     # max is 1000 (enforced by RPC)
 ```
+
+**RPC provider note:** The public `api.mainnet-beta.solana.com` endpoint blocks `getProgramAccounts` for most programs and has aggressive rate limits. For production, use a dedicated provider (Helius, Triton, QuickNode) configured via `SOLANA_RPC_URL`. Support comma-separated fallback URLs matching the existing EVM pattern (`rpc_fallback.rs`).
 
 ### 6f. Database Migration
 
@@ -855,25 +1067,33 @@ sequenceDiagram
 ## 12. Dependency Order
 
 ```
-Phase 1: Solana Programs
+Phase 2a: Address Codec Regression Tests (FIRST — before any refactoring)
+  ├── multichain-rs: hardcoded byte-level regression tests
+  ├── Terra CosmWasm: hardcoded byte-level regression tests
+  ├── EVM Foundry: hardcoded byte-level regression tests
+  ├── Cross-codebase parity: same inputs → same bytes32 across all three
+  └── Verify all pass on current code (baseline)
+
+Phase 1: Solana Programs (can start parallel to Phase 2a)
   ├── Bridge program (state, instructions, hash)
   ├── Unit tests (hash parity, instruction logic)
   └── Local deploy scripts
 
-Phase 2: Address Codec (can start parallel to Phase 1)
-  ├── multichain-rs: Solana address functions
-  ├── AddressCodecLib.sol: encodeSolana
-  ├── Terra address_codec.rs: encode_solana
-  └── Parity tests across all four codebases
+Phase 2b: Address Codec Refactor (after Phase 2a regression tests pass)
+  ├── multichain-rs: UniversalAddress → variable-length raw address
+  ├── AddressCodecLib.sol: encodeSolana, encode32
+  ├── Terra address_codec.rs: RawAddress enum, Solana methods
+  ├── Run Phase 2a regression tests — all must still pass
+  └── New Solana-specific tests (roundtrip, display, hash bytes)
 
-Phase 3: Operator (depends on Phase 1 + 2)
+Phase 3: Operator (depends on Phase 1 + 2b)
   ├── SolanaConfig
   ├── SolanaWatcher
   ├── SolanaWriter
   ├── DB migration
   └── Integration tests
 
-Phase 4: Canceler (depends on Phase 1 + 2)
+Phase 4: Canceler (depends on Phase 1 + 2b)
   ├── Solana approval monitoring
   ├── Solana deposit verification
   ├── Cancel instruction submission
@@ -897,9 +1117,9 @@ Phase 7: Deployment (depends on Phase 1-6)
   └── Mainnet deployment + registration
 ```
 
-**Critical path:** Phase 1 (programs) → Phase 3 (operator) → Phase 6 (E2E) → Phase 7 (deploy)
+**Critical path:** Phase 2a (regression tests) → Phase 2b (refactor) → Phase 3 (operator) → Phase 6 (E2E) → Phase 7 (deploy)
 
-**Parallelizable:** Phase 2 runs alongside Phase 1. Phase 5 can start once Phase 1 has a stable interface. Phases 3 and 4 can run in parallel.
+**Parallelizable:** Phase 1 (Solana programs) runs alongside Phase 2a/2b. Phase 5 can start once Phase 1 has a stable interface. Phases 3 and 4 can run in parallel.
 
 ---
 
@@ -909,12 +1129,16 @@ Phase 7: Deployment (depends on Phase 1-6)
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Solana 32-byte addresses break existing `UniversalAddress` | All codebases need updating | Option C: separate hash encoding from display; hash paths already use `[u8; 32]` |
-| Solana RPC rate limits on mainnet | Watcher misses deposits | Use dedicated RPC provider (Helius, Triton, etc.); implement fallback URLs like EVM |
-| Solana transaction size limits (1232 bytes) | Complex instructions may not fit | Split into multiple instructions if needed; use lookup tables |
+| `UniversalAddress` refactor to variable-length (Option B) breaks existing code | Regression in EVM/Cosmos address handling | Write and verify regression tests FIRST (Phase 2a) before any refactoring; all must pass after refactor |
+| Solana RPC rate limits on mainnet | Watcher misses deposits | Use dedicated RPC provider (Helius, Triton, etc.); implement fallback URLs like EVM. **Verified:** public RPC blocks `getProgramAccounts` for most programs |
+| `getProgramAccounts` unavailable on public RPCs | Canceler cannot enumerate pending withdrawals | Derive PDA addresses from known nonces + `getMultipleAccounts` batch read; or use a provider that enables `getProgramAccounts` |
+| `getTransaction` fails without `maxSupportedTransactionVersion` | Watcher silently misses versioned (v0) transactions | **Verified:** must always pass `maxSupportedTransactionVersion: 0` — without it, versioned txs return an RPC error |
+| `getSignaturesForAddress` capped at 1000 | Watcher may miss deposits during high traffic | Paginate with `before` param in a loop; track last-processed signature for cursor-based polling |
+| Solana transaction size limits (1232 bytes) | Complex instructions may not fit | Split into multiple instructions if needed; use address lookup tables |
 | Anchor vs native Solana programs | Framework choice affects maintainability | Anchor is recommended — mature, well-documented, most Solana programs use it |
 | Compute unit limits on Solana | keccak256 hash + state writes may exceed limits | Profile compute usage; request additional compute units if needed |
-| Solana finality model differs from EVM | Deposits may be dropped before finalization | Wait for `confirmed` or `finalized` commitment level before processing |
+| Solana finality lag ~13 seconds | Deposits take ~13s longer to detect vs EVM | **Verified:** finalized commitment lags ~32 slots (~13s) behind processed. Acceptable given 5-minute delay window. Use `finalized` for safety |
+| Custom program instructions not auto-parsed | `jsonParsed` encoding only parses known programs (SPL Token, System) | Parse our bridge program instructions manually from raw data; use Anchor event logs (`"Program data: ..."`) for structured event extraction |
 | SPL Token 2022 vs classic SPL Token | Some tokens use Token Extensions | Support both token programs; check mint's owning program |
 
 ### Open Questions
@@ -928,7 +1152,28 @@ Phase 7: Deployment (depends on Phase 1-6)
 | 5 | Solana wallet adapter library version? | `@solana/wallet-adapter-react` (v1) or build on `@solana/kit` (v5) | Frontend architecture |
 | 6 | WSOL handling? | Auto-wrap native SOL to WSOL, or handle SOL natively | UX complexity |
 | 7 | Multi-signature upgrade authority? | Squads multisig, single upgrade authority, immutable | Program security |
-| 8 | Which mainnet RPC provider? | Helius, Triton, QuickNode, public | Cost, reliability |
+| 8 | Which mainnet RPC provider? | Helius, Triton, QuickNode — **public RPC not viable** (blocks `getProgramAccounts`, rate-limited) | Cost, reliability, canceler functionality |
+
+### Verified RPC Assumptions
+
+The following assumptions from this plan were tested against `api.mainnet-beta.solana.com` on 2026-03-17:
+
+| Assumption | Verified? | Finding |
+|------------|-----------|---------|
+| `getSlot` returns current slot per commitment | **Yes** | All three commitment levels work (`processed`, `confirmed`, `finalized`) |
+| `getSignaturesForAddress` returns tx signatures for a program | **Yes** | Returns `signature`, `slot`, `blockTime`, `confirmationStatus`, `err`, `memo` |
+| `getSignaturesForAddress` supports `until` for cursor-based polling | **Yes** | `until` excludes the named signature, returns newer ones |
+| `getSignaturesForAddress` supports `before` for backward pagination | **Yes** | Works correctly for paginating through history |
+| `getSignaturesForAddress` max limit is 1000 | **Yes** | Requesting >1000 returns error `"Invalid limit; max 1000"` |
+| `getTransaction` returns full tx data with log messages | **Yes** | `meta.logMessages` contains program logs including `"Program data: ..."` for Anchor events |
+| `getTransaction` requires `maxSupportedTransactionVersion: 0` | **Yes** | Without it, versioned (v0) transactions fail with explicit error message |
+| `jsonParsed` encoding auto-parses SPL Token instructions | **Yes** | Inner SPL Token `transfer` instructions are parsed to `{type, info: {amount, authority, source, destination}}` |
+| Custom program instructions are NOT auto-parsed | **Yes** | Our bridge program data appears as raw base64 `data` field, not parsed |
+| `getAccountInfo` returns account data with owner/lamports | **Yes** | Returns `lamports`, `owner`, `executable`, `data` (base64 encoded) |
+| `getMultipleAccounts` supports batch PDA reads | **Yes** | Returns array of account info; `null` for non-existent accounts |
+| Batch JSON-RPC (array of requests) is supported | **Yes** | Multiple requests in one HTTP POST, each returns independently |
+| `getProgramAccounts` works on public RPC | **No** | Blocked for most programs: `"excluded from account secondary indexes"` |
+| Finalized commitment lags ~30s behind processed | **Partially** | Measured ~32 slots = **~13s** (not 30s as initially estimated); confirmed has near-zero lag |
 
 ---
 
@@ -942,7 +1187,7 @@ Phase 7: Deployment (depends on Phase 1-6)
 | **Address size** | 20 bytes | 20 bytes (bech32 canonical) | 32 bytes (Ed25519 pubkey) |
 | **Address format** | Hex (0x...) | Bech32 (terra1...) | Base58 |
 | **Block time** | ~3-12s (varies) | ~6s | ~400ms |
-| **Finality** | Chain-dependent | Instant (Tendermint) | Optimistic (~30s confirmed) |
+| **Finality** | Chain-dependent | Instant (Tendermint) | confirmed: ~0-1s, finalized: **~13s** (32 slots) |
 | **Gas model** | Gas price × gas used | Gas + stability fee | Compute units + priority fee |
 | **Event system** | Log topics + data | Tx attributes | Program logs + account changes |
 | **Indexing** | `eth_getLogs` | LCD `tx_search` | `getSignaturesForAddress` + `getTransaction` |
