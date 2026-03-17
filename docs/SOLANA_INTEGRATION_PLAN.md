@@ -178,14 +178,35 @@ packages/contracts-solana/
 
 #### State Accounts (PDAs)
 
-| PDA | Seeds | Fields |
-|-----|-------|--------|
-| `BridgeConfig` | `["bridge"]` | `admin`, `operator`, `fee_bps`, `withdraw_delay`, `deposit_nonce`, `paused` |
-| `DepositRecord` | `["deposit", nonce.to_le_bytes()]` | `transfer_hash`, `src_account`, `dest_chain`, `dest_account`, `token`, `amount`, `nonce`, `timestamp` |
-| `PendingWithdraw` | `["withdraw", transfer_hash]` | `transfer_hash`, `src_chain`, `src_account`, `dest_account`, `token`, `amount`, `nonce`, `approved_at`, `cancelled` |
-| `ChainEntry` | `["chain", chain_id]` | `chain_id: [u8; 4]`, `identifier: String` |
-| `TokenMapping` | `["token", dest_chain, dest_token]` | `local_mint`, `dest_chain`, `dest_token`, `mode` (LockUnlock / MintBurn), `decimals` |
-| `CancelerEntry` | `["canceler", pubkey]` | `pubkey`, `active` |
+On Solana, programs don't have internal storage like EVM contracts. Data lives in **accounts** that the program owns. A PDA (Program Derived Address) is a special account address derived from a set of **seeds** + the program ID:
+
+```
+PDA address = findProgramAddress([seed1, seed2, ...], programId)
+```
+
+No private key exists for a PDA — only the owning program can sign for it. This is conceptually similar to EVM's `mapping(bytes32 => Struct)`, where the seeds act as the mapping key.
+
+**All PDAs must use deterministic seeds** — meaning the seeds are composed of values that the reader already has (nonce, transfer hash, pubkey, chain ID). This is a hard design requirement for two reasons:
+
+1. **Public RPC compatibility.** The only way to scan for accounts by owning program is `getProgramAccounts`, which is blocked on public Solana RPCs (`"excluded from account secondary indexes"`). With deterministic seeds, readers derive the PDA address from known data and call `getAccountInfo` directly — no scanning needed.
+
+2. **Cross-chain verifiability.** The canceler receives a `transfer_hash` from the approval event on the destination chain. With deterministic seeds (`["withdraw", transfer_hash]`), it can derive the exact PDA address on Solana and read it to verify the deposit exists. If seeds were non-deterministic (e.g., an opaque auto-incremented counter stored only on-chain), the canceler would have no way to find the right account without scanning.
+
+This works because the bridge protocol already passes the key data (hash, nonce) between chains. Every party that needs to read a PDA already has the information needed to derive its address.
+
+| PDA | Seeds | Why Deterministic | Fields |
+|-----|-------|-------------------|--------|
+| `BridgeConfig` | `["bridge"]` | Singleton — only one per program | `admin`, `operator`, `fee_bps`, `withdraw_delay`, `deposit_nonce`, `paused` |
+| `DepositRecord` | `["deposit", nonce.to_le_bytes()]` | Nonce is in the deposit event data; canceler gets it from the destination chain's approval event | `transfer_hash`, `src_account`, `dest_chain`, `dest_account`, `token`, `amount`, `nonce`, `timestamp` |
+| `PendingWithdraw` | `["withdraw", transfer_hash]` | Transfer hash is in the `WithdrawApprove` event the canceler is verifying | `transfer_hash`, `src_chain`, `src_account`, `dest_account`, `token`, `amount`, `nonce`, `approved_at`, `cancelled` |
+| `ChainEntry` | `["chain", chain_id]` | Chain ID is known configuration | `chain_id: [u8; 4]`, `identifier: String` |
+| `TokenMapping` | `["token", dest_chain, dest_token]` | Both values are known from token registration | `local_mint`, `dest_chain`, `dest_token`, `mode` (LockUnlock / MintBurn), `decimals` |
+| `CancelerEntry` | `["canceler", pubkey]` | Pubkey is the canceler's own address | `pubkey`, `active` |
+
+**Startup enumeration:** The one scenario deterministic seeds don't cover is "list all pending withdrawals at startup" (since you'd need to know all outstanding transfer hashes). This is handled by:
+- Replaying `getSignaturesForAddress` history to rebuild state
+- Querying the operator's PostgreSQL database
+- Using a dedicated RPC provider that enables `getProgramAccounts`
 
 #### Instruction Flow
 
@@ -662,7 +683,7 @@ SOLANA_BYTES4_CHAIN_ID=0x00000005       # or whatever ID is chosen
 SOLANA_MAX_SIGNATURES_PER_POLL=1000     # max is 1000 (enforced by RPC)
 ```
 
-**RPC provider note:** The public `api.mainnet-beta.solana.com` endpoint blocks `getProgramAccounts` for most programs and has aggressive rate limits. For production, use a dedicated provider (Helius, Triton, QuickNode) configured via `SOLANA_RPC_URL`. Support comma-separated fallback URLs matching the existing EVM pattern (`rpc_fallback.rs`).
+**RPC provider note:** The public `api.mainnet-beta.solana.com` endpoint blocks `getProgramAccounts` and has rate limits, but is viable for our design since all PDAs use deterministic seeds (see §4b) — no account scanning needed. A dedicated provider (Helius, Triton, QuickNode) is recommended for production reliability. Support comma-separated fallback URLs matching the existing EVM pattern (`rpc_fallback.rs`).
 
 ### 6f. Database Migration
 
@@ -1131,7 +1152,7 @@ Phase 7: Deployment (depends on Phase 1-6)
 |------|--------|------------|
 | `UniversalAddress` refactor to variable-length (Option B) breaks existing code | Regression in EVM/Cosmos address handling | Write and verify regression tests FIRST (Phase 2a) before any refactoring; all must pass after refactor |
 | Solana RPC rate limits on mainnet | Watcher misses deposits | Use dedicated RPC provider (Helius, Triton, etc.); implement fallback URLs like EVM. **Verified:** public RPC blocks `getProgramAccounts` for most programs |
-| `getProgramAccounts` unavailable on public RPCs | Canceler cannot enumerate pending withdrawals | Derive PDA addresses from known nonces + `getMultipleAccounts` batch read; or use a provider that enables `getProgramAccounts` |
+| `getProgramAccounts` unavailable on public RPCs | Cannot scan for accounts by program | Not a problem: all PDAs use deterministic seeds (see §4b), so readers derive addresses from known data (hash/nonce) and call `getAccountInfo` directly. Startup enumeration handled via `getSignaturesForAddress` replay or operator DB |
 | `getTransaction` fails without `maxSupportedTransactionVersion` | Watcher silently misses versioned (v0) transactions | **Verified:** must always pass `maxSupportedTransactionVersion: 0` — without it, versioned txs return an RPC error |
 | `getSignaturesForAddress` capped at 1000 | Watcher may miss deposits during high traffic | Paginate with `before` param in a loop; track last-processed signature for cursor-based polling |
 | Solana transaction size limits (1232 bytes) | Complex instructions may not fit | Split into multiple instructions if needed; use address lookup tables |
@@ -1152,7 +1173,7 @@ Phase 7: Deployment (depends on Phase 1-6)
 | 5 | Solana wallet adapter library version? | `@solana/wallet-adapter-react` (v1) or build on `@solana/kit` (v5) | Frontend architecture |
 | 6 | WSOL handling? | Auto-wrap native SOL to WSOL, or handle SOL natively | UX complexity |
 | 7 | Multi-signature upgrade authority? | Squads multisig, single upgrade authority, immutable | Program security |
-| 8 | Which mainnet RPC provider? | Helius, Triton, QuickNode — **public RPC not viable** (blocks `getProgramAccounts`, rate-limited) | Cost, reliability, canceler functionality |
+| 8 | Which mainnet RPC provider? | Helius, Triton, QuickNode, or public | Public RPC is viable with deterministic PDA seeds (no `getProgramAccounts` needed); dedicated provider recommended for production reliability and rate limits |
 
 ### Verified RPC Assumptions
 
@@ -1193,6 +1214,25 @@ The following assumptions from this plan were tested against `api.mainnet-beta.s
 | **Indexing** | `eth_getLogs` | LCD `tx_search` | `getSignaturesForAddress` + `getTransaction` |
 | **Testing** | Foundry (forge) | cw-multi-test | Anchor bankrun / solana-program-test |
 | **Wallet ecosystem** | MetaMask, WalletConnect, etc. | Station, Keplr, Leap | Phantom, Solflare, Backpack |
+
+---
+
+## Appendix B: Solana Gotchas for EVM/CosmWasm Developers
+
+| # | Gotcha | What To Know |
+|---|--------|-------------|
+| 1 | **All accounts declared upfront** | Every account an instruction reads/writes must be passed in the transaction — no runtime storage lookups |
+| 2 | **No `msg.sender`** | Caller must be passed explicitly as a `Signer` account; forgetting the check is a security hole |
+| 3 | **Rent** | Accounts must hold minimum SOL proportional to data size (~0.002 SOL per 200 bytes) or get garbage-collected; refunded on close |
+| 4 | **No native mappings** | Each "mapping entry" is a separate PDA account that costs rent — no `mapping(key => value)` equivalent |
+| 5 | **1232-byte transaction limit** | Entire transaction (signatures + accounts + data) must fit in 1232 bytes; use Address Lookup Tables if tight |
+| 6 | **Compute units** | 200K CU default per instruction (request up to 1.4M); keccak256 costs ~100 CU per 64 bytes hashed |
+| 7 | **No indexed events** | No `eth_getLogs` equivalent; Anchor events are base64 in unindexed log lines — must fetch full tx and parse |
+| 8 | **No try/catch** | If any instruction in a transaction fails, all revert — no partial success |
+| 9 | **Account close + reinit attack** | Closed PDAs can be recreated in the same transaction with different data; use `is_closed` flags |
+| 10 | **Upgradeable by default** | Programs are upgradeable unless you explicitly revoke the upgrade authority — opposite of EVM |
+| 11 | **Clock drift** | `Clock::get().unix_timestamp` can drift several seconds; fine for 5-min delay, not for sub-second precision |
+| 12 | **4KB stack limit** | Large structs on the stack crash with `AccessViolation`; use `Box::new()` to move to heap |
 
 ---
 
