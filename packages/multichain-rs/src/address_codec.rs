@@ -804,4 +804,102 @@ mod tests {
         let expected_raw = parse_evm_address(REGRESSION_EVM_ADDR).unwrap();
         assert_eq!(addr.raw_address_bytes(), &expected_raw[..]);
     }
+
+    // ========================================================================
+    // Solana Byte-Level Regression Tests
+    // ========================================================================
+
+    #[rustfmt::skip]
+    const REGRESSION_SOLANA_PUBKEY: [u8; 32] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    ];
+
+    #[rustfmt::skip]
+    const REGRESSION_SOLANA_TO_BYTES32: [u8; 32] = [
+        0x00, 0x00, 0x00, 0x03, // chain_type = 3 (Solana)
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, // first 28 bytes of pubkey (lossy)
+    ];
+
+    #[rustfmt::skip]
+    const REGRESSION_SOLANA_TO_BYTES: [u8; 36] = [
+        0x00, 0x00, 0x00, 0x03, // chain_type = 3 (Solana)
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, // full 32-byte pubkey
+    ];
+
+    #[test]
+    fn regression_solana_to_bytes32() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert_eq!(addr.to_bytes32(), REGRESSION_SOLANA_TO_BYTES32);
+    }
+
+    #[test]
+    fn regression_solana_to_bytes_exact() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert_eq!(addr.to_bytes().as_slice(), &REGRESSION_SOLANA_TO_BYTES[..]);
+    }
+
+    #[test]
+    fn regression_solana_to_bytes_roundtrip_lossless() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        let bytes = addr.to_bytes();
+        let recovered = UniversalAddress::from_bytes(&bytes).unwrap();
+        assert_eq!(recovered.chain_type, CHAIN_TYPE_SOLANA);
+        assert_eq!(recovered.raw_address_bytes(), &REGRESSION_SOLANA_PUBKEY[..]);
+    }
+
+    #[test]
+    fn regression_solana_hash_bytes_is_full_pubkey() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert_eq!(addr.to_hash_bytes(), REGRESSION_SOLANA_PUBKEY);
+    }
+
+    #[test]
+    fn regression_solana_chain_type_checks() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert!(addr.is_solana());
+        assert!(!addr.is_evm());
+        assert!(!addr.is_cosmos());
+        assert!(addr.is_valid_chain_type());
+        assert_eq!(addr.chain_type, CHAIN_TYPE_SOLANA);
+    }
+
+    #[test]
+    fn regression_solana_display_format() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        let display = format!("{}", addr);
+        assert!(display.starts_with("SOLANA:"), "Solana display must start with 'SOLANA:'");
+    }
+
+    #[test]
+    fn regression_solana_raw_address_20_errors() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert!(addr.raw_address_20().is_err(), "Solana 32-byte pubkey must not fit in 20-byte accessor");
+    }
+
+    #[test]
+    fn regression_solana_base58_roundtrip_exact() {
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        let b58 = addr.to_solana_string().unwrap();
+        let recovered = UniversalAddress::from_solana_base58(&b58).unwrap();
+        assert_eq!(recovered.raw_address_bytes(), &REGRESSION_SOLANA_PUBKEY[..]);
+        assert_eq!(recovered.chain_type, CHAIN_TYPE_SOLANA);
+    }
+
+    #[test]
+    fn regression_cross_codebase_parity_solana() {
+        let expected_hex = "00000003\
+                            0102030405060708090a0b0c0d0e0f10\
+                            1112131415161718191a1b1c";
+        let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
+        assert_eq!(hex::encode(addr.to_bytes32()), expected_hex);
+    }
 }

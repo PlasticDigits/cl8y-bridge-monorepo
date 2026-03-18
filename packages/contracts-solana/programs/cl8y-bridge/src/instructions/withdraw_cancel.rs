@@ -31,6 +31,7 @@ pub fn handler(ctx: Context<WithdrawCancel>) -> Result<()> {
 
     let pw = &mut ctx.accounts.pending_withdraw;
     require!(!pw.executed, BridgeError::AlreadyExecuted);
+    require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
 
     pw.cancelled = true;
 

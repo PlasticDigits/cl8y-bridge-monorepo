@@ -110,8 +110,18 @@ pub struct ApprovalVerifier {
     /// All known EVM chains, keyed by V2 chain ID bytes.
     /// Used for multi-chain deposit verification routing.
     known_evm_chains: std::collections::HashMap<[u8; 4], KnownEvmChain>,
+    /// Optional Solana chain configuration for deposit verification
+    solana_config: Option<SolanaVerifierConfig>,
     /// C6: Counter for unknown source chain events (aids alerting)
     unknown_source_chain_count: AtomicU64,
+}
+
+/// Solana configuration for the verifier to verify deposits on Solana source chain.
+#[derive(Debug, Clone)]
+pub struct SolanaVerifierConfig {
+    pub rpc_url: String,
+    pub program_id: [u8; 32],
+    pub chain_id: [u8; 4],
 }
 
 impl ApprovalVerifier {
@@ -185,6 +195,7 @@ impl ApprovalVerifier {
             evm_chain_id: evm_v2_chain_id,
             terra_chain_id: terra_v2_chain_id,
             known_evm_chains,
+            solana_config: None,
             unknown_source_chain_count: AtomicU64::new(0),
         }
     }
@@ -232,6 +243,14 @@ impl ApprovalVerifier {
                 "Source is Terra chain, verifying deposit on Terra"
             );
             return self.verify_terra_deposit(approval).await;
+        }
+
+        if self.is_solana_chain(&approval.src_chain_id) {
+            debug!(
+                hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                "Source is Solana chain, verifying deposit on Solana"
+            );
+            return self.verify_solana_deposit(approval).await;
         }
 
         // C6 FIX: Unknown source chain — return Pending, NOT Invalid.
@@ -513,6 +532,139 @@ impl ApprovalVerifier {
         }
     }
 
+    /// Verify a deposit exists on Solana source chain.
+    ///
+    /// Queries the Solana RPC `getAccountInfo` for the DepositRecord PDA
+    /// derived from the deposit nonce. Verifies the stored transfer_hash
+    /// matches the expected hash.
+    async fn verify_solana_deposit(
+        &self,
+        approval: &PendingApproval,
+    ) -> Result<VerificationResult> {
+        let config = match &self.solana_config {
+            Some(c) => c,
+            None => {
+                warn!("Solana chain ID matched but no Solana config registered");
+                return Ok(VerificationResult::Pending);
+            }
+        };
+
+        debug!(
+            hash = %bytes32_to_hex(&approval.xchain_hash_id),
+            nonce = approval.nonce,
+            "Querying Solana source chain for deposit"
+        );
+
+        let nonce_bytes = approval.nonce.to_le_bytes();
+
+        // Derive DepositRecord PDA: seeds = ["deposit", nonce.to_le_bytes()]
+        let program_id = solana_sdk::pubkey::Pubkey::new_from_array(config.program_id);
+        let (deposit_pda, _bump) = solana_sdk::pubkey::Pubkey::find_program_address(
+            &[b"deposit", &nonce_bytes],
+            &program_id,
+        );
+        let deposit_pda_b58 = deposit_pda.to_string();
+
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                deposit_pda_b58,
+                {"encoding": "base64", "commitment": "finalized"}
+            ]
+        });
+
+        match self.client.post(&config.rpc_url).json(&body).send().await {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    warn!(
+                        status = %resp.status(),
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        "Solana RPC returned error status"
+                    );
+                    return Ok(VerificationResult::Pending);
+                }
+
+                let json: serde_json::Value = resp.json().await?;
+                let result = &json["result"]["value"];
+
+                if result.is_null() {
+                    info!(
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        nonce = approval.nonce,
+                        pda = %deposit_pda_b58,
+                        "No deposit PDA found on Solana source chain"
+                    );
+                    return Ok(VerificationResult::Invalid {
+                        reason: "No deposit found with this nonce on Solana source chain"
+                            .to_string(),
+                    });
+                }
+
+                // Parse base64 account data: 8 (discriminator) + 32 (transfer_hash) + ...
+                if let Some(data_arr) = result["data"].as_array() {
+                    if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
+                        if let Ok(data_bytes) =
+                            base64::engine::general_purpose::STANDARD.decode(data_b64)
+                        {
+                            if data_bytes.len() >= 40 {
+                                let mut stored_hash = [0u8; 32];
+                                stored_hash.copy_from_slice(&data_bytes[8..40]);
+
+                                if stored_hash != approval.xchain_hash_id {
+                                    info!(
+                                        expected = %bytes32_to_hex(&approval.xchain_hash_id),
+                                        got = %bytes32_to_hex(&stored_hash),
+                                        "Deposit exists on Solana but hash doesn't match"
+                                    );
+                                    return Ok(VerificationResult::Invalid {
+                                        reason: format!(
+                                            "Hash mismatch: expected {}, got {}",
+                                            bytes32_to_hex(&approval.xchain_hash_id),
+                                            bytes32_to_hex(&stored_hash)
+                                        ),
+                                    });
+                                }
+
+                                info!(
+                                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                                    nonce = approval.nonce,
+                                    "Deposit verified on Solana source chain"
+                                );
+                                return Ok(VerificationResult::Valid);
+                            }
+                        }
+                    }
+                }
+
+                warn!(
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                    "Solana deposit PDA data could not be parsed"
+                );
+                Ok(VerificationResult::Pending)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                    "Failed to query Solana deposit - will retry"
+                );
+                Ok(VerificationResult::Pending)
+            }
+        }
+    }
+
+    /// Register Solana chain configuration for deposit verification.
+    pub fn register_solana(&mut self, config: SolanaVerifierConfig) {
+        info!(
+            chain_id = %hex::encode(config.chain_id),
+            rpc = %config.rpc_url,
+            "Registered Solana chain for deposit verification"
+        );
+        self.solana_config = Some(config);
+    }
+
     /// Register EVM chain peers for multi-chain verification routing.
     ///
     /// Call this after construction with chains from `MultiEvmConfig`.
@@ -541,6 +693,13 @@ impl ApprovalVerifier {
     /// Check if chain ID matches the known Terra chain
     fn is_terra_chain(&self, id: &[u8; 4]) -> bool {
         *id == self.terra_chain_id
+    }
+
+    /// Check if chain ID matches the known Solana chain
+    fn is_solana_chain(&self, id: &[u8; 4]) -> bool {
+        self.solana_config
+            .as_ref()
+            .is_some_and(|c| *id == c.chain_id)
     }
 
     /// C6: Return the count of unknown source chain events (for metrics/alerting)

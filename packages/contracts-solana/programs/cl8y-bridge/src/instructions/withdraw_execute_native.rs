@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
 use crate::state::{BridgeConfig, PendingWithdraw, ExecutedHash};
 use crate::error::BridgeError;
 
@@ -57,7 +56,8 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
     let pw = &mut ctx.accounts.pending_withdraw;
     pw.executed = true;
 
-    let amount: u64 = pw.amount
+    let amount_u128 = pw.amount;
+    let amount: u64 = amount_u128
         .try_into()
         .map_err(|_| BridgeError::AmountExceedsU64)?;
     let transfer_hash = pw.transfer_hash;
@@ -65,24 +65,22 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
 
     ctx.accounts.executed_hash.bump = ctx.bumps.executed_hash;
 
-    let bridge_seeds: &[&[u8]] = &[BridgeConfig::SEED, &[bridge.bump]];
-
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.bridge.to_account_info(),
-                to: ctx.accounts.recipient.to_account_info(),
-            },
-            &[bridge_seeds],
-        ),
-        amount,
-    )?;
+    // Transfer native SOL from bridge PDA to recipient
+    let bridge_info = ctx.accounts.bridge.to_account_info();
+    let recipient_info = ctx.accounts.recipient.to_account_info();
+    **bridge_info.try_borrow_mut_lamports()? = bridge_info
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
+    **recipient_info.try_borrow_mut_lamports()? = recipient_info
+        .lamports()
+        .checked_add(amount)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
 
     emit!(WithdrawExecuteNativeEvent {
         transfer_hash,
         recipient: dest_account,
-        amount: pw.amount,
+        amount: amount_u128,
     });
 
     Ok(())

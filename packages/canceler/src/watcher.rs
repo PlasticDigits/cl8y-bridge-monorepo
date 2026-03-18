@@ -223,6 +223,14 @@ impl CancelerWatcher {
                 chain_id = %hex::encode(sol_config.bytes4_chain_id),
                 "Solana canceler client initialized"
             );
+            // Register Solana in the verifier for source-chain deposit verification
+            let program_id_bytes = program_id.to_bytes();
+            verifier.register_solana(crate::verifier::SolanaVerifierConfig {
+                rpc_url: sol_config.rpc_url.clone(),
+                program_id: program_id_bytes,
+                chain_id: sol_config.bytes4_chain_id,
+            });
+
             (Some(client), Some(sol_config.bytes4_chain_id))
         } else {
             (None, None)
