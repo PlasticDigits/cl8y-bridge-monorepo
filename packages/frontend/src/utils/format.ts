@@ -232,7 +232,7 @@ export function getEvmTxUrl(txHash: string): string {
 export function getTokenExplorerUrl(
   explorerBaseUrl: string,
   tokenAddress: string,
-  chainType: 'evm' | 'cosmos'
+  chainType: 'evm' | 'cosmos' | 'solana'
 ): string {
   if (!explorerBaseUrl?.trim() || !tokenAddress?.trim()) return ''
   const base = explorerBaseUrl.replace(/\/$/, '')

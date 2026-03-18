@@ -48,7 +48,7 @@ interface ChainConfig {
   key: string
   name: string
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   faucetAddress: string
   explorerTxUrl: string
 }
@@ -88,7 +88,20 @@ const TERRA_CHAIN: ChainConfig = {
   explorerTxUrl: 'https://finder.terraclassic.community/mainnet/tx/',
 }
 
-const ALL_CHAINS: ChainConfig[] = [...EVM_CHAINS, ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : [])]
+const SOLANA_CHAIN: ChainConfig = {
+  key: 'solana',
+  name: 'Solana',
+  chainId: 'solana-devnet',
+  type: 'solana',
+  faucetAddress: import.meta.env.VITE_SOLANA_FAUCET_ADDRESS || '',
+  explorerTxUrl: 'https://explorer.solana.com/tx/',
+}
+
+const ALL_CHAINS: ChainConfig[] = [
+  ...EVM_CHAINS,
+  ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : []),
+  ...(SOLANA_CHAIN.faucetAddress ? [SOLANA_CHAIN] : []),
+]
 
 const TOKENS: TokenConfig[] = [
   {
@@ -576,8 +589,9 @@ export function FaucetPanel() {
       <div className="border-2 border-yellow-700/50 bg-yellow-900/15 p-4">
         <p className="text-sm text-yellow-300">
           No faucet contracts configured. Set <code className="text-xs">VITE_BSC_FAUCET_ADDRESS</code>,{' '}
-          <code className="text-xs">VITE_OPBNB_FAUCET_ADDRESS</code>, or{' '}
-          <code className="text-xs">VITE_TERRA_FAUCET_ADDRESS</code> in your environment.
+          <code className="text-xs">VITE_OPBNB_FAUCET_ADDRESS</code>,{' '}
+          <code className="text-xs">VITE_TERRA_FAUCET_ADDRESS</code>, or{' '}
+          <code className="text-xs">VITE_SOLANA_FAUCET_ADDRESS</code> in your environment.
         </p>
       </div>
     )

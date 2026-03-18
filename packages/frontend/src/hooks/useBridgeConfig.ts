@@ -123,7 +123,7 @@ const TOKEN_REGISTRY_EXTRA_ABI = [
 export interface UnifiedBridgeConfig {
   chainId: string
   chainName: string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   cancelWindowSeconds: number | null
   feeBps: number | null
   feeCollector: string | null
@@ -292,7 +292,63 @@ export function useBridgeConfig(): {
               bridgeAddress: config.bridgeAddress,
             }
           }
-          if (!isCosmos && hasBridge) {
+          if (config.type === 'solana' && hasBridge && config.rpcUrl) {
+            try {
+              const rpcUrl = config.rpcUrl.replace(/\/$/, '')
+              const body = (method: string, params: unknown[] = []) =>
+                JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+
+              const accountRes = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body('getAccountInfo', [
+                  config.bridgeAddress,
+                  { encoding: 'base64', commitment: 'confirmed' },
+                ]),
+              })
+              const accountData = await accountRes.json()
+              const data = accountData?.result?.value?.data
+              if (data && Array.isArray(data) && data[0]) {
+                const bytes = Uint8Array.from(atob(data[0]), c => c.charCodeAt(0))
+                // Anchor BridgeConfig layout after 8-byte discriminator:
+                // admin: 32, operator: 32, chain_id: 4, fee_bps: 2, withdraw_delay: 8, ...
+                if (bytes.length >= 8 + 32 + 32 + 4 + 2 + 8) {
+                  const adminBytes = bytes.slice(8, 40)
+                  const admin = Array.from(adminBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+                  const feeBps = (bytes[8 + 32 + 32 + 4] ?? 0) | ((bytes[8 + 32 + 32 + 4 + 1] ?? 0) << 8)
+                  const delayView = new DataView(bytes.buffer, bytes.byteOffset + 8 + 32 + 32 + 4 + 2, 8)
+                  const withdrawDelay = Number(delayView.getBigInt64(0, true))
+                  return {
+                    chainId: id,
+                    chainName: config.name,
+                    type: 'solana' as const,
+                    cancelWindowSeconds: withdrawDelay,
+                    feeBps,
+                    feeCollector: null,
+                    admin,
+                    loaded: true,
+                    chainConfig: config,
+                    bridgeAddress: config.bridgeAddress,
+                  }
+                }
+              }
+            } catch {
+              // Fall through to default
+            }
+            return {
+              chainId: id,
+              chainName: config.name,
+              type: 'solana' as const,
+              cancelWindowSeconds: null,
+              feeBps: null,
+              feeCollector: null,
+              admin: null,
+              loaded: false,
+              chainConfig: config,
+              bridgeAddress: config.bridgeAddress,
+            }
+          }
+          if (!isCosmos && config.type !== 'solana' && hasBridge) {
             const client = getEvmClient(config)
             const addr = config.bridgeAddress as `0x${string}`
             const [cancelWindow, feeConfig, owner] = await Promise.all([

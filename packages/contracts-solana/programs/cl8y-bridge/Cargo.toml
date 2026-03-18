@@ -1,0 +1,23 @@
+[package]
+name = "cl8y-bridge"
+version = "0.1.0"
+description = "CL8Y Bridge Solana Program"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "cl8y_bridge"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+anchor-spl = { version = "0.30", features = ["token", "token_interface"] }
+solana-program = "1.18"

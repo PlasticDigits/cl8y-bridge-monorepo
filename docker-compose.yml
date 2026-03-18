@@ -58,6 +58,27 @@ services:
       retries: 30
       start_period: 15s
 
+  # Local Solana validator
+  solana:
+    image: solanalabs/solana:v2.2
+    command: >
+      solana-test-validator
+      --reset
+      --bind-address 0.0.0.0
+      --rpc-port 8899
+      --faucet-port 9900
+      --log
+    ports:
+      - "8899:8899"
+      - "8900:8900"
+      - "9900:9900"
+    healthcheck:
+      test: ["CMD", "solana", "cluster-version", "--url", "http://localhost:8899"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   # PostgreSQL for operator state
   postgres:
     image: postgres:16-alpine

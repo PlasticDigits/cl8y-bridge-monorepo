@@ -7,15 +7,20 @@ use crate::config::Config;
 use crate::multi_evm::EvmChainConfigExt;
 
 pub mod evm;
+#[allow(dead_code)]
+pub mod solana;
 pub mod terra;
 
 pub use evm::EvmWatcher;
+#[allow(unused_imports)]
+pub use solana::SolanaWatcher;
 pub use terra::TerraWatcher;
 
 /// Manages multiple chain watchers
 pub struct WatcherManager {
     evm_watchers: Vec<EvmWatcher>,
     terra_watcher: TerraWatcher,
+    solana_watcher: Option<SolanaWatcher>,
 }
 
 impl WatcherManager {
@@ -75,6 +80,7 @@ impl WatcherManager {
         Ok(Self {
             evm_watchers,
             terra_watcher,
+            solana_watcher: None,
         })
     }
 
@@ -88,6 +94,9 @@ impl WatcherManager {
             join_set.spawn(async move { (format!("evm:{chain_id}"), evm_watcher.run().await) });
         }
         join_set.spawn(async move { ("terra".to_string(), self.terra_watcher.run().await) });
+        if let Some(solana_watcher) = self.solana_watcher {
+            join_set.spawn(async move { ("solana".to_string(), solana_watcher.run().await) });
+        }
 
         tokio::select! {
             _ = shutdown.recv() => {

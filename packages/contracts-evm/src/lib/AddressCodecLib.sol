@@ -201,4 +201,31 @@ library AddressCodecLib {
         // forge-lint: disable-next-line(unsafe-typecast)
         return bytes20(encoded << 32);
     }
+
+    // ============================================================================
+    // Solana Functions
+    // ============================================================================
+
+    /// @notice Encode a Solana pubkey (32 bytes) for use in bridge contracts
+    /// @dev Solana pubkeys are 32 bytes — they occupy the entire bytes32 slot.
+    ///      The chain type cannot be embedded (no room), so callers must track
+    ///      chain type externally via ChainRegistry.
+    /// @param pubkey The 32-byte Solana public key
+    /// @return encoded The pubkey stored directly as bytes32
+    function encodeSolana(bytes32 pubkey) internal pure returns (bytes32 encoded) {
+        return pubkey;
+    }
+
+    /// @notice Check if an encoded address is a Solana address
+    /// @dev Since Solana pubkeys use the full 32 bytes, this checks if the
+    ///      chain type prefix matches CHAIN_TYPE_SOLANA. Note: in practice,
+    ///      Solana addresses in bridge fields (destAccount) do NOT have a chain
+    ///      type prefix — they are raw 32-byte pubkeys. Use ChainRegistry to
+    ///      determine the chain type instead.
+    /// @param encoded The encoded bytes32 address
+    /// @return True if chain type prefix is CHAIN_TYPE_SOLANA
+    function isSolana(bytes32 encoded) internal pure returns (bool) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint32(bytes4(encoded)) == CHAIN_TYPE_SOLANA;
+    }
 }

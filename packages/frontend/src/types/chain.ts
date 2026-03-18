@@ -2,7 +2,7 @@ export interface ChainInfo {
   id: string
   name: string
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   icon: string
   rpcUrl: string
   explorerUrl: string
@@ -14,6 +14,7 @@ export interface ChainInfo {
   bridgeAddress?: string
   lcdUrl?: string
   lcdFallbacks?: string[]
+  programId?: string
 }
 
 /**
@@ -22,7 +23,7 @@ export interface ChainInfo {
  */
 export interface BridgeChainConfig {
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   name: string
   rpcUrl: string
   rpcFallbacks?: string[]

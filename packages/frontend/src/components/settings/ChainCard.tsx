@@ -6,7 +6,7 @@ import { Card } from '../ui'
 export interface ChainCardProps {
   name: string
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   rpcUrl?: string
   rpcUrls?: string[]
   lcdUrl?: string
@@ -24,12 +24,16 @@ export function ChainCard({
   lcdUrls,
   explorerUrl,
 }: ChainCardProps) {
-  const urls = type === 'evm' ? (rpcUrls ?? (rpcUrl ? [rpcUrl] : [])) : (lcdUrls ?? (lcdUrl ? [lcdUrl] : []))
+  const urls = type === 'evm'
+    ? (rpcUrls ?? (rpcUrl ? [rpcUrl] : []))
+    : type === 'solana'
+      ? (rpcUrls ?? (rpcUrl ? [rpcUrl] : []))
+      : (lcdUrls ?? (lcdUrl ? [lcdUrl] : []))
   const [endpointsExpanded, setEndpointsExpanded] = useState(false)
-  const { data: status } = useChainStatus(urls.length > 0 ? urls : null, type === 'evm' ? 'evm' : 'cosmos')
+  const { data: status } = useChainStatus(urls.length > 0 ? urls : null, type)
   const { data: perEndpoint, isLoading: perEndpointLoading } = useChainStatusPerEndpoint(
     urls,
-    type === 'evm' ? 'evm' : 'cosmos',
+    type,
     endpointsExpanded && urls.length > 1
   )
 
@@ -41,9 +45,50 @@ export function ChainCard({
         <div>
           <h4 className="font-medium text-white">{name}</h4>
           <p className="mt-1 text-sm text-gray-400">
-            ID: {chainId} · {type === 'evm' ? 'EVM' : 'Cosmos'}
+            ID: {chainId} · {type === 'evm' ? 'EVM' : type === 'solana' ? 'Solana' : 'Cosmos'}
           </p>
           {type === 'evm' && (displayUrl || urls.length > 0) && (
+            urls.length > 1 ? (
+              <details
+                className="mt-2 group/details"
+                onToggle={(e) => setEndpointsExpanded((e.target as HTMLDetailsElement).open)}
+              >
+                <summary className="cursor-pointer font-mono text-xs text-gray-300 hover:text-gray-200 list-none [&::-webkit-details-marker]:hidden [&::marker]:hidden inline-flex items-center gap-1">
+                  <span className="text-[10px] text-gray-500 transition-transform group-open/details:rotate-90" aria-hidden>▸</span>
+                  RPC: {urls.length} endpoints
+                </summary>
+                <ul className="mt-2 space-y-1 pl-0 list-none">
+                  {perEndpointLoading ? (
+                    urls.map((url) => (
+                      <li key={url} className="break-all font-mono text-xs text-gray-400">
+                        {url} <span className="text-gray-500">— pinging…</span>
+                      </li>
+                    ))
+                  ) : perEndpoint ? (
+                    perEndpoint.map(({ url, ok, latencyMs, error }) => (
+                      <li key={url} className="break-all font-mono text-xs text-gray-400">
+                        {url}{' '}
+                        <span className={ok ? 'text-green-400' : 'text-red-400'}>
+                          {ok && latencyMs != null ? `${latencyMs}ms` : error ?? '—'}
+                        </span>
+                      </li>
+                    ))
+                  ) : (
+                    urls.map((url) => (
+                      <li key={url} className="break-all font-mono text-xs text-gray-400">
+                        {url}
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </details>
+            ) : (
+              <p className="mt-2 max-w-full truncate font-mono text-xs text-gray-300" title={urls[0]}>
+                RPC: {displayUrl}
+              </p>
+            )
+          )}
+          {type === 'solana' && (displayUrl || urls.length > 0) && (
             urls.length > 1 ? (
               <details
                 className="mt-2 group/details"

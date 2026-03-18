@@ -9,6 +9,7 @@ pub mod evm_client;
 pub mod hash;
 pub mod redact;
 pub mod server;
+pub mod solana_client;
 pub mod terra_client;
 pub mod verifier;
 pub mod watcher;

@@ -92,6 +92,37 @@ pub struct Config {
     /// and can verify deposits on any known source chain.
     /// Loaded from EVM_CHAINS_COUNT / EVM_CHAIN_{N}_* env vars.
     pub multi_evm: Option<multichain_rs::MultiEvmConfig>,
+
+    /// Optional Solana chain configuration for monitoring Solana bridge approvals.
+    pub solana: Option<SolanaConfig>,
+}
+
+/// Solana chain configuration for the canceler.
+///
+/// NOTE: `Debug` is manually implemented to redact the keypair path.
+#[derive(Clone)]
+pub struct SolanaConfig {
+    pub rpc_url: String,
+    pub program_id: String,
+    pub keypair_path: String,
+    pub commitment: String,
+    pub poll_interval_ms: u64,
+    pub bytes4_chain_id: [u8; 4],
+    pub enabled: bool,
+}
+
+impl fmt::Debug for SolanaConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SolanaConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("program_id", &self.program_id)
+            .field("keypair_path", &"<redacted>")
+            .field("commitment", &self.commitment)
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field("bytes4_chain_id", &hex::encode(self.bytes4_chain_id))
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 /// Custom Debug impl that redacts sensitive fields (evm_private_key, terra_mnemonic)
@@ -129,6 +160,7 @@ impl fmt::Debug for Config {
             .field("evm_poll_lookback_blocks", &self.evm_poll_lookback_blocks)
             .field("evm_poll_chunk_size", &self.evm_poll_chunk_size)
             .field("multi_evm", &self.multi_evm)
+            .field("solana", &self.solana)
             .finish()
     }
 }
@@ -222,6 +254,59 @@ impl Config {
         // Load optional multi-EVM configuration (for cross-EVM fraud detection)
         let multi_evm = multichain_rs::multi_evm::load_from_env()?;
 
+        // Load optional Solana configuration
+        let solana = {
+            let enabled = env::var("SOLANA_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+
+            if enabled {
+                let rpc_url = env::var("SOLANA_RPC_URL")
+                    .map_err(|_| eyre!("SOLANA_RPC_URL required when SOLANA_ENABLED=true"))?;
+                validate_rpc_url(&rpc_url, "SOLANA_RPC_URL")?;
+
+                let program_id = env::var("SOLANA_PROGRAM_ID")
+                    .map_err(|_| eyre!("SOLANA_PROGRAM_ID required when SOLANA_ENABLED=true"))?;
+
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
+                    .map_err(|_| eyre!("SOLANA_KEYPAIR_PATH required when SOLANA_ENABLED=true"))?;
+
+                let commitment =
+                    env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
+
+                let poll_interval_ms: u64 = env::var("SOLANA_POLL_INTERVAL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(2000);
+
+                let bytes4_chain_id = env::var("SOLANA_V2_CHAIN_ID")
+                    .ok()
+                    .and_then(|s| {
+                        let s = s.trim().trim_start_matches("0x");
+                        if let Ok(n) = u32::from_str_radix(s, 16) {
+                            Some(n.to_be_bytes())
+                        } else if let Ok(n) = s.parse::<u32>() {
+                            Some(n.to_be_bytes())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or([0x00, 0x00, 0x00, 0x05]);
+
+                Some(SolanaConfig {
+                    rpc_url,
+                    program_id,
+                    keypair_path,
+                    commitment,
+                    poll_interval_ms,
+                    bytes4_chain_id,
+                    enabled,
+                })
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
@@ -310,6 +395,8 @@ impl Config {
                 .unwrap_or(5_000),
 
             multi_evm,
+
+            solana,
         })
     }
 }

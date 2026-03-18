@@ -5,23 +5,28 @@
 //!
 //! ## Address Format
 //!
-//! All addresses are stored as 32 bytes with format:
+//! EVM/Cosmos addresses are stored as 32 bytes:
 //! ```text
 //! | Chain Type (4 bytes) | Raw Address (20 bytes) | Reserved (8 bytes) |
+//! ```
+//!
+//! Solana addresses use all 28 remaining bytes in the 32-byte encoding:
+//! ```text
+//! | Chain Type (4 bytes) | Pubkey[0..28] (28 bytes) |
 //! ```
 //!
 //! ## Chain Type Codes
 //!
 //! - `0x00000001`: EVM (Ethereum, BSC, Polygon, etc.)
 //! - `0x00000002`: Cosmos/Terra (Terra Classic, Osmosis)
-//! - `0x00000003`: Solana (future)
+//! - `0x00000003`: Solana
 //! - `0x00000004`: Bitcoin (future)
 //!
-//! ## Raw Address (20 bytes)
+//! ## Raw Address
 //!
 //! - EVM: 20-byte address directly
 //! - Cosmos: 20-byte address from bech32 decoding
-//! - Others: Chain-specific raw address
+//! - Solana: 32-byte Ed25519 public key
 
 use cosmwasm_std::{Addr, StdError, StdResult};
 
@@ -35,7 +40,7 @@ pub const CHAIN_TYPE_EVM: u32 = 1;
 /// Chain type for Cosmos/Terra chains
 pub const CHAIN_TYPE_COSMOS: u32 = 2;
 
-/// Chain type for Solana (future)
+/// Chain type for Solana
 pub const CHAIN_TYPE_SOLANA: u32 = 3;
 
 /// Chain type for Bitcoin (future)
@@ -45,14 +50,20 @@ pub const CHAIN_TYPE_BITCOIN: u32 = 4;
 // Universal Address Structure
 // ============================================================================
 
+/// Internal representation for variable-length raw addresses
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RawAddress {
+    Short([u8; 20]),
+    Full([u8; 32]),
+}
+
 /// Universal address that can represent addresses from any supported chain
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniversalAddress {
     /// Chain type code (4 bytes)
     pub chain_type: u32,
-    /// Raw 20-byte address
-    pub raw_address: [u8; 20],
-    /// Reserved bytes for future use (8 bytes)
+    raw: RawAddress,
+    /// Reserved bytes (8 bytes, only used for Short addresses)
     pub reserved: [u8; 8],
 }
 
@@ -64,7 +75,7 @@ impl UniversalAddress {
         }
         Ok(Self {
             chain_type,
-            raw_address,
+            raw: RawAddress::Short(raw_address),
             reserved: [0u8; 8],
         })
     }
@@ -80,7 +91,7 @@ impl UniversalAddress {
         }
         Ok(Self {
             chain_type,
-            raw_address,
+            raw: RawAddress::Short(raw_address),
             reserved,
         })
     }
@@ -106,50 +117,63 @@ impl UniversalAddress {
         Self::from_cosmos(addr.as_str())
     }
 
+    /// Create a Solana address from a 32-byte public key
+    pub fn from_solana(pubkey: &[u8; 32]) -> StdResult<Self> {
+        Ok(Self {
+            chain_type: CHAIN_TYPE_SOLANA,
+            raw: RawAddress::Full(*pubkey),
+            reserved: [0u8; 8],
+        })
+    }
+
     // ============================================================================
     // Serialization
     // ============================================================================
 
     /// Convert to 32-byte array
     ///
-    /// Layout: | chain_type (4) | raw_address (20) | reserved (8) |
+    /// Short (EVM/Cosmos): | chain_type (4) | raw_address (20) | reserved (8) |
+    /// Full (Solana): | chain_type (4) | pubkey[0..28] (28) |
     pub fn to_bytes32(&self) -> [u8; 32] {
         let mut result = [0u8; 32];
-
-        // Chain type in big-endian (first 4 bytes)
         result[0..4].copy_from_slice(&self.chain_type.to_be_bytes());
-
-        // Raw address (bytes 4-23)
-        result[4..24].copy_from_slice(&self.raw_address);
-
-        // Reserved (bytes 24-31)
-        result[24..32].copy_from_slice(&self.reserved);
-
+        match &self.raw {
+            RawAddress::Short(raw) => {
+                result[4..24].copy_from_slice(raw);
+                result[24..32].copy_from_slice(&self.reserved);
+            }
+            RawAddress::Full(raw) => {
+                result[4..32].copy_from_slice(&raw[0..28]);
+            }
+        }
         result
     }
 
     /// Parse from 32-byte array
     pub fn from_bytes32(bytes: &[u8; 32]) -> StdResult<Self> {
-        // Extract chain type (first 4 bytes, big-endian)
         let chain_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-
         if chain_type == 0 {
             return Err(StdError::generic_err("Invalid chain type: 0"));
         }
-
-        // Extract raw address (bytes 4-23)
-        let mut raw_address = [0u8; 20];
-        raw_address.copy_from_slice(&bytes[4..24]);
-
-        // Extract reserved (bytes 24-31)
-        let mut reserved = [0u8; 8];
-        reserved.copy_from_slice(&bytes[24..32]);
-
-        Ok(Self {
-            chain_type,
-            raw_address,
-            reserved,
-        })
+        if chain_type == CHAIN_TYPE_SOLANA {
+            let mut pubkey = [0u8; 32];
+            pubkey[0..28].copy_from_slice(&bytes[4..32]);
+            Ok(Self {
+                chain_type,
+                raw: RawAddress::Full(pubkey),
+                reserved: [0u8; 8],
+            })
+        } else {
+            let mut raw_address = [0u8; 20];
+            raw_address.copy_from_slice(&bytes[4..24]);
+            let mut reserved = [0u8; 8];
+            reserved.copy_from_slice(&bytes[24..32]);
+            Ok(Self {
+                chain_type,
+                raw: RawAddress::Short(raw_address),
+                reserved,
+            })
+        }
     }
 
     /// Parse from 32-byte array with strict validation (reserved must be zero)
@@ -177,7 +201,10 @@ impl UniversalAddress {
                 self.chain_type
             )));
         }
-        Ok(format!("0x{}", hex::encode(self.raw_address)))
+        match &self.raw {
+            RawAddress::Short(raw) => Ok(format!("0x{}", hex::encode(raw))),
+            RawAddress::Full(_) => Err(StdError::generic_err("EVM address must be 20 bytes")),
+        }
     }
 
     /// Convert to Cosmos bech32 string with given prefix
@@ -190,7 +217,10 @@ impl UniversalAddress {
                 self.chain_type
             )));
         }
-        encode_bech32_address(&self.raw_address, hrp)
+        match &self.raw {
+            RawAddress::Short(raw) => encode_bech32_address(raw, hrp),
+            RawAddress::Full(_) => Err(StdError::generic_err("Cosmos address must be 20 bytes")),
+        }
     }
 
     /// Convert to Terra address string
@@ -212,9 +242,50 @@ impl UniversalAddress {
         self.chain_type == CHAIN_TYPE_COSMOS
     }
 
+    /// Check if this is a Solana address
+    pub fn is_solana(&self) -> bool {
+        self.chain_type == CHAIN_TYPE_SOLANA
+    }
+
     /// Check if the chain type is valid (known)
     pub fn is_valid_chain_type(&self) -> bool {
         self.chain_type >= CHAIN_TYPE_EVM && self.chain_type <= CHAIN_TYPE_BITCOIN
+    }
+
+    // ============================================================================
+    // Raw Address Accessors
+    // ============================================================================
+
+    /// Returns the raw address bytes (20 for EVM/Cosmos, 32 for Solana)
+    pub fn raw_address_bytes(&self) -> &[u8] {
+        match &self.raw {
+            RawAddress::Short(raw) => raw,
+            RawAddress::Full(raw) => raw,
+        }
+    }
+
+    /// Returns the 20-byte raw address, or error if the address is 32 bytes (Solana)
+    pub fn raw_address_20(&self) -> StdResult<&[u8; 20]> {
+        match &self.raw {
+            RawAddress::Short(raw) => Ok(raw),
+            RawAddress::Full(_) => Err(StdError::generic_err(
+                "Address is 32 bytes (Solana), not 20",
+            )),
+        }
+    }
+
+    /// Returns 32 bytes for hash computation.
+    /// EVM/Cosmos: 12 zero bytes followed by the 20-byte address (left-padded).
+    /// Solana: full 32-byte public key.
+    pub fn to_hash_bytes(&self) -> [u8; 32] {
+        match &self.raw {
+            RawAddress::Short(raw) => {
+                let mut result = [0u8; 32];
+                result[12..32].copy_from_slice(raw);
+                result
+            }
+            RawAddress::Full(raw) => *raw,
+        }
     }
 }
 
@@ -427,7 +498,7 @@ mod tests {
         // Parse back
         let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
         assert_eq!(parsed.chain_type, CHAIN_TYPE_EVM);
-        assert_eq!(parsed.raw_address, universal.raw_address);
+        assert_eq!(parsed.raw_address_bytes(), universal.raw_address_bytes());
 
         // Convert to string
         let recovered = parsed.to_evm_string().unwrap();
@@ -452,7 +523,7 @@ mod tests {
         // Parse back
         let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
         assert_eq!(parsed.chain_type, CHAIN_TYPE_COSMOS);
-        assert_eq!(parsed.raw_address, universal.raw_address);
+        assert_eq!(parsed.raw_address_bytes(), universal.raw_address_bytes());
 
         // Convert to string
         let recovered = parsed.to_terra_string().unwrap();
@@ -495,5 +566,133 @@ mod tests {
         bytes32[31] = 0;
         let result = UniversalAddress::from_bytes32_strict(&bytes32);
         assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Regression Tests — lock in exact byte-level behavior before refactoring
+    // ========================================================================
+
+    const REGRESSION_EVM_ADDR: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    const REGRESSION_TERRA_ADDR: &str = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
+
+    #[rustfmt::skip]
+    const REGRESSION_EVM_BYTES32: [u8; 32] = [
+        0x00, 0x00, 0x00, 0x01,
+        0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
+        0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[rustfmt::skip]
+    const REGRESSION_COSMOS_BYTES32: [u8; 32] = [
+        0x00, 0x00, 0x00, 0x02,
+        0x35, 0x74, 0x30, 0x74, 0x95, 0x6c, 0x71, 0x08, 0x00, 0xe8,
+        0x31, 0x98, 0x01, 0x1c, 0xcb, 0xd4, 0xdd, 0xf1, 0x55, 0x6d,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn regression_evm_to_bytes32() {
+        let addr = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
+        assert_eq!(addr.to_bytes32(), REGRESSION_EVM_BYTES32);
+    }
+
+    #[test]
+    fn regression_evm_roundtrip() {
+        let addr = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
+        let bytes32 = addr.to_bytes32();
+        let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
+        let recovered = parsed.to_evm_string().unwrap();
+        assert_eq!(recovered.to_lowercase(), REGRESSION_EVM_ADDR.to_lowercase());
+    }
+
+    #[test]
+    fn regression_cosmos_to_bytes32() {
+        let addr = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        assert_eq!(addr.to_bytes32(), REGRESSION_COSMOS_BYTES32);
+    }
+
+    #[test]
+    fn regression_cosmos_roundtrip() {
+        let addr = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        let bytes32 = addr.to_bytes32();
+        let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
+        let recovered = parsed.to_terra_string().unwrap();
+        assert_eq!(recovered, REGRESSION_TERRA_ADDR);
+    }
+
+    #[test]
+    fn regression_bytes32_layout_evm() {
+        let addr = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
+        let b = addr.to_bytes32();
+
+        assert_eq!(&b[0..4], &[0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(&b[4..24], addr.raw_address_bytes());
+        assert_eq!(&b[24..32], &[0u8; 8]);
+    }
+
+    #[test]
+    fn regression_bytes32_layout_cosmos() {
+        let addr = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        let b = addr.to_bytes32();
+
+        assert_eq!(&b[0..4], &[0x00, 0x00, 0x00, 0x02]);
+        assert_eq!(&b[4..24], addr.raw_address_bytes());
+        assert_eq!(&b[24..32], &[0u8; 8]);
+    }
+
+    #[test]
+    fn regression_strict_validation() {
+        let mut bytes = REGRESSION_EVM_BYTES32;
+        bytes[31] = 0xff;
+        assert!(UniversalAddress::from_bytes32_strict(&bytes).is_err());
+        assert!(UniversalAddress::from_bytes32_strict(&REGRESSION_EVM_BYTES32).is_ok());
+    }
+
+    #[test]
+    fn regression_chain_type_checks() {
+        let evm = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
+        assert!(evm.is_evm());
+        assert!(!evm.is_cosmos());
+        assert!(evm.is_valid_chain_type());
+
+        let cosmos = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        assert!(!cosmos.is_evm());
+        assert!(cosmos.is_cosmos());
+        assert!(cosmos.is_valid_chain_type());
+
+        let unknown = UniversalAddress::new(99, [0u8; 20]).unwrap();
+        assert!(!unknown.is_valid_chain_type());
+    }
+
+    #[test]
+    fn regression_new_with_reserved() {
+        let reserved = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let raw = [0xaau8; 20];
+        let addr = UniversalAddress::new_with_reserved(CHAIN_TYPE_EVM, raw, reserved).unwrap();
+        let b = addr.to_bytes32();
+        assert_eq!(&b[24..32], &reserved);
+    }
+
+    #[test]
+    fn regression_from_addr() {
+        let addr = Addr::unchecked(REGRESSION_TERRA_ADDR);
+        let from_addr = UniversalAddress::from_addr(&addr).unwrap();
+        let from_cosmos = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        assert_eq!(from_addr, from_cosmos);
+    }
+
+    #[test]
+    fn regression_cross_codebase_parity_evm() {
+        let expected_hex = "00000001f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000";
+        let addr = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
+        assert_eq!(hex::encode(addr.to_bytes32()), expected_hex);
+    }
+
+    #[test]
+    fn regression_cross_codebase_parity_cosmos() {
+        let expected_hex = "0000000235743074956c710800e83198011ccbd4ddf1556d0000000000000000";
+        let addr = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
+        assert_eq!(hex::encode(addr.to_bytes32()), expected_hex);
     }
 }

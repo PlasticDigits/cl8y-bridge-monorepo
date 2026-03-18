@@ -14,7 +14,7 @@ export type NetworkTier = 'local' | 'testnet' | 'mainnet'
 
 /**
  * Bridge chain configurations per network tier.
- * Each tier contains configs for all supported chains (EVM + Terra).
+ * Each tier contains configs for all supported chains (EVM + Terra + Solana).
  */
 export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig>> = {
   local: {
@@ -43,6 +43,14 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       lcdFallbacks: ['http://localhost:1317'],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000002', // V2 chain ID 2 (local Terra)
+    },
+    'solana-localnet': {
+      chainId: 'solana-localnet',
+      type: 'solana',
+      name: 'Solana Localnet',
+      rpcUrl: 'http://localhost:8899',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || 'CL8YBr1dg3So1ana111111111111111111111111111',
+      bytes4ChainId: '0x00000005',
     },
   },
   testnet: {
@@ -84,6 +92,14 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000002',
+    },
+    'solana-devnet': {
+      chainId: 'solana-devnet',
+      type: 'solana',
+      name: 'Solana Devnet',
+      rpcUrl: 'https://api.devnet.solana.com',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bytes4ChainId: '0x00000005',
     },
   },
   mainnet: {
@@ -131,6 +147,14 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000001',
     },
+    solana: {
+      chainId: 'solana',
+      type: 'solana',
+      name: 'Solana',
+      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bytes4ChainId: '0x00000005',
+    },
   },
 }
 
@@ -143,6 +167,9 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
   anvil: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
   anvil1: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
   localterra: { icon: '🌙', explorerUrl: '', nativeCurrency: { name: 'Luna', symbol: 'LUNA', decimals: 6 } },
+  solana: { icon: '◎', explorerUrl: 'https://explorer.solana.com', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
+  'solana-devnet': { icon: '◎', explorerUrl: 'https://explorer.solana.com/?cluster=devnet', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
+  'solana-localnet': { icon: '◎', explorerUrl: '', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
 }
 
 /**

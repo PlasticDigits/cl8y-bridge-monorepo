@@ -40,7 +40,7 @@ export interface BrokenTransferFix {
 
 export interface FixParams {
   /** For EVM dest: use submitOnEvm. For Terra dest: use submitOnTerra. */
-  destType: 'evm' | 'cosmos'
+  destType: 'evm' | 'cosmos' | 'solana'
   srcChainBytes4: Hex
   srcAccount: Hex
   destAccount: Hex

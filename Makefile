@@ -16,6 +16,13 @@ help:
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
+	@echo "Solana:"
+	@echo "  make solana-validator     - Start local Solana test validator"
+	@echo "  make solana-build         - Build Solana programs"
+	@echo "  make solana-test          - Run Solana program tests"
+	@echo "  make solana-deploy-local  - Deploy Solana program to local validator"
+	@echo "  make solana-logs          - Follow Solana program logs"
+	@echo ""
 	@echo "Building:"
 	@echo "  make build-evm            - Build EVM contracts"
 	@echo "  make build-terra          - Build Terra contracts (cargo)"
@@ -105,6 +112,30 @@ logs-terra:
 
 logs-postgres:
 	docker-compose logs -f postgres
+
+# ===========================================================================
+# Solana Targets
+# ===========================================================================
+
+.PHONY: solana-validator
+solana-validator: ## Start local Solana test validator
+	docker compose up solana -d
+
+.PHONY: solana-build
+solana-build: ## Build Solana programs
+	cd packages/contracts-solana && anchor build
+
+.PHONY: solana-test
+solana-test: ## Run Solana program tests
+	cd packages/contracts-solana && anchor test
+
+.PHONY: solana-deploy-local
+solana-deploy-local: ## Deploy Solana program to local validator
+	cd packages/contracts-solana && anchor deploy --provider.cluster localnet
+
+.PHONY: solana-logs
+solana-logs: ## Follow Solana program logs
+	solana logs --url http://localhost:8899
 
 # Formatting
 fmt:

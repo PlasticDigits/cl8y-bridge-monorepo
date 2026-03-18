@@ -289,4 +289,75 @@ contract AddressCodecLibTest is Test {
         bytes20 decoded = AddressCodecLib.decodeAsCosmos(encoded);
         assertEq(decoded, allOnes);
     }
+
+    // ============================================================================
+    // Regression Tests — hardcoded byte-level assertions for cross-codebase parity
+    // ============================================================================
+
+    function test_Regression_EncodeEvm_ExactBytes() public pure {
+        bytes32 encoded = AddressCodecLib.encodeEvm(TEST_EVM_ADDRESS);
+        bytes32 expected = hex"00000001f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000";
+        assertEq(encoded, expected, "EVM encoding must match cross-codebase reference");
+    }
+
+    function test_Regression_EncodeCosmos_ExactBytes() public pure {
+        bytes20 cosmosRaw = bytes20(hex"35743074956c710800e83198011ccbd4ddf1556d");
+        bytes32 encoded = AddressCodecLib.encodeCosmos(cosmosRaw);
+        bytes32 expected = hex"0000000235743074956c710800e83198011ccbd4ddf1556d0000000000000000";
+        assertEq(encoded, expected, "Cosmos encoding must match cross-codebase reference");
+    }
+
+    function test_Regression_Decode_Layout() public pure {
+        bytes32 evmEncoded = hex"00000001f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000";
+
+        (uint32 chainType, bytes20 rawAddr, bytes8 reserved) = AddressCodecLib.decode(evmEncoded);
+
+        assertEq(chainType, 1, "chain type must be 1 (EVM)");
+        assertEq(rawAddr, bytes20(TEST_EVM_ADDRESS), "raw address must match");
+        assertEq(reserved, bytes8(0), "reserved must be zero");
+    }
+
+    function test_Regression_Decode_Layout_Cosmos() public pure {
+        bytes32 cosmosEncoded = hex"0000000235743074956c710800e83198011ccbd4ddf1556d0000000000000000";
+
+        (uint32 chainType, bytes20 rawAddr, bytes8 reserved) = AddressCodecLib.decode(cosmosEncoded);
+
+        assertEq(chainType, 2, "chain type must be 2 (Cosmos)");
+        assertEq(rawAddr, bytes20(hex"35743074956c710800e83198011ccbd4ddf1556d"), "raw address must match");
+        assertEq(reserved, bytes8(0), "reserved must be zero");
+    }
+
+    // ============================================================================
+    // Solana-Specific Tests
+    // ============================================================================
+
+    function test_EncodeSolana_Identity() public pure {
+        bytes32 pubkey = bytes32(hex"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069");
+        bytes32 encoded = AddressCodecLib.encodeSolana(pubkey);
+        assertEq(encoded, pubkey, "Solana encoding should be identity (pubkey stored directly)");
+    }
+
+    function test_IsSolana_WithPrefixed() public pure {
+        bytes32 solanaPrefixed = bytes32(bytes4(uint32(AddressCodecLib.CHAIN_TYPE_SOLANA)));
+        assertTrue(AddressCodecLib.isSolana(solanaPrefixed), "Should detect Solana chain type prefix");
+    }
+
+    function test_IsSolana_RawPubkey() public pure {
+        bytes32 pubkey = bytes32(hex"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069");
+        assertFalse(AddressCodecLib.isSolana(pubkey), "Raw Solana pubkey should NOT be detected as Solana via isSolana");
+    }
+
+    function test_Solana_ChainTypeConstant() public pure {
+        assertEq(AddressCodecLib.CHAIN_TYPE_SOLANA, 3, "Solana chain type must be 3");
+    }
+
+    function testFuzz_EncodeSolana_Identity(bytes32 pubkey) public pure {
+        bytes32 encoded = AddressCodecLib.encodeSolana(pubkey);
+        assertEq(encoded, pubkey, "Solana encoding must always be identity");
+    }
+
+    function test_Regression_SolanaType_InValidRange() public pure {
+        bytes32 solanaEncoded = AddressCodecLib.encode(AddressCodecLib.CHAIN_TYPE_SOLANA, bytes20(0));
+        assertTrue(AddressCodecLib.isValidChainType(solanaEncoded), "Solana chain type should be in valid range");
+    }
 }

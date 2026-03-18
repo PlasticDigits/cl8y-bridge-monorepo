@@ -39,6 +39,9 @@ pub mod evm;
 #[cfg(feature = "terra")]
 pub mod terra;
 
+#[cfg(feature = "solana")]
+pub mod solana;
+
 // Testing utilities (feature-gated)
 #[cfg(feature = "testing")]
 pub mod testing;

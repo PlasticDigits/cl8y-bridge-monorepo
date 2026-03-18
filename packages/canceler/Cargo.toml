@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Shared multichain library
-multichain-rs = { path = "../multichain-rs", features = ["evm", "terra"] }
+multichain-rs = { path = "../multichain-rs", features = ["evm", "terra", "solana"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -51,6 +51,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Configuration
 dotenvy = "0.15"
+
+# Solana interactions
+solana-sdk = "=2.1.0"
+solana-client = "=2.1.0"
+solana-transaction-status = "=2.1.0"
+borsh = "0.10"
+bs58 = "0.5"
 
 # Utilities
 hex = "0.4"

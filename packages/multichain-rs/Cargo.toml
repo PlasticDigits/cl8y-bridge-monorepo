@@ -11,7 +11,8 @@ default = ["evm", "terra"]
 evm = []
 terra = []
 testing = []
-full = ["evm", "terra", "testing"]
+solana = []
+full = ["evm", "terra", "testing", "solana"]
 
 [dependencies]
 # Async runtime
@@ -42,12 +43,19 @@ tracing = "0.1"
 eyre = "0.6"
 thiserror = "1.0"
 
+# Solana interactions
+solana-sdk = "=2.1.0"
+solana-client = "=2.1.0"
+solana-transaction-status = "=2.1.0"
+borsh = "0.10"
+
 # Utilities
 hex = "0.4"
 url = "2"
 base64 = "0.22"
 bip39 = "2.0"
 bech32 = "0.9"
+bs58 = "0.5"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 [dev-dependencies]
