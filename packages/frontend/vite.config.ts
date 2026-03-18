@@ -94,16 +94,19 @@ export default defineConfig({
     __GIT_SHA__: JSON.stringify(gitSha),
     __APP_VERSION__: JSON.stringify(appVersion),
   },
-  // Optimize dependency pre-bundling
+  resolve: {
+    alias: {
+      buffer: 'buffer/',
+    },
+  },
   optimizeDeps: {
     include: [
       'react',
       'react-dom',
       'zustand',
       '@tanstack/react-query',
+      'buffer',
     ],
-    exclude: [
-      // Exclude heavy deps from pre-bundling to allow proper chunking
-    ],
+    exclude: [],
   },
 })

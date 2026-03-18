@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { ConnectWallet } from './ConnectWallet'
 import { WalletButton } from './WalletButton'
+import { SolanaConnectButton } from './SolanaConnectButton'
 import { sounds } from '../lib/sounds'
 
 export function NavBar() {
@@ -25,11 +26,13 @@ export function NavBar() {
         <div className="hidden min-[480px]:flex items-center gap-2 xl:hidden shrink-0">
           <WalletButton />
           <ConnectWallet />
+          <SolanaConnectButton />
         </div>
 
-        <div className="grid grid-cols-2 gap-2 w-full min-[480px]:hidden [&>button]:w-full [&>button]:justify-center">
+        <div className="grid grid-cols-3 gap-2 w-full min-[480px]:hidden [&>button]:w-full [&>button]:justify-center">
           <WalletButton />
           <ConnectWallet />
+          <SolanaConnectButton />
         </div>
 
         <nav className="flex gap-1 border-2 border-white/30 bg-black/80 p-1 min-w-0 w-full xl:w-auto xl:flex-1">
@@ -94,6 +97,7 @@ export function NavBar() {
         <div className="hidden xl:flex items-center gap-2 shrink-0">
           <WalletButton />
           <ConnectWallet />
+          <SolanaConnectButton />
         </div>
       </div>
     </div>

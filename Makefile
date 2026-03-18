@@ -87,31 +87,31 @@ help:
 
 # Infrastructure
 start:
-	docker-compose up -d
+	docker compose up -d
 	@echo "Waiting for services to be healthy..."
 	@sleep 5
-	docker-compose ps
+	docker compose ps
 
 stop:
-	docker-compose down
+	docker compose down
 
 reset:
-	docker-compose down -v
+	docker compose down -v
 
 logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 status:
 	./scripts/status.sh
 
 logs-anvil:
-	docker-compose logs -f anvil
+	docker compose logs -f anvil
 
 logs-terra:
-	docker-compose logs -f localterra
+	docker compose logs -f localterra
 
 logs-postgres:
-	docker-compose logs -f postgres
+	docker compose logs -f postgres
 
 # ===========================================================================
 # Solana Targets
@@ -237,7 +237,9 @@ deploy-evm:
 	@echo "Deploying EVM contracts to Anvil..."
 	cd packages/contracts-evm && forge script script/DeployLocal.s.sol:DeployLocal \
 		--broadcast \
-		--rpc-url http://localhost:8545
+		--rpc-url http://localhost:8545 \
+		--sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
 deploy-test-token:
 	@echo "Deploying test ERC20 token to Anvil..."

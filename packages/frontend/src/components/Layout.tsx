@@ -1,9 +1,10 @@
 import { Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { NavBar } from './NavBar'
-import { EvmWalletModal, TerraWalletModal } from './wallet'
+import { EvmWalletModal, TerraWalletModal, SolanaWalletModal } from './wallet'
 import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
+import { useSolanaWalletStore } from '../stores/solanaWallet'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -23,6 +24,7 @@ function getInitialTheme(): ThemeMode {
 export function Layout() {
   const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
   const { showWalletModal, setShowWalletModal } = useWalletStore()
+  const { showWalletModal: showSolanaModal, setShowWalletModal: setShowSolanaModal } = useSolanaWalletStore()
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
 
   useEffect(() => {
@@ -95,6 +97,7 @@ export function Layout() {
 
       <EvmWalletModal isOpen={showEvmWalletModal} onClose={() => setShowEvmWalletModal(false)} />
       <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
+      <SolanaWalletModal isOpen={showSolanaModal} onClose={() => setShowSolanaModal(false)} />
     </div>
   )
 }

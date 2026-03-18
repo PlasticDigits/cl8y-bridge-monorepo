@@ -60,7 +60,7 @@ services:
 
   # Local Solana validator
   solana:
-    image: solanalabs/solana:v2.2
+    image: solanalabs/solana:v1.18.26
     command: >
       solana-test-validator
       --reset
@@ -72,6 +72,10 @@ services:
       - "8899:8899"
       - "8900:8900"
       - "9900:9900"
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1000000
     healthcheck:
       test: ["CMD", "solana", "cluster-version", "--url", "http://localhost:8899"]
       interval: 5s

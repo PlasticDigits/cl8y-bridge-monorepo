@@ -18,6 +18,7 @@ import {
 } from '../../hooks/useBridgeDeposit'
 import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidation'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
+import { useSolanaWallet } from '../../hooks/useSolanaWallet'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
@@ -76,6 +77,10 @@ const TOKEN_CONFIGS: Record<string, { address: Address; lockUnlockAddress: Addre
 /** Derive the transfer direction from the selected source and dest chain types */
 function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefined): TransferDirection {
   if (!source || !dest) return 'terra-to-evm'
+  if (source.type === 'solana' && dest.type === 'evm') return 'solana-to-evm'
+  if (source.type === 'evm' && dest.type === 'solana') return 'evm-to-solana'
+  if (source.type === 'solana' && dest.type === 'cosmos') return 'solana-to-terra'
+  if (source.type === 'cosmos' && dest.type === 'solana') return 'terra-to-solana'
   if (source.type === 'cosmos' && dest.type === 'evm') return 'terra-to-evm'
   if (source.type === 'evm' && dest.type === 'cosmos') return 'evm-to-terra'
   return 'evm-to-evm'
@@ -85,10 +90,11 @@ function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefi
 function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): ChainInfo[] {
   const source = allChains.find((c) => c.id === sourceChainId)
   return allChains.filter((c) => {
-    // Can't bridge to the same chain
     if (c.id === sourceChainId) return false
     // Cosmos → Cosmos not supported
     if (source?.type === 'cosmos' && c.type === 'cosmos') return false
+    // Solana → Solana not supported (same chain type bridge)
+    if (source?.type === 'solana' && c.type === 'solana') return false
     return true
   })
 }
@@ -212,6 +218,7 @@ function getTerraTokenDecimals(
 export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
+  const { connected: isSolanaConnected, address: solanaAddress, setShowWalletModal: setShowSolanaModal } = useSolanaWallet()
   const { data: registryTokens, isLoading: isRegistryLoading } = useTokenRegistry()
   const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
@@ -272,8 +279,10 @@ export function TransferForm() {
     }
   }, [destChains, destChain])
 
-  const isSourceTerra = direction === 'terra-to-evm'
-  const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm'
+  const isSourceTerra = direction === 'terra-to-evm' || direction === 'terra-to-solana'
+  const isSourceSolana = direction === 'solana-to-evm' || direction === 'solana-to-terra'
+  const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm' || direction === 'solana-to-evm'
+  const isDestSolana = direction === 'evm-to-solana' || direction === 'terra-to-solana'
 
   const sourceChainConfig = useMemo(
     () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[sourceChain],
@@ -440,14 +449,15 @@ export function TransferForm() {
   )
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
-  const isWalletConnected = isSourceTerra ? isTerraConnected : isEvmConnected
+  const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
 
   // Auto-fill recipient from connected wallet on the destination side
   const recipientAddr = useMemo(() => {
     if (recipient) return recipient
+    if (isDestSolana) return solanaAddress ?? ''
     if (isDestEvm) return evmAddress ?? ''
     return terraAddress ?? ''
-  }, [recipient, isDestEvm, evmAddress, terraAddress])
+  }, [recipient, isDestEvm, isDestSolana, evmAddress, terraAddress, solanaAddress])
 
   const receiveAmount = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return '0'
@@ -926,8 +936,9 @@ export function TransferForm() {
   const isSwapDisabled = useMemo(() => {
     const destInfo = getChainById(destChain)
     const sourceInfo = getChainById(sourceChain)
-    // Disable swap if swapping would result in cosmos→cosmos
-    return destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos'
+    if (destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos') return true
+    if (destInfo?.type === 'solana' && sourceInfo?.type === 'solana') return true
+    return false
   }, [sourceChain, destChain])
 
   const handleSourceChange = useCallback(
@@ -973,6 +984,18 @@ export function TransferForm() {
     // NOT native chain IDs (e.g. 31337, 31338).
     const tier = DEFAULT_NETWORK as NetworkTier
     const destConfig = BRIDGE_CHAINS[tier][destChain]
+
+    if (isSourceSolana) {
+      setError('Solana deposits are not yet available. The Solana bridge program is under development.')
+      frozenChainsRef.current = null
+      return
+    }
+
+    if (isDestSolana) {
+      setError('Solana withdrawals are not yet available. The Solana bridge program is under development.')
+      frozenChainsRef.current = null
+      return
+    }
 
     if (direction === 'terra-to-evm') {
       // Terra → EVM: deposit on Terra bridge (V2)
@@ -1048,7 +1071,7 @@ export function TransferForm() {
     isSourceTerra
       ? terraDisplay.displayLabel || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC'
       : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || '—')
-  const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
+  const walletLabel = isSourceTerra ? 'Terra' : isSourceSolana ? 'Solana' : 'EVM'
 
   // "You will receive" shows DESTINATION token - use display hooks for symbol, link to dest chain
   const feeBreakdownProps = useMemo(() => {
@@ -1126,10 +1149,14 @@ export function TransferForm() {
     ? `Switching to ${sourceChainConfig?.name ?? 'source chain'}...`
     : isSubmitting
     ? 'Processing...'
-    : direction === 'terra-to-evm'
+    : direction === 'terra-to-evm' || direction === 'terra-to-solana'
     ? 'Bridge from Terra'
+    : direction === 'solana-to-evm' || direction === 'solana-to-terra'
+    ? 'Bridge from Solana'
     : direction === 'evm-to-evm'
     ? 'Bridge EVM to EVM'
+    : direction === 'evm-to-solana'
+    ? 'Bridge EVM to Solana'
     : 'Bridge from EVM'
 
   return (
@@ -1195,7 +1222,10 @@ export function TransferForm() {
         onChange={setRecipient}
         direction={direction}
         onAutofill={() => {
-          if (isDestEvm) {
+          if (isDestSolana) {
+            if (solanaAddress) setRecipient(solanaAddress)
+            else setShowSolanaModal(true)
+          } else if (isDestEvm) {
             if (evmAddress) setRecipient(evmAddress)
             else setShowEvmWalletModal(true)
           } else {
