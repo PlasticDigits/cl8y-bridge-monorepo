@@ -36,7 +36,7 @@ export function SolanaConnectButton() {
             <span className="text-purple-400">SOL</span>
           </div>
           <div className="w-8 h-8 shrink-0 flex items-center justify-center overflow-hidden rounded-sm bg-black/90 p-1 border-2 border-black shadow-[2px_2px_0_#000]">
-            <span className="text-base font-bold text-purple-300 leading-none">◎</span>
+            <img src="/chains/solana-icon.png" alt="Solana" className="h-full w-full object-contain" />
           </div>
         </button>
 
@@ -90,8 +90,8 @@ export function SolanaConnectButton() {
           </>
         ) : (
           <>
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5">
-              <span className="text-sm font-bold text-purple-300">◎</span>
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-black p-0.5 overflow-hidden">
+              <img src="/chains/solana-icon.png" alt="Solana" className="h-full w-full object-contain" />
             </span>
             <span className="hidden sm:inline text-slate-950 text-sm font-semibold whitespace-nowrap">CONNECT SOL</span>
             <span className="sm:hidden text-slate-950 text-sm font-semibold whitespace-nowrap">SOL</span>
