@@ -112,6 +112,34 @@ When `VITE_NETWORK=local`, run `make deploy` from the repo root first, then
 copy the deployed addresses from the terminal output into `.env.local`. The RPC
 defaults (`localhost:8545`, `localhost:1317`) work out of the box.
 
+Example local `.env.local`:
+
+```env
+VITE_NETWORK=local
+VITE_TERRA_BRIDGE_ADDRESS=<from deploy output>
+VITE_EVM_BRIDGE_ADDRESS=<from deploy output>
+VITE_EVM_ROUTER_ADDRESS=
+VITE_BRIDGE_TOKEN_ADDRESS=
+VITE_LOCK_UNLOCK_ADDRESS=<from deploy output>
+VITE_EVM_RPC_URL=http://localhost:8545
+VITE_TERRA_LCD_URL=http://localhost:1317
+VITE_TERRA_RPC_URL=http://localhost:26657
+VITE_DEV_MODE=true
+```
+
+### Solana environment variables
+
+Add these when testing Solana integration (on the `feat/solana-integration` branch):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VITE_SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` (devnet) or `http://localhost:8899` (local) |
+| `VITE_SOLANA_PROGRAM_ID` | Deployed bridge program address | `CL8Y...` (from deploy output) |
+| `VITE_SOLANA_FAUCET_ADDRESS` | Faucet for devnet testing | *(optional)* |
+
+For local dev, the Solana test validator runs at `http://localhost:8899`
+(started automatically by `docker compose`).
+
 ### `VITE_WC_PROJECT_ID`
 
 Required for WalletConnect QR flows. Get it from
@@ -123,9 +151,9 @@ work without it.
 
 ## What You're Testing
 
-The CL8Y Bridge is a cross-chain bridge between **Terra Classic** and **EVM chains**
-(BSC, opBNB). Users connect wallets, initiate transfers, monitor status, and verify
-transaction hashes.
+The CL8Y Bridge is a cross-chain bridge between **Terra Classic**, **EVM chains**
+(BSC, opBNB), and **Solana**. Users connect wallets, initiate transfers, monitor
+status, and verify transaction hashes.
 
 ### Pages
 
@@ -153,17 +181,23 @@ transaction hashes.
 - LuncDash (via WalletConnect)
 - GalaxyStation (via WalletConnect)
 
+**Solana wallets:**
+- Phantom (browser extension + mobile)
+- Solflare (browser extension + mobile)
+
 ### Key Flows
 
-1. **Connect wallet** — both EVM and Terra sides, verify address displays
+1. **Connect wallet** — EVM, Terra, and Solana sides, verify address displays
 2. **EVM → Terra transfer** — full lifecycle: form → sign → pending → complete
 3. **Terra → EVM transfer** — full lifecycle
-4. **Auto-submit withdrawal** — status page should auto-submit when wallet connected
-5. **Manual withdrawal** — fallback when auto-submit doesn't fire
-6. **Hash verification** — search a tx hash, compare source/dest
-7. **Faucet claim** — claim test tokens on mainnet
-8. **Responsive layout** — every page on phones, tablets, desktops
-9. **Error states** — disconnect mid-transfer, reject signing, invalid inputs
+4. **Solana → EVM transfer** — full lifecycle (requires deployed Solana program)
+5. **EVM → Solana transfer** — full lifecycle (requires deployed Solana program)
+6. **Auto-submit withdrawal** — status page should auto-submit when wallet connected
+7. **Manual withdrawal** — fallback when auto-submit doesn't fire
+8. **Hash verification** — search a tx hash, compare source/dest
+9. **Faucet claim** — claim test tokens on mainnet
+10. **Responsive layout** — every page on phones, tablets, desktops
+11. **Error states** — disconnect mid-transfer, reject signing, invalid inputs
 
 ---
 
@@ -472,14 +506,26 @@ local chains), you'll need Docker:
 
 ```bash
 # From repo root
-make start          # Starts Anvil, LocalTerra, Postgres
+make start          # Starts Anvil, LocalTerra, Solana validator, Postgres
 make deploy         # Deploys contracts to local chains
+
+# Set up cross-chain registration
+export EVM_BRIDGE_ADDRESS=<from deploy output>
+export EVM_CHAIN_REGISTRY=<from deploy output>
+export TERRA_BRIDGE_ADDRESS=<from deploy output>
+./scripts/setup-bridge.sh
+
 make operator       # Runs the bridge operator
 
 # In another terminal
 cd packages/frontend
 npm run dev
 ```
+
+> **Note:** The Solana test validator requires high file descriptor limits.
+> This is handled automatically via `ulimits` in `docker-compose.yml`. If you
+> see `UnableToSetOpenFileDescriptorLimit` errors, ensure your Docker host
+> allows `nofile` limits of at least 1000000.
 
 For most QA work, you'll test against the deployed staging/production site
 rather than running the full stack locally.
@@ -534,6 +580,120 @@ real wallet signing flows. Your manual testing covers what automation cannot.
 
 ---
 
+## Solana Integration (`feat/solana-integration`)
+
+The Solana integration is under active development on the `feat/solana-integration`
+branch. This section covers what's been implemented, what's pending, and how to
+test it.
+
+> **Do NOT merge this branch to `main`** until all Solana QA checklist items
+> pass. The main branch serves live EVM + Terra production.
+
+### Branch setup
+
+```bash
+git checkout feat/solana-integration
+git pull origin feat/solana-integration
+```
+
+Then follow the normal Quick Start / Full Dev Stack setup above. The Solana
+test validator container starts automatically with `make start`.
+
+### Infrastructure fixes already applied
+
+These issues were discovered and fixed in commit `1f01c90`:
+
+| Issue | Fix |
+|-------|-----|
+| `docker-compose` not found | Replaced with `docker compose` (v2 syntax) in Makefile |
+| `solanalabs/solana:v2.2` doesn't exist | Changed to `solanalabs/solana:v1.18.26` in docker-compose.yml |
+| Solana validator `UnableToSetOpenFileDescriptorLimit` | Added `ulimits.nofile: 1000000` to solana service |
+| `forge script` "default sender" error | Added `--sender` / `--private-key` to Makefile `deploy-evm` target |
+| Browser: `Module "buffer" has been externalized` | Added `buffer` to Vite `resolve.alias` and `optimizeDeps.include` |
+| Solana chains missing from frontend dropdowns | Fixed `useDiscoveredChains.ts` to pass `solana` type through filter |
+
+### What's working in the frontend
+
+- [x] **CONNECT SOL** button in the navbar (alongside TC and EVM buttons)
+- [x] `SolanaWalletModal` for Phantom / Solflare wallet connection
+- [x] Solana wallet status in the `WalletStatusBar` (purple accent row)
+- [x] Solana Localnet in FROM/TO chain selectors (local tier)
+- [x] Solana mainnet and Solana Devnet in chain selectors (mainnet/testnet tiers)
+- [x] Chain icons (`localsolana-icon.png`, `solana-icon.png`) display correctly
+- [x] Transfer direction logic for all 4 Solana routes: `solana↔evm`, `solana↔terra`
+- [x] Swap button correctly disabled for `solana→solana`
+- [x] Recipient autofill from connected Solana wallet
+- [x] No browser console errors (Buffer polyfill fixed)
+
+### What's pending (requires deployed Solana program)
+
+- [ ] Actual Solana deposit execution (placeholder: "Solana deposits are not yet available")
+- [ ] Actual Solana withdraw execution (placeholder: "Solana withdrawals are not yet available")
+- [ ] `useSolanaDeposit` hook wired into `handleSubmit` (needs program ID)
+- [ ] Solana withdraw flow in `useWithdrawSubmit`
+- [ ] Solana RPC health check in Settings → ChainCard
+- [ ] Bridge config panel for Solana (admin, feeBps, withdrawDelay)
+
+### QA checklist for Solana
+
+When the Solana program is deployed to devnet, verify:
+
+**Wallet:**
+- [ ] Phantom connects and shows SOL balance
+- [ ] Solflare connects and shows SOL balance
+- [ ] Disconnect works cleanly for both wallets
+- [ ] Address displays correctly in navbar and WalletStatusBar
+
+**Chain selector:**
+- [ ] Solana appears in FROM dropdown with correct icon
+- [ ] Solana appears in TO dropdown with correct icon
+- [ ] Selecting Solana as source hides Solana from TO (no same-chain bridge)
+- [ ] Chain swap button works for Solana routes
+
+**Transfer form:**
+- [ ] SOL balance loads when Solana is the source chain
+- [ ] Recipient autofills with connected destination wallet address
+- [ ] Fee display works for Solana routes
+- [ ] Amount validation works (insufficient balance, zero, negative)
+
+**Transfer execution (after program deploy):**
+- [ ] Solana → EVM deposit: form → sign → pending → operator picks up → complete
+- [ ] EVM → Solana withdraw: operator approves → wait delay → execute withdraw
+- [ ] Cancel flow: withdraw submitted → canceler cancels before execution
+- [ ] Hash parity: Solana transfer hash matches EVM keccak256 output
+
+**Operator & canceler:**
+- [ ] Operator watches Solana deposit events (`solana_deposits` table)
+- [ ] Operator submits `withdraw_approve` on Solana
+- [ ] Canceler polls `WithdrawApprove` events from Solana
+- [ ] Canceler submits `withdraw_cancel` for fraudulent approvals
+
+**Security:**
+- [ ] `ExecutedHash` PDA prevents replay (double-spend)
+- [ ] Close-reinit attack blocked (`AlreadyExecutedHash` error)
+- [ ] Only admin can call `set_config`, `register_chain`, `register_token`
+- [ ] Only registered cancelers can call `withdraw_cancel`
+
+### Operator/canceler env vars for Solana
+
+When running the operator or canceler with Solana enabled, add to the
+service's environment:
+
+```env
+SOLANA_ENABLED=true
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_PROGRAM_ID=<program-id-from-deploy>
+SOLANA_KEYPAIR_PATH=~/.config/solana/devnet-deployer.json
+SOLANA_V2_CHAIN_ID=0x736f6c00
+SOLANA_POLL_INTERVAL_MS=5000
+SOLANA_COMMITMENT=finalized
+```
+
+For full details, see [issue #60](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/60)
+and `docs/SOLANA_INTEGRATION_PLAN.md`.
+
+---
+
 ## Device Testing Checklist
 
 When doing a test pass, aim to cover this matrix:
@@ -543,8 +703,8 @@ When doing a test pass, aim to cover this matrix:
 | **iOS** | iPhone SE (small), iPhone 15 (medium), iPad |
 | **Android** | Small phone (< 375px), mid-range, tablet |
 | **Desktop** | Chrome, Firefox, Safari (macOS), Edge |
-| **Wallets** | At least MetaMask + Station per pass, rotate others |
-| **Networks** | Mainnet (with test tokens) for full flows and checks |
+| **Wallets** | At least MetaMask + Station + Phantom per pass, rotate others |
+| **Networks** | Mainnet (with test tokens) for full flows; Solana devnet for Solana flows |
 
 You don't need to test every combination every time. Rotate coverage across
 test passes and note what was tested in the QA Test Pass issue.
