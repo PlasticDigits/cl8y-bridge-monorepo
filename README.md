@@ -438,7 +438,7 @@ make deploy-terra-mainnet      # Deploy to Terra Classic Mainnet
 # Monitoring
 make start-monitoring   # Start Prometheus + Grafana
 make stop-monitoring    # Stop monitoring services
-# Prometheus: http://localhost:9091
+# Prometheus: http://localhost:9092
 # Grafana: http://localhost:3000 (admin/admin)
 
 # Development

@@ -123,7 +123,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.0
     ports:
-      - "127.0.0.1:9091:9090"
+      - "127.0.0.1:9092:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerting-rules.yml:/etc/prometheus/rules/alerting-rules.yml:ro
