@@ -1,7 +1,10 @@
 import { expect } from "chai";
 
+import pkg from "js-sha3";
+const { keccak_256 } = pkg;
+
 function keccak256(data: Buffer): Buffer {
-  const { keccak_256 } = require("js-sha3");
+
   return Buffer.from(keccak_256.arrayBuffer(data));
 }
 
