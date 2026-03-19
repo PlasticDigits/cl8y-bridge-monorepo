@@ -5,7 +5,8 @@ import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
 import {
   setupTest, findBridgePda, findDepositPda, findChainPda, findWithdrawPda,
-  findExecutedHashPda, airdrop, TestContext
+  findExecutedHashPda, airdrop, TestContext,
+  initializeBridgeIfNeeded, registerChainIfNeeded
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -50,30 +51,27 @@ describe("deposit and withdraw flow", () => {
   before(async () => {
     ctx = await setupTest();
 
+    await initializeBridgeIfNeeded(ctx, {
+      operator: ctx.operator.publicKey,
+      feeBps: 50,
+      withdrawDelay: new anchor.BN(300),
+      chainId: SOLANA_CHAIN_ID,
+    });
     await ctx.program.methods
-      .initialize({
+      .setConfig({
+        newAdmin: null,
         operator: ctx.operator.publicKey,
         feeBps: 50,
-        withdrawDelay: new anchor.BN(1),
-        chainId: SOLANA_CHAIN_ID,
+        withdrawDelay: new anchor.BN(15),
+        paused: false,
       })
       .accounts({
         bridge: ctx.bridgePda,
         admin: ctx.admin.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .rpc();
 
-    [evmChainPda] = findChainPda(ctx.program.programId, Buffer.from(EVM_CHAIN_ID));
-    await ctx.program.methods
-      .registerChain({ chainId: EVM_CHAIN_ID, identifier: "evm_1" })
-      .accounts({
-        bridge: ctx.bridgePda,
-        chainEntry: evmChainPda,
-        admin: ctx.admin.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc();
+    evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_1");
   });
 
   describe("deposit_native", () => {
@@ -398,7 +396,7 @@ describe("deposit and withdraw flow", () => {
     });
 
     it("execute native withdrawal after delay", async () => {
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 16000));
 
       const [withdrawPda] = findWithdrawPda(ctx.program.programId, transferHash);
       const [executedHashPda] = findExecutedHashPda(ctx.program.programId, transferHash);

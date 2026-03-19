@@ -62,6 +62,47 @@ export interface TestContext {
   bridgeBump: number;
 }
 
+export async function initializeBridgeIfNeeded(
+  ctx: TestContext,
+  params: {
+    operator: PublicKey;
+    feeBps: number;
+    withdrawDelay: anchor.BN;
+    chainId: number[];
+  }
+): Promise<void> {
+  const info = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
+  if (info) return;
+  await ctx.program.methods
+    .initialize(params)
+    .accounts({
+      bridge: ctx.bridgePda,
+      admin: ctx.admin.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+}
+
+export async function registerChainIfNeeded(
+  ctx: TestContext,
+  chainId: number[],
+  identifier: string
+): Promise<PublicKey> {
+  const [chainPda] = findChainPda(ctx.program.programId, Buffer.from(chainId));
+  const info = await ctx.provider.connection.getAccountInfo(chainPda);
+  if (info) return chainPda;
+  await ctx.program.methods
+    .registerChain({ chainId, identifier })
+    .accounts({
+      bridge: ctx.bridgePda,
+      chainEntry: chainPda,
+      admin: ctx.admin.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  return chainPda;
+}
+
 export async function setupTest(): Promise<TestContext> {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);

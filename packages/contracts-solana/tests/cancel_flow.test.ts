@@ -5,7 +5,8 @@ import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
 import {
   setupTest, findBridgePda, findChainPda, findWithdrawPda,
-  findCancelerPda, findExecutedHashPda, airdrop, TestContext
+  findCancelerPda, findExecutedHashPda, airdrop, TestContext,
+  initializeBridgeIfNeeded
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -55,17 +56,23 @@ describe("cancel flow", () => {
   before(async () => {
     ctx = await setupTest();
 
+    await initializeBridgeIfNeeded(ctx, {
+      operator: ctx.operator.publicKey,
+      feeBps: 50,
+      withdrawDelay: new anchor.BN(300),
+      chainId: SOLANA_CHAIN_ID,
+    });
     await ctx.program.methods
-      .initialize({
+      .setConfig({
+        newAdmin: null,
         operator: ctx.operator.publicKey,
-        feeBps: 50,
-        withdrawDelay: new anchor.BN(300),
-        chainId: SOLANA_CHAIN_ID,
+        feeBps: null,
+        withdrawDelay: null,
+        paused: null,
       })
       .accounts({
         bridge: ctx.bridgePda,
         admin: ctx.admin.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .rpc();
 

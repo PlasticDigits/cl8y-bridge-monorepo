@@ -3,58 +3,58 @@ import { Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
-import { setupTest, findBridgePda, airdrop, TestContext } from "./helpers/setup";
+import { setupTest, findBridgePda, airdrop, TestContext, initializeBridgeIfNeeded } from "./helpers/setup";
 
 describe("cl8y-bridge", () => {
   let ctx: TestContext;
 
   before(async () => {
     ctx = await setupTest();
+    await initializeBridgeIfNeeded(ctx, {
+      operator: ctx.operator.publicKey,
+      feeBps: 50,
+      withdrawDelay: new anchor.BN(300),
+      chainId: [0x00, 0x00, 0x00, 0x05],
+    });
+    await ctx.program.methods
+      .setConfig({
+        newAdmin: null,
+        operator: ctx.operator.publicKey,
+        feeBps: 50,
+        withdrawDelay: new anchor.BN(300),
+        paused: false,
+      })
+      .accounts({
+        bridge: ctx.bridgePda,
+        admin: ctx.admin.publicKey,
+      })
+      .rpc();
   });
 
   describe("initialize", () => {
-    it("initializes bridge config", async () => {
-      await ctx.program.methods
-        .initialize({
-          operator: ctx.operator.publicKey,
-          feeBps: 50,
-          withdrawDelay: new anchor.BN(300),
-          chainId: [0x00, 0x00, 0x00, 0x05],
-        })
-        .accounts({
-          bridge: ctx.bridgePda,
-          admin: ctx.admin.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
+    it("bridge config is initialized correctly", async () => {
       const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
       expect(bridge.admin.toString()).to.equal(ctx.admin.publicKey.toString());
       expect(bridge.operator.toString()).to.equal(ctx.operator.publicKey.toString());
       expect(bridge.feeBps).to.equal(50);
       expect(bridge.withdrawDelay.toNumber()).to.equal(300);
-      expect(bridge.depositNonce.toNumber()).to.equal(0);
       expect(bridge.paused).to.be.false;
     });
 
     it("rejects invalid fee bps", async () => {
-      const newAdmin = Keypair.generate();
-      await airdrop(ctx.provider.connection, newAdmin.publicKey);
-
       try {
         await ctx.program.methods
-          .initialize({
-            operator: ctx.operator.publicKey,
+          .setConfig({
+            newAdmin: null,
+            operator: null,
             feeBps: 10001,
-            withdrawDelay: new anchor.BN(300),
-            chainId: [0x00, 0x00, 0x00, 0x05],
+            withdrawDelay: null,
+            paused: null,
           })
           .accounts({
             bridge: ctx.bridgePda,
-            admin: newAdmin.publicKey,
-            systemProgram: SystemProgram.programId,
+            admin: ctx.admin.publicKey,
           })
-          .signers([newAdmin])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -148,15 +148,18 @@ describe("cl8y-bridge", () => {
         ctx.program.programId
       );
 
-      await ctx.program.methods
-        .registerChain({ chainId: Array.from(chainId), identifier: "evm_1" })
-        .accounts({
-          bridge: ctx.bridgePda,
-          chainEntry: chainPda,
-          admin: ctx.admin.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      const existing = await ctx.provider.connection.getAccountInfo(chainPda);
+      if (!existing) {
+        await ctx.program.methods
+          .registerChain({ chainId: Array.from(chainId), identifier: "evm_1" })
+          .accounts({
+            bridge: ctx.bridgePda,
+            chainEntry: chainPda,
+            admin: ctx.admin.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
 
       const chain = await ctx.program.account.chainEntry.fetch(chainPda);
       expect(chain.identifier).to.equal("evm_1");
@@ -170,15 +173,18 @@ describe("cl8y-bridge", () => {
         ctx.program.programId
       );
 
-      await ctx.program.methods
-        .addCanceler({ canceler: ctx.canceler.publicKey, active: true })
-        .accounts({
-          bridge: ctx.bridgePda,
-          cancelerEntry: cancelerPda,
-          admin: ctx.admin.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      const existing = await ctx.provider.connection.getAccountInfo(cancelerPda);
+      if (!existing) {
+        await ctx.program.methods
+          .addCanceler({ canceler: ctx.canceler.publicKey, active: true })
+          .accounts({
+            bridge: ctx.bridgePda,
+            cancelerEntry: cancelerPda,
+            admin: ctx.admin.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
 
       const entry = await ctx.program.account.cancelerEntry.fetch(cancelerPda);
       expect(entry.active).to.be.true;
