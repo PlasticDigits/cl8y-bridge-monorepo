@@ -44,10 +44,10 @@ fi
 echo ""
 echo "Sending initialize transaction..."
 
+# Run mocha directly with --grep; anchor test passes -- args to cargo-build-sbf, not mocha
 cd packages/contracts-solana
-anchor test --skip-deploy --skip-lint \
-  --provider.cluster "${SOLANA_RPC_URL}" \
-  --provider.wallet "${SOLANA_KEYPAIR}" \
-  -- --grep "initialize"
+ANCHOR_PROVIDER_URI="${SOLANA_RPC_URL}" \
+ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "initialize"
 
 echo "Bridge initialized!"

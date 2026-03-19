@@ -49,9 +49,9 @@ anchor deploy --provider.cluster "${RPC_URL}"
 echo "[3/4] Verifying deployment..."
 solana program show "${PROGRAM_ID}" --url "${RPC_URL}"
 
-# Run hash parity test
+# Run hash parity test (call ts-mocha directly; anchor test passes -- args to cargo-build-sbf, not mocha)
 echo "[4/4] Running hash parity verification..."
-anchor test --skip-deploy -- --grep "hash parity"
+npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity.test.ts
 
 echo
 echo "============================================"
