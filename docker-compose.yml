@@ -7,7 +7,7 @@ services:
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--block-time", "1", "--accounts", "10", "--balance", "10000"]
     ports:
-      - "8545:8545"
+      - "127.0.0.1:8545:8545"
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 5s
@@ -20,7 +20,7 @@ services:
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--block-time", "1", "--accounts", "10", "--balance", "10000", "--chain-id", "31338"]
     ports:
-      - "8546:8545"
+      - "127.0.0.1:8546:8545"
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 5s
@@ -44,10 +44,10 @@ services:
     image: ghcr.io/plasticdigits/localterra-cl8y:latest
     platform: linux/amd64
     ports:
-      - "26657:26657"  # RPC
-      - "1317:1317"    # LCD/REST
-      - "9090:9090"    # gRPC
-      - "9091:9091"    # gRPC-web
+      - "127.0.0.1:26657:26657"  # RPC
+      - "127.0.0.1:1317:1317"    # LCD/REST
+      - "127.0.0.1:9090:9090"    # gRPC
+      - "127.0.0.1:9091:9091"    # gRPC-web
     volumes:
       # Persist chain data (optional - remove for fresh state each run)
       - localterra-data:/home/terra/.terra
@@ -63,10 +63,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: operator
-      POSTGRES_PASSWORD: operator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-operator}
       POSTGRES_DB: operator
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"  # Use 5433 to avoid conflict with local PostgreSQL
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"  # Use 5433 to avoid conflict with local PostgreSQL
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Note: Migrations are run by the operator via sqlx, not via init scripts
@@ -98,7 +98,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.0
     ports:
-      - "9091:9090"
+      - "127.0.0.1:9091:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerting-rules.yml:/etc/prometheus/rules/alerting-rules.yml:ro
@@ -117,10 +117,10 @@ services:
   grafana:
     image: grafana/grafana:10.2.2
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
