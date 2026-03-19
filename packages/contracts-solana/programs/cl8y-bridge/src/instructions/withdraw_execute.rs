@@ -9,7 +9,7 @@ pub struct WithdrawExecute<'info> {
         seeds = [BridgeConfig::SEED],
         bump = bridge.bump,
     )]
-    pub bridge: Account<'info, BridgeConfig>,
+    pub bridge: Box<Account<'info, BridgeConfig>>,
 
     #[account(
         mut,
@@ -17,7 +17,7 @@ pub struct WithdrawExecute<'info> {
         bump = pending_withdraw.bump,
         close = recipient,
     )]
-    pub pending_withdraw: Account<'info, PendingWithdraw>,
+    pub pending_withdraw: Box<Account<'info, PendingWithdraw>>,
 
     #[account(
         init,
@@ -26,7 +26,7 @@ pub struct WithdrawExecute<'info> {
         seeds = [ExecutedHash::SEED, pending_withdraw.transfer_hash.as_ref()],
         bump,
     )]
-    pub executed_hash: Account<'info, ExecutedHash>,
+    pub executed_hash: Box<Account<'info, ExecutedHash>>,
 
     #[account(constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered)]
     pub mint: InterfaceAccount<'info, Mint>,
@@ -50,7 +50,7 @@ pub struct WithdrawExecute<'info> {
         seeds = [TokenMapping::SEED, pending_withdraw.src_chain.as_ref(), token_mapping.dest_token.as_ref()],
         bump = token_mapping.bump,
     )]
-    pub token_mapping: Account<'info, TokenMapping>,
+    pub token_mapping: Box<Account<'info, TokenMapping>>,
 
     #[account(mut)]
     pub recipient: Signer<'info>,

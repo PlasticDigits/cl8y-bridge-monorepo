@@ -20,7 +20,7 @@ pub struct DepositSpl<'info> {
         seeds = [BridgeConfig::SEED],
         bump = bridge.bump,
     )]
-    pub bridge: Account<'info, BridgeConfig>,
+    pub bridge: Box<Account<'info, BridgeConfig>>,
 
     #[account(
         init,
@@ -29,13 +29,13 @@ pub struct DepositSpl<'info> {
         seeds = [DepositRecord::SEED, (bridge.deposit_nonce + 1).to_le_bytes().as_ref()],
         bump,
     )]
-    pub deposit_record: Account<'info, DepositRecord>,
+    pub deposit_record: Box<Account<'info, DepositRecord>>,
 
     #[account(
         seeds = [TokenMapping::SEED, params.dest_chain.as_ref(), token_mapping.dest_token.as_ref()],
         bump = token_mapping.bump,
     )]
-    pub token_mapping: Account<'info, TokenMapping>,
+    pub token_mapping: Box<Account<'info, TokenMapping>>,
 
     #[account(constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered)]
     pub mint: InterfaceAccount<'info, Mint>,
@@ -59,7 +59,7 @@ pub struct DepositSpl<'info> {
         seeds = [ChainEntry::SEED, params.dest_chain.as_ref()],
         bump = dest_chain_entry.bump,
     )]
-    pub dest_chain_entry: Account<'info, ChainEntry>,
+    pub dest_chain_entry: Box<Account<'info, ChainEntry>>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,
