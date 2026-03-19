@@ -5,14 +5,14 @@ help:
 	@echo "CL8Y Bridge Development Commands"
 	@echo ""
 	@echo "Infrastructure:"
-	@echo "  make start          - Start all services (Anvil, Anvil1, LocalTerra, PostgreSQL)"
+	@echo "  make start          - Start all services (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
 	@echo "  make stop           - Stop all services"
 	@echo "  make reset          - Stop and remove all volumes"
 	@echo "  make status         - Check status of all services"
 	@echo "  make logs           - View service logs"
 	@echo ""
 	@echo "Development:"
-	@echo "  make deploy         - Deploy contracts to local chains"
+	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana)"
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
@@ -72,7 +72,10 @@ help:
 	@echo "  make e2e-single TEST=x  - Run single test by name"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy             - Deploy all contracts locally"
+	@echo "  make deploy             - Deploy all contracts locally (EVM, Terra, Solana)"
+	@echo "  make deploy-evm         - Deploy EVM contracts to Anvil"
+	@echo "  make deploy-terra       - Deploy Terra contracts to LocalTerra"
+	@echo "  make deploy-solana      - Deploy Solana program to local validator"
 	@echo "  make deploy-test-token  - Deploy test ERC20 for integration tests"
 	@echo "  make deploy-terra-cw20  - Deploy Terra bridge and CW20 token"
 	@echo "  make deploy-tokens      - Deploy test tokens on both chains"
@@ -112,6 +115,9 @@ logs-terra:
 
 logs-postgres:
 	docker compose logs -f postgres
+
+logs-solana:
+	docker compose logs -f solana
 
 # ===========================================================================
 # Solana Targets
@@ -230,7 +236,7 @@ test-frontend-integration:
 test: test-evm test-terra test-operator test-canceler test-frontend
 
 # Deployment - Local
-deploy: deploy-evm deploy-terra setup-bridge
+deploy: deploy-evm deploy-terra deploy-solana setup-bridge
 	@echo "Deployment complete!"
 
 deploy-evm:
@@ -257,6 +263,10 @@ deploy-terra:
 
 deploy-terra-local: deploy-terra
 	@echo "Terra local deployment complete"
+
+deploy-solana:
+	@echo "Deploying Solana program to local validator..."
+	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --provider.cluster localnet
 
 deploy-terra-cw20:
 	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."

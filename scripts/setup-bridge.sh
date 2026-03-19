@@ -25,6 +25,8 @@ CONTAINER_NAME="${LOCALTERRA_CONTAINER:-cl8y-bridge-monorepo-localterra-1}"
 EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-}"
 EVM_CHAIN_REGISTRY="${EVM_CHAIN_REGISTRY:-}"
 TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-}"
+SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:-}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
 
 # Keys
 EVM_PRIVATE_KEY="${EVM_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -189,6 +191,50 @@ setup_operator() {
     log_info "Operator configured"
 }
 
+# Setup Solana side (register EVM and Terra chains on Solana bridge)
+setup_solana_side() {
+    if [ -z "$SOLANA_PROGRAM_ID" ]; then
+        log_warn "SOLANA_PROGRAM_ID not set — skipping Solana bridge configuration"
+        return 0
+    fi
+
+    log_info "=== Configuring Solana Side ==="
+
+    # Check Solana validator is reachable
+    if ! curl -sf -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"getVersion"}' \
+        "$SOLANA_RPC_URL" &>/dev/null; then
+        log_warn "Solana validator not reachable at $SOLANA_RPC_URL — skipping"
+        return 0
+    fi
+
+    # Register EVM chain on Solana bridge (chain ID 0x00000001)
+    log_info "Registering EVM chain on Solana bridge..."
+    if [ -x "$(command -v npx)" ] && [ -d "packages/contracts-solana" ]; then
+        cd "$PROJECT_ROOT/packages/contracts-solana"
+        npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "register" 2>/dev/null \
+            || log_warn "Solana chain registration via test runner failed (may need manual setup)"
+        cd "$PROJECT_ROOT"
+    else
+        log_warn "npx or contracts-solana not available — run Solana registration manually"
+    fi
+
+    # Register Solana chain on EVM side
+    if [ -n "$EVM_CHAIN_REGISTRY" ]; then
+        log_info "Registering Solana chain on EVM ChainRegistry..."
+        SOLANA_CHAIN_ID="0x00000005"
+        cast send "$EVM_CHAIN_REGISTRY" \
+            "registerChain(string,bytes4)" \
+            "solana_localnet" \
+            "$SOLANA_CHAIN_ID" \
+            --rpc-url "$EVM_RPC_URL" \
+            --private-key "$EVM_PRIVATE_KEY" \
+            2>/dev/null || log_warn "Solana chain registration on EVM failed (may already exist)"
+    fi
+
+    log_info "Solana side configured"
+}
+
 # Verify configuration
 verify_config() {
     log_info "=== Verifying Configuration ==="
@@ -216,6 +262,7 @@ main() {
     check_addresses
     setup_evm_side
     setup_terra_side
+    setup_solana_side
     setup_operator
     verify_config
     
@@ -223,8 +270,9 @@ main() {
     log_info "=== Bridge Configuration Complete ==="
     echo ""
     echo "Configuration:"
-    echo "  EVM Bridge: $EVM_BRIDGE_ADDRESS"
-    echo "  Terra Bridge: $TERRA_BRIDGE_ADDRESS"
+    echo "  EVM Bridge:    $EVM_BRIDGE_ADDRESS"
+    echo "  Terra Bridge:  $TERRA_BRIDGE_ADDRESS"
+    echo "  Solana Program: ${SOLANA_PROGRAM_ID:-(not set)}"
     echo ""
     log_info "Next steps:"
     echo "  1. Update packages/operator/.env with bridge addresses"

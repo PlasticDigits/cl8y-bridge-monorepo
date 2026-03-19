@@ -1,6 +1,6 @@
 # CL8Y Bridge Monorepo
 
-A cross-chain bridge solution for connecting Terra Classic with EVM-compatible blockchains.
+A cross-chain bridge solution for connecting Terra Classic, EVM-compatible blockchains, and Solana.
 
 ## Documentation
 
@@ -118,6 +118,7 @@ See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for t
 |---------|-------------|---------------|
 | [contracts-evm](./packages/contracts-evm) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) | [docs](./docs/contracts-evm.md) |
 | [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic | [docs](./docs/contracts-terraclassic.md) |
+| [contracts-solana](./packages/contracts-solana) | Anchor/Solana program for Solana bridge | — |
 | [operator](./packages/operator) | Rust-based bridge operator service | [docs](./docs/operator.md) |
 | [canceler](./packages/canceler) | Rust-based canceler node for watchtower security | [docs](./docs/canceler-network.md) |
 | [frontend](./packages/frontend) | Web application for bridge interface | [docs](./docs/frontend.md) |
@@ -129,17 +130,18 @@ See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for t
 - Docker and Docker Compose
 - Rust toolchain (1.70+)
 - Foundry (for EVM contracts)
+- Anchor CLI + Solana CLI (for Solana contracts)
 
 ### Local Development
 
 ```bash
-# Start local infrastructure (Anvil, LocalTerra, PostgreSQL)
+# Start local infrastructure (Anvil, LocalTerra, Solana, PostgreSQL)
 make start
 
-# Check service status
+# Check service status (all chains + services)
 make status
 
-# Deploy contracts to local chains
+# Deploy contracts to all local chains (EVM, Terra, Solana)
 make deploy
 
 # Run operator
@@ -166,7 +168,8 @@ The project includes comprehensive tests at multiple levels. See the full [Testi
 |--------------|----------------|
 | EVM contracts | Foundry tests against in-memory EVM |
 | Terra contracts | Cargo tests with CosmWasm VM |
-| Frontend blockchain calls | Real LocalTerra + Anvil devnet |
+| Solana contracts | Anchor tests against local validator |
+| Frontend blockchain calls | Real LocalTerra + Anvil + Solana devnet |
 | Canceler event polling | Real LocalTerra + Anvil devnet |
 | E2E transfers | Full infrastructure with real transactions |
 
@@ -374,6 +377,7 @@ cl8y-bridge-monorepo/
 ├── packages/
 │   ├── contracts-evm/          # Foundry project for Solidity contracts
 │   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
+│   ├── contracts-solana/       # Anchor program for Solana bridge
 │   ├── operator/               # Rust bridge operator service
 │   ├── canceler/               # Rust canceler node for watchtower security
 │   └── frontend/               # Web application (Vite + React)
@@ -395,10 +399,10 @@ cl8y-bridge-monorepo/
 
 ```bash
 # Infrastructure
-make start              # Start Docker services
-make stop               # Stop Docker services
+make start              # Start Docker services (Anvil, LocalTerra, Solana, PostgreSQL)
+make stop               # Stop all Docker services
 make reset              # Stop and remove volumes
-make status             # Check status of all services
+make status             # Check status of all services (incl. Solana)
 make logs               # View service logs
 
 # Building
@@ -416,9 +420,10 @@ make test-integration   # Run integration tests
 make e2e-test           # Run E2E tests
 
 # Deployment - Local
-make deploy             # Deploy all contracts locally
+make deploy             # Deploy all contracts locally (EVM, Terra, Solana)
 make deploy-evm         # Deploy EVM contracts to Anvil
 make deploy-terra       # Deploy Terra contracts to LocalTerra
+make deploy-solana      # Deploy Solana program to local validator
 
 # Deployment - Testnet
 make deploy-evm-bsc-testnet    # Deploy to BSC Testnet

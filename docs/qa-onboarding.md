@@ -47,6 +47,15 @@ git clone https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-b
 cd packages/frontend
 npm ci
 
+# Start local infrastructure (Anvil, LocalTerra, Solana, PostgreSQL)
+make start         # from repo root
+
+# Check all services are healthy
+make status
+
+# Deploy contracts to all local chains (EVM, Terra, Solana)
+make deploy
+
 # Set up local environment
 cp .env.example .env.local
 # Edit .env.local — see "Environment Setup" below
@@ -60,10 +69,18 @@ npm run test:unit
 
 # Lint
 npm run lint
+
+# When you're done, stop everything
+make stop          # from repo root
 ```
 
-You only need to work inside `packages/frontend/`. The backend services (operator,
-canceler) and smart contracts are managed separately and deployed independently.
+`make start` spins up all local chain infrastructure via Docker Compose in one
+command: Anvil (EVM), LocalTerra (Cosmos), Solana test validator, and PostgreSQL.
+`make stop` tears it all down. `make status` shows the health of every service
+including Solana.
+
+For frontend-only work, you only need `packages/frontend/`. The backend services
+(operator, canceler) and smart contracts are managed separately.
 
 ---
 
@@ -110,9 +127,9 @@ VITE_DEV_MODE=false
 
 ### Local dev values
 
-When `VITE_NETWORK=local`, run `make deploy` from the repo root first, then
-copy the deployed addresses from the terminal output into `.env.local`. The RPC
-defaults (`localhost:8545`, `localhost:1317`) work out of the box.
+When `VITE_NETWORK=local`, run `make start && make deploy` from the repo root
+first, then copy the deployed addresses from the terminal output into
+`.env.local`. The RPC defaults work out of the box for all chains.
 
 Example local `.env.local`:
 
@@ -126,6 +143,8 @@ VITE_LOCK_UNLOCK_ADDRESS=<from deploy output>
 VITE_EVM_RPC_URL=http://localhost:8545
 VITE_TERRA_LCD_URL=http://localhost:1317
 VITE_TERRA_RPC_URL=http://localhost:26657
+VITE_SOLANA_RPC_URL=http://localhost:8899
+VITE_SOLANA_PROGRAM_ID=<from deploy output>
 VITE_DEV_MODE=true
 ```
 
@@ -142,7 +161,7 @@ Add these when testing Solana integration (on the `feat/solana-integration` bran
 
 
 For local dev, the Solana test validator runs at `http://localhost:8899`
-(started automatically by `docker compose`).
+(started automatically by `make start`).
 
 ### `VITE_WC_PROJECT_ID`
 
@@ -522,22 +541,27 @@ If you need the full bridge running locally (for testing real transfers against
 local chains), you'll need Docker:
 
 ```bash
-# From repo root
-make start          # Starts Anvil, LocalTerra, Solana validator, Postgres
-make deploy         # Deploys contracts to local chains
+# From repo root — one command to start everything
+make start          # Starts Anvil, LocalTerra, Solana validator, PostgreSQL
+make status         # Verify all services are healthy
 
-# Set up cross-chain registration
-export EVM_BRIDGE_ADDRESS=<from deploy output>
-export EVM_CHAIN_REGISTRY=<from deploy output>
-export TERRA_BRIDGE_ADDRESS=<from deploy output>
-./scripts/setup-bridge.sh
+# Deploy contracts to ALL local chains (EVM, Terra, Solana)
+make deploy         # Builds + deploys EVM, Terra, and Solana contracts, then configures cross-chain registration
 
 make operator       # Runs the bridge operator
 
 # In another terminal
 cd packages/frontend
 npm run dev
+
+# When done
+make stop           # Stops all Docker services
 ```
+
+`make deploy` handles everything: EVM contracts to Anvil, Terra contracts to
+LocalTerra, Solana program to the local validator, and cross-chain bridge
+registration (`setup-bridge.sh`). Contract addresses are printed in the
+terminal output — copy them into `packages/frontend/.env.local`.
 
 > **Note:** The Solana test validator requires high file descriptor limits.
 > This is handled automatically via `ulimits` in `docker-compose.yml`. If you
@@ -552,6 +576,13 @@ rather than running the full stack locally.
 ## Useful Commands Reference
 
 ```bash
+# Infrastructure (from repo root)
+make start               # Start Anvil, LocalTerra, Solana, PostgreSQL
+make stop                # Stop all services
+make status              # Health check all chains + services
+make deploy              # Deploy contracts to all local chains (EVM, Terra, Solana)
+make logs                # Follow all service logs
+
 # Frontend dev
 cd packages/frontend
 npm run dev              # Start dev server
@@ -611,10 +642,14 @@ test it.
 ```bash
 git checkout feat/solana-integration
 git pull origin feat/solana-integration
+
+# Start everything (including Solana validator)
+make start
+make status    # Confirm Solana shows "running"
+make deploy    # Deploys to EVM, Terra, and Solana
 ```
 
-Then follow the normal Quick Start / Full Dev Stack setup above. The Solana
-test validator container starts automatically with `make start`.
+Then follow the normal Quick Start / Full Dev Stack setup above.
 
 ### Infrastructure fixes already applied
 

@@ -4,6 +4,7 @@
 # Checks the health of:
 # - Anvil (EVM local chain)
 # - LocalTerra (Terra Classic local chain)
+# - Solana (local test validator)
 # - PostgreSQL database
 # - Operator service (if running)
 # - Canceler service (if running)
@@ -34,6 +35,7 @@ fi
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
 TERRA_RPC_URL="${TERRA_RPC_URL:-http://localhost:26657}"
 TERRA_LCD_URL="${TERRA_LCD_URL:-http://localhost:1317}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
 DATABASE_URL="${DATABASE_URL:-postgres://operator:operator@localhost:5433/operator}"
 OPERATOR_API_URL="${OPERATOR_API_URL:-http://localhost:9092}"
 CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://localhost:9099}"
@@ -99,6 +101,26 @@ check_localterra() {
         return 0
     else
         log_status "LocalTerra" "stopped"
+        return 1
+    fi
+}
+
+# Check Solana
+check_solana() {
+    local version
+    version=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"getVersion"}' \
+        "$SOLANA_RPC_URL" 2>/dev/null | jq -r '.result["solana-core"] // empty' 2>/dev/null || echo "")
+
+    if [ -n "$version" ]; then
+        local slot
+        slot=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getSlot"}' \
+            "$SOLANA_RPC_URL" 2>/dev/null | jq -r '.result // empty' 2>/dev/null || echo "")
+        log_status "Solana" "running" "(v$version, slot $slot)"
+        return 0
+    else
+        log_status "Solana" "stopped"
         return 1
     fi
 }
@@ -239,6 +261,20 @@ get_contracts() {
             echo "  Terra Bridge: (not set)"
         fi
 
+        if [ -n "${SOLANA_PROGRAM_ID:-}" ]; then
+            local program_info
+            program_info=$(curl -sf -X POST -H "Content-Type: application/json" \
+                -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"${SOLANA_PROGRAM_ID}\",{\"encoding\":\"base64\"}]}" \
+                "$SOLANA_RPC_URL" 2>/dev/null | jq -r '.result.value.executable // empty' 2>/dev/null || echo "")
+            if [ "$program_info" = "true" ]; then
+                echo -e "  Solana Prog:  $SOLANA_PROGRAM_ID ${GREEN}(verified on-chain)${NC}"
+            else
+                echo -e "  Solana Prog:  $SOLANA_PROGRAM_ID ${RED}(NOT found on-chain)${NC}"
+            fi
+        else
+            echo "  Solana Prog:  (not set)"
+        fi
+
         if [ -f "$PROJECT_ROOT/.env.e2e.local" ]; then
             echo -e "  ${BLUE}Source:${NC}       .env.e2e.local"
         fi
@@ -261,7 +297,8 @@ output_json() {
     echo "  },"
     echo "  \"contracts\": {"
     echo "    \"evm_bridge\": \"${EVM_BRIDGE_ADDRESS:-}\","
-    echo "    \"terra_bridge\": \"${TERRA_BRIDGE_ADDRESS:-}\""
+    echo "    \"terra_bridge\": \"${TERRA_BRIDGE_ADDRESS:-}\","
+    echo "    \"solana_program\": \"${SOLANA_PROGRAM_ID:-}\""
     echo "  }"
     echo "}"
 }
@@ -280,6 +317,7 @@ main() {
     check_docker || true
     check_anvil || true
     check_localterra || true
+    check_solana || true
     check_postgres || true
     
     if [ "$JSON_OUTPUT" = false ]; then
