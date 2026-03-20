@@ -59,12 +59,15 @@ services:
       start_period: 15s
 
   # Local Solana validator
+  # Bind to loopback only (not 0.0.0.0): safe on shared hosts and still works with
+  # "127.0.0.1:PORT:PORT" publishing below. Use `docker compose stop` (SIGTERM) not
+  # `kill -9` so the validator can drain; stop_grace_period allows a clean exit.
   solana:
     image: solanalabs/solana:v1.18.26
     command: >
       solana-test-validator
       --reset
-      --bind-address 0.0.0.0
+      --bind-address 127.0.0.1
       --rpc-port 8899
       --faucet-port 9900
       --log
@@ -72,6 +75,7 @@ services:
       - "127.0.0.1:8899:8899"
       - "127.0.0.1:8900:8900"
       - "127.0.0.1:9900:9900"
+    stop_grace_period: 90s
     ulimits:
       nofile:
         soft: 1000000

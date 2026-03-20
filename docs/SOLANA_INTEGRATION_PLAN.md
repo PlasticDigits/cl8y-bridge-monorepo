@@ -876,14 +876,14 @@ solana:
   command: >
     solana-test-validator
     --reset
-    --bind-address 0.0.0.0
+    --bind-address 127.0.0.1
     --rpc-port 8899
     --faucet-port 9900
     --limit-ledger-size 50000000
   ports:
-    - "8899:8899"
-    - "8900:8900"
-    - "9900:9900"
+    - "127.0.0.1:8899:8899"
+    - "127.0.0.1:8900:8900"
+    - "127.0.0.1:9900:9900"
   healthcheck:
     test: ["CMD", "solana", "cluster-version", "--url", "http://localhost:8899"]
     interval: 5s

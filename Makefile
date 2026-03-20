@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native
 
 # Default target
 help:
@@ -17,11 +17,12 @@ help:
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
 	@echo "Solana:"
-	@echo "  make solana-validator     - Start local Solana test validator"
-	@echo "  make solana-build         - Build Solana programs"
-	@echo "  make solana-test          - Run Solana program tests"
-	@echo "  make solana-deploy-local  - Deploy Solana program to local validator"
-	@echo "  make solana-logs          - Follow Solana program logs"
+	@echo "  make solana-validator         - Start Solana test validator (Docker; binds 127.0.0.1)"
+	@echo "  make solana-validator-native  - Run solana-test-validator on host (loopback; safe on public IPs)"
+	@echo "  make solana-build             - Build Solana programs"
+	@echo "  make solana-test              - Run Solana program tests"
+	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
+	@echo "  make solana-logs              - Follow Solana program logs"
 	@echo ""
 	@echo "Building:"
 	@echo "  make build-evm            - Build EVM contracts"
@@ -124,8 +125,13 @@ logs-solana:
 # ===========================================================================
 
 .PHONY: solana-validator
-solana-validator: ## Start local Solana test validator
+solana-validator: ## Start local Solana test validator (Docker; RPC on 127.0.0.1 only)
 	docker compose up solana -d
+
+.PHONY: solana-validator-native
+solana-validator-native: ## Run solana-test-validator on host — loopback bind (safe on internet-facing servers)
+	@chmod +x "$(CURDIR)/scripts/solana/run-test-validator.sh" 2>/dev/null || true
+	"$(CURDIR)/scripts/solana/run-test-validator.sh"
 
 .PHONY: solana-build
 solana-build: ## Build Solana programs
