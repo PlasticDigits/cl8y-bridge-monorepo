@@ -304,10 +304,10 @@ describe("deposit and withdraw flow", () => {
     const withdrawAmount = 500000000n; // 0.5 SOL
     const withdrawNonce = 100n;
     const srcChain = EVM_CHAIN_ID;
+    const srcAccount = Buffer.alloc(32, 0xAA);
+    const destToken = Keypair.generate().publicKey;
 
     it("submit withdrawal", async () => {
-      const srcAccount = Buffer.alloc(32, 0xAA);
-      const destToken = Keypair.generate().publicKey;
 
       transferHash = computeTransferHash(
         srcChain,
@@ -431,8 +431,6 @@ describe("deposit and withdraw flow", () => {
     });
 
     it("cannot re-submit after execution (close-reinit protection)", async () => {
-      const srcAccount = Buffer.alloc(32, 0xAA);
-      const destToken = Keypair.generate().publicKey;
 
       const sameHash = transferHash;
       const [withdrawPda] = findWithdrawPda(ctx.program.programId, sameHash);
