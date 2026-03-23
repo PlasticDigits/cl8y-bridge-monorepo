@@ -3,7 +3,14 @@ import { Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
-import { setupTest, findBridgePda, findTokenPda, airdrop, TestContext, initializeBridgeIfNeeded } from "./helpers/setup";
+import {
+  setupTest,
+  findBridgePda,
+  findTokenPda,
+  airdrop,
+  TestContext,
+  initializeBridgeIfNeeded,
+} from "./helpers/setup";
 
 describe("cl8y-bridge", () => {
   let ctx: TestContext;
@@ -33,9 +40,13 @@ describe("cl8y-bridge", () => {
 
   describe("initialize", () => {
     it("bridge config is initialized correctly", async () => {
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       expect(bridge.admin.toString()).to.equal(ctx.admin.publicKey.toString());
-      expect(bridge.operator.toString()).to.equal(ctx.operator.publicKey.toString());
+      expect(bridge.operator.toString()).to.equal(
+        ctx.operator.publicKey.toString()
+      );
       expect(bridge.feeBps).to.equal(50);
       expect(bridge.withdrawDelay.toNumber()).to.equal(300);
       expect(bridge.paused).to.be.false;
@@ -80,8 +91,12 @@ describe("cl8y-bridge", () => {
         })
         .rpc();
 
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
-      expect(bridge.operator.toString()).to.equal(newOperator.publicKey.toString());
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
+      expect(bridge.operator.toString()).to.equal(
+        newOperator.publicKey.toString()
+      );
 
       // Reset operator back
       await ctx.program.methods
@@ -123,7 +138,13 @@ describe("cl8y-bridge", () => {
 
     it("admin can pause and unpause", async () => {
       await ctx.program.methods
-        .setConfig({ newAdmin: null, operator: null, feeBps: null, withdrawDelay: null, paused: true })
+        .setConfig({
+          newAdmin: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: true,
+        })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
 
@@ -131,7 +152,13 @@ describe("cl8y-bridge", () => {
       expect(bridge.paused).to.be.true;
 
       await ctx.program.methods
-        .setConfig({ newAdmin: null, operator: null, feeBps: null, withdrawDelay: null, paused: false })
+        .setConfig({
+          newAdmin: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: false,
+        })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
 
@@ -173,7 +200,11 @@ describe("cl8y-bridge", () => {
       destToken[31] = 0x42;
       const localMint = Keypair.generate().publicKey;
 
-      const [tokenPda] = findTokenPda(ctx.program.programId, destChain, destToken);
+      const [tokenPda] = findTokenPda(
+        ctx.program.programId,
+        destChain,
+        destToken
+      );
 
       const existing = await ctx.provider.connection.getAccountInfo(tokenPda);
       if (!existing) {
@@ -202,10 +233,14 @@ describe("cl8y-bridge", () => {
     it("non-admin cannot register token", async () => {
       const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
       const destToken = Buffer.alloc(32);
-      destToken[31] = 0xFF;
+      destToken[31] = 0xff;
       const localMint = Keypair.generate().publicKey;
 
-      const [tokenPda] = findTokenPda(ctx.program.programId, destChain, destToken);
+      const [tokenPda] = findTokenPda(
+        ctx.program.programId,
+        destChain,
+        destToken
+      );
 
       try {
         await ctx.program.methods
@@ -238,7 +273,9 @@ describe("cl8y-bridge", () => {
         ctx.program.programId
       );
 
-      const existing = await ctx.provider.connection.getAccountInfo(cancelerPda);
+      const existing = await ctx.provider.connection.getAccountInfo(
+        cancelerPda
+      );
       if (!existing) {
         await ctx.program.methods
           .addCanceler({ canceler: ctx.canceler.publicKey, active: true })

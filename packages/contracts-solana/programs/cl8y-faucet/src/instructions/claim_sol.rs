@@ -1,6 +1,5 @@
 use crate::state::{ClaimRecord, FaucetConfig, FaucetError};
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
 
 #[derive(Accounts)]
 pub struct ClaimSol<'info> {
@@ -43,18 +42,18 @@ pub fn handler(ctx: Context<ClaimSol>, lamports: u64) -> Result<()> {
     let available = faucet_balance.saturating_sub(rent_exempt);
     require!(available >= lamports, FaucetError::InsufficientSol);
 
-    let seeds: &[&[u8]] = &[FaucetConfig::SEED, &[config.bump]];
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.faucet_config.to_account_info(),
-                to: ctx.accounts.claimer.to_account_info(),
-            },
-            &[seeds],
-        ),
-        lamports,
-    )?;
+    // FaucetConfig PDA holds account data — SystemProgram::transfer rejects `from` with data.
+    // Move lamports directly (same pattern as bridge `withdraw_execute_native`).
+    let faucet_info = ctx.accounts.faucet_config.to_account_info();
+    let claimer_info = ctx.accounts.claimer.to_account_info();
+    **faucet_info.try_borrow_mut_lamports()? = faucet_info
+        .lamports()
+        .checked_sub(lamports)
+        .ok_or(FaucetError::ArithmeticOverflow)?;
+    **claimer_info.try_borrow_mut_lamports()? = claimer_info
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(FaucetError::ArithmeticOverflow)?;
 
     record.last_claimed_at = clock.unix_timestamp;
     record.bump = ctx.bumps.claim_record;

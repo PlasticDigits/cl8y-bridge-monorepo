@@ -15,6 +15,7 @@ import { getEvmClient } from '../../services/evmClient'
 import { BRIDGE_CHAINS } from '../../utils/bridgeChains'
 import { DEFAULT_NETWORK, NETWORKS } from '../../utils/constants'
 import { sounds } from '../../lib/sounds'
+import { anchorDiscriminator } from '../../utils/anchorDiscriminator'
 import type { NetworkTier } from '../../utils/bridgeChains'
 
 // ---------------------------------------------------------------------------
@@ -322,8 +323,7 @@ function SolanaClaimButton({
         tx.add(createAssociatedTokenAccountInstruction(claimer, ata, claimer, mint))
       }
 
-      const { createHash } = await import('crypto')
-      const disc = createHash('sha256').update('global:claim').digest().subarray(0, 8)
+      const disc = anchorDiscriminator('claim')
       const { TransactionInstruction } = await import('@solana/web3.js')
       const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
       const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111')

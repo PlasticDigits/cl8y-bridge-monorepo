@@ -4,9 +4,15 @@ import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
 import {
-  setupTest, findBridgePda, findChainPda, findWithdrawPda,
-  findCancelerPda, findExecutedHashPda, airdrop, TestContext,
-  initializeBridgeIfNeeded
+  setupTest,
+  findBridgePda,
+  findChainPda,
+  findWithdrawPda,
+  findCancelerPda,
+  findExecutedHashPda,
+  airdrop,
+  TestContext,
+  initializeBridgeIfNeeded,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -24,7 +30,7 @@ function computeTransferHash(
   destAccount: Buffer,
   token: Buffer,
   amount: bigint,
-  nonce: bigint,
+  nonce: bigint
 ): Buffer {
   const buf = Buffer.alloc(224);
   Buffer.from(srcChain).copy(buf, 0);
@@ -34,7 +40,7 @@ function computeTransferHash(
   token.copy(buf, 128);
   const amountBuf = Buffer.alloc(16);
   amountBuf.writeBigUInt64BE(amount >> 64n, 0);
-  amountBuf.writeBigUInt64BE(amount & 0xFFFFFFFFFFFFFFFFn, 8);
+  amountBuf.writeBigUInt64BE(amount & 0xffffffffffffffffn, 8);
   amountBuf.copy(buf, 176);
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64BE(nonce);
@@ -48,7 +54,7 @@ describe("cancel flow", () => {
   let withdrawPda: PublicKey;
   let cancelerPda: PublicKey;
 
-  const srcAccount = Buffer.alloc(32, 0xAA);
+  const srcAccount = Buffer.alloc(32, 0xaa);
   const destToken = Keypair.generate().publicKey;
   const amount = 500000n;
   const nonce = 10n;
@@ -76,7 +82,10 @@ describe("cancel flow", () => {
       })
       .rpc();
 
-    [cancelerPda] = findCancelerPda(ctx.program.programId, ctx.canceler.publicKey);
+    [cancelerPda] = findCancelerPda(
+      ctx.program.programId,
+      ctx.canceler.publicKey
+    );
     await ctx.program.methods
       .addCanceler({ canceler: ctx.canceler.publicKey, active: true })
       .accounts({
@@ -88,12 +97,19 @@ describe("cancel flow", () => {
       .rpc();
 
     transferHash = computeTransferHash(
-      EVM_CHAIN_ID, SOLANA_CHAIN_ID,
-      srcAccount, ctx.user.publicKey.toBuffer(),
-      destToken.toBuffer(), amount, nonce,
+      EVM_CHAIN_ID,
+      SOLANA_CHAIN_ID,
+      srcAccount,
+      ctx.user.publicKey.toBuffer(),
+      destToken.toBuffer(),
+      amount,
+      nonce
     );
     [withdrawPda] = findWithdrawPda(ctx.program.programId, transferHash);
-    const [executedHashPda] = findExecutedHashPda(ctx.program.programId, transferHash);
+    const [executedHashPda] = findExecutedHashPda(
+      ctx.program.programId,
+      transferHash
+    );
 
     await ctx.program.methods
       .withdrawSubmit({
@@ -150,7 +166,10 @@ describe("cancel flow", () => {
     const randomUser = Keypair.generate();
     await airdrop(ctx.provider.connection, randomUser.publicKey);
 
-    const [fakePda] = findCancelerPda(ctx.program.programId, randomUser.publicKey);
+    const [fakePda] = findCancelerPda(
+      ctx.program.programId,
+      randomUser.publicKey
+    );
 
     try {
       await ctx.program.methods
@@ -180,12 +199,16 @@ describe("cancel flow", () => {
       })
       .rpc();
 
-    const srcAccount2 = Buffer.alloc(32, 0xDD);
+    const srcAccount2 = Buffer.alloc(32, 0xdd);
     const destToken2 = Keypair.generate().publicKey;
     const hash2 = computeTransferHash(
-      EVM_CHAIN_ID, SOLANA_CHAIN_ID,
-      srcAccount2, ctx.user.publicKey.toBuffer(),
-      destToken2.toBuffer(), 1000n, 20n,
+      EVM_CHAIN_ID,
+      SOLANA_CHAIN_ID,
+      srcAccount2,
+      ctx.user.publicKey.toBuffer(),
+      destToken2.toBuffer(),
+      1000n,
+      20n
     );
     const [wp2] = findWithdrawPda(ctx.program.programId, hash2);
     const [eh2] = findExecutedHashPda(ctx.program.programId, hash2);

@@ -1,7 +1,17 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, createMint, createAssociatedTokenAccount, getAccount } from "@solana/spl-token";
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+} from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  createMint,
+  createAssociatedTokenAccount,
+  getAccount,
+} from "@solana/spl-token";
 import { expect } from "chai";
 import { Cl8yFaucet } from "../target/types/cl8y_faucet";
 import { airdrop } from "./helpers/setup";
@@ -16,10 +26,13 @@ function findFaucetConfigPda(programId: PublicKey): [PublicKey, number] {
 function findClaimRecordPda(
   programId: PublicKey,
   claimer: PublicKey,
-  mintOrTag: PublicKey | Buffer,
+  mintOrTag: PublicKey | Buffer
 ): [PublicKey, number] {
   const key = mintOrTag instanceof PublicKey ? mintOrTag.toBuffer() : mintOrTag;
-  return PublicKey.findProgramAddressSync([CLAIM_SEED, claimer.toBuffer(), key], programId);
+  return PublicKey.findProgramAddressSync(
+    [CLAIM_SEED, claimer.toBuffer(), key],
+    programId
+  );
 }
 
 describe("cl8y-faucet", () => {
@@ -76,7 +89,7 @@ describe("cl8y-faucet", () => {
         expect.fail("Should have thrown");
       } catch (err) {
         expect(err.toString()).to.satisfy(
-          (s: string) => s.includes("already in use") || s.includes("0x0"),
+          (s: string) => s.includes("already in use") || s.includes("0x0")
         );
       }
     });
@@ -92,13 +105,13 @@ describe("cl8y-faucet", () => {
         admin,
         admin.publicKey, // initial mint authority = admin
         null,
-        9,
+        9
       );
       claimerAta = await createAssociatedTokenAccount(
         provider.connection,
         admin,
         mint,
-        claimer.publicKey,
+        claimer.publicKey
       );
     });
 
@@ -123,7 +136,7 @@ describe("cl8y-faucet", () => {
         rogue,
         rogue.publicKey,
         null,
-        9,
+        9
       );
 
       try {
@@ -144,7 +157,11 @@ describe("cl8y-faucet", () => {
     });
 
     it("claims SPL tokens", async () => {
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, mint);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        mint
+      );
 
       await program.methods
         .claim()
@@ -165,7 +182,11 @@ describe("cl8y-faucet", () => {
     });
 
     it("rejects claim before cooldown elapses", async () => {
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, mint);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        mint
+      );
 
       try {
         await program.methods
@@ -190,7 +211,11 @@ describe("cl8y-faucet", () => {
     it("allows claim after cooldown", async () => {
       await new Promise((r) => setTimeout(r, (COOLDOWN_SECONDS + 1) * 1000));
 
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, mint);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        mint
+      );
 
       await program.methods
         .claim()
@@ -222,15 +247,21 @@ describe("cl8y-faucet", () => {
           fromPubkey: admin.publicKey,
           toPubkey: faucetConfigPda,
           lamports: 2 * LAMPORTS_PER_SOL,
-        }),
+        })
       );
       await provider.sendAndConfirm(tx);
     });
 
     it("claims SOL from faucet", async () => {
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, NATIVE_SOL_TAG);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        NATIVE_SOL_TAG
+      );
 
-      const balanceBefore = await provider.connection.getBalance(claimer.publicKey);
+      const balanceBefore = await provider.connection.getBalance(
+        claimer.publicKey
+      );
 
       await program.methods
         .claimSol(new anchor.BN(SOL_CLAIM_LAMPORTS))
@@ -243,13 +274,19 @@ describe("cl8y-faucet", () => {
         .signers([claimer])
         .rpc();
 
-      const balanceAfter = await provider.connection.getBalance(claimer.publicKey);
+      const balanceAfter = await provider.connection.getBalance(
+        claimer.publicKey
+      );
       // Balance increase ≈ SOL_CLAIM_LAMPORTS minus tx fee; at minimum it should go up
       expect(balanceAfter).to.be.greaterThan(balanceBefore);
     });
 
     it("rejects SOL claim before cooldown", async () => {
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, NATIVE_SOL_TAG);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        NATIVE_SOL_TAG
+      );
 
       try {
         await program.methods
@@ -271,7 +308,11 @@ describe("cl8y-faucet", () => {
     it("rejects SOL claim exceeding available balance", async () => {
       await new Promise((r) => setTimeout(r, (COOLDOWN_SECONDS + 1) * 1000));
 
-      const [claimRecord] = findClaimRecordPda(program.programId, claimer.publicKey, NATIVE_SOL_TAG);
+      const [claimRecord] = findClaimRecordPda(
+        program.programId,
+        claimer.publicKey,
+        NATIVE_SOL_TAG
+      );
       const hugeAmount = 999 * LAMPORTS_PER_SOL;
 
       try {

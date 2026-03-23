@@ -4,7 +4,6 @@ import pkg from "js-sha3";
 const { keccak_256 } = pkg;
 
 function keccak256(data: Buffer): Buffer {
-
   return Buffer.from(keccak_256.arrayBuffer(data));
 }
 
@@ -15,7 +14,7 @@ function computeTransferHash(
   destAccount: Buffer,
   token: Buffer,
   amount: bigint,
-  nonce: bigint,
+  nonce: bigint
 ): Buffer {
   const buf = Buffer.alloc(224);
 
@@ -28,7 +27,7 @@ function computeTransferHash(
   // amount as u128 big-endian, right-aligned in 32-byte slot
   const amountBuf = Buffer.alloc(16);
   amountBuf.writeBigUInt64BE(amount >> 64n, 0);
-  amountBuf.writeBigUInt64BE(amount & 0xFFFFFFFFFFFFFFFFn, 8);
+  amountBuf.writeBigUInt64BE(amount & 0xffffffffffffffffn, 8);
   amountBuf.copy(buf, 176);
 
   // nonce as u64 big-endian, right-aligned in 32-byte slot
@@ -46,7 +45,7 @@ function computeTransferHashU64Amount(
   destAccount: Buffer,
   token: Buffer,
   amount: bigint,
-  nonce: bigint,
+  nonce: bigint
 ): Buffer {
   const buf = Buffer.alloc(224);
 
@@ -79,8 +78,24 @@ describe("hash parity", () => {
     const token = Buffer.alloc(32);
     token[31] = 0x03;
 
-    const hash1 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 1000000n, 1n);
-    const hash2 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 1000000n, 1n);
+    const hash1 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1000000n,
+      1n
+    );
+    const hash2 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1000000n,
+      1n
+    );
     expect(hash1.toString("hex")).to.equal(hash2.toString("hex"));
   });
 
@@ -91,9 +106,33 @@ describe("hash parity", () => {
     const destAccount = Buffer.alloc(32);
     const token = Buffer.alloc(32);
 
-    const hash1 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 1000000n, 1n);
-    const hash2 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 999999n, 1n);
-    const hash3 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 1000000n, 2n);
+    const hash1 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1000000n,
+      1n
+    );
+    const hash2 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      999999n,
+      1n
+    );
+    const hash3 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1000000n,
+      2n
+    );
 
     expect(hash1.toString("hex")).to.not.equal(hash2.toString("hex"));
     expect(hash1.toString("hex")).to.not.equal(hash3.toString("hex"));
@@ -102,17 +141,35 @@ describe("hash parity", () => {
   it("u64 amount layout matches u128 layout for values fitting in u64", () => {
     const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x05]);
     const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
-    const srcAccount = Buffer.alloc(32, 0xAA);
-    const destAccount = Buffer.alloc(32, 0xBB);
-    const token = Buffer.alloc(32, 0xCC);
+    const srcAccount = Buffer.alloc(32, 0xaa);
+    const destAccount = Buffer.alloc(32, 0xbb);
+    const token = Buffer.alloc(32, 0xcc);
     const amount = 1_000_000_000n;
     const nonce = 42n;
 
-    const hashU128 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
-    const hashU64 = computeTransferHashU64Amount(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+    const hashU128 = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      amount,
+      nonce
+    );
+    const hashU64 = computeTransferHashU64Amount(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      amount,
+      nonce
+    );
 
-    expect(hashU128.toString("hex")).to.equal(hashU64.toString("hex"),
-      "u64 and u128 encodings must produce the same hash for amounts that fit in u64");
+    expect(hashU128.toString("hex")).to.equal(
+      hashU64.toString("hex"),
+      "u64 and u128 encodings must produce the same hash for amounts that fit in u64"
+    );
   });
 
   it("matches known EVM reference hash (EVM chain 1 -> chain 2)", () => {
@@ -127,7 +184,15 @@ describe("hash parity", () => {
     const destAccount = Buffer.alloc(32);
     const token = Buffer.alloc(32);
 
-    const hash = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, 1000000n, 1n);
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1000000n,
+      1n
+    );
 
     // Manually verify the abi.encode buffer layout
     const expectedBuf = Buffer.alloc(224);
@@ -153,24 +218,39 @@ describe("hash parity", () => {
     const solanaChain = Buffer.from([0x00, 0x00, 0x00, 0x05]);
     const evmChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
 
-    const depositor = Buffer.alloc(32, 0xAA); // Solana pubkey
+    const depositor = Buffer.alloc(32, 0xaa); // Solana pubkey
     const recipient = Buffer.alloc(32);
     // EVM 20-byte address left-padded
-    Buffer.from([0xf3, 0x9F, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xF6, 0xF4, 0xce,
-                  0x6a, 0xB8, 0x82, 0x72, 0x79, 0xcf, 0xfF, 0xb9, 0x22, 0x66])
-      .copy(recipient, 12);
+    Buffer.from([
+      0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8,
+      0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66,
+    ]).copy(recipient, 12);
     const token = Buffer.alloc(32);
     token[31] = 0x42;
 
     const depositHash = computeTransferHash(
-      solanaChain, evmChain, depositor, recipient, token, 995000n, 1n
+      solanaChain,
+      evmChain,
+      depositor,
+      recipient,
+      token,
+      995000n,
+      1n
     );
     const withdrawHash = computeTransferHash(
-      solanaChain, evmChain, depositor, recipient, token, 995000n, 1n
+      solanaChain,
+      evmChain,
+      depositor,
+      recipient,
+      token,
+      995000n,
+      1n
     );
 
-    expect(depositHash.toString("hex")).to.equal(withdrawHash.toString("hex"),
-      "Deposit and withdraw must produce identical hashes");
+    expect(depositHash.toString("hex")).to.equal(
+      withdrawHash.toString("hex"),
+      "Deposit and withdraw must produce identical hashes"
+    );
   });
 
   it("Solana 32-byte pubkey as srcAccount produces valid hash", () => {
@@ -189,7 +269,13 @@ describe("hash parity", () => {
     const token = Buffer.alloc(32);
 
     const hash = computeTransferHash(
-      solanaChain, evmChain, solanaPubkey, evmRecipient, token, 1000000000n, 1n
+      solanaChain,
+      evmChain,
+      solanaPubkey,
+      evmRecipient,
+      token,
+      1000000000n,
+      1n
     );
 
     expect(hash.length).to.equal(32);

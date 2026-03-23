@@ -32,4 +32,6 @@ pub enum FaucetError {
     Unauthorized,
     #[msg("Insufficient SOL in faucet")]
     InsufficientSol,
+    #[msg("Arithmetic overflow")]
+    ArithmeticOverflow,
 }

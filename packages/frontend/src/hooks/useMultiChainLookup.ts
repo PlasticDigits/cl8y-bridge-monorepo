@@ -81,7 +81,7 @@ export function useMultiChainLookup() {
         ])
 
         return { chain, deposit, withdraw, failed: false }
-      } catch (err) {
+      } catch {
         return { chain, deposit: null, withdraw: null, failed: true }
       }
     })
@@ -97,7 +97,7 @@ export function useMultiChainLookup() {
         ])
 
         return { chain, deposit, withdraw, failed: false }
-      } catch (err) {
+      } catch {
         return { chain, deposit: null, withdraw: null, failed: true }
       }
     })

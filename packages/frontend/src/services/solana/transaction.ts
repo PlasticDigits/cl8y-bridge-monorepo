@@ -5,18 +5,8 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
-import { createHash } from "crypto";
 import { keccak256 } from "viem";
-
-/**
- * Compute the Anchor instruction discriminator: sha256("global:<method_name>")[0..8]
- */
-function anchorDiscriminator(methodName: string): Buffer {
-  const hash = createHash("sha256")
-    .update(`global:${methodName}`)
-    .digest();
-  return hash.subarray(0, 8);
-}
+import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
 
 /**
  * Build a deposit_native instruction for the Solana bridge program.
