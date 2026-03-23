@@ -326,8 +326,7 @@ impl UniversalAddress {
                 Self::from_bytes32(&arr)
             }
             36 => {
-                let chain_type =
-                    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let chain_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 if chain_type != CHAIN_TYPE_SOLANA {
                     return Err(eyre!(
                         "36-byte encoding only valid for Solana (chain_type=3), got {}",
@@ -619,8 +618,16 @@ mod tests {
         let addr = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
         let b = addr.to_bytes32();
 
-        assert_eq!(&b[0..4], &[0x00, 0x00, 0x00, 0x01], "chain_type must be EVM (1)");
-        assert_eq!(&b[4..24], addr.raw_address_bytes(), "bytes 4..24 must be raw address");
+        assert_eq!(
+            &b[0..4],
+            &[0x00, 0x00, 0x00, 0x01],
+            "chain_type must be EVM (1)"
+        );
+        assert_eq!(
+            &b[4..24],
+            addr.raw_address_bytes(),
+            "bytes 4..24 must be raw address"
+        );
         assert_eq!(&b[24..32], &[0u8; 8], "bytes 24..32 must be zero reserved");
     }
 
@@ -629,8 +636,16 @@ mod tests {
         let addr = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
         let b = addr.to_bytes32();
 
-        assert_eq!(&b[0..4], &[0x00, 0x00, 0x00, 0x02], "chain_type must be Cosmos (2)");
-        assert_eq!(&b[4..24], addr.raw_address_bytes(), "bytes 4..24 must be raw address");
+        assert_eq!(
+            &b[0..4],
+            &[0x00, 0x00, 0x00, 0x02],
+            "chain_type must be Cosmos (2)"
+        );
+        assert_eq!(
+            &b[4..24],
+            addr.raw_address_bytes(),
+            "bytes 4..24 must be raw address"
+        );
         assert_eq!(&b[24..32], &[0u8; 8], "bytes 24..32 must be zero reserved");
     }
 
@@ -639,7 +654,10 @@ mod tests {
         let mut bytes = REGRESSION_EVM_BYTES32;
         bytes[31] = 0xff; // non-zero reserved
         let result = UniversalAddress::from_bytes32_strict(&bytes);
-        assert!(result.is_err(), "non-zero reserved must be rejected by strict");
+        assert!(
+            result.is_err(),
+            "non-zero reserved must be rejected by strict"
+        );
 
         let result = UniversalAddress::from_bytes32_strict(&REGRESSION_EVM_BYTES32);
         assert!(result.is_ok(), "zero reserved must be accepted by strict");
@@ -669,19 +687,29 @@ mod tests {
         let raw = [0xaau8; 20];
         let addr = UniversalAddress::new_with_reserved(CHAIN_TYPE_EVM, raw, reserved).unwrap();
         let b = addr.to_bytes32();
-        assert_eq!(&b[24..32], &reserved, "reserved bytes must be preserved in to_bytes32");
+        assert_eq!(
+            &b[24..32],
+            &reserved,
+            "reserved bytes must be preserved in to_bytes32"
+        );
     }
 
     #[test]
     fn regression_display_format() {
         let evm = UniversalAddress::from_evm(REGRESSION_EVM_ADDR).unwrap();
         let display = format!("{}", evm);
-        assert!(display.starts_with("EVM:"), "EVM display must start with 'EVM:'");
+        assert!(
+            display.starts_with("EVM:"),
+            "EVM display must start with 'EVM:'"
+        );
         assert!(display.contains("f39fd6e51aad88f6f4ce6ab8827279cfffb92266"));
 
         let cosmos = UniversalAddress::from_cosmos(REGRESSION_TERRA_ADDR).unwrap();
         let display = format!("{}", cosmos);
-        assert!(display.starts_with("COSMOS:"), "Cosmos display must start with 'COSMOS:'");
+        assert!(
+            display.starts_with("COSMOS:"),
+            "Cosmos display must start with 'COSMOS:'"
+        );
         assert!(display.contains("35743074956c710800e83198011ccbd4ddf1556d"));
     }
 
@@ -876,13 +904,19 @@ mod tests {
     fn regression_solana_display_format() {
         let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
         let display = format!("{}", addr);
-        assert!(display.starts_with("SOLANA:"), "Solana display must start with 'SOLANA:'");
+        assert!(
+            display.starts_with("SOLANA:"),
+            "Solana display must start with 'SOLANA:'"
+        );
     }
 
     #[test]
     fn regression_solana_raw_address_20_errors() {
         let addr = UniversalAddress::from_solana(&REGRESSION_SOLANA_PUBKEY).unwrap();
-        assert!(addr.raw_address_20().is_err(), "Solana 32-byte pubkey must not fit in 20-byte accessor");
+        assert!(
+            addr.raw_address_20().is_err(),
+            "Solana 32-byte pubkey must not fit in 20-byte accessor"
+        );
     }
 
     #[test]

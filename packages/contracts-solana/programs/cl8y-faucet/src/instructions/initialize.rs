@@ -1,4 +1,4 @@
-use crate::state::FaucetConfig;
+use crate::state::{FaucetConfig, FaucetError};
 use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -25,6 +25,9 @@ pub struct Initialize<'info> {
 }
 
 pub fn handler(ctx: Context<Initialize>, params: InitializeParams) -> Result<()> {
+    require!(params.claim_amount > 0, FaucetError::InvalidClaimAmount);
+    require!(params.cooldown_seconds >= 0, FaucetError::InvalidCooldown);
+
     let config = &mut ctx.accounts.faucet_config;
     config.admin = ctx.accounts.admin.key();
     config.claim_amount = params.claim_amount;

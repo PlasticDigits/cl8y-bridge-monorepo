@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "  make solana-build             - Build Solana programs"
 	@echo "  make solana-test              - Run Solana program tests"
 	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
+	@echo "  make solana-test-e2e          - Run ignored Rust Solana cross-chain flow tests (live validator)"
 	@echo "  make solana-logs              - Follow Solana program logs"
 	@echo ""
 	@echo "Building:"
@@ -144,6 +145,10 @@ solana-test: ## Run Solana program tests
 .PHONY: solana-deploy-local
 solana-deploy-local: ## Deploy Solana program to local validator
 	cd packages/contracts-solana && anchor deploy --provider.cluster localnet
+
+.PHONY: solana-test-e2e
+solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + initialized bridge)
+	cd packages/e2e && cargo test --test test_solana_flows -- --ignored --nocapture
 
 .PHONY: solana-logs
 solana-logs: ## Follow Solana program logs
@@ -272,7 +277,7 @@ deploy-terra-local: deploy-terra
 
 deploy-solana:
 	@echo "Deploying Solana program to local validator..."
-	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --provider.cluster localnet
+	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --no-idl --provider.cluster localnet
 
 deploy-terra-cw20:
 	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."

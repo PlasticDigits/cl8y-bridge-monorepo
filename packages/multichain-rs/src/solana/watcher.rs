@@ -5,9 +5,7 @@ use solana_client::rpc_config::RpcTransactionConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
-};
+use solana_transaction_status::{EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding};
 use tracing::{debug, warn};
 
 use super::types::*;
@@ -19,10 +17,7 @@ const PROGRAM_DATA_PREFIX: &str = "Program data: ";
 /// Anchor emits events as base64-encoded data in log lines prefixed with
 /// "Program data: ". The first 8 bytes are the event discriminator (sha256
 /// of "event:<EventName>" truncated), followed by Borsh-serialized data.
-pub fn parse_anchor_events(
-    log_messages: &[String],
-    program_id: &Pubkey,
-) -> Vec<SolanaEvent> {
+pub fn parse_anchor_events(log_messages: &[String], program_id: &Pubkey) -> Vec<SolanaEvent> {
     let mut events = Vec::new();
     let mut in_program = false;
     let program_id_str = program_id.to_string();
@@ -102,7 +97,11 @@ fn parse_deposit_event(payload: &[u8]) -> Result<SolanaDepositEvent> {
     // 32 + 32 + 4 + 32 + 32 + 16 + 16 + 8 = 172 bytes
     let min_len = 32 + 32 + 4 + 32 + 32 + 16 + 16 + 8;
     if payload.len() < min_len {
-        return Err(eyre!("DepositEvent payload too short: {} bytes (need {})", payload.len(), min_len));
+        return Err(eyre!(
+            "DepositEvent payload too short: {} bytes (need {})",
+            payload.len(),
+            min_len
+        ));
     }
     let mut offset = 0;
 
@@ -148,7 +147,10 @@ fn parse_deposit_event(payload: &[u8]) -> Result<SolanaDepositEvent> {
 
 fn parse_withdraw_approve_event(payload: &[u8]) -> Result<SolanaWithdrawApproveEvent> {
     if payload.len() < 32 + 8 {
-        return Err(eyre!("WithdrawApproveEvent payload too short: {} bytes", payload.len()));
+        return Err(eyre!(
+            "WithdrawApproveEvent payload too short: {} bytes",
+            payload.len()
+        ));
     }
 
     let mut transfer_hash = [0u8; 32];
@@ -164,14 +166,17 @@ fn parse_withdraw_approve_event(payload: &[u8]) -> Result<SolanaWithdrawApproveE
 
 fn parse_withdraw_cancel_event(payload: &[u8]) -> Result<SolanaWithdrawCancelEvent> {
     if payload.len() < 32 + 32 {
-        return Err(eyre!("WithdrawCancelEvent payload too short: {} bytes", payload.len()));
+        return Err(eyre!(
+            "WithdrawCancelEvent payload too short: {} bytes",
+            payload.len()
+        ));
     }
 
     let mut transfer_hash = [0u8; 32];
     transfer_hash.copy_from_slice(&payload[..32]);
 
-    let canceler = Pubkey::try_from(&payload[32..64])
-        .map_err(|e| eyre!("Invalid canceler pubkey: {}", e))?;
+    let canceler =
+        Pubkey::try_from(&payload[32..64]).map_err(|e| eyre!("Invalid canceler pubkey: {}", e))?;
 
     Ok(SolanaWithdrawCancelEvent {
         transfer_hash,

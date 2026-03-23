@@ -98,7 +98,6 @@ pub fn compute_xchain_hash_id(
     keccak256(&data)
 }
 
-
 /// Convert an EVM address to bytes32 (left-padded with zeros)
 pub fn address_to_bytes32(addr: &[u8; 20]) -> [u8; 32] {
     let mut result = [0u8; 32];

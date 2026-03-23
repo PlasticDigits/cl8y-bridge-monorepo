@@ -30,7 +30,10 @@ pub struct WithdrawExecute<'info> {
     )]
     pub executed_hash: Box<Account<'info, ExecutedHash>>,
 
-    #[account(constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered)]
+    #[account(
+        mut,
+        constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
 
     #[account(

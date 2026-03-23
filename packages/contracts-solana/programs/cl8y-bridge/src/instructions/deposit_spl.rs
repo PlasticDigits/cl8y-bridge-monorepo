@@ -34,12 +34,16 @@ pub struct DepositSpl<'info> {
     pub deposit_record: Box<Account<'info, DepositRecord>>,
 
     #[account(
+        mut,
         seeds = [TokenMapping::SEED, params.dest_chain.as_ref(), token_mapping.dest_token.as_ref()],
         bump = token_mapping.bump,
     )]
-    pub token_mapping: Box<Account<'info, TokenMapping>>,
+    pub token_mapping: Account<'info, TokenMapping>,
 
-    #[account(constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered)]
+    #[account(
+        mut,
+        constraint = mint.key() == token_mapping.local_mint @ BridgeError::TokenNotRegistered
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -72,6 +76,7 @@ pub struct DepositSpl<'info> {
 
 pub fn handler(ctx: Context<DepositSpl>, params: DepositSplParams) -> Result<()> {
     let bridge = &mut ctx.accounts.bridge;
+    let token_mapping = &mut ctx.accounts.token_mapping;
     require!(!bridge.paused, BridgeError::BridgePaused);
     require!(params.amount > 0, BridgeError::ZeroAmount);
 
@@ -85,7 +90,6 @@ pub fn handler(ctx: Context<DepositSpl>, params: DepositSplParams) -> Result<()>
         .checked_sub(fee)
         .ok_or(BridgeError::FeeExceedsAmount)?;
 
-    let token_mapping = &ctx.accounts.token_mapping;
     let decimals = ctx.accounts.mint.decimals;
 
     match token_mapping.mode {
@@ -135,6 +139,11 @@ pub fn handler(ctx: Context<DepositSpl>, params: DepositSplParams) -> Result<()>
             )?;
         }
     }
+
+    token_mapping.accrued_fees = token_mapping
+        .accrued_fees
+        .checked_add(fee)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
 
     bridge.deposit_nonce += 1;
     let nonce = bridge.deposit_nonce;

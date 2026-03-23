@@ -28,6 +28,10 @@ impl ClaimRecord {
 pub enum FaucetError {
     #[msg("Cooldown period has not elapsed")]
     CooldownNotElapsed,
+    #[msg("Claim amount must be greater than zero")]
+    InvalidClaimAmount,
+    #[msg("Cooldown must be zero or positive")]
+    InvalidCooldown,
     #[msg("Unauthorized")]
     Unauthorized,
     #[msg("Insufficient SOL in faucet")]

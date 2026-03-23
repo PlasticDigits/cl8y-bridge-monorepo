@@ -54,4 +54,8 @@ pub enum BridgeError {
     AmountExceedsU64,
     #[msg("Transfer hash has already been executed")]
     AlreadyExecutedHash,
+    #[msg("Requested fee withdrawal exceeds accrued fees")]
+    InsufficientAccruedFees,
+    #[msg("Bridge balance would fall below rent-exempt reserve")]
+    InsufficientBridgeBalance,
 }

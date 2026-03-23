@@ -41,6 +41,7 @@ pub fn handler(ctx: Context<Initialize>, params: InitializeParams) -> Result<()>
     bridge.fee_bps = params.fee_bps;
     bridge.withdraw_delay = params.withdraw_delay;
     bridge.deposit_nonce = 0;
+    bridge.accrued_native_fees = 0;
     bridge.paused = false;
     bridge.chain_id = params.chain_id;
     bridge.bump = ctx.bumps.bridge;

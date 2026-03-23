@@ -385,8 +385,13 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
             .map_err(|_| eyre!("Invalid {}_THIS_CHAIN_ID — must be a u32", prefix))?;
 
         let rpc_var = format!("{}_RPC_URL", prefix);
-        let rpc_raw = std::env::var(&rpc_var)
-            .map_err(|_| eyre!("Missing {}. Set it to the RPC endpoint for chain {}", rpc_var, name))?;
+        let rpc_raw = std::env::var(&rpc_var).map_err(|_| {
+            eyre!(
+                "Missing {}. Set it to the RPC endpoint for chain {}",
+                rpc_var,
+                name
+            )
+        })?;
         let rpc_parts: Vec<String> = rpc_raw
             .split(',')
             .map(|s| s.trim().to_string())
@@ -399,8 +404,13 @@ pub fn load_from_env() -> Result<Option<MultiEvmConfig>> {
         let rpc_fallback_urls = rpc_parts[1..].to_vec();
 
         let bridge_var = format!("{}_BRIDGE_ADDRESS", prefix);
-        let bridge_address = std::env::var(&bridge_var)
-            .map_err(|_| eyre!("Missing {}. Set it to the bridge contract address for chain {}", bridge_var, name))?;
+        let bridge_address = std::env::var(&bridge_var).map_err(|_| {
+            eyre!(
+                "Missing {}. Set it to the bridge contract address for chain {}",
+                bridge_var,
+                name
+            )
+        })?;
 
         let finality_blocks: u64 = std::env::var(format!("{}_FINALITY_BLOCKS", prefix))
             .ok()

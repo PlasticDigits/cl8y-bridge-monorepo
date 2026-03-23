@@ -1,5 +1,5 @@
 use crate::error::BridgeError;
-use crate::state::BridgeConfig;
+use crate::state::{BridgeConfig, TokenMapping};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
@@ -33,22 +33,38 @@ pub struct WithdrawFees<'info> {
     /// Mint of the SPL token (optional for native withdrawals)
     pub mint: Option<InterfaceAccount<'info, Mint>>,
 
+    #[account(mut)]
+    pub token_mapping: Option<Box<Account<'info, TokenMapping>>>,
+
     pub token_program: Option<Interface<'info, TokenInterface>>,
     pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result<()> {
-    let bridge = &ctx.accounts.bridge;
+    let bridge_admin = ctx.accounts.bridge.admin;
+    let bridge_bump = ctx.accounts.bridge.bump;
+    let bridge_key = ctx.accounts.bridge.key();
     require!(
-        ctx.accounts.admin.key() == bridge.admin,
+        ctx.accounts.admin.key() == bridge_admin,
         BridgeError::UnauthorizedAdmin
     );
     require!(params.amount > 0, BridgeError::ZeroAmount);
 
     if params.native {
+        require!(
+            ctx.accounts.bridge.accrued_native_fees >= params.amount,
+            BridgeError::InsufficientAccruedFees
+        );
+
         // Withdraw native SOL fees from bridge PDA
         let bridge_info = ctx.accounts.bridge.to_account_info();
         let admin_info = ctx.accounts.admin.to_account_info();
+        let rent_exempt = Rent::get()?.minimum_balance(8 + BridgeConfig::INIT_SPACE);
+        let available = bridge_info.lamports().saturating_sub(rent_exempt);
+        require!(
+            available >= params.amount,
+            BridgeError::InsufficientBridgeBalance
+        );
         **bridge_info.try_borrow_mut_lamports()? = bridge_info
             .lamports()
             .checked_sub(params.amount)
@@ -56,6 +72,12 @@ pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result
         **admin_info.try_borrow_mut_lamports()? = admin_info
             .lamports()
             .checked_add(params.amount)
+            .ok_or(BridgeError::ArithmeticOverflow)?;
+        ctx.accounts.bridge.accrued_native_fees = ctx
+            .accounts
+            .bridge
+            .accrued_native_fees
+            .checked_sub(params.amount)
             .ok_or(BridgeError::ArithmeticOverflow)?;
     } else {
         // Withdraw SPL token fees from bridge token account
@@ -74,13 +96,51 @@ pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result
             .mint
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
+        let token_mapping = ctx
+            .accounts
+            .token_mapping
+            .as_mut()
+            .ok_or(BridgeError::TokenNotRegistered)?;
         let token_program = ctx
             .accounts
             .token_program
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
 
-        let bridge_seeds: &[&[u8]] = &[BridgeConfig::SEED, &[bridge.bump]];
+        require!(
+            token_mapping.local_mint == mint.key(),
+            BridgeError::TokenNotRegistered
+        );
+        let (expected_mapping, _) = Pubkey::find_program_address(
+            &[
+                TokenMapping::SEED,
+                token_mapping.dest_chain.as_ref(),
+                token_mapping.dest_token.as_ref(),
+            ],
+            ctx.program_id,
+        );
+        require!(
+            token_mapping.key() == expected_mapping,
+            BridgeError::TokenNotRegistered
+        );
+        require!(
+            bridge_token_account.owner == bridge_key,
+            BridgeError::TokenNotRegistered
+        );
+        require!(
+            bridge_token_account.mint == mint.key(),
+            BridgeError::TokenNotRegistered
+        );
+        require!(
+            admin_token_account.mint == mint.key(),
+            BridgeError::TokenNotRegistered
+        );
+        require!(
+            token_mapping.accrued_fees >= params.amount,
+            BridgeError::InsufficientAccruedFees
+        );
+
+        let bridge_seeds: &[&[u8]] = &[BridgeConfig::SEED, &[bridge_bump]];
         let decimals = mint.decimals;
 
         token_interface::transfer_checked(
@@ -97,6 +157,11 @@ pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result
             params.amount,
             decimals,
         )?;
+
+        token_mapping.accrued_fees = token_mapping
+            .accrued_fees
+            .checked_sub(params.amount)
+            .ok_or(BridgeError::ArithmeticOverflow)?;
     }
 
     emit!(WithdrawFeesEvent {

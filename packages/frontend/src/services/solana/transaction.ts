@@ -213,7 +213,7 @@ export function buildWithdrawSubmitInstruction(
   );
 
   const [executedHashCheck] = PublicKey.findProgramAddressSync(
-    [Buffer.from("executed_hash"), Buffer.from(transferHash)],
+    [Buffer.from("executed"), Buffer.from(transferHash)],
     programId,
   );
 

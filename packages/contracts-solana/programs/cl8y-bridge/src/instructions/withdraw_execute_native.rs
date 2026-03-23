@@ -71,6 +71,9 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
     // Transfer native SOL from bridge PDA to recipient
     let bridge_info = ctx.accounts.bridge.to_account_info();
     let recipient_info = ctx.accounts.recipient.to_account_info();
+    let rent_exempt = Rent::get()?.minimum_balance(8 + BridgeConfig::INIT_SPACE);
+    let available = bridge_info.lamports().saturating_sub(rent_exempt);
+    require!(available >= amount, BridgeError::InsufficientBridgeBalance);
     **bridge_info.try_borrow_mut_lamports()? = bridge_info
         .lamports()
         .checked_sub(amount)

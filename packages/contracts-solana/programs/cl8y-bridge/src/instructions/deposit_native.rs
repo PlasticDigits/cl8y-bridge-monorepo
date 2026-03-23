@@ -70,6 +70,11 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
         params.amount,
     )?;
 
+    bridge.accrued_native_fees = bridge
+        .accrued_native_fees
+        .checked_add(fee)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
+
     bridge.deposit_nonce += 1;
     let nonce = bridge.deposit_nonce;
 

@@ -14,6 +14,7 @@ pub struct TokenMapping {
     pub dest_token: [u8; 32],
     pub mode: TokenMode,
     pub decimals: u8,
+    pub accrued_fees: u64,
     pub bump: u8,
 }
 

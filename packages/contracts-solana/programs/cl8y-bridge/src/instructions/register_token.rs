@@ -48,6 +48,7 @@ pub fn handler(ctx: Context<RegisterToken>, params: RegisterTokenParams) -> Resu
     mapping.dest_token = params.dest_token;
     mapping.mode = params.mode;
     mapping.decimals = params.decimals;
+    mapping.accrued_fees = 0;
     mapping.bump = ctx.bumps.token_mapping;
 
     Ok(())

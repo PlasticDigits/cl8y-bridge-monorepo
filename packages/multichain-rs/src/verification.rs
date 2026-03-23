@@ -241,7 +241,8 @@ pub async fn route_verification(
 
     // Check if source is a known EVM chain
     if let Some(endpoint) = evm_endpoints.get(src_chain_id) {
-        return verify_evm_deposit(&endpoint.rpc_url, &endpoint.bridge_address, xchain_hash_id).await;
+        return verify_evm_deposit(&endpoint.rpc_url, &endpoint.bridge_address, xchain_hash_id)
+            .await;
     }
 
     // Unknown source chain: fail closed

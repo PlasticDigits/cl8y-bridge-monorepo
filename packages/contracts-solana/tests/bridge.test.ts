@@ -72,6 +72,48 @@ describe("cl8y-bridge", () => {
         expect(err.toString()).to.contain("InvalidFeeBps");
       }
     });
+
+    it("rejects withdraw delay below minimum", async () => {
+      try {
+        await ctx.program.methods
+          .setConfig({
+            newAdmin: null,
+            operator: null,
+            feeBps: null,
+            withdrawDelay: new anchor.BN(14),
+            paused: null,
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            admin: ctx.admin.publicKey,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.toString()).to.contain("InvalidWithdrawDelay");
+      }
+    });
+
+    it("rejects withdraw delay above maximum", async () => {
+      try {
+        await ctx.program.methods
+          .setConfig({
+            newAdmin: null,
+            operator: null,
+            feeBps: null,
+            withdrawDelay: new anchor.BN(86401),
+            paused: null,
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            admin: ctx.admin.publicKey,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.toString()).to.contain("InvalidWithdrawDelay");
+      }
+    });
   });
 
   describe("set_config", () => {
@@ -190,6 +232,35 @@ describe("cl8y-bridge", () => {
 
       const chain = await ctx.program.account.chainEntry.fetch(chainPda);
       expect(chain.identifier).to.equal("evm_1");
+    });
+
+    it("non-admin cannot register chain", async () => {
+      const chainId = Buffer.from([0x00, 0x00, 0x00, 0xfe]);
+      const [chainPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("chain"), chainId],
+        ctx.program.programId
+      );
+      const rogue = Keypair.generate();
+      await airdrop(ctx.provider.connection, rogue.publicKey);
+
+      try {
+        await ctx.program.methods
+          .registerChain({
+            chainId: Array.from(chainId),
+            identifier: "rogue_chain",
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            chainEntry: chainPda,
+            admin: rogue.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([rogue])
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.toString()).to.contain("UnauthorizedAdmin");
+      }
     });
   });
 

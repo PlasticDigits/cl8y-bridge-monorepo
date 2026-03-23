@@ -636,13 +636,23 @@ mod tests {
 
     #[test]
     fn test_is_onchain_revert_classification() {
-        let revert_err = eyre::eyre!("Transaction failed in block (code 5): Invalid token type for operation");
-        assert!(is_onchain_revert(&revert_err), "On-chain revert must be classified as revert");
+        let revert_err =
+            eyre::eyre!("Transaction failed in block (code 5): Invalid token type for operation");
+        assert!(
+            is_onchain_revert(&revert_err),
+            "On-chain revert must be classified as revert"
+        );
 
         let timeout_err = eyre::eyre!("Timeout waiting for transaction ABC to be confirmed");
-        assert!(!is_onchain_revert(&timeout_err), "Timeout must NOT be classified as revert");
+        assert!(
+            !is_onchain_revert(&timeout_err),
+            "Timeout must NOT be classified as revert"
+        );
 
         let network_err = eyre::eyre!("reqwest::Error: connection refused");
-        assert!(!is_onchain_revert(&network_err), "Network error must NOT be classified as revert");
+        assert!(
+            !is_onchain_revert(&network_err),
+            "Network error must NOT be classified as revert"
+        );
     }
 }

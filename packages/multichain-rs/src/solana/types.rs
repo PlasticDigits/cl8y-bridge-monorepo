@@ -4,8 +4,7 @@ use solana_sdk::signature::Signature;
 
 /// Anchor event discriminator for DepositEvent
 /// sha256("event:DepositEvent")[..8]
-pub const DEPOSIT_EVENT_DISCRIMINATOR: [u8; 8] =
-    [0x78, 0xf8, 0x3d, 0x53, 0x1f, 0x8e, 0x6b, 0x90];
+pub const DEPOSIT_EVENT_DISCRIMINATOR: [u8; 8] = [0x78, 0xf8, 0x3d, 0x53, 0x1f, 0x8e, 0x6b, 0x90];
 
 /// Anchor event discriminator for WithdrawApproveEvent
 /// sha256("event:WithdrawApproveEvent")[..8]

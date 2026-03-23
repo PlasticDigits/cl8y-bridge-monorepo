@@ -8,6 +8,7 @@ pub struct BridgeConfig {
     pub fee_bps: u16,
     pub withdraw_delay: i64,
     pub deposit_nonce: u64,
+    pub accrued_native_fees: u64,
     pub paused: bool,
     pub chain_id: [u8; 4],
     pub bump: u8,

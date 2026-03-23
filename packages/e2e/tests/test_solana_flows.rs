@@ -4,17 +4,30 @@
 //! - solana-test-validator on localhost:8899
 //! - anvil on localhost:8545
 //! - operator and canceler services
+//!
+//! **Operator keypair:** the bridge `operator` pubkey must be signable locally. Resolution order:
+//! 1. `SOLANA_OPERATOR_KEYPAIR` — path to a JSON keypair file whose pubkey matches on-chain `operator`
+//! 2. `ANCHOR_WALLET` or `SOLANA_KEYPAIR`, else `~/.config/solana/id.json` — used if its pubkey matches `operator`
+//!
+//! **Admin keypair:** `ANCHOR_WALLET` / `SOLANA_KEYPAIR` / default Solana CLI path — must match on-chain `admin`
+//! for `add_canceler` / `withdraw_reenable`.
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
+    hash::hash,
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
+    signature::{Keypair, Signer},
+    system_program,
     transaction::Transaction,
 };
 use std::str::FromStr;
+use std::thread;
+use std::time::Duration;
+
+const EVM_CHAIN_ID: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
 fn solana_rpc() -> RpcClient {
     RpcClient::new_with_commitment(
@@ -41,6 +54,314 @@ fn derive_pending_withdraw_pda(program_id: &Pubkey, transfer_hash: &[u8; 32]) ->
 
 fn derive_canceler_entry_pda(program_id: &Pubkey, canceler: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[b"canceler", canceler.as_ref()], program_id)
+}
+
+fn derive_executed_hash_pda(program_id: &Pubkey, transfer_hash: &[u8; 32]) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"executed", transfer_hash], program_id)
+}
+
+fn derive_chain_pda(program_id: &Pubkey, chain_id: &[u8; 4]) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"chain", chain_id], program_id)
+}
+
+fn anchor_discriminator(name: &str) -> [u8; 8] {
+    let preimage = format!("global:{}", name);
+    let h = hash(preimage.as_bytes());
+    let mut d = [0u8; 8];
+    d.copy_from_slice(&h.to_bytes()[..8]);
+    d
+}
+
+#[derive(BorshDeserialize)]
+#[allow(dead_code)]
+struct BridgeConfigData {
+    admin: [u8; 32],
+    operator: [u8; 32],
+    fee_bps: u16,
+    withdraw_delay: i64,
+    deposit_nonce: u64,
+    accrued_native_fees: u64,
+    paused: bool,
+    chain_id: [u8; 4],
+    bump: u8,
+}
+
+fn parse_bridge_account(data: &[u8]) -> BridgeConfigData {
+    assert!(
+        data.len() >= 8,
+        "bridge account data too short for discriminator"
+    );
+    BridgeConfigData::try_from_slice(&data[8..]).expect("borsh decode BridgeConfig")
+}
+
+#[derive(BorshDeserialize)]
+#[allow(dead_code)]
+struct PendingWithdrawData {
+    transfer_hash: [u8; 32],
+    src_chain: [u8; 4],
+    src_account: [u8; 32],
+    dest_account: [u8; 32],
+    token: [u8; 32],
+    amount: u128,
+    nonce: u64,
+    approved: bool,
+    approved_at: i64,
+    cancelled: bool,
+    executed: bool,
+    bump: u8,
+}
+
+fn parse_pending_withdraw(data: &[u8]) -> PendingWithdrawData {
+    PendingWithdrawData::try_from_slice(&data[8..]).expect("borsh decode PendingWithdraw")
+}
+
+fn default_wallet_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("ANCHOR_WALLET") {
+        return std::path::PathBuf::from(p);
+    }
+    if let Ok(p) = std::env::var("SOLANA_KEYPAIR") {
+        return std::path::PathBuf::from(p);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".config/solana/id.json")
+}
+
+fn load_keypair_json(path: &std::path::Path) -> Keypair {
+    let s = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("read keypair {}: {}", path.display(), e));
+    let bytes: Vec<u8> =
+        serde_json::from_str(&s).unwrap_or_else(|e| panic!("parse keypair json: {}", e));
+    Keypair::from_bytes(&bytes).expect("Keypair::from_bytes")
+}
+
+/// Resolve a keypair whose pubkey matches `expected`, or panic with guidance.
+fn resolve_keypair_for_pubkey(expected: &Pubkey, role: &str) -> Keypair {
+    let expected_bytes = expected.to_bytes();
+
+    if let Ok(p) = std::env::var("SOLANA_OPERATOR_KEYPAIR") {
+        if role == "operator" {
+            let kp = load_keypair_json(std::path::Path::new(&p));
+            if kp.pubkey().to_bytes() == expected_bytes {
+                return kp;
+            }
+        }
+    }
+
+    let default_path = default_wallet_path();
+    let kp = load_keypair_json(&default_path);
+    if kp.pubkey().to_bytes() == expected_bytes {
+        return kp;
+    }
+
+    if role == "operator" {
+        if let Ok(p) = std::env::var("SOLANA_OPERATOR_KEYPAIR") {
+            let kp2 = load_keypair_json(std::path::Path::new(&p));
+            if kp2.pubkey().to_bytes() == expected_bytes {
+                return kp2;
+            }
+        }
+    }
+
+    panic!(
+        "{}: need a local keypair for pubkey {}. For operator set SOLANA_OPERATOR_KEYPAIR to a JSON keypair whose pubkey matches the bridge operator, or re-initialize the bridge so operator matches ANCHOR_WALLET ({}).",
+        role,
+        expected,
+        default_path.display()
+    );
+}
+
+#[derive(BorshSerialize)]
+struct WithdrawSubmitArgs {
+    src_chain: [u8; 4],
+    src_account: [u8; 32],
+    dest_token: [u8; 32],
+    amount: u128,
+    nonce: u64,
+}
+
+#[derive(BorshSerialize)]
+struct WithdrawApproveArgs {
+    transfer_hash: [u8; 32],
+}
+
+#[derive(BorshSerialize)]
+struct DepositNativeArgs {
+    dest_chain: [u8; 4],
+    dest_account: [u8; 32],
+    dest_token: [u8; 32],
+    amount: u64,
+}
+
+#[derive(BorshSerialize)]
+struct AddCancelerArgs {
+    canceler: [u8; 32],
+    active: bool,
+}
+
+fn build_withdraw_submit_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    pending_withdraw: Pubkey,
+    executed_hash_check: Pubkey,
+    recipient: Pubkey,
+    args: WithdrawSubmitArgs,
+) -> Instruction {
+    let mut data = anchor_discriminator("withdraw_submit").to_vec();
+    data.extend(args.try_to_vec().expect("borsh"));
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(pending_withdraw, false),
+            AccountMeta::new_readonly(executed_hash_check, false),
+            AccountMeta::new(recipient, true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data,
+    }
+}
+
+fn build_withdraw_approve_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    pending_withdraw: Pubkey,
+    operator: Pubkey,
+    transfer_hash: [u8; 32],
+) -> Instruction {
+    let mut data = anchor_discriminator("withdraw_approve").to_vec();
+    data.extend(
+        WithdrawApproveArgs { transfer_hash }
+            .try_to_vec()
+            .expect("borsh"),
+    );
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(pending_withdraw, false),
+            AccountMeta::new_readonly(operator, true),
+        ],
+        data,
+    }
+}
+
+fn build_withdraw_execute_native_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    pending_withdraw: Pubkey,
+    executed_hash: Pubkey,
+    recipient: Pubkey,
+) -> Instruction {
+    let mut data = anchor_discriminator("withdraw_execute_native").to_vec();
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(bridge, false),
+            AccountMeta::new(pending_withdraw, false),
+            AccountMeta::new(executed_hash, false),
+            AccountMeta::new(recipient, true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data,
+    }
+}
+
+fn build_deposit_native_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    deposit_record: Pubkey,
+    dest_chain_entry: Pubkey,
+    depositor: Pubkey,
+    args: DepositNativeArgs,
+) -> Instruction {
+    let mut data = anchor_discriminator("deposit_native").to_vec();
+    data.extend(args.try_to_vec().expect("borsh"));
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(bridge, false),
+            AccountMeta::new(deposit_record, false),
+            AccountMeta::new_readonly(dest_chain_entry, false),
+            AccountMeta::new(depositor, true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data,
+    }
+}
+
+fn build_add_canceler_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    canceler_entry: Pubkey,
+    admin: Pubkey,
+    canceler: Pubkey,
+    active: bool,
+) -> Instruction {
+    let mut data = anchor_discriminator("add_canceler").to_vec();
+    data.extend(
+        AddCancelerArgs {
+            canceler: canceler.to_bytes(),
+            active,
+        }
+        .try_to_vec()
+        .expect("borsh"),
+    );
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(canceler_entry, false),
+            AccountMeta::new(admin, true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data,
+    }
+}
+
+fn build_withdraw_cancel_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    pending_withdraw: Pubkey,
+    canceler_entry: Pubkey,
+    canceler: Pubkey,
+) -> Instruction {
+    let data = anchor_discriminator("withdraw_cancel").to_vec();
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(pending_withdraw, false),
+            AccountMeta::new_readonly(canceler_entry, false),
+            AccountMeta::new_readonly(canceler, true),
+        ],
+        data,
+    }
+}
+
+fn build_withdraw_reenable_ix(
+    program_id: Pubkey,
+    bridge: Pubkey,
+    pending_withdraw: Pubkey,
+    admin: Pubkey,
+) -> Instruction {
+    let data = anchor_discriminator("withdraw_reenable").to_vec();
+    Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(pending_withdraw, false),
+            AccountMeta::new_readonly(admin, true),
+        ],
+        data,
+    }
+}
+
+fn send_tx(client: &RpcClient, payer: &Keypair, ixs: Vec<Instruction>) {
+    let bh = client.get_latest_blockhash().expect("blockhash");
+    let tx = Transaction::new_signed_with_payer(&ixs, Some(&payer.pubkey()), &[payer], bh);
+    client
+        .send_and_confirm_transaction(&tx)
+        .expect("send_and_confirm_transaction");
 }
 
 #[test]
@@ -96,87 +417,45 @@ fn test_solana_to_evm_deposit_flow() {
     let program_id = get_program_id();
     let (bridge_pda, _) = derive_bridge_pda(&program_id);
 
-    match client.get_account(&bridge_pda) {
-        Ok(account) => {
-            println!("Bridge PDA exists with {} bytes", account.data.len());
-        }
-        Err(e) => {
-            println!(
-                "Bridge PDA not found (program may need initialization): {}",
-                e
-            );
-            return;
-        }
-    }
+    let bridge_account = client
+        .get_account(&bridge_pda)
+        .expect("Bridge PDA must exist after make deploy / initialization");
+    println!("Bridge PDA exists with {} bytes", bridge_account.data.len());
+
+    let bridge_data = parse_bridge_account(&bridge_account.data);
+    let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
 
     // Build and send deposit_native instruction
-    let dest_chain = [0x00, 0x00, 0x00, 0x01]; // EVM
+    let dest_chain = EVM_CHAIN_ID;
     let dest_account = [0xBBu8; 32];
     let dest_token = [0xCCu8; 32];
     let amount: u64 = 1_000_000_000; // 1 SOL
 
-    // Read current nonce from bridge PDA to derive deposit record PDA
-    let bridge_account = client.get_account(&bridge_pda).unwrap();
-    // Anchor: 8 (discriminator) + 32 (admin) + 32 (operator) + 2 (fee_bps) +
-    // 8 (withdraw_delay) + 8 (deposit_nonce) = offset 82
-    let nonce_offset = 8 + 32 + 32 + 2 + 8;
-    let current_nonce = u64::from_le_bytes(
-        bridge_account.data[nonce_offset..nonce_offset + 8]
-            .try_into()
-            .unwrap(),
-    );
+    let current_nonce = bridge_data.deposit_nonce;
     let next_nonce = current_nonce + 1;
 
     let (deposit_record_pda, _) = derive_deposit_pda(&program_id, next_nonce);
 
-    // Derive dest chain entry PDA
-    let (dest_chain_pda, _) = Pubkey::find_program_address(&[b"chain", &dest_chain], &program_id);
-
-    // Anchor discriminator for deposit_native
-    let discriminator = {
-        use solana_sdk::hash::hash;
-        let h = hash(b"global:deposit_native");
-        let mut d = [0u8; 8];
-        d.copy_from_slice(&h.to_bytes()[..8]);
-        d
-    };
-
-    let mut data = discriminator.to_vec();
-    data.extend_from_slice(&dest_chain);
-    data.extend_from_slice(&dest_account);
-    data.extend_from_slice(&dest_token);
-    data.extend_from_slice(&amount.to_le_bytes());
-
-    let instruction = Instruction {
+    let ix = build_deposit_native_ix(
         program_id,
-        accounts: vec![
-            AccountMeta::new(bridge_pda, false),
-            AccountMeta::new(deposit_record_pda, false),
-            AccountMeta::new_readonly(dest_chain_pda, false),
-            AccountMeta::new(user.pubkey(), true),
-            AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
-        ],
-        data,
-    };
-
-    let recent_blockhash = client.get_latest_blockhash().unwrap();
-    let tx = Transaction::new_signed_with_payer(
-        &[instruction],
-        Some(&user.pubkey()),
-        &[&user],
-        recent_blockhash,
+        bridge_pda,
+        deposit_record_pda,
+        dest_chain_pda,
+        user.pubkey(),
+        DepositNativeArgs {
+            dest_chain,
+            dest_account,
+            dest_token,
+            amount,
+        },
     );
 
-    match client.send_and_confirm_transaction(&tx) {
-        Ok(sig) => println!("Deposit tx succeeded: {}", sig),
-        Err(e) => {
-            println!(
-                "Deposit tx failed (expected if chain not registered): {}",
-                e
-            );
-            return;
-        }
-    }
+    let bh = client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&user.pubkey()), &[&user], bh);
+
+    client
+        .send_and_confirm_transaction(&tx)
+        .expect("deposit_native must succeed (EVM chain must be registered on Solana)");
 
     // Verify deposit record PDA was created
     let deposit_account = client
@@ -197,54 +476,117 @@ fn test_evm_to_solana_flow() {
     let program_id = get_program_id();
     let (bridge_pda, _) = derive_bridge_pda(&program_id);
 
-    // Verify bridge is initialized
-    match client.get_account(&bridge_pda) {
-        Ok(_) => println!("Bridge PDA exists, proceeding with EVM→Solana test"),
-        Err(e) => {
-            println!("Bridge PDA not found, skipping: {}", e);
-            return;
-        }
-    }
+    let bridge_account = client
+        .get_account(&bridge_pda)
+        .expect("Bridge PDA must exist after make deploy / initialization");
+    let bridge_data = parse_bridge_account(&bridge_account.data);
+    let solana_chain_id = bridge_data.chain_id;
+    let withdraw_delay = bridge_data.withdraw_delay.max(0) as u64;
 
-    // EVM→Solana flow:
-    // 1. EVM deposit is detected by operator (external)
-    // 2. User calls withdraw_submit on Solana
-    // 3. Operator calls withdraw_approve
-    // 4. After delay, user calls withdraw_execute
+    let operator_pk = Pubkey::new_from_array(bridge_data.operator);
+    let operator = resolve_keypair_for_pubkey(&operator_pk, "operator");
+
+    let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
 
     let user = Keypair::new();
     let sig = client
-        .request_airdrop(&user.pubkey(), 5_000_000_000)
+        .request_airdrop(&user.pubkey(), 10_000_000_000)
         .unwrap();
     client.confirm_transaction(&sig).unwrap();
 
-    // Test parameters (would match an EVM deposit in a full E2E)
-    let src_chain = [0x00, 0x00, 0x00, 0x01]; // EVM source
-    let src_account = [0xAAu8; 32];
-    let dest_token = Pubkey::new_unique();
-    let amount: u128 = 1_000_000_000;
-    let nonce: u64 = 1;
+    // Fund bridge via deposit_native (same pattern as TS integration tests)
+    let fund_amount: u64 = 2_000_000_000;
+    let current_nonce = bridge_data.deposit_nonce;
+    let fund_nonce = current_nonce + 1;
+    let (deposit_record_pda, _) = derive_deposit_pda(&program_id, fund_nonce);
+    let deposit_ix = build_deposit_native_ix(
+        program_id,
+        bridge_pda,
+        deposit_record_pda,
+        dest_chain_pda,
+        user.pubkey(),
+        DepositNativeArgs {
+            dest_chain: EVM_CHAIN_ID,
+            dest_account: [0x11u8; 32],
+            dest_token: [0x22u8; 32],
+            amount: fund_amount,
+        },
+    );
+    send_tx(&client, &user, vec![deposit_ix]);
 
-    // Compute transfer hash
+    // Unique withdrawal (avoid collision with prior runs)
+    let withdraw_nonce: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let withdraw_amount: u128 = 500_000_000;
+    let src_account = [0xAAu8; 32];
+    let dest_token_kp = Keypair::new();
+    let dest_token = dest_token_kp.pubkey();
+
     let transfer_hash = multichain_rs::hash::compute_xchain_hash_id(
-        &src_chain,
-        &[0x00, 0x00, 0x00, 0x05], // Solana dest
+        &EVM_CHAIN_ID,
+        &solana_chain_id,
         &src_account,
         &user.pubkey().to_bytes(),
         &dest_token.to_bytes(),
-        amount,
-        nonce,
+        withdraw_amount,
+        withdraw_nonce,
     );
 
     let (pending_withdraw_pda, _) = derive_pending_withdraw_pda(&program_id, &transfer_hash);
+    let (executed_hash_check_pda, _) = derive_executed_hash_pda(&program_id, &transfer_hash);
 
-    // Check if withdraw_submit would succeed (PDA should not exist yet)
-    match client.get_account(&pending_withdraw_pda) {
-        Ok(_) => println!("PendingWithdraw PDA already exists (may be from prior test run)"),
-        Err(_) => println!("PendingWithdraw PDA does not exist yet, as expected"),
-    }
+    let submit_ix = build_withdraw_submit_ix(
+        program_id,
+        bridge_pda,
+        pending_withdraw_pda,
+        executed_hash_check_pda,
+        user.pubkey(),
+        WithdrawSubmitArgs {
+            src_chain: EVM_CHAIN_ID,
+            src_account,
+            dest_token: dest_token.to_bytes(),
+            amount: withdraw_amount,
+            nonce: withdraw_nonce,
+        },
+    );
+    send_tx(&client, &user, vec![submit_ix]);
 
-    println!("EVM to Solana flow test completed (partial - requires operator for full flow)");
+    let approve_ix = build_withdraw_approve_ix(
+        program_id,
+        bridge_pda,
+        pending_withdraw_pda,
+        operator.pubkey(),
+        transfer_hash,
+    );
+    send_tx(&client, &operator, vec![approve_ix]);
+
+    thread::sleep(Duration::from_secs(withdraw_delay.saturating_add(2)));
+
+    let (executed_hash_pda, _) = derive_executed_hash_pda(&program_id, &transfer_hash);
+    let balance_before = client.get_balance(&user.pubkey()).unwrap();
+
+    let exec_ix = build_withdraw_execute_native_ix(
+        program_id,
+        bridge_pda,
+        pending_withdraw_pda,
+        executed_hash_pda,
+        user.pubkey(),
+    );
+    send_tx(&client, &user, vec![exec_ix]);
+
+    let balance_after = client.get_balance(&user.pubkey()).unwrap();
+    assert!(
+        balance_after > balance_before,
+        "recipient balance should increase after withdraw_execute_native"
+    );
+
+    client
+        .get_account(&executed_hash_pda)
+        .expect("ExecutedHash PDA must exist after successful execution");
+
+    println!("EVM→Solana withdraw_execute_native flow PASSED");
 }
 
 #[test]
@@ -254,13 +596,17 @@ fn test_solana_cancel_flow() {
     let program_id = get_program_id();
     let (bridge_pda, _) = derive_bridge_pda(&program_id);
 
-    match client.get_account(&bridge_pda) {
-        Ok(_) => println!("Bridge PDA exists, proceeding with cancel test"),
-        Err(e) => {
-            println!("Bridge PDA not found, skipping: {}", e);
-            return;
-        }
-    }
+    let bridge_account = client
+        .get_account(&bridge_pda)
+        .expect("Bridge PDA must exist after make deploy / initialization");
+    let bridge_data = parse_bridge_account(&bridge_account.data);
+    let solana_chain_id = bridge_data.chain_id;
+
+    let admin_pk = Pubkey::new_from_array(bridge_data.admin);
+    let admin = resolve_keypair_for_pubkey(&admin_pk, "admin");
+
+    let operator_pk = Pubkey::new_from_array(bridge_data.operator);
+    let operator = resolve_keypair_for_pubkey(&operator_pk, "operator");
 
     let canceler = Keypair::new();
     let sig = client
@@ -268,21 +614,141 @@ fn test_solana_cancel_flow() {
         .unwrap();
     client.confirm_transaction(&sig).unwrap();
 
-    // Verify canceler entry PDA derivation is correct
     let (canceler_entry_pda, _) = derive_canceler_entry_pda(&program_id, &canceler.pubkey());
-    match client.get_account(&canceler_entry_pda) {
-        Ok(account) => {
-            println!(
-                "Canceler PDA exists with {} bytes (should check active flag)",
-                account.data.len()
-            );
-        }
-        Err(_) => {
-            println!("Canceler not registered (expected - admin must register first)");
-        }
-    }
+    let add_ix = build_add_canceler_ix(
+        program_id,
+        bridge_pda,
+        canceler_entry_pda,
+        admin.pubkey(),
+        canceler.pubkey(),
+        true,
+    );
+    send_tx(&client, &admin, vec![add_ix]);
 
-    println!("Solana cancel flow test completed (partial - requires admin setup for full flow)");
+    let user = Keypair::new();
+    let sig = client
+        .request_airdrop(&user.pubkey(), 10_000_000_000)
+        .unwrap();
+    client.confirm_transaction(&sig).unwrap();
+
+    let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
+    let bridge_refresh =
+        parse_bridge_account(&client.get_account(&bridge_pda).expect("bridge").data);
+    let fund_nonce = bridge_refresh.deposit_nonce + 1;
+    let (deposit_record_pda, _) = derive_deposit_pda(&program_id, fund_nonce);
+    send_tx(
+        &client,
+        &user,
+        vec![build_deposit_native_ix(
+            program_id,
+            bridge_pda,
+            deposit_record_pda,
+            dest_chain_pda,
+            user.pubkey(),
+            DepositNativeArgs {
+                dest_chain: EVM_CHAIN_ID,
+                dest_account: [0x33u8; 32],
+                dest_token: [0x44u8; 32],
+                amount: 2_000_000_000,
+            },
+        )],
+    );
+
+    let withdraw_nonce: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_add(10_000);
+    let withdraw_amount: u128 = 100_000_000;
+    let src_account = [0xCCu8; 32];
+    let dest_token = Keypair::new().pubkey();
+    let transfer_hash = multichain_rs::hash::compute_xchain_hash_id(
+        &EVM_CHAIN_ID,
+        &solana_chain_id,
+        &src_account,
+        &user.pubkey().to_bytes(),
+        &dest_token.to_bytes(),
+        withdraw_amount,
+        withdraw_nonce,
+    );
+
+    let (pending_withdraw_pda, _) = derive_pending_withdraw_pda(&program_id, &transfer_hash);
+    let (executed_check, _) = derive_executed_hash_pda(&program_id, &transfer_hash);
+
+    send_tx(
+        &client,
+        &user,
+        vec![build_withdraw_submit_ix(
+            program_id,
+            bridge_pda,
+            pending_withdraw_pda,
+            executed_check,
+            user.pubkey(),
+            WithdrawSubmitArgs {
+                src_chain: EVM_CHAIN_ID,
+                src_account,
+                dest_token: dest_token.to_bytes(),
+                amount: withdraw_amount,
+                nonce: withdraw_nonce,
+            },
+        )],
+    );
+
+    send_tx(
+        &client,
+        &operator,
+        vec![build_withdraw_approve_ix(
+            program_id,
+            bridge_pda,
+            pending_withdraw_pda,
+            operator.pubkey(),
+            transfer_hash,
+        )],
+    );
+
+    send_tx(
+        &client,
+        &canceler,
+        vec![build_withdraw_cancel_ix(
+            program_id,
+            bridge_pda,
+            pending_withdraw_pda,
+            canceler_entry_pda,
+            canceler.pubkey(),
+        )],
+    );
+
+    let pw_data = parse_pending_withdraw(
+        &client
+            .get_account(&pending_withdraw_pda)
+            .expect("pending withdraw")
+            .data,
+    );
+    assert!(pw_data.cancelled, "cancelled flag must be true");
+
+    send_tx(
+        &client,
+        &admin,
+        vec![build_withdraw_reenable_ix(
+            program_id,
+            bridge_pda,
+            pending_withdraw_pda,
+            admin.pubkey(),
+        )],
+    );
+
+    let pw2 = parse_pending_withdraw(
+        &client
+            .get_account(&pending_withdraw_pda)
+            .expect("pending withdraw after reenable")
+            .data,
+    );
+    assert!(
+        !pw2.cancelled,
+        "cancelled must be false after withdraw_reenable"
+    );
+
+    println!("Solana cancel / reenable flow PASSED");
 }
 
 #[test]
