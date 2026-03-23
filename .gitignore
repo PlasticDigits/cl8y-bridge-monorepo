@@ -33,6 +33,11 @@ dist/
 .output/
 
 # ===================
+# Solana (local validator / anchor test)
+# ===================
+test-ledger/
+
+# ===================
 # Terra Contracts (Rust/CosmWasm)
 # ===================
 target/

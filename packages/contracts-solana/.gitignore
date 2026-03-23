@@ -1,1 +1,3 @@
 .anchor/
+# solana-test-validator / anchor test default ledger (do not commit)
+test-ledger/
