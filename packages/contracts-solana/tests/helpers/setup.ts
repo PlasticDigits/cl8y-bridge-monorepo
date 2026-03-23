@@ -17,8 +17,25 @@ export async function airdrop(
   pubkey: PublicKey,
   amount: number = 100 * LAMPORTS_PER_SOL
 ): Promise<void> {
-  const sig = await connection.requestAirdrop(pubkey, amount);
-  await connection.confirmTransaction(sig, "confirmed");
+  const minBalance = Math.min(amount, LAMPORTS_PER_SOL);
+  const balance = await connection.getBalance(pubkey);
+  if (balance >= minBalance) return;
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const sig = await connection.requestAirdrop(pubkey, amount);
+      await connection.confirmTransaction(sig, "confirmed");
+      return;
+    } catch (err: any) {
+      const is429 = err?.message?.includes("429") || err?.status === 429;
+      if (is429 && attempt < MAX_RETRIES - 1) {
+        await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 export function findBridgePda(programId: PublicKey): [PublicKey, number] {
