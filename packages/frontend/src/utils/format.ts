@@ -94,11 +94,11 @@ export function parseAmount(
   humanAmount: string | number,
   decimals: number = DECIMALS.LUNC
 ): string {
-  const amount = typeof humanAmount === 'string' 
-    ? parseFloat(humanAmount) 
-    : humanAmount;
-  
-  return Math.floor(amount * Math.pow(10, decimals)).toString();
+  const str = typeof humanAmount === "number" ? humanAmount.toString() : humanAmount;
+  const [whole, frac = ""] = str.split(".");
+  const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
+  const raw = whole + padded;
+  return raw.replace(/^0+/, "") || "0";
 }
 
 /**
