@@ -22,8 +22,4 @@ pub mod cl8y_faucet {
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
         instructions::claim::handler(ctx)
     }
-
-    pub fn claim_sol(ctx: Context<ClaimSol>, lamports: u64) -> Result<()> {
-        instructions::claim_sol::handler(ctx, lamports)
-    }
 }

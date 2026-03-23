@@ -63,6 +63,7 @@ pub struct WithdrawSubmit<'info> {
 pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
     require!(!bridge.paused, BridgeError::BridgePaused);
+    require!(params.amount > 0, BridgeError::ZeroAmount);
 
     // Reject if this transfer hash was already executed (close+reinit protection)
     require!(

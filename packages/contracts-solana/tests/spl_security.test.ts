@@ -137,6 +137,7 @@ describe("bridge SPL security and multi-user coverage", () => {
         .accounts({
           bridge: ctx.bridgePda,
           tokenMapping: tokenPda,
+          mint,
           admin: ctx.admin.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -156,11 +157,6 @@ describe("bridge SPL security and multi-user coverage", () => {
       ctx.admin.publicKey,
       null,
       9
-    );
-    const { tokenPda, destToken } = await registerTokenMapping(
-      mint,
-      destTokenByte,
-      mode
     );
 
     const userToken = await getOrCreateAssociatedTokenAccount(
@@ -203,6 +199,12 @@ describe("bridge SPL security and multi-user coverage", () => {
         ctx.bridgePda
       );
     }
+
+    const { tokenPda, destToken } = await registerTokenMapping(
+      mint,
+      destTokenByte,
+      mode
+    );
 
     return {
       mint,

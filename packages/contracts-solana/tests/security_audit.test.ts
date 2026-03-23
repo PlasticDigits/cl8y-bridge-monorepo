@@ -165,6 +165,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .accounts({
           bridge: ctx.bridgePda,
           tokenMapping: tokenPda,
+          mint,
           admin: ctx.admin.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -183,11 +184,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       ctx.admin.publicKey,
       null,
       9
-    );
-    const { tokenPda, destToken } = await registerTokenMapping(
-      mint,
-      destTokenByte,
-      mode
     );
     const userToken = await getOrCreateAssociatedTokenAccount(
       ctx.provider.connection,
@@ -227,6 +223,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         ctx.bridgePda
       );
     }
+    const { tokenPda, destToken } = await registerTokenMapping(
+      mint,
+      destTokenByte,
+      mode
+    );
     return {
       mint,
       tokenPda,
@@ -1928,6 +1929,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     it("non-admin cannot register token", async () => {
       const rogue = Keypair.generate();
       await airdrop(ctx.provider.connection, rogue.publicKey);
+      const rogueMint = await createMint(
+        ctx.provider.connection,
+        ctx.admin,
+        ctx.admin.publicKey,
+        null,
+        9
+      );
       const destChain = Buffer.from(EVM_CHAIN_ID);
       const destToken = Buffer.alloc(32);
       destToken[31] = 0xfe;
@@ -1939,7 +1947,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       try {
         await ctx.program.methods
           .registerToken({
-            localMint: Keypair.generate().publicKey,
+            localMint: rogueMint,
             destChain: EVM_CHAIN_ID,
             destToken: Array.from(destToken),
             mode: { lockUnlock: {} },
@@ -1948,6 +1956,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             tokenMapping: tokenPda,
+            mint: rogueMint,
             admin: rogue.publicKey,
             systemProgram: SystemProgram.programId,
           })

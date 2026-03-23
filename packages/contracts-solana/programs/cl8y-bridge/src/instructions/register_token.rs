@@ -1,6 +1,7 @@
 use crate::error::BridgeError;
 use crate::state::{BridgeConfig, TokenMapping, TokenMode};
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::Mint;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct RegisterTokenParams {
@@ -29,6 +30,11 @@ pub struct RegisterToken<'info> {
     )]
     pub token_mapping: Account<'info, TokenMapping>,
 
+    #[account(
+        constraint = mint.key() == params.local_mint @ BridgeError::TokenNotRegistered
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+
     #[account(mut)]
     pub admin: Signer<'info>,
 
@@ -41,6 +47,20 @@ pub fn handler(ctx: Context<RegisterToken>, params: RegisterTokenParams) -> Resu
         ctx.accounts.admin.key() == bridge.admin,
         BridgeError::UnauthorizedAdmin
     );
+
+    let mint = &ctx.accounts.mint;
+    require!(
+        params.decimals == mint.decimals,
+        BridgeError::InvalidDecimals
+    );
+
+    if params.mode == TokenMode::MintBurn {
+        let bridge_pda = ctx.accounts.bridge.key();
+        require!(
+            mint.mint_authority.contains(&bridge_pda),
+            BridgeError::MintAuthorityNotBridge
+        );
+    }
 
     let mapping = &mut ctx.accounts.token_mapping;
     mapping.local_mint = params.local_mint;

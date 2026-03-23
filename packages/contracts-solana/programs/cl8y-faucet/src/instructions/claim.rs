@@ -42,8 +42,12 @@ pub fn handler(ctx: Context<Claim>) -> Result<()> {
 
     let clock = Clock::get()?;
     if record.last_claimed_at > 0 {
+        let next_claim_at = record
+            .last_claimed_at
+            .checked_add(config.cooldown_seconds)
+            .ok_or(FaucetError::ArithmeticOverflow)?;
         require!(
-            clock.unix_timestamp >= record.last_claimed_at + config.cooldown_seconds,
+            clock.unix_timestamp >= next_claim_at,
             FaucetError::CooldownNotElapsed
         );
     }

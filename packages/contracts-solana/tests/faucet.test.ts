@@ -236,99 +236,150 @@ describe("cl8y-faucet", () => {
     });
   });
 
-  describe("claim_sol", () => {
-    const SOL_CLAIM_LAMPORTS = LAMPORTS_PER_SOL / 10; // 0.1 SOL
-    const NATIVE_SOL_TAG = Buffer.from("native_sol");
+  describe("claim_sol instruction removed", () => {
+    it("claimSol instruction no longer exists on the program", async () => {
+      expect((program.methods as any).claimSol).to.be.undefined;
+    });
+  });
+
+  describe("mint isolation and edge cases", () => {
+    let mintA: PublicKey;
+    let mintB: PublicKey;
+    let claimer2: Keypair;
+    let claimer2AtaA: PublicKey;
+    let claimer2AtaB: PublicKey;
 
     before(async () => {
-      // Fund the faucet PDA with SOL so it can dispense
-      const tx = new anchor.web3.Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: admin.publicKey,
-          toPubkey: faucetConfigPda,
-          lamports: 2 * LAMPORTS_PER_SOL,
-        })
-      );
-      await provider.sendAndConfirm(tx);
-    });
+      claimer2 = Keypair.generate();
+      await airdrop(provider.connection, claimer2.publicKey);
 
-    it("claims SOL from faucet", async () => {
-      const [claimRecord] = findClaimRecordPda(
-        program.programId,
-        claimer.publicKey,
-        NATIVE_SOL_TAG
+      mintA = await createMint(
+        provider.connection,
+        admin,
+        admin.publicKey,
+        null,
+        9
       );
-
-      const balanceBefore = await provider.connection.getBalance(
-        claimer.publicKey
+      mintB = await createMint(
+        provider.connection,
+        admin,
+        admin.publicKey,
+        null,
+        9
       );
 
+      claimer2AtaA = await createAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mintA,
+        claimer2.publicKey
+      );
+      claimer2AtaB = await createAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mintB,
+        claimer2.publicKey
+      );
+
+      // Register both mints
       await program.methods
-        .claimSol(new anchor.BN(SOL_CLAIM_LAMPORTS))
+        .registerMint()
         .accounts({
           faucetConfig: faucetConfigPda,
-          claimRecord,
-          claimer: claimer.publicKey,
-          systemProgram: SystemProgram.programId,
+          mint: mintA,
+          admin: admin.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([claimer])
         .rpc();
 
-      const balanceAfter = await provider.connection.getBalance(
-        claimer.publicKey
-      );
-      // Balance increase ≈ SOL_CLAIM_LAMPORTS minus tx fee; at minimum it should go up
-      expect(balanceAfter).to.be.greaterThan(balanceBefore);
+      await program.methods
+        .registerMint()
+        .accounts({
+          faucetConfig: faucetConfigPda,
+          mint: mintB,
+          admin: admin.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
     });
 
-    it("rejects SOL claim before cooldown", async () => {
-      const [claimRecord] = findClaimRecordPda(
+    it("two different mints have separate cooldowns", async () => {
+      const [claimRecordA] = findClaimRecordPda(
         program.programId,
-        claimer.publicKey,
-        NATIVE_SOL_TAG
+        claimer2.publicKey,
+        mintA
+      );
+      const [claimRecordB] = findClaimRecordPda(
+        program.programId,
+        claimer2.publicKey,
+        mintB
+      );
+
+      // Claim mint A
+      await program.methods
+        .claim()
+        .accounts({
+          faucetConfig: faucetConfigPda,
+          claimRecord: claimRecordA,
+          mint: mintA,
+          claimerTokenAccount: claimer2AtaA,
+          claimer: claimer2.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([claimer2])
+        .rpc();
+
+      // Immediately claim mint B - should succeed (separate cooldown)
+      await program.methods
+        .claim()
+        .accounts({
+          faucetConfig: faucetConfigPda,
+          claimRecord: claimRecordB,
+          mint: mintB,
+          claimerTokenAccount: claimer2AtaB,
+          claimer: claimer2.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([claimer2])
+        .rpc();
+
+      const ataA = await getAccount(provider.connection, claimer2AtaA);
+      const ataB = await getAccount(provider.connection, claimer2AtaB);
+      expect(Number(ataA.amount)).to.equal(CLAIM_AMOUNT);
+      expect(Number(ataB.amount)).to.equal(CLAIM_AMOUNT);
+    });
+
+    it("wrong claim_record PDA (different mint seed) is rejected", async () => {
+      const [wrongRecord] = findClaimRecordPda(
+        program.programId,
+        claimer2.publicKey,
+        mintB // wrong mint for mintA claim
       );
 
       try {
         await program.methods
-          .claimSol(new anchor.BN(SOL_CLAIM_LAMPORTS))
+          .claim()
           .accounts({
             faucetConfig: faucetConfigPda,
-            claimRecord,
-            claimer: claimer.publicKey,
+            claimRecord: wrongRecord,
+            mint: mintA,
+            claimerTokenAccount: claimer2AtaA,
+            claimer: claimer2.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([claimer])
+          .signers([claimer2])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
-        expect(err.toString()).to.contain("CooldownNotElapsed");
-      }
-    });
-
-    it("rejects SOL claim exceeding available balance", async () => {
-      await new Promise((r) => setTimeout(r, (COOLDOWN_SECONDS + 1) * 1000));
-
-      const [claimRecord] = findClaimRecordPda(
-        program.programId,
-        claimer.publicKey,
-        NATIVE_SOL_TAG
-      );
-      const hugeAmount = 999 * LAMPORTS_PER_SOL;
-
-      try {
-        await program.methods
-          .claimSol(new anchor.BN(hugeAmount))
-          .accounts({
-            faucetConfig: faucetConfigPda,
-            claimRecord,
-            claimer: claimer.publicKey,
-            systemProgram: SystemProgram.programId,
-          })
-          .signers([claimer])
-          .rpc();
-        expect.fail("Should have thrown");
-      } catch (err) {
-        expect(err.toString()).to.contain("InsufficientSol");
+        const msg = err.toString();
+        expect(
+          msg.includes("ConstraintSeeds") ||
+            msg.includes("seeds constraint") ||
+            msg.includes("A seeds constraint was violated")
+        ).to.be.true;
       }
     });
   });

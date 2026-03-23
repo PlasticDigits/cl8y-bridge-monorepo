@@ -14,8 +14,6 @@ pub enum BridgeError {
     ZeroAmount,
     #[msg("Fee exceeds deposit amount")]
     FeeExceedsAmount,
-    #[msg("Chain is not registered")]
-    ChainNotRegistered,
     #[msg("Token is not registered for destination chain")]
     TokenNotRegistered,
     #[msg("Transfer hash mismatch")]
@@ -38,12 +36,6 @@ pub enum BridgeError {
     InvalidWithdrawDelay,
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
-    #[msg("Invalid token mode")]
-    InvalidTokenMode,
-    #[msg("Canceler is already registered")]
-    CancelerAlreadyRegistered,
-    #[msg("Nonce already used")]
-    NonceAlreadyUsed,
     #[msg("Recipient does not match the pending withdrawal")]
     WrongRecipient,
     #[msg("Token mint does not match the pending withdrawal")]
@@ -60,4 +52,8 @@ pub enum BridgeError {
     InsufficientBridgeBalance,
     #[msg("Withdrawal token must be native SOL (Pubkey::default) for native execution")]
     NotNativeToken,
+    #[msg("Registered decimals do not match the mint's actual decimals")]
+    InvalidDecimals,
+    #[msg("MintBurn mode requires the bridge PDA to be the mint authority")]
+    MintAuthorityNotBridge,
 }

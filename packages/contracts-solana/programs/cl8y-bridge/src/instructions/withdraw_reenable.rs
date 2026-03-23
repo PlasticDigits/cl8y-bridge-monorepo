@@ -22,6 +22,7 @@ pub struct WithdrawReenable<'info> {
 
 pub fn handler(ctx: Context<WithdrawReenable>) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
+    require!(!bridge.paused, BridgeError::BridgePaused);
     require!(
         ctx.accounts.admin.key() == bridge.admin,
         BridgeError::UnauthorizedAdmin

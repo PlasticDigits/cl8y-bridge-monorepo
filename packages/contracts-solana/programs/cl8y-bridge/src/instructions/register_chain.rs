@@ -38,6 +38,7 @@ pub fn handler(ctx: Context<RegisterChain>, params: RegisterChainParams) -> Resu
         ctx.accounts.admin.key() == bridge.admin,
         BridgeError::UnauthorizedAdmin
     );
+    require!(params.chain_id != [0u8; 4], BridgeError::InvalidChainId);
     require!(
         params.identifier.len() <= 64,
         BridgeError::ArithmeticOverflow

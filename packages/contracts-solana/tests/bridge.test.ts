@@ -1,6 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { createMint } from "@solana/spl-token";
 import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
 import {
@@ -269,7 +270,13 @@ describe("cl8y-bridge", () => {
       const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
       const destToken = Buffer.alloc(32);
       destToken[31] = 0x42;
-      const localMint = Keypair.generate().publicKey;
+      const localMint = await createMint(
+        ctx.provider.connection,
+        ctx.admin,
+        ctx.admin.publicKey,
+        null,
+        9
+      );
 
       const [tokenPda] = findTokenPda(
         ctx.program.programId,
@@ -290,6 +297,7 @@ describe("cl8y-bridge", () => {
           .accounts({
             bridge: ctx.bridgePda,
             tokenMapping: tokenPda,
+            mint: localMint,
             admin: ctx.admin.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -305,7 +313,13 @@ describe("cl8y-bridge", () => {
       const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
       const destToken = Buffer.alloc(32);
       destToken[31] = 0xff;
-      const localMint = Keypair.generate().publicKey;
+      const localMint = await createMint(
+        ctx.provider.connection,
+        ctx.admin,
+        ctx.admin.publicKey,
+        null,
+        9
+      );
 
       const [tokenPda] = findTokenPda(
         ctx.program.programId,
@@ -325,6 +339,7 @@ describe("cl8y-bridge", () => {
           .accounts({
             bridge: ctx.bridgePda,
             tokenMapping: tokenPda,
+            mint: localMint,
             admin: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
