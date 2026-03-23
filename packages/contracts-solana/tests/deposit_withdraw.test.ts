@@ -6,7 +6,7 @@ import { Cl8yBridge } from "../target/types/cl8y_bridge";
 import {
   setupTest, findBridgePda, findDepositPda, findChainPda, findWithdrawPda,
   findExecutedHashPda, airdrop, TestContext,
-  initializeBridgeIfNeeded, registerChainIfNeeded
+  initializeBridgeIfNeeded, registerChainIfNeeded, getNextDepositNonce
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -75,12 +75,16 @@ describe("deposit and withdraw flow", () => {
   });
 
   describe("deposit_native", () => {
+    let firstDepositNonce: number;
+    let firstDepositPda: PublicKey;
+
     it("deposits SOL and creates deposit record", async () => {
       const amount = 1 * LAMPORTS_PER_SOL;
       const destAccount = Array.from(Buffer.alloc(32, 0xBB));
       const destToken = Array.from(Buffer.alloc(32, 0xCC));
 
-      const [depositPda] = findDepositPda(ctx.program.programId, 1);
+      firstDepositNonce = await getNextDepositNonce(ctx);
+      [firstDepositPda] = findDepositPda(ctx.program.programId, firstDepositNonce);
 
       await ctx.program.methods
         .depositNative({
@@ -91,7 +95,7 @@ describe("deposit and withdraw flow", () => {
         })
         .accounts({
           bridge: ctx.bridgePda,
-          depositRecord: depositPda,
+          depositRecord: firstDepositPda,
           destChainEntry: evmChainPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
@@ -99,20 +103,19 @@ describe("deposit and withdraw flow", () => {
         .signers([ctx.user])
         .rpc();
 
-      const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-      expect(deposit.nonce.toNumber()).to.equal(1);
+      const deposit = await ctx.program.account.depositRecord.fetch(firstDepositPda);
+      expect(deposit.nonce.toNumber()).to.equal(firstDepositNonce);
       expect(deposit.srcAccount.toString()).to.equal(ctx.user.publicKey.toString());
 
       const expectedNet = amount - Math.floor(amount * 50 / 10000);
       expect(Number(deposit.amount)).to.equal(expectedNet);
 
       const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
-      expect(bridge.depositNonce.toNumber()).to.equal(1);
+      expect(bridge.depositNonce.toNumber()).to.equal(firstDepositNonce);
     });
 
     it("deposit hash uses chain_id from bridge config", async () => {
-      const [depositPda] = findDepositPda(ctx.program.programId, 1);
-      const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
+      const deposit = await ctx.program.account.depositRecord.fetch(firstDepositPda);
 
       const amount = 1 * LAMPORTS_PER_SOL;
       const expectedNet = BigInt(amount - Math.floor(amount * 50 / 10000));
@@ -124,7 +127,7 @@ describe("deposit and withdraw flow", () => {
         Buffer.alloc(32, 0xBB),
         Buffer.alloc(32, 0xCC),
         expectedNet,
-        1n,
+        BigInt(firstDepositNonce),
       );
 
       expect(Buffer.from(deposit.transferHash).toString("hex"))
@@ -132,7 +135,8 @@ describe("deposit and withdraw flow", () => {
     });
 
     it("rejects zero amount", async () => {
-      const [depositPda] = findDepositPda(ctx.program.programId, 2);
+      const nextNonce = await getNextDepositNonce(ctx);
+      const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
 
       try {
         await ctx.program.methods
@@ -160,7 +164,8 @@ describe("deposit and withdraw flow", () => {
     it("rejects deposit to unregistered chain", async () => {
       const unregisteredChain = [0x00, 0x00, 0x00, 0xFF];
       const [fakePda] = findChainPda(ctx.program.programId, Buffer.from(unregisteredChain));
-      const [depositPda] = findDepositPda(ctx.program.programId, 2);
+      const nextNonce = await getNextDepositNonce(ctx);
+      const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
 
       try {
         await ctx.program.methods
@@ -191,7 +196,8 @@ describe("deposit and withdraw flow", () => {
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
 
-      const [depositPda] = findDepositPda(ctx.program.programId, 2);
+      const nextNonce = await getNextDepositNonce(ctx);
+      const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
       try {
         await ctx.program.methods
           .depositNative({
@@ -227,7 +233,8 @@ describe("deposit and withdraw flow", () => {
         .rpc();
 
       const amount = 1 * LAMPORTS_PER_SOL;
-      const [depositPda] = findDepositPda(ctx.program.programId, 2);
+      const nextNonce = await getNextDepositNonce(ctx);
+      const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
 
       await ctx.program.methods
         .depositNative({
@@ -262,7 +269,8 @@ describe("deposit and withdraw flow", () => {
         .rpc();
 
       const amount = 1 * LAMPORTS_PER_SOL;
-      const [depositPda] = findDepositPda(ctx.program.programId, 3);
+      const nextNonce = await getNextDepositNonce(ctx);
+      const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
 
       await ctx.program.methods
         .depositNative({

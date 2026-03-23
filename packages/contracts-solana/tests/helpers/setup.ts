@@ -103,6 +103,11 @@ export async function registerChainIfNeeded(
   return chainPda;
 }
 
+export async function getNextDepositNonce(ctx: TestContext): Promise<number> {
+  const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+  return bridge.depositNonce.toNumber() + 1;
+}
+
 export async function setupTest(): Promise<TestContext> {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
