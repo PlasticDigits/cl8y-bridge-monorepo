@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'packages/contracts-evm/**'
+      - 'packages/contracts-solana/**'
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'packages/contracts-evm/**'
+      - 'packages/contracts-solana/**'
       - 'packages/operator/**'
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
@@ -268,3 +270,57 @@ jobs:
         env:
           RUST_BACKTRACE: 1
         run: cargo test -- --nocapture
+
+  # ==========================================================================
+  # Solana Contracts Tests (Anchor)
+  # ==========================================================================
+  contracts-solana:
+    name: Solana Contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.12/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor CLI
+        run: cargo install --git https://github.com/coral-xyz/anchor avm --force
+      - run: avm install 0.32.1 && avm use 0.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install JS dependencies
+        working-directory: packages/contracts-solana
+        run: npm ci
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/contracts-solana -> target
+
+      - name: Check formatting
+        working-directory: packages/contracts-solana
+        run: cargo fmt --check
+
+      - name: Build programs
+        working-directory: packages/contracts-solana
+        run: anchor build
+
+      - name: Run tests
+        working-directory: packages/contracts-solana
+        env:
+          RUST_BACKTRACE: 1
+        run: anchor test --skip-build
