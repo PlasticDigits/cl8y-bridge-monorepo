@@ -75,7 +75,10 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
         .checked_add(fee)
         .ok_or(BridgeError::ArithmeticOverflow)?;
 
-    bridge.deposit_nonce += 1;
+    bridge.deposit_nonce = bridge
+        .deposit_nonce
+        .checked_add(1)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
     let nonce = bridge.deposit_nonce;
 
     let src_account = pubkey_to_bytes32(&ctx.accounts.depositor.key());

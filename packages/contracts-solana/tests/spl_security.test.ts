@@ -30,6 +30,7 @@ import {
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
   setupTest,
+  NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -780,7 +781,7 @@ describe("bridge SPL security and multi-user coverage", () => {
 
   describe("auth and pause hardening", () => {
     it("rejects withdraw_submit when bridge is paused", async () => {
-      const destToken = Keypair.generate().publicKey;
+      const destToken = NATIVE_SOL_TOKEN;
       const srcAccount = Buffer.alloc(32, 0x77);
       const amount = 100_000n;
       const nonce = 8888n;

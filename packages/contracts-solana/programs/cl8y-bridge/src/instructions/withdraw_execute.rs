@@ -1,4 +1,5 @@
 use crate::error::BridgeError;
+use crate::hash::compute_transfer_hash;
 use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw, TokenMapping, TokenMode};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
@@ -82,6 +83,17 @@ pub fn handler(ctx: Context<WithdrawExecute>) -> Result<()> {
             pw.token == ctx.accounts.mint.key(),
             BridgeError::TokenMintMismatch
         );
+
+        let recomputed = compute_transfer_hash(
+            &pw.src_chain,
+            &bridge.chain_id,
+            &pw.src_account,
+            &pw.dest_account.to_bytes(),
+            &pw.token.to_bytes(),
+            pw.amount,
+            pw.nonce,
+        );
+        require!(recomputed == pw.transfer_hash, BridgeError::HashMismatch);
 
         let clock = Clock::get()?;
         require!(

@@ -13,6 +13,7 @@ import {
   airdrop,
   TestContext,
   initializeBridgeIfNeeded,
+  NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -55,7 +56,7 @@ describe("cancel flow", () => {
   let cancelerPda: PublicKey;
 
   const srcAccount = Buffer.alloc(32, 0xaa);
-  const destToken = Keypair.generate().publicKey;
+  const destToken = NATIVE_SOL_TOKEN;
   const amount = 500000n;
   const nonce = 10n;
 
@@ -200,7 +201,7 @@ describe("cancel flow", () => {
       .rpc();
 
     const srcAccount2 = Buffer.alloc(32, 0xdd);
-    const destToken2 = Keypair.generate().publicKey;
+    const destToken2 = NATIVE_SOL_TOKEN;
     const hash2 = computeTransferHash(
       EVM_CHAIN_ID,
       SOLANA_CHAIN_ID,

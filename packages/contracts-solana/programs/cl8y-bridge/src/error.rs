@@ -58,4 +58,6 @@ pub enum BridgeError {
     InsufficientAccruedFees,
     #[msg("Bridge balance would fall below rent-exempt reserve")]
     InsufficientBridgeBalance,
+    #[msg("Withdrawal token must be native SOL (Pubkey::default) for native execution")]
+    NotNativeToken,
 }

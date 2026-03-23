@@ -1,5 +1,6 @@
 use crate::error::BridgeError;
-use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw};
+use crate::hash::compute_transfer_hash;
+use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw, NATIVE_SOL_TOKEN};
 use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
@@ -48,6 +49,21 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
             pw.dest_account == ctx.accounts.recipient.key(),
             BridgeError::WrongRecipient
         );
+        require!(
+            pw.token == NATIVE_SOL_TOKEN,
+            BridgeError::NotNativeToken
+        );
+
+        let recomputed = compute_transfer_hash(
+            &pw.src_chain,
+            &bridge.chain_id,
+            &pw.src_account,
+            &pw.dest_account.to_bytes(),
+            &pw.token.to_bytes(),
+            pw.amount,
+            pw.nonce,
+        );
+        require!(recomputed == pw.transfer_hash, BridgeError::HashMismatch);
 
         let clock = Clock::get()?;
         require!(

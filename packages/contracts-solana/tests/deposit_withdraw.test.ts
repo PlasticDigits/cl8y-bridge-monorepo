@@ -20,6 +20,7 @@ import {
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
   getNextDepositNonce,
+  NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -369,7 +370,7 @@ describe("deposit and withdraw flow", () => {
     const withdrawNonce = 100n;
     const srcChain = EVM_CHAIN_ID;
     const srcAccount = Buffer.alloc(32, 0xaa);
-    const destToken = Keypair.generate().publicKey;
+    const destToken = NATIVE_SOL_TOKEN;
 
     it("submit withdrawal", async () => {
       transferHash = computeTransferHash(
@@ -560,7 +561,7 @@ describe("deposit and withdraw flow", () => {
   describe("withdraw_approve rejects when paused", () => {
     it("operator cannot approve when bridge is paused", async () => {
       const srcAccount = Buffer.alloc(32, 0xdd);
-      const destToken = Keypair.generate().publicKey;
+      const destToken = NATIVE_SOL_TOKEN;
       const amount = 100000n;
       const nonce = 200n;
 

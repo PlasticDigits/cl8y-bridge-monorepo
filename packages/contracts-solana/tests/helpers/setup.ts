@@ -15,6 +15,9 @@ import {
 } from "@solana/spl-token";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
 
+/** Canonical token identifier for native SOL — all-zeros, matching Rust NATIVE_SOL_TOKEN. */
+export const NATIVE_SOL_TOKEN = new PublicKey(Buffer.alloc(32));
+
 export const BRIDGE_SEED = Buffer.from("bridge");
 export const DEPOSIT_SEED = Buffer.from("deposit");
 export const WITHDRAW_SEED = Buffer.from("withdraw");
