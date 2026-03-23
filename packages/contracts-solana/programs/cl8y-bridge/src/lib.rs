@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 
+pub mod address_codec;
 pub mod error;
 pub mod hash;
-pub mod address_codec;
 pub mod instructions;
 pub mod state;
 
@@ -26,11 +26,17 @@ pub mod cl8y_bridge {
         instructions::deposit_spl::handler(ctx, params)
     }
 
-    pub fn withdraw_submit(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Result<()> {
+    pub fn withdraw_submit(
+        ctx: Context<WithdrawSubmit>,
+        params: WithdrawSubmitParams,
+    ) -> Result<()> {
         instructions::withdraw_submit::handler(ctx, params)
     }
 
-    pub fn withdraw_approve(ctx: Context<WithdrawApprove>, params: WithdrawApproveParams) -> Result<()> {
+    pub fn withdraw_approve(
+        ctx: Context<WithdrawApprove>,
+        params: WithdrawApproveParams,
+    ) -> Result<()> {
         instructions::withdraw_approve::handler(ctx, params)
     }
 

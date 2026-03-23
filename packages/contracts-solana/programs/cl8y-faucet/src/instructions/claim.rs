@@ -1,6 +1,6 @@
+use crate::state::{ClaimRecord, FaucetConfig, FaucetError};
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, MintTo, Token, Mint, TokenAccount};
-use crate::state::{FaucetConfig, ClaimRecord, FaucetError};
+use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
 
 #[derive(Accounts)]
 pub struct Claim<'info> {

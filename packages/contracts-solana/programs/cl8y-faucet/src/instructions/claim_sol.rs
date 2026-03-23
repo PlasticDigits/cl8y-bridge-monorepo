@@ -1,6 +1,6 @@
+use crate::state::{ClaimRecord, FaucetConfig, FaucetError};
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::state::{FaucetConfig, ClaimRecord, FaucetError};
 
 #[derive(Accounts)]
 pub struct ClaimSol<'info> {

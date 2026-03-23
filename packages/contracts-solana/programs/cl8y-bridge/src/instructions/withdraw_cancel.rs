@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, PendingWithdraw, CancelerEntry};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, CancelerEntry, PendingWithdraw};
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct WithdrawCancel<'info> {
@@ -27,7 +27,10 @@ pub struct WithdrawCancel<'info> {
 }
 
 pub fn handler(ctx: Context<WithdrawCancel>) -> Result<()> {
-    require!(ctx.accounts.canceler_entry.active, BridgeError::UnauthorizedCanceler);
+    require!(
+        ctx.accounts.canceler_entry.active,
+        BridgeError::UnauthorizedCanceler
+    );
 
     let pw = &mut ctx.accounts.pending_withdraw;
     require!(!pw.executed, BridgeError::AlreadyExecuted);

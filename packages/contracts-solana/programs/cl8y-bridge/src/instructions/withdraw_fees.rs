@@ -1,7 +1,7 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, TokenInterface, TokenAccount, Mint, TransferChecked};
-use crate::state::BridgeConfig;
 use crate::error::BridgeError;
+use crate::state::BridgeConfig;
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawFeesParams {
@@ -39,7 +39,10 @@ pub struct WithdrawFees<'info> {
 
 pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
     require!(params.amount > 0, BridgeError::ZeroAmount);
 
     if params.native {
@@ -56,16 +59,24 @@ pub fn handler(ctx: Context<WithdrawFees>, params: WithdrawFeesParams) -> Result
             .ok_or(BridgeError::ArithmeticOverflow)?;
     } else {
         // Withdraw SPL token fees from bridge token account
-        let bridge_token_account = ctx.accounts.bridge_token_account
+        let bridge_token_account = ctx
+            .accounts
+            .bridge_token_account
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
-        let admin_token_account = ctx.accounts.admin_token_account
+        let admin_token_account = ctx
+            .accounts
+            .admin_token_account
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
-        let mint = ctx.accounts.mint
+        let mint = ctx
+            .accounts
+            .mint
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
-        let token_program = ctx.accounts.token_program
+        let token_program = ctx
+            .accounts
+            .token_program
             .as_ref()
             .ok_or(BridgeError::TokenNotRegistered)?;
 

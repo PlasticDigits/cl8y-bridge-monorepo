@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, PendingWithdraw};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, PendingWithdraw};
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawApproveParams {
@@ -29,7 +29,10 @@ pub struct WithdrawApprove<'info> {
 pub fn handler(ctx: Context<WithdrawApprove>, params: WithdrawApproveParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
     require!(!bridge.paused, BridgeError::BridgePaused);
-    require!(ctx.accounts.operator.key() == bridge.operator, BridgeError::UnauthorizedOperator);
+    require!(
+        ctx.accounts.operator.key() == bridge.operator,
+        BridgeError::UnauthorizedOperator
+    );
 
     let pw = &mut ctx.accounts.pending_withdraw;
     require!(!pw.approved, BridgeError::AlreadyApproved);

@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, PendingWithdraw};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, PendingWithdraw};
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct WithdrawReenable<'info> {
@@ -22,7 +22,10 @@ pub struct WithdrawReenable<'info> {
 
 pub fn handler(ctx: Context<WithdrawReenable>) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
 
     let pw = &mut ctx.accounts.pending_withdraw;
     require!(pw.cancelled, BridgeError::NotCancelled);

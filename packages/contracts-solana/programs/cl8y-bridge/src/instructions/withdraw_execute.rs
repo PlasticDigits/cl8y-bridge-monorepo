@@ -1,7 +1,9 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, TokenInterface, TokenAccount, Mint, TransferChecked, MintTo};
-use crate::state::{BridgeConfig, PendingWithdraw, TokenMapping, TokenMode, ExecutedHash};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw, TokenMapping, TokenMode};
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{
+    self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
+};
 
 #[derive(Accounts)]
 pub struct WithdrawExecute<'info> {
@@ -69,8 +71,14 @@ pub fn handler(ctx: Context<WithdrawExecute>) -> Result<()> {
         require!(pw.approved, BridgeError::NotApproved);
         require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
         require!(!pw.executed, BridgeError::AlreadyExecuted);
-        require!(pw.dest_account == ctx.accounts.recipient.key(), BridgeError::WrongRecipient);
-        require!(pw.token == ctx.accounts.mint.key(), BridgeError::TokenMintMismatch);
+        require!(
+            pw.dest_account == ctx.accounts.recipient.key(),
+            BridgeError::WrongRecipient
+        );
+        require!(
+            pw.token == ctx.accounts.mint.key(),
+            BridgeError::TokenMintMismatch
+        );
 
         let clock = Clock::get()?;
         require!(

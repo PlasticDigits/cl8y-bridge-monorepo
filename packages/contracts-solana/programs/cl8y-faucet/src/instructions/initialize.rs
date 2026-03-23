@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::state::FaucetConfig;
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct InitializeParams {

@@ -1,9 +1,9 @@
-use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use crate::state::{BridgeConfig, ChainEntry, DepositRecord};
+use crate::address_codec::pubkey_to_bytes32;
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
-use crate::address_codec::pubkey_to_bytes32;
+use crate::state::{BridgeConfig, ChainEntry, DepositRecord};
+use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct DepositNativeParams {
@@ -54,7 +54,10 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
         .ok_or(BridgeError::ArithmeticOverflow)?
         .checked_div(10000)
         .ok_or(BridgeError::ArithmeticOverflow)? as u64;
-    let net_amount = params.amount.checked_sub(fee).ok_or(BridgeError::FeeExceedsAmount)?;
+    let net_amount = params
+        .amount
+        .checked_sub(fee)
+        .ok_or(BridgeError::FeeExceedsAmount)?;
 
     system_program::transfer(
         CpiContext::new(

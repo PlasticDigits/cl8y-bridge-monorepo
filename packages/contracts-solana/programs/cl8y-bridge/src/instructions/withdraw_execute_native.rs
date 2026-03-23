@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, PendingWithdraw, ExecutedHash};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw};
+use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct WithdrawExecuteNative<'info> {
@@ -44,7 +44,10 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
         require!(pw.approved, BridgeError::NotApproved);
         require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
         require!(!pw.executed, BridgeError::AlreadyExecuted);
-        require!(pw.dest_account == ctx.accounts.recipient.key(), BridgeError::WrongRecipient);
+        require!(
+            pw.dest_account == ctx.accounts.recipient.key(),
+            BridgeError::WrongRecipient
+        );
 
         let clock = Clock::get()?;
         require!(

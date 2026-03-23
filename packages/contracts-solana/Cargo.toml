@@ -2,6 +2,13 @@
 members = ["programs/*"]
 resolver = "2"
 
+# Anchor/solana_program_entrypoint macros use cfg flags Rust 1.80+ does not know about;
+# silence until upstream declares them (removes hundreds of lines of noise in CI).
+# Instruction modules each export `handler` but only account types are needed at crate root.
+[workspace.lints.rust]
+unexpected_cfgs = "allow"
+ambiguous_glob_reexports = "allow"
+
 [profile.release]
 overflow-checks = true
 lto = "fat"

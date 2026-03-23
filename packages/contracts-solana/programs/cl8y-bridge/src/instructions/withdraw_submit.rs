@@ -1,7 +1,7 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, PendingWithdraw, ExecutedHash};
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
+use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw};
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawSubmitParams {

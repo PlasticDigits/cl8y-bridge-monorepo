@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, ChainEntry};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, ChainEntry};
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct RegisterChainParams {
@@ -34,8 +34,14 @@ pub struct RegisterChain<'info> {
 
 pub fn handler(ctx: Context<RegisterChain>, params: RegisterChainParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
-    require!(params.identifier.len() <= 64, BridgeError::ArithmeticOverflow);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
+    require!(
+        params.identifier.len() <= 64,
+        BridgeError::ArithmeticOverflow
+    );
 
     let entry = &mut ctx.accounts.chain_entry;
     entry.chain_id = params.chain_id;

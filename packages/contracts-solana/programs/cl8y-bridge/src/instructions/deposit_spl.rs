@@ -1,9 +1,11 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, TokenInterface, TokenAccount, Mint, TransferChecked, Burn};
-use crate::state::{BridgeConfig, ChainEntry, DepositRecord, TokenMapping, TokenMode};
+use crate::address_codec::pubkey_to_bytes32;
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
-use crate::address_codec::pubkey_to_bytes32;
+use crate::state::{BridgeConfig, ChainEntry, DepositRecord, TokenMapping, TokenMode};
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{
+    self, Burn, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct DepositSplParams {
@@ -78,7 +80,10 @@ pub fn handler(ctx: Context<DepositSpl>, params: DepositSplParams) -> Result<()>
         .ok_or(BridgeError::ArithmeticOverflow)?
         .checked_div(10000)
         .ok_or(BridgeError::ArithmeticOverflow)? as u64;
-    let net_amount = params.amount.checked_sub(fee).ok_or(BridgeError::FeeExceedsAmount)?;
+    let net_amount = params
+        .amount
+        .checked_sub(fee)
+        .ok_or(BridgeError::FeeExceedsAmount)?;
 
     let token_mapping = &ctx.accounts.token_mapping;
     let decimals = ctx.accounts.mint.decimals;

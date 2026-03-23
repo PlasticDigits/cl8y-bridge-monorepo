@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::BridgeConfig;
 use crate::error::BridgeError;
+use crate::state::BridgeConfig;
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct InitializeParams {
@@ -29,7 +29,10 @@ pub struct Initialize<'info> {
 
 pub fn handler(ctx: Context<Initialize>, params: InitializeParams) -> Result<()> {
     require!(params.fee_bps <= 10000, BridgeError::InvalidFeeBps);
-    require!(params.withdraw_delay >= 15 && params.withdraw_delay <= 86400, BridgeError::InvalidWithdrawDelay);
+    require!(
+        params.withdraw_delay >= 15 && params.withdraw_delay <= 86400,
+        BridgeError::InvalidWithdrawDelay
+    );
     require!(params.chain_id != [0u8; 4], BridgeError::InvalidChainId);
 
     let bridge = &mut ctx.accounts.bridge;

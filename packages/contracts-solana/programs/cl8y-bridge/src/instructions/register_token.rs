@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, TokenMapping, TokenMode};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, TokenMapping, TokenMode};
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct RegisterTokenParams {
@@ -37,7 +37,10 @@ pub struct RegisterToken<'info> {
 
 pub fn handler(ctx: Context<RegisterToken>, params: RegisterTokenParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
 
     let mapping = &mut ctx.accounts.token_mapping;
     mapping.local_mint = params.local_mint;

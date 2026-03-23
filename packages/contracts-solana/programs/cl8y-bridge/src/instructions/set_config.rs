@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::BridgeConfig;
 use crate::error::BridgeError;
+use crate::state::BridgeConfig;
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct SetConfigParams {
@@ -25,7 +25,10 @@ pub struct SetConfig<'info> {
 
 pub fn handler(ctx: Context<SetConfig>, params: SetConfigParams) -> Result<()> {
     let bridge = &mut ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
 
     if let Some(new_admin) = params.new_admin {
         bridge.admin = new_admin;
@@ -38,7 +41,10 @@ pub fn handler(ctx: Context<SetConfig>, params: SetConfigParams) -> Result<()> {
         bridge.fee_bps = fee_bps;
     }
     if let Some(delay) = params.withdraw_delay {
-        require!(delay >= 15 && delay <= 86400, BridgeError::InvalidWithdrawDelay);
+        require!(
+            delay >= 15 && delay <= 86400,
+            BridgeError::InvalidWithdrawDelay
+        );
         bridge.withdraw_delay = delay;
     }
     if let Some(paused) = params.paused {

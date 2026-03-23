@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::state::{BridgeConfig, CancelerEntry};
 use crate::error::BridgeError;
+use crate::state::{BridgeConfig, CancelerEntry};
+use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct AddCancelerParams {
@@ -34,7 +34,10 @@ pub struct AddCanceler<'info> {
 
 pub fn handler(ctx: Context<AddCanceler>, params: AddCancelerParams) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
-    require!(ctx.accounts.admin.key() == bridge.admin, BridgeError::UnauthorizedAdmin);
+    require!(
+        ctx.accounts.admin.key() == bridge.admin,
+        BridgeError::UnauthorizedAdmin
+    );
 
     let entry = &mut ctx.accounts.canceler_entry;
     entry.pubkey = params.canceler;

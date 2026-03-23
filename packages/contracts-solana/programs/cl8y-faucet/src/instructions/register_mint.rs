@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token::{self, SetAuthority, Token, Mint};
 use crate::state::{FaucetConfig, FaucetError};
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, SetAuthority, Token};
 
 #[derive(Accounts)]
 pub struct RegisterMint<'info> {
