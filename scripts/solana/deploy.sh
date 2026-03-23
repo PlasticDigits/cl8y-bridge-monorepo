@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 CLUSTER="${1:-localnet}"
 
 case "${CLUSTER}" in
@@ -31,7 +34,7 @@ echo " RPC: ${RPC_URL}"
 echo "============================================"
 echo
 
-cd packages/contracts-solana
+cd "$REPO_ROOT/packages/contracts-solana"
 
 # Build
 echo "[1/4] Building Anchor program..."
@@ -51,7 +54,9 @@ solana program show "${PROGRAM_ID}" --url "${RPC_URL}"
 
 # Run hash parity test (call ts-mocha directly; anchor test passes -- args to cargo-build-sbf, not mocha)
 echo "[4/4] Running hash parity verification..."
-npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity.test.ts
+ANCHOR_PROVIDER_URL="${RPC_URL}" \
+ANCHOR_WALLET="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}" \
+  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity.test.ts
 
 echo
 echo "============================================"

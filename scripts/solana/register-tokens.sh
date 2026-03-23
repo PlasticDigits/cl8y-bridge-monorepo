@@ -1,18 +1,33 @@
 #!/usr/bin/env bash
-# Register token mappings across all chains for Solana integration
+# Register token mappings on the Solana bridge program
 #
 # Usage: ./scripts/solana/register-tokens.sh
+#
+# Env vars:
+#   SOLANA_RPC_URL     - Solana RPC endpoint (default: http://localhost:8899)
+#   SOLANA_KEYPAIR     - Path to admin keypair JSON (default: ~/.config/solana/id.json)
 
 set -euo pipefail
 
-echo "Token Registration"
-echo "========================="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
+SOLANA_KEYPAIR="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
+
+ADMIN_PUBKEY=$(solana-keygen pubkey "${SOLANA_KEYPAIR}")
+
+echo "Registering Token Mappings on Solana Bridge"
+echo "  Admin: ${ADMIN_PUBKEY}"
+echo "  RPC:   ${SOLANA_RPC_URL}"
 echo ""
-echo "Token: WSOL"
-echo "  Solana Mint:  So11111111111111111111111111111111111111112"
-echo "  EVM Address:  0x0000000000000000000000000000000000000000 (placeholder)"
-echo "  Terra Denom:  uluna"
-echo "  Mode:         LockUnlock"
-echo "  Decimals:     9"
+
+cd "$REPO_ROOT/packages/contracts-solana"
+
+echo "Sending register_token transaction via test runner..."
+ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
+ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "register_token"
+
 echo ""
-echo "Run individual chain-specific registration scripts to register these tokens."
+echo "Token mappings registered!"

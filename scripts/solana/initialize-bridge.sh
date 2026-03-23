@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
 SOLANA_KEYPAIR="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
 SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:?SOLANA_PROGRAM_ID is required}"
@@ -45,7 +48,7 @@ echo ""
 echo "Sending initialize transaction..."
 
 # Run mocha directly with --grep; anchor test passes -- args to cargo-build-sbf, not mocha
-cd packages/contracts-solana
+cd "$REPO_ROOT/packages/contracts-solana"
 ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
 ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
   npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "initialize"

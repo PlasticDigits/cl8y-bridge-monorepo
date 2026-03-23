@@ -3,7 +3,7 @@ import { Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import { Cl8yBridge } from "../target/types/cl8y_bridge";
-import { setupTest, findBridgePda, airdrop, TestContext, initializeBridgeIfNeeded } from "./helpers/setup";
+import { setupTest, findBridgePda, findTokenPda, airdrop, TestContext, initializeBridgeIfNeeded } from "./helpers/setup";
 
 describe("cl8y-bridge", () => {
   let ctx: TestContext;
@@ -163,6 +163,71 @@ describe("cl8y-bridge", () => {
 
       const chain = await ctx.program.account.chainEntry.fetch(chainPda);
       expect(chain.identifier).to.equal("evm_1");
+    });
+  });
+
+  describe("register_token", () => {
+    it("registers a token mapping", async () => {
+      const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+      const destToken = Buffer.alloc(32);
+      destToken[31] = 0x42;
+      const localMint = Keypair.generate().publicKey;
+
+      const [tokenPda] = findTokenPda(ctx.program.programId, destChain, destToken);
+
+      const existing = await ctx.provider.connection.getAccountInfo(tokenPda);
+      if (!existing) {
+        await ctx.program.methods
+          .registerToken({
+            localMint,
+            destChain: Array.from(destChain),
+            destToken: Array.from(destToken),
+            mode: { lockUnlock: {} },
+            decimals: 9,
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            tokenMapping: tokenPda,
+            admin: ctx.admin.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
+
+      const mapping = await ctx.program.account.tokenMapping.fetch(tokenPda);
+      expect(mapping.localMint.toString()).to.equal(localMint.toString());
+      expect(mapping.decimals).to.equal(9);
+    });
+
+    it("non-admin cannot register token", async () => {
+      const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+      const destToken = Buffer.alloc(32);
+      destToken[31] = 0xFF;
+      const localMint = Keypair.generate().publicKey;
+
+      const [tokenPda] = findTokenPda(ctx.program.programId, destChain, destToken);
+
+      try {
+        await ctx.program.methods
+          .registerToken({
+            localMint,
+            destChain: Array.from(destChain),
+            destToken: Array.from(destToken),
+            mode: { lockUnlock: {} },
+            decimals: 9,
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            tokenMapping: tokenPda,
+            admin: ctx.user.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([ctx.user])
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.toString()).to.contain("UnauthorizedAdmin");
+      }
     });
   });
 
