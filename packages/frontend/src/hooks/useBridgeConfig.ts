@@ -753,7 +753,8 @@ export function useTokenDetails(
       }
     },
     enabled: !!chainConfig && !!tokenId && enabled,
-    staleTime: 60_000,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   })
   return { data: data ?? null, isLoading, error: error as Error | null }
 }

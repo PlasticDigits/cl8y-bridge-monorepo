@@ -21,16 +21,25 @@ vi.mock('../../hooks/useWallet', () => ({
   })),
 }))
 
+vi.mock('../../hooks/useSolanaWallet', () => ({
+  useSolanaWallet: vi.fn(() => ({
+    connected: false,
+    address: undefined,
+  })),
+}))
+
 import { useAccount } from 'wagmi'
 import { useWallet } from '../../hooks/useWallet'
+import { useSolanaWallet } from '../../hooks/useSolanaWallet'
 
 const mockUseAccount = vi.mocked(useAccount)
 const mockUseWallet = vi.mocked(useWallet)
+const mockUseSolanaWallet = vi.mocked(useSolanaWallet)
 
 describe('WalletStatusBar', () => {
   it('should show Connect buttons when wallets are disconnected', () => {
     render(<WalletStatusBar />)
-    expect(screen.getAllByText('Connect')).toHaveLength(2)
+    expect(screen.getAllByText('Connect')).toHaveLength(3)
   })
 
   it('should show EVM address when connected', () => {
@@ -94,5 +103,46 @@ describe('WalletStatusBar', () => {
     const buttons = screen.getAllByText('Connect')
     fireEvent.click(buttons[1]!) // Terra is second
     expect(onConnectTerra).toHaveBeenCalledOnce()
+  })
+
+  it('should call onConnectSolana when Solana Connect button clicked', () => {
+    mockUseAccount.mockReturnValue({
+      isConnected: false,
+      address: undefined,
+      chain: undefined,
+    } as unknown as ReturnType<typeof useAccount>)
+    mockUseWallet.mockReturnValue({
+      connected: false,
+      address: undefined,
+    } as unknown as ReturnType<typeof useWallet>)
+    mockUseSolanaWallet.mockReturnValue({
+      connected: false,
+      address: undefined,
+    } as unknown as ReturnType<typeof useSolanaWallet>)
+
+    const onConnectSolana = vi.fn()
+    render(<WalletStatusBar onConnectSolana={onConnectSolana} />)
+    const buttons = screen.getAllByText('Connect')
+    fireEvent.click(buttons[2]!) // Solana is third
+    expect(onConnectSolana).toHaveBeenCalledOnce()
+  })
+
+  it('should show Solana address when connected', () => {
+    mockUseAccount.mockReturnValue({
+      isConnected: false,
+      address: undefined,
+      chain: undefined,
+    } as unknown as ReturnType<typeof useAccount>)
+    mockUseWallet.mockReturnValue({
+      connected: false,
+      address: undefined,
+    } as unknown as ReturnType<typeof useWallet>)
+    mockUseSolanaWallet.mockReturnValue({
+      connected: true,
+      address: 'So11111111111111111111111111111111111111112',
+    } as unknown as ReturnType<typeof useSolanaWallet>)
+
+    render(<WalletStatusBar />)
+    expect(screen.getByText('So11...1112')).toBeInTheDocument()
   })
 })
