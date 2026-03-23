@@ -2,7 +2,7 @@
 
 **Created:** 2026-03-17
 **Scope:** All packages — contracts, operator, canceler, multichain-rs, frontend, e2e
-**Status:** Draft — ready for review
+**Status:** In progress — implementation on feat/solana-integration
 
 ---
 

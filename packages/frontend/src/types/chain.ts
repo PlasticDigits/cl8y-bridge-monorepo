@@ -31,4 +31,7 @@ export interface BridgeChainConfig {
   lcdFallbacks?: string[]
   bridgeAddress: string
   bytes4ChainId?: string
+  programId?: string
+  explorerTxUrl?: string
+  faucetAddress?: string
 }

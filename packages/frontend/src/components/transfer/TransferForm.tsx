@@ -19,6 +19,9 @@ import {
 import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidation'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useSolanaWallet } from '../../hooks/useSolanaWallet'
+import { useSolanaDeposit } from '../../hooks/useSolanaDeposit'
+import { fetchDepositNonce } from '../../services/solana/transaction'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
@@ -219,6 +222,7 @@ export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
   const { connected: isSolanaConnected, address: solanaAddress, setShowWalletModal: setShowSolanaModal } = useSolanaWallet()
+  const { step: solanaStep, txSignature: solanaTxSig, error: _solanaError, deposit: solanaDeposit, reset: resetSolana } = useSolanaDeposit()
   const { data: registryTokens, isLoading: isRegistryLoading } = useTokenRegistry()
   const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
@@ -924,6 +928,31 @@ export function TransferForm() {
     }
   }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, sourceChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens, destTokenAddr])
 
+  // Solana deposit success: record transfer and navigate to status page
+  useEffect(() => {
+    if (solanaStep === 'confirmed' && solanaTxSig) {
+      const frozen = frozenChainsRef.current
+      if (!frozen) return
+
+      recordTransfer({
+        sourceChain: frozen.sourceChain,
+        destChain: frozen.destChain,
+        direction: frozen.direction,
+        type: 'deposit',
+        token: 'SOL',
+        amount: parseAmount(amount, amountDecimals),
+        status: 'confirmed',
+        srcAccount: solanaAddress || '',
+        txHash: solanaTxSig,
+        lifecycle: 'deposited',
+        sourceChainIdBytes4: sourceChainConfig?.bytes4ChainId,
+      })
+      frozenChainsRef.current = null
+      resetSolana()
+      navigate(`/transfer/${solanaTxSig}`)
+    }
+  }, [solanaStep, solanaTxSig, amount, amountDecimals, solanaAddress, sourceChainConfig, recordTransfer, resetSolana, navigate])
+
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
     const prevDest = destChain
@@ -986,14 +1015,75 @@ export function TransferForm() {
     const destConfig = BRIDGE_CHAINS[tier][destChain]
 
     if (isSourceSolana) {
-      setError('Solana deposits are not yet available. The Solana bridge program is under development.')
-      frozenChainsRef.current = null
-      return
-    }
+      // Solana → EVM or Solana → Terra: deposit on Solana bridge
+      if (!recipientAddr) {
+        setError('Please provide a recipient address or connect your destination wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      const sourceConfig = sourceChainConfig
+      if (!sourceConfig?.rpcUrl || !sourceConfig?.programId) {
+        setError(`Missing Solana RPC or program ID config for source chain: ${sourceChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destV2Bytes4 = destConfig?.bytes4ChainId
+      if (!destV2Bytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
 
-    if (isDestSolana) {
-      setError('Solana withdrawals are not yet available. The Solana bridge program is under development.')
-      frozenChainsRef.current = null
+      try {
+        const connection = new Connection(sourceConfig.rpcUrl, 'confirmed')
+        const programId = new PublicKey(sourceConfig.programId)
+        const depositNonce = await fetchDepositNonce(connection, programId)
+
+        // Encode destination parameters as bytes
+        const destChainBytes = new Uint8Array(4)
+        const destChainNum = parseInt(destV2Bytes4, 16)
+        destChainBytes[0] = (destChainNum >> 24) & 0xff
+        destChainBytes[1] = (destChainNum >> 16) & 0xff
+        destChainBytes[2] = (destChainNum >> 8) & 0xff
+        destChainBytes[3] = destChainNum & 0xff
+
+        // Encode dest account as 32 bytes
+        const destAccountBytes = new Uint8Array(32)
+        if (recipientAddr.startsWith('0x')) {
+          const hex = recipientAddr.slice(2)
+          for (let i = 0; i < 20 && i * 2 < hex.length; i++) {
+            destAccountBytes[12 + i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+          }
+        } else {
+          // Solana base58 or Terra address — encode as raw bytes
+          try {
+            const pk = new PublicKey(recipientAddr)
+            destAccountBytes.set(pk.toBytes())
+          } catch {
+            setError('Invalid recipient address')
+            frozenChainsRef.current = null
+            return
+          }
+        }
+
+        // Destination token as 32 bytes (use zero for native SOL bridge)
+        const destTokenBytes = new Uint8Array(32)
+
+        const amountLamports = BigInt(parseAmount(amount, amountDecimals))
+
+        await solanaDeposit({
+          rpcUrl: sourceConfig.rpcUrl,
+          programId: sourceConfig.programId,
+          destChain: destChainBytes,
+          destAccount: destAccountBytes,
+          destToken: destTokenBytes,
+          amount: amountLamports,
+          depositNonce,
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to build Solana deposit')
+        frozenChainsRef.current = null
+      }
       return
     }
 

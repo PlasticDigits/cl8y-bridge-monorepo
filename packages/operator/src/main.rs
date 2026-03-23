@@ -97,6 +97,7 @@ async fn async_main() -> eyre::Result<()> {
     let (shutdown_tx2, shutdown_rx2) = tokio::sync::mpsc::channel::<()>(1);
     let (shutdown_tx3, shutdown_rx3) = tokio::sync::mpsc::channel::<()>(1);
     let (shutdown_tx4, shutdown_rx4) = tokio::sync::mpsc::channel::<()>(1);
+    let (shutdown_tx5, shutdown_rx5) = tokio::sync::mpsc::channel::<()>(1);
 
     // Setup signal handlers
     let shutdown_tx_signal = shutdown_tx.clone();
@@ -106,12 +107,34 @@ async fn async_main() -> eyre::Result<()> {
         let _ = shutdown_tx2.send(()).await;
         let _ = shutdown_tx3.send(()).await;
         let _ = shutdown_tx4.send(()).await;
+        let _ = shutdown_tx5.send(()).await;
     });
 
     // Create managers
     let watcher_manager = WatcherManager::new(&config, db.clone()).await?;
     let mut writer_manager = WriterManager::new(&config, db.clone()).await?;
     let mut confirmation_tracker = ConfirmationTracker::new(&config, db.clone()).await?;
+
+    // Create optional Solana writer (runs as a standalone task with its own loop)
+    let solana_writer = if let Some(ref sol_cfg) = config.solana {
+        let program_id: solana_sdk::pubkey::Pubkey = sol_cfg
+            .program_id
+            .parse()
+            .map_err(|e| eyre::eyre!("Invalid SOLANA_PROGRAM_ID for writer: {}", e))?;
+        let keypair = solana_sdk::signature::Keypair::from_base58_string(&sol_cfg.private_key);
+        match writers::SolanaWriter::new(&sol_cfg.rpc_url, program_id, keypair, db.clone()) {
+            Ok(w) => {
+                tracing::info!("Solana writer created");
+                Some(w)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to create Solana writer; continuing without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     tracing::info!("Managers initialized, starting processing");
 
@@ -150,6 +173,24 @@ async fn async_main() -> eyre::Result<()> {
     let confirmation_handle =
         tokio::spawn(async move { confirmation_tracker.run(shutdown_rx3).await });
 
+    // Solana writer runs as a separate task (its own polling loop).
+    // Shutdown is handled by shutdown_rx5; we abort it if the main select exits first.
+    let solana_writer_handle = if let Some(sw) = solana_writer {
+        let mut shutdown = shutdown_rx5;
+        Some(tokio::spawn(async move {
+            tokio::select! {
+                result = sw.run() => result,
+                _ = shutdown.recv() => {
+                    tracing::info!("Solana writer received shutdown signal");
+                    Ok(())
+                }
+            }
+        }))
+    } else {
+        drop(shutdown_rx5);
+        None
+    };
+
     tokio::select! {
         result = watcher_handle => {
             match result {
@@ -172,6 +213,10 @@ async fn async_main() -> eyre::Result<()> {
                 Err(e) => tracing::error!(error = %e, "Confirmation tracker task panicked"),
             }
         }
+    }
+
+    if let Some(h) = solana_writer_handle {
+        h.abort();
     }
 
     tracing::info!("CL8Y Bridge Relayer stopped");

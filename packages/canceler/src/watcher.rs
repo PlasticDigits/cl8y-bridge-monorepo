@@ -216,7 +216,12 @@ impl CancelerWatcher {
             let keypair = solana_sdk::signature::Keypair::from_bytes(&keypair_data)
                 .map_err(|e| eyre!("Invalid Solana keypair bytes: {}", e))?;
 
-            let client = SolanaCancelerClient::new(&sol_config.rpc_url, program_id, keypair);
+            let client = SolanaCancelerClient::new(
+                &sol_config.rpc_url,
+                program_id,
+                keypair,
+                &sol_config.commitment,
+            );
             info!(
                 program_id = %program_id,
                 canceler_pubkey = %client.pubkey(),
@@ -1488,25 +1493,13 @@ impl CancelerWatcher {
 
         let mut last_sig = self.last_solana_signature;
 
-        for (signature, xchain_hash_id, src_chain_id_opt, approved_at) in &prepared {
+        for (signature, xchain_hash_id, _src_chain_id_opt, approved_at) in &prepared {
             if self.verified_hashes.contains(xchain_hash_id)
                 || self.cancelled_hashes.contains(xchain_hash_id)
             {
                 last_sig = Some(*signature);
                 continue;
             }
-
-            let src_chain_id = match src_chain_id_opt {
-                Some(id) => *id,
-                None => {
-                    warn!(
-                        xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
-                        "Failed to read PendingWithdraw src_chain, skipping"
-                    );
-                    last_sig = Some(*signature);
-                    continue;
-                }
-            };
 
             info!(
                 xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
@@ -1515,17 +1508,29 @@ impl CancelerWatcher {
                 "Processing Solana approval event"
             );
 
-            let approval = PendingApproval {
-                xchain_hash_id: *xchain_hash_id,
-                src_chain_id,
-                dest_chain_id: solana_chain_id,
-                src_account: [0u8; 32],
-                dest_account: [0u8; 32],
-                dest_token: [0u8; 32],
-                amount: 0,
-                nonce: 0,
-                approved_at_timestamp: *approved_at as u64,
-                cancel_window: 300,
+            let solana_ref = self.solana_client.as_ref().unwrap();
+            let approval = match solana_ref.read_pending_withdraw_full(xchain_hash_id) {
+                Ok(pw) => PendingApproval {
+                    xchain_hash_id: *xchain_hash_id,
+                    src_chain_id: pw.src_chain,
+                    dest_chain_id: solana_chain_id,
+                    src_account: pw.src_account,
+                    dest_account: pw.dest_account,
+                    dest_token: pw.token,
+                    amount: pw.amount,
+                    nonce: pw.nonce,
+                    approved_at_timestamp: pw.approved_at as u64,
+                    cancel_window: 300,
+                },
+                Err(e) => {
+                    warn!(
+                        xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                        error = %e,
+                        "Failed to read full PendingWithdraw data, skipping"
+                    );
+                    last_sig = Some(*signature);
+                    continue;
+                }
             };
 
             if let Err(e) = self.verify_and_cancel(&approval).await {

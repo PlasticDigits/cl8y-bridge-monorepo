@@ -21,6 +21,7 @@ import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useAccount, useSwitchChain } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { useWallet } from './useWallet'
+import { useSolanaWallet } from './useSolanaWallet'
 import { useWithdrawSubmit } from './useWithdrawSubmit'
 import { useTransferStore } from '../stores/transfer'
 import { BRIDGE_WITHDRAW_VIEW_ABI } from '../services/evm/withdrawSubmit'
@@ -62,8 +63,9 @@ export type AutoSubmitBlockReason =
 export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoading?: boolean) {
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { connected: isTerraConnected, luncBalance } = useWallet()
+  const { connected: isSolanaConnected } = useSolanaWallet()
   const { switchChainAsync } = useSwitchChain()
-  const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
+  const { submitOnEvm, submitOnTerra, submitOnSolana } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
   const { data: tokenlist } = useTokenList()
 
@@ -93,13 +95,16 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       return BRIDGE_CHAINS[tier][transfer.destChain] ?? null
     })()
     const destIsCosmos = destConfig?.type === 'cosmos' || transfer.direction === 'evm-to-terra'
+    const destIsSolana = destConfig?.type === 'solana'
     if (destIsCosmos) {
       if (!isTerraConnected) return 'wallet-disconnected'
+    } else if (destIsSolana) {
+      if (!isSolanaConnected) return 'wallet-disconnected'
     } else {
       if (!evmAddress) return 'wallet-disconnected'
     }
     return null
-  }, [transfer, evmAddress, isTerraConnected, lookupLoading])
+  }, [transfer, evmAddress, isTerraConnected, isSolanaConnected, lookupLoading])
 
   // Determine if auto-submit is possible (pure function, no state updates)
   const canAutoSubmit = useCallback((): boolean => {
@@ -448,6 +453,69 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           setError('WithdrawSubmit transaction failed')
           submittedRef.current = false
         }
+      } else if (destChainConfig.type === 'solana') {
+        // Destination is Solana
+        setPhase('submitting-hash')
+
+        if (!destChainConfig.bridgeAddress && !destChainConfig.programId) {
+          const msg = `No program ID configured for destination chain "${transfer.destChain}"`
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        let srcChainBytes4Data: Uint8Array
+        if (transfer.sourceChainIdBytes4) {
+          srcChainBytes4Data = hexToUint8Array(transfer.sourceChainIdBytes4)
+        } else {
+          const msg = 'Cannot determine source chain bytes4 for Solana transfer'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        const srcAccountBytes32 = transfer.srcAccount
+          ? hexToUint8Array(transfer.srcAccount)
+          : new Uint8Array(32)
+
+        const destToken = transfer.destToken || '11111111111111111111111111111111'
+
+        console.info(
+          `${LOG} Submitting Solana withdrawSubmit: program=${destChainConfig.programId}, ` +
+          `amount=${transfer.amount}, nonce=${transfer.depositNonce}`
+        )
+
+        const solanaTxSig = await submitOnSolana({
+          rpcUrl: destChainConfig.rpcUrl,
+          programId: destChainConfig.programId || destChainConfig.bridgeAddress,
+          srcChain: srcChainBytes4Data,
+          srcAccount: srcAccountBytes32,
+          destToken,
+          amount: BigInt(transfer.amount || '0'),
+          nonce: BigInt(transfer.depositNonce || 0),
+          bridgeChainId: destChainConfig.bytes4ChainId
+            ? hexToUint8Array(destChainConfig.bytes4ChainId)
+            : new Uint8Array([0, 0, 0, 5]),
+        })
+
+        if (solanaTxSig) {
+          console.info(`${LOG} submitOnSolana success: txSig=${solanaTxSig}`)
+          updateTransferRecord(transfer.id, {
+            lifecycle: 'hash-submitted',
+            withdrawSubmitTxHash: solanaTxSig,
+          })
+          setPhase('waiting-approval')
+          startPolling()
+        } else {
+          console.warn(`${LOG} submitOnSolana returned null`)
+          setPhase('error')
+          setError('WithdrawSubmit transaction failed')
+          submittedRef.current = false
+        }
       }
     } catch (err) {
       // If the contract says the withdrawal already exists or the nonce was
@@ -473,7 +541,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       submittedRef.current = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, updateTransferRecord, getDestChainConfig, resolveDestToken])
+  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, submitOnSolana, updateTransferRecord, getDestChainConfig, resolveDestToken])
 
   /**
    * Poll destination chain for approval and execution.
@@ -586,6 +654,58 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             }
           } else {
             notConfirmedCountRef.current = 0
+          }
+        } else if (destChainConfig.type === 'solana') {
+          // Solana destination: read PendingWithdraw PDA
+          try {
+            const { Connection, PublicKey } = await import('@solana/web3.js')
+            const connection = new Connection(destChainConfig.rpcUrl, 'confirmed')
+            const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+            if (!programIdStr) return
+            const programId = new PublicKey(programIdStr)
+            const hashBytes = new Uint8Array(32)
+            const hexStr = (transfer.xchainHashId as string).replace('0x', '')
+            for (let i = 0; i < 32; i++) {
+              hashBytes[i] = parseInt(hexStr.slice(i * 2, i * 2 + 2), 16)
+            }
+            const [pendingPda] = PublicKey.findProgramAddressSync(
+              [Buffer.from('withdraw'), Buffer.from(hashBytes)],
+              programId,
+            )
+            const account = await connection.getAccountInfo(pendingPda)
+            if (account && account.data.length >= 175) {
+              const approved = account.data[164] !== 0
+              const executed = account.data[174] !== 0
+              if (executed) {
+                if (transfer.lifecycle !== 'executed') {
+                  updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+                  setPhase('complete')
+                }
+                if (pollingRef.current) {
+                  clearInterval(pollingRef.current)
+                  pollingRef.current = null
+                }
+              } else if (approved) {
+                notConfirmedCountRef.current = 0
+                if (transfer.lifecycle === 'hash-submitted') {
+                  updateTransferRecord(transfer.id, { lifecycle: 'approved' })
+                  setPhase('waiting-execution')
+                }
+              }
+            } else if (!account) {
+              notConfirmedCountRef.current++
+              if (notConfirmedCountRef.current >= 3) {
+                setPhase('error')
+                setError('Withdrawal not found on Solana — submission may have failed')
+                submittedRef.current = false
+                if (pollingRef.current) {
+                  clearInterval(pollingRef.current)
+                  pollingRef.current = null
+                }
+              }
+            }
+          } catch {
+            // Polling error, continue
           }
         }
       } catch {

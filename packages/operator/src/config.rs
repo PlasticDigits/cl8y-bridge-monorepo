@@ -21,6 +21,10 @@ pub struct Config {
     /// (e.g., BSC→opBNB, ETH→Polygon). Loaded from EVM_CHAINS_COUNT env vars.
     #[serde(skip)]
     pub multi_evm: Option<MultiEvmConfig>,
+    /// Optional Solana chain configuration. When set, the operator watches for
+    /// Solana deposits and submits withdraw_approve instructions on Solana.
+    #[serde(skip)]
+    pub solana: Option<SolanaConfig>,
 }
 
 /// Database configuration
@@ -113,6 +117,33 @@ impl fmt::Debug for TerraConfig {
             .field("mnemonic", &"<redacted>")
             .field("fee_recipient", &self.fee_recipient)
             .field("this_chain_id", &self.this_chain_id)
+            .finish()
+    }
+}
+
+/// Solana chain configuration (optional — operator runs without Solana if unset)
+#[derive(Clone)]
+pub struct SolanaConfig {
+    pub rpc_url: String,
+    pub program_id: String,
+    pub private_key: String,
+    pub poll_interval_ms: u64,
+    pub bytes4_chain_id: [u8; 4],
+    pub commitment: String,
+}
+
+impl fmt::Debug for SolanaConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SolanaConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("program_id", &self.program_id)
+            .field("private_key", &"<redacted>")
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field(
+                "bytes4_chain_id",
+                &format!("0x{}", hex::encode(self.bytes4_chain_id)),
+            )
+            .field("commitment", &self.commitment)
             .finish()
     }
 }
@@ -256,6 +287,47 @@ impl Config {
         // Load optional multi-EVM configuration (for EVM-to-EVM bridging)
         let multi_evm = crate::multi_evm::load_from_env()?;
 
+        // Load optional Solana configuration (only when SOLANA_RPC_URL is set)
+        let solana = match env::var("SOLANA_RPC_URL") {
+            Ok(rpc_url) if !rpc_url.is_empty() => {
+                let program_id = env::var("SOLANA_PROGRAM_ID").map_err(|_| {
+                    eyre!("SOLANA_PROGRAM_ID is required when SOLANA_RPC_URL is set")
+                })?;
+                let private_key = env::var("SOLANA_PRIVATE_KEY").map_err(|_| {
+                    eyre!("SOLANA_PRIVATE_KEY is required when SOLANA_RPC_URL is set")
+                })?;
+                let poll_interval_ms = env::var("SOLANA_POLL_INTERVAL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(2000);
+                let commitment =
+                    env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
+
+                let bytes4_chain_id = match env::var("SOLANA_V2_CHAIN_ID") {
+                    Ok(v) => {
+                        let parsed: u32 = if let Some(hex_str) = v.strip_prefix("0x") {
+                            u32::from_str_radix(hex_str, 16)
+                                .wrap_err("SOLANA_V2_CHAIN_ID: invalid hex")?
+                        } else {
+                            v.parse().wrap_err("SOLANA_V2_CHAIN_ID: invalid u32")?
+                        };
+                        parsed.to_be_bytes()
+                    }
+                    Err(_) => [0, 0, 0, 5],
+                };
+
+                Some(SolanaConfig {
+                    rpc_url,
+                    program_id,
+                    private_key,
+                    poll_interval_ms,
+                    bytes4_chain_id,
+                    commitment,
+                })
+            }
+            _ => None,
+        };
+
         let config = Config {
             database,
             evm,
@@ -263,6 +335,7 @@ impl Config {
             relayer,
             fees,
             multi_evm,
+            solana,
         };
 
         config.validate()?;
@@ -417,6 +490,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // Valid config should pass
@@ -473,6 +547,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // Valid fee BPS
@@ -523,6 +598,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // No multi-EVM — should pass

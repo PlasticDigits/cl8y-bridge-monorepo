@@ -8,6 +8,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, Spinner } from '../ui'
 import { useWalletStore } from '../../stores/wallet'
+import { useSolanaWalletStore } from '../../stores/solanaWallet'
 import { executeContractWithCoins } from '../../services/terra'
 import { queryContract } from '../../services/lcdClient'
 import { getEvmClient } from '../../services/evmClient'
@@ -111,8 +112,9 @@ const TOKENS: TokenConfig[] = [
       bsc: '0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c',
       opbnb: '0xF073d5685594F465a66EA54516f0D2f76b6cc6F3',
       terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
+      solana: import.meta.env.VITE_SOLANA_TESTA_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18 },
+    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'testb',
@@ -121,8 +123,9 @@ const TOKENS: TokenConfig[] = [
       bsc: '0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52',
       opbnb: '0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e',
       terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
+      solana: import.meta.env.VITE_SOLANA_TESTB_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18 },
+    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'tdec',
@@ -131,8 +134,9 @@ const TOKENS: TokenConfig[] = [
       bsc: '0xe159c7a58d694fafba82221905d5a49e7f314330',
       opbnb: '0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd',
       terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
+      solana: import.meta.env.VITE_SOLANA_TDEC_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 12, terra: 6 },
+    decimals: { bsc: 18, opbnb: 12, terra: 6, solana: 6 },
   },
 ]
 
@@ -233,6 +237,180 @@ function TerraBalanceCell({
 
   if (!terraAddress) return <span className="text-xs text-gray-500">—</span>
   return <span className="text-xs text-slate-300 tabular-nums">{formatBalanceSigFigs(balance ?? '0', decimals)}</span>
+}
+
+function SolanaBalanceCell({
+  tokenAddress,
+  decimals,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+  decimals: number
+}) {
+  const { address } = useSolanaWalletStore()
+  const [balance, setBalance] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!address || !tokenAddress) {
+      setBalance(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { Connection, PublicKey } = await import('@solana/web3.js')
+        const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+        const connection = new Connection(
+          import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899',
+          'confirmed',
+        )
+        const mint = new PublicKey(tokenAddress)
+        const owner = new PublicKey(address)
+        const ata = await getAssociatedTokenAddress(mint, owner)
+        const info = await connection.getTokenAccountBalance(ata)
+        if (!cancelled) setBalance(info.value.amount)
+      } catch {
+        if (!cancelled) setBalance('0')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [address, tokenAddress])
+
+  if (!address) return <span className="text-gray-500">—</span>
+  if (balance === null) return <span className="text-gray-500 animate-pulse">...</span>
+  return <span className="text-white font-mono">{formatBalanceSigFigs(balance, decimals)}</span>
+}
+
+function SolanaClaimButton({
+  chain,
+  tokenAddress,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+}) {
+  const { address, walletType } = useSolanaWalletStore()
+  const [claiming, setClaiming] = useState(false)
+  const [claimTx, setClaimTx] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleClaim = async () => {
+    if (!address || !walletType || !chain.faucetAddress) return
+    setClaiming(true)
+    setError(null)
+    setClaimTx(null)
+    try {
+      const { Connection, PublicKey, Transaction } = await import('@solana/web3.js')
+      const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token')
+      const { sendSolanaTransaction } = await import('../../services/solana/transaction')
+
+      const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+      const connection = new Connection(rpcUrl, 'confirmed')
+      const programId = new PublicKey(chain.faucetAddress)
+      const mint = new PublicKey(tokenAddress)
+      const claimer = new PublicKey(address)
+
+      const [faucetPda] = PublicKey.findProgramAddressSync([Buffer.from('faucet')], programId)
+      const [claimRecordPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('claim'), claimer.toBuffer(), mint.toBuffer()],
+        programId,
+      )
+      const ata = await getAssociatedTokenAddress(mint, claimer)
+
+      const ataInfo = await connection.getAccountInfo(ata)
+      const tx = new Transaction()
+      if (!ataInfo) {
+        tx.add(createAssociatedTokenAccountInstruction(claimer, ata, claimer, mint))
+      }
+
+      const { createHash } = await import('crypto')
+      const disc = createHash('sha256').update('global:claim').digest().subarray(0, 8)
+      const { TransactionInstruction } = await import('@solana/web3.js')
+      const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+      const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111')
+
+      tx.add(new TransactionInstruction({
+        programId,
+        keys: [
+          { pubkey: faucetPda, isSigner: false, isWritable: false },
+          { pubkey: claimRecordPda, isSigner: false, isWritable: true },
+          { pubkey: mint, isSigner: false, isWritable: true },
+          { pubkey: ata, isSigner: false, isWritable: true },
+          { pubkey: claimer, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.from(disc),
+      }))
+
+      const sig = await sendSolanaTransaction(connection, tx, walletType)
+      setClaimTx(sig)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Claim failed')
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  if (!address) return <span className="text-gray-500 text-xs">Connect wallet</span>
+  if (claimTx) {
+    return (
+      <a
+        href={`${chain.explorerTxUrl}${claimTx}?cluster=custom`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-green-400 hover:underline"
+      >
+        Claimed ✓
+      </a>
+    )
+  }
+  if (error) return <span className="text-xs text-red-400" title={error}>Failed</span>
+
+  return (
+    <button
+      onClick={handleClaim}
+      disabled={claiming || !chain.faucetAddress}
+      className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
+    >
+      {claiming ? '...' : 'Claim'}
+    </button>
+  )
+}
+
+function SolAirdropButton() {
+  const { address } = useSolanaWalletStore()
+  const [requesting, setRequesting] = useState(false)
+  const [done, setDone] = useState(false)
+
+  const handleAirdrop = async () => {
+    if (!address) return
+    setRequesting(true)
+    try {
+      const { Connection, PublicKey, LAMPORTS_PER_SOL } = await import('@solana/web3.js')
+      const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+      const connection = new Connection(rpcUrl, 'confirmed')
+      const sig = await connection.requestAirdrop(new PublicKey(address), 2 * LAMPORTS_PER_SOL)
+      await connection.confirmTransaction(sig, 'confirmed')
+      setDone(true)
+      setTimeout(() => setDone(false), 5000)
+    } catch {
+      // Airdrop may fail on non-local clusters
+    } finally {
+      setRequesting(false)
+    }
+  }
+
+  if (!address) return null
+
+  return (
+    <button
+      onClick={handleAirdrop}
+      disabled={requesting}
+      className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-500 disabled:opacity-50"
+    >
+      {done ? 'Airdropped ✓' : requesting ? '...' : 'Airdrop 2 SOL'}
+    </button>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +784,9 @@ export function FaucetPanel() {
         <p className="mt-1 text-xs text-gray-400">
           Claim 10 test tokens per wallet per token per chain, once every 24 hours.
         </p>
+        <div className="flex items-center gap-2 mt-2">
+          <SolAirdropButton />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
@@ -632,6 +813,8 @@ export function FaucetPanel() {
                         <td className="py-2 pr-3 text-right">
                           {chain.type === 'evm' ? (
                             <EvmBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
+                          ) : chain.type === 'solana' ? (
+                            <SolanaBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           ) : (
                             <TerraBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           )}
@@ -639,6 +822,8 @@ export function FaucetPanel() {
                         <td className="py-2 pl-3 text-right">
                           {chain.type === 'evm' ? (
                             <EvmClaimButton chain={chain} tokenAddress={addr} />
+                          ) : chain.type === 'solana' ? (
+                            <SolanaClaimButton chain={chain} tokenAddress={addr} />
                           ) : (
                             <TerraClaimButton chain={chain} tokenAddress={addr} />
                           )}

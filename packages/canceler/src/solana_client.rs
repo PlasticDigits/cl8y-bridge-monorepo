@@ -13,6 +13,21 @@ use multichain_rs::solana::{
     SolanaWithdrawApproveEvent,
 };
 
+/// Parsed PendingWithdraw PDA data
+pub struct PendingWithdrawData {
+    pub transfer_hash: [u8; 32],
+    pub src_chain: [u8; 4],
+    pub src_account: [u8; 32],
+    pub dest_account: [u8; 32],
+    pub token: [u8; 32],
+    pub amount: u128,
+    pub nonce: u64,
+    pub approved: bool,
+    pub approved_at: i64,
+    pub cancelled: bool,
+    pub executed: bool,
+}
+
 pub struct SolanaCancelerClient {
     rpc_client: RpcClient,
     program_id: Pubkey,
@@ -20,9 +35,13 @@ pub struct SolanaCancelerClient {
 }
 
 impl SolanaCancelerClient {
-    pub fn new(rpc_url: &str, program_id: Pubkey, keypair: Keypair) -> Self {
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::finalized());
+    pub fn new(rpc_url: &str, program_id: Pubkey, keypair: Keypair, commitment: &str) -> Self {
+        let commitment_config = match commitment {
+            "confirmed" => CommitmentConfig::confirmed(),
+            "processed" => CommitmentConfig::processed(),
+            _ => CommitmentConfig::finalized(),
+        };
+        let rpc_client = RpcClient::new_with_commitment(rpc_url.to_string(), commitment_config);
         Self {
             rpc_client,
             program_id,
@@ -135,6 +154,76 @@ impl SolanaCancelerClient {
         let mut src_chain = [0u8; 4];
         src_chain.copy_from_slice(&account.data[40..44]);
         Ok(src_chain)
+    }
+
+    /// Read the full PendingWithdraw PDA and parse all fields.
+    /// Anchor layout (after 8-byte discriminator):
+    ///   transfer_hash: [u8; 32]  (offset 8)
+    ///   src_chain: [u8; 4]       (offset 40)
+    ///   src_account: [u8; 32]    (offset 44)
+    ///   dest_account: Pubkey     (offset 76)
+    ///   token: Pubkey            (offset 108)
+    ///   amount: u128             (offset 140, LE)
+    ///   nonce: u64               (offset 156, LE)
+    ///   approved: bool           (offset 164)
+    ///   approved_at: i64         (offset 165, LE)
+    ///   cancelled: bool          (offset 173)
+    ///   executed: bool           (offset 174)
+    pub fn read_pending_withdraw_full(
+        &self,
+        transfer_hash: &[u8; 32],
+    ) -> Result<PendingWithdrawData> {
+        let (pda, _) =
+            Pubkey::find_program_address(&[b"withdraw", transfer_hash], &self.program_id);
+
+        let account = self
+            .rpc_client
+            .get_account(&pda)
+            .map_err(|e| eyre::eyre!("Failed to read PendingWithdraw PDA: {}", e))?;
+
+        let data = &account.data;
+        if data.len() < 175 {
+            return Err(eyre::eyre!(
+                "PendingWithdraw account data too short: {} bytes (need 175)",
+                data.len()
+            ));
+        }
+
+        let mut th = [0u8; 32];
+        th.copy_from_slice(&data[8..40]);
+
+        let mut sc = [0u8; 4];
+        sc.copy_from_slice(&data[40..44]);
+
+        let mut sa = [0u8; 32];
+        sa.copy_from_slice(&data[44..76]);
+
+        let mut da = [0u8; 32];
+        da.copy_from_slice(&data[76..108]);
+
+        let mut tok = [0u8; 32];
+        tok.copy_from_slice(&data[108..140]);
+
+        let amount = u128::from_le_bytes(data[140..156].try_into().unwrap());
+        let nonce = u64::from_le_bytes(data[156..164].try_into().unwrap());
+        let approved = data[164] != 0;
+        let approved_at = i64::from_le_bytes(data[165..173].try_into().unwrap());
+        let cancelled = data[173] != 0;
+        let executed = data[174] != 0;
+
+        Ok(PendingWithdrawData {
+            transfer_hash: th,
+            src_chain: sc,
+            src_account: sa,
+            dest_account: da,
+            token: tok,
+            amount,
+            nonce,
+            approved,
+            approved_at,
+            cancelled,
+            executed,
+        })
     }
 
     /// Submit a withdraw_cancel instruction

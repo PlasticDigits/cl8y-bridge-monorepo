@@ -319,7 +319,15 @@ function buildTransferFromLookup(
   // us which chain the tokens are destined for.
   const srcIsCosmos = sourceChain?.type === 'cosmos' || resolvedSourceChainKey.includes('terra')
   const destIsCosmos = resolvedDestChainConfig?.type === 'cosmos' || (resolvedDestChainKey ?? '').includes('terra')
-  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+  const srcIsSolana = sourceChain?.type === 'solana' || resolvedSourceChainKey.includes('solana')
+  const destIsSolana = resolvedDestChainConfig?.type === 'solana' || (resolvedDestChainKey ?? '').includes('solana')
+  const direction: TransferRecord['direction'] = srcIsSolana && destIsCosmos ? 'solana-to-terra'
+    : srcIsSolana ? 'solana-to-evm'
+    : destIsSolana && srcIsCosmos ? 'terra-to-solana'
+    : destIsSolana ? 'evm-to-solana'
+    : srcIsCosmos ? 'terra-to-evm'
+    : destIsCosmos ? 'evm-to-terra'
+    : 'evm-to-evm'
 
   return {
     id: hash,
@@ -769,6 +777,8 @@ export default function TransferStatusPage() {
           updateTransferRecord(transfer.id, updates)
           setTransfer((prev) => (prev ? { ...prev, ...updates } : null))
         }
+      } else if (fixParams.destType === 'solana') {
+        setFixSubmitError('Solana broken-transfer fix is not yet supported. Please contact support.')
       } else {
         // Terra destination
         const srcChainBytes4 = hexToUint8Array(fixParams.srcChainBytes4)

@@ -78,6 +78,18 @@ async function terraTokenExists(chainConfig: BridgeChainConfig, tokenId: string)
   }
 }
 
+async function solanaTokenExists(chainConfig: BridgeChainConfig, tokenId: string): Promise<boolean> {
+  try {
+    const { Connection, PublicKey } = await import('@solana/web3.js')
+    const connection = new Connection(chainConfig.rpcUrl, 'confirmed')
+    const pubkey = new PublicKey(tokenId)
+    const account = await connection.getAccountInfo(pubkey)
+    return account !== null
+  } catch {
+    return false
+  }
+}
+
 export function useTransferRouteValidation({
   enabled,
   tokenLabel,
@@ -132,7 +144,16 @@ export function useTransferRouteValidation({
         if (!destExists) {
           return invalid(`The destination token contract for ${tokenName} does not exist on ${destChainConfig.name}.`)
         }
+      } else if (destChainConfig.type === 'solana') {
+        if (!destTokenId) {
+          return invalid(`The destination token for ${tokenName} could not be resolved on ${destChainConfig.name}.`)
+        }
+        const destExists = await solanaTokenExists(destChainConfig, destTokenId)
+        if (!destExists) {
+          return invalid(`The destination token for ${tokenName} does not exist on ${destChainConfig.name}.`)
+        }
       } else {
+        // Cosmos/Terra destination
         if (!destTokenId) {
           return invalid(`The destination token for ${tokenName} could not be resolved on ${destChainConfig.name}.`)
         }

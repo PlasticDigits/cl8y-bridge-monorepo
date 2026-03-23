@@ -18,6 +18,20 @@ import {
   type WithdrawSubmitTerraParams,
 } from '../services/terra/withdrawSubmit'
 import { TerraTxError } from '../services/terra/transaction'
+import { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import { buildWithdrawSubmitInstruction, sendSolanaTransaction } from '../services/solana/transaction'
+import { useSolanaWalletStore } from '../stores/solanaWallet'
+
+export interface WithdrawSubmitSolanaParams {
+  rpcUrl: string
+  programId: string
+  srcChain: Uint8Array
+  srcAccount: Uint8Array
+  destToken: string
+  amount: bigint
+  nonce: bigint
+  bridgeChainId: Uint8Array
+}
 
 export type WithdrawSubmitStatus =
   | 'idle'
@@ -109,6 +123,52 @@ export function useWithdrawSubmit() {
   )
 
   /**
+   * Submit withdrawal on a Solana destination chain.
+   */
+  const submitOnSolana = useCallback(
+    async (params: WithdrawSubmitSolanaParams): Promise<string | null> => {
+      setState({ status: 'submitting', txHash: null, error: null })
+      try {
+        const solanaWallet = useSolanaWalletStore.getState()
+        if (!solanaWallet.address || !solanaWallet.walletType) {
+          throw new Error('Solana wallet not connected')
+        }
+        const connection = new Connection(params.rpcUrl, 'confirmed')
+        const programId = new PublicKey(params.programId)
+        const recipient = new PublicKey(solanaWallet.address)
+        const destToken = new PublicKey(params.destToken)
+
+        const instruction = buildWithdrawSubmitInstruction(
+          programId,
+          recipient,
+          params.srcChain,
+          params.srcAccount,
+          destToken,
+          params.amount,
+          params.nonce,
+          params.bridgeChainId,
+        )
+
+        const tx = new Transaction().add(instruction)
+        const signature = await sendSolanaTransaction(connection, tx, solanaWallet.walletType)
+
+        setState({ status: 'success', txHash: signature, error: null })
+        return signature
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'WithdrawSubmit failed'
+        const isRejection = message.toLowerCase().includes('rejected') || message.toLowerCase().includes('denied')
+        setState({
+          status: 'error',
+          txHash: null,
+          error: isRejection ? 'Transaction rejected by user' : message,
+        })
+        return null
+      }
+    },
+    []
+  )
+
+  /**
    * Reset state to idle.
    */
   const reset = useCallback(() => {
@@ -120,6 +180,7 @@ export function useWithdrawSubmit() {
     ...state,
     submitOnEvm,
     submitOnTerra,
+    submitOnSolana,
     reset,
     isLoading: state.status === 'submitting' || state.status === 'waiting-receipt' || state.status === 'switching-chain',
   }

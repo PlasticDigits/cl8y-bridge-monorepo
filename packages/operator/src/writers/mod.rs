@@ -10,13 +10,11 @@ use crate::types::ChainId;
 
 pub mod evm;
 pub mod retry;
-#[allow(dead_code)]
 pub mod solana;
 pub mod terra;
 
 pub use evm::EvmWriter;
 pub use retry::{classify_error, RetryConfig};
-#[allow(unused_imports)]
 pub use solana::SolanaWriter;
 pub use terra::TerraWriter;
 

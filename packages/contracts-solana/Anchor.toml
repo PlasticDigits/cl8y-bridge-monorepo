@@ -6,6 +6,7 @@ skip-lint = false
 
 [programs.localnet]
 cl8y_bridge = "CL8YBr1dg3So1ana111111111111111111111111111"
+cl8y_faucet = "CL8YFaucet1111111111111111111111111111111111"
 
 [registry]
 url = "https://api.apr.dev"

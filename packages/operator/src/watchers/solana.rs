@@ -14,6 +14,7 @@ pub struct SolanaWatcher {
     db: PgPool,
     last_signature: Option<Signature>,
     poll_interval: Duration,
+    #[allow(dead_code)]
     bytes4_chain_id: [u8; 4],
 }
 
