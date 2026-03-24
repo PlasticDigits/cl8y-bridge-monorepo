@@ -38,6 +38,20 @@ async fn try_anvil_reset(rpc_url: &str) {
     }
 }
 
+/// Solana V2 chain id (bytes4 big-endian) from `SOLANA_V2_CHAIN_ID` or default `5` (`0x00000005`).
+fn parse_solana_v2_chain_id_from_env() -> u32 {
+    std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(h) = v.strip_prefix("0x") {
+                u32::from_str_radix(h, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5)
+}
+
 impl E2eSetup {
     /// Deploy EVM contracts using forge script
     /// Returns deployed addresses
@@ -329,6 +343,28 @@ impl E2eSetup {
         {
             Ok(()) => info!("Incoming token mapping set for Terra source"),
             Err(e) => warn!("Failed to set incoming token mapping for Terra: {}", e),
+        }
+
+        // Solana→EVM paths call `TokenRegistry.getSrcTokenDecimals(solanaChain, token)` in withdrawSubmit.
+        let solana_v2 = parse_solana_v2_chain_id_from_env();
+        if solana_v2 != 0 {
+            let solana_key = ChainId4::from_slice(&solana_v2.to_be_bytes());
+            match chain_config::set_incoming_token_mapping(
+                deployed.token_registry,
+                solana_key,
+                token,
+                18,
+                rpc_url,
+                &private_key,
+            )
+            .await
+            {
+                Ok(()) => info!(
+                    "Incoming token mapping set for Solana source (chain_id=0x{})",
+                    hex::encode(solana_key)
+                ),
+                Err(e) => warn!("Failed to set Solana incoming token mapping: {}", e),
+            }
         }
 
         info!("Test token registration complete");
@@ -650,16 +686,7 @@ impl E2eSetup {
     ///
     /// Uses `SOLANA_V2_CHAIN_ID` when set (hex or decimal); default `5` (`0x00000005`). Skips when 0.
     pub async fn register_solana_chain_key(&self, deployed: &DeployedContracts) -> Result<()> {
-        let solana_v2: u32 = std::env::var("SOLANA_V2_CHAIN_ID")
-            .ok()
-            .and_then(|v| {
-                if let Some(h) = v.strip_prefix("0x") {
-                    u32::from_str_radix(h, 16).ok()
-                } else {
-                    v.parse().ok()
-                }
-            })
-            .unwrap_or(5);
+        let solana_v2 = parse_solana_v2_chain_id_from_env();
 
         if solana_v2 == 0 {
             warn!("SOLANA_V2_CHAIN_ID is 0, skipping Solana chain registration");

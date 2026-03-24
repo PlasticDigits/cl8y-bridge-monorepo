@@ -365,21 +365,20 @@ impl E2eSetup {
             deployed.bridge
         );
 
-        // Set cancel window to 15 seconds for devnet/testing
-        // Production default is 5 minutes (300s), set in Bridge.sol constants.
-        // For local testing we use 15s so canceler E2E tests complete quickly.
+        // Cancel window on-chain: canceler must call withdrawCancel before
+        // block.timestamp > approvedAt + cancelWindow. Local Anvil advances
+        // time on every mined block; the operator and long test suites mine many
+        // blocks, so a 15s window often expires before the canceler finishes
+        // verification (especially when Terra LCD is slow). Use a generous window
+        // for e2e; watchtower tests use evm_increaseTime and still stay well below 10m.
         {
             let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
             let rpc_url = self.config.evm.rpc_url.as_str();
-            match chain_config::set_cancel_window(
-                deployed.bridge,
-                15, // 15 seconds for devnet
-                rpc_url,
-                &private_key,
-            )
-            .await
+            match chain_config::set_cancel_window(deployed.bridge, 600, rpc_url, &private_key).await
             {
-                Ok(()) => info!("EVM cancel window set to 15 seconds for devnet"),
+                Ok(()) => {
+                    info!("EVM cancel window set to 600 seconds for e2e (canceler vs block churn)")
+                }
                 Err(e) => warn!("Failed to set EVM cancel window: {}", e),
             }
         }
@@ -614,14 +613,14 @@ impl E2eSetup {
                         evm2.contracts.bridge = deployed2.bridge;
                     }
 
-                    // Set cancel window on anvil1 too
+                    // Set cancel window on anvil1 too (match primary chain for e2e)
                     {
                         let private_key =
                             format!("0x{:x}", self.config.test_accounts.evm_private_key);
                         let rpc2 = self.config.evm2.as_ref().unwrap().rpc_url.to_string();
                         let _ = chain_config::set_cancel_window(
                             deployed2.bridge,
-                            15,
+                            600,
                             &rpc2,
                             &private_key,
                         )
