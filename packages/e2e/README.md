@@ -102,6 +102,7 @@ src/
 | `EVM_BRIDGE_ADDRESS` | Deployed Bridge contract | - |
 | `EVM_ROUTER_ADDRESS` | Deployed Router contract | - |
 | `TERRA_BRIDGE_ADDRESS` | Deployed Terra bridge | - |
+| `SOLANA_PROGRAM_ID` | Deployed Solana bridge program (Rust Solana E2E / canceler Solana tests) | From `solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`; `make solana-test-e2e` fills this when unset |
 
 ## Test Categories
 

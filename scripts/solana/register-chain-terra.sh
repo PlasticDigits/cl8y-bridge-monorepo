@@ -4,13 +4,15 @@
 # Usage: ./scripts/solana/register-chain-terra.sh
 #
 # Env vars:
-#   TERRA_NODE_URL - Terra RPC endpoint
+#   TERRA_NODE_URL - Terra LCD / node (default: http://localhost:1317)
+#   TERRA_CHAIN_ID - Chain ID (default: localterra; use columbus-5 for Terra Classic mainnet)
 #   TERRA_WALLET - Wallet name
 #   BRIDGE_CONTRACT - Bridge contract address
 
 set -euo pipefail
 
 TERRA_NODE_URL="${TERRA_NODE_URL:-http://localhost:1317}"
+TERRA_CHAIN_ID="${TERRA_CHAIN_ID:-localterra}"
 BRIDGE_CONTRACT="${BRIDGE_CONTRACT:?BRIDGE_CONTRACT is required}"
 TERRA_WALLET="${TERRA_WALLET:-validator}"
 
@@ -26,6 +28,6 @@ terrad tx wasm execute "${BRIDGE_CONTRACT}" "{
     \"chain_id\": \"${SOLANA_CHAIN_ID}\",
     \"identifier\": \"${SOLANA_IDENTIFIER}\"
   }
-}" --from "${TERRA_WALLET}" --node "${TERRA_NODE_URL}" --chain-id localterra --gas auto --gas-adjustment 1.4 -y
+}" --from "${TERRA_WALLET}" --node "${TERRA_NODE_URL}" --chain-id "${TERRA_CHAIN_ID}" --gas auto --gas-adjustment 1.4 -y
 
 echo "Done!"

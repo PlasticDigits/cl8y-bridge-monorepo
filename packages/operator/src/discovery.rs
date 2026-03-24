@@ -141,6 +141,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         }
     }
 

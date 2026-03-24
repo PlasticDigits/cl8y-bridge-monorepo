@@ -144,7 +144,7 @@ VITE_EVM_RPC_URL=http://localhost:8545
 VITE_TERRA_LCD_URL=http://localhost:1317
 VITE_TERRA_RPC_URL=http://localhost:26657
 VITE_SOLANA_RPC_URL=http://localhost:8899
-VITE_SOLANA_PROGRAM_ID=<from deploy output>
+VITE_SOLANA_PROGRAM_ID=<solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json>
 VITE_DEV_MODE=true
 ```
 
@@ -156,7 +156,7 @@ Add these when testing Solana integration (on the `feat/solana-integration` bran
 | Variable                     | Description                     | Example                                                                     |
 | ---------------------------- | ------------------------------- | --------------------------------------------------------------------------- |
 | `VITE_SOLANA_RPC_URL`        | Solana RPC endpoint             | `https://api.devnet.solana.com` (devnet) or `http://localhost:8899` (local) |
-| `VITE_SOLANA_PROGRAM_ID`     | Deployed bridge program address | `CL8Y...` (from deploy output)                                              |
+| `VITE_SOLANA_PROGRAM_ID`     | Deployed bridge program address | Output of `solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` after `make deploy-solana` (same value `setup-bridge.sh` auto-detects) |
 | `VITE_SOLANA_FAUCET_ADDRESS` | Faucet for devnet testing       | *(optional)*                                                                |
 
 
@@ -560,8 +560,13 @@ make stop           # Stops all Docker services
 
 `make deploy` handles everything: EVM contracts to Anvil, Terra contracts to
 LocalTerra, Solana program to the local validator, and cross-chain bridge
-registration (`setup-bridge.sh`). Contract addresses are printed in the
-terminal output — copy them into `packages/frontend/.env.local`.
+registration (`setup-bridge.sh`). For Solana, `setup-bridge.sh` sets the program
+id from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` when
+`SOLANA_PROGRAM_ID` is not exported, so Solana-side registration runs after
+`deploy-solana`. You still need `EVM_BRIDGE_ADDRESS` and `TERRA_BRIDGE_ADDRESS`
+in the environment (or your usual deploy wrapper) before `setup-bridge` can run.
+Contract addresses are printed in the deploy output — copy them into
+`packages/frontend/.env.local`.
 
 > **Note:** The Solana test validator requires high file descriptor limits.
 > This is handled automatically via `ulimits` in `docker-compose.yml`. If you

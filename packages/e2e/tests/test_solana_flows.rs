@@ -11,6 +11,10 @@
 //!
 //! **Admin keypair:** `ANCHOR_WALLET` / `SOLANA_KEYPAIR` / default Solana CLI path — must match on-chain `admin`
 //! for `add_canceler` / `withdraw_reenable`.
+//!
+//! **Program ID:** set `SOLANA_PROGRAM_ID` to the deployed bridge program (same as `anchor deploy` /
+//! `solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`).
+//! If unset, tests fall back to the workspace placeholder id (only valid when that id is what is deployed).
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_client::rpc_client::RpcClient;
@@ -29,6 +33,9 @@ use std::time::Duration;
 
 const EVM_CHAIN_ID: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
+/// Anchor workspace default in `packages/contracts-solana` (must match `declare_id!` / deploy keypair).
+const DEFAULT_SOLANA_PROGRAM_ID: &str = "CL8YBr1dg3So1ana111111111111111111111111111";
+
 fn solana_rpc() -> RpcClient {
     RpcClient::new_with_commitment(
         "http://localhost:8899".to_string(),
@@ -37,7 +44,15 @@ fn solana_rpc() -> RpcClient {
 }
 
 fn get_program_id() -> Pubkey {
-    Pubkey::from_str("CL8YBr1dg3So1ana111111111111111111111111111").expect("Invalid program ID")
+    let s = std::env::var("SOLANA_PROGRAM_ID")
+        .unwrap_or_else(|_| DEFAULT_SOLANA_PROGRAM_ID.to_string());
+    Pubkey::from_str(s.trim()).unwrap_or_else(|e| {
+        panic!(
+            "Invalid SOLANA_PROGRAM_ID {:?}: {}. Set to your deployed program id (see packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json).",
+            std::env::var("SOLANA_PROGRAM_ID").ok(),
+            e
+        )
+    })
 }
 
 fn derive_bridge_pda(program_id: &Pubkey) -> (Pubkey, u8) {
@@ -252,7 +267,7 @@ fn build_withdraw_execute_native_ix(
     executed_hash: Pubkey,
     recipient: Pubkey,
 ) -> Instruction {
-    let mut data = anchor_discriminator("withdraw_execute_native").to_vec();
+    let data = anchor_discriminator("withdraw_execute_native").to_vec();
     Instruction {
         program_id,
         accounts: vec![

@@ -6,7 +6,7 @@
 # Env vars:
 #   SOLANA_RPC_URL     - Solana RPC endpoint (default: http://localhost:8899)
 #   SOLANA_KEYPAIR     - Path to admin keypair JSON (default: ~/.config/solana/id.json)
-#   SOLANA_PROGRAM_ID  - Deployed program ID
+#   SOLANA_PROGRAM_ID  - Deployed program ID (optional if deploy keypair exists under packages/contracts-solana/target/deploy/)
 #   OPERATOR_PUBKEY    - Operator public key
 #   FEE_BPS            - Fee in basis points (default: 50 = 0.5%)
 #   WITHDRAW_DELAY     - Withdrawal delay in seconds (default: 300 = 5 minutes)
@@ -18,7 +18,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
 SOLANA_KEYPAIR="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
-SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:?SOLANA_PROGRAM_ID is required}"
+
+SOLANA_DEPLOY_KEYPAIR="${REPO_ROOT}/packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json"
+if [ -z "${SOLANA_PROGRAM_ID:-}" ] && [ -f "$SOLANA_DEPLOY_KEYPAIR" ] && command -v solana-keygen >/dev/null 2>&1; then
+  SOLANA_PROGRAM_ID=$(solana-keygen pubkey "$SOLANA_DEPLOY_KEYPAIR" 2>/dev/null || true)
+fi
+SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:?SOLANA_PROGRAM_ID is required (set env or deploy: packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json)}"
 OPERATOR_PUBKEY="${OPERATOR_PUBKEY:?OPERATOR_PUBKEY is required}"
 FEE_BPS="${FEE_BPS:-50}"
 WITHDRAW_DELAY="${WITHDRAW_DELAY:-300}"

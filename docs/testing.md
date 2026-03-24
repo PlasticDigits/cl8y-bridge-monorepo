@@ -423,6 +423,26 @@ Options:
 | `scripts/deploy-terra-local.sh` | Deploy Terra contracts | `./scripts/deploy-terra-local.sh` |
 | `scripts/setup-bridge.sh` | Configure cross-chain | `./scripts/setup-bridge.sh` |
 
+### Solana Rust E2E (`make solana-test-e2e`)
+
+`packages/e2e/tests/test_solana_flows.rs` exercises the deployed Anchor program against a **local** validator (`http://localhost:8899`). Tests are `#[ignore]`; the Makefile runs them with `cargo test -- --ignored`.
+
+**Prerequisites**
+
+1. `make start` (or otherwise run `solana-test-validator` / Docker Solana service).
+2. `make deploy-solana` (or `anchor deploy` to localnet) so `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` exists.
+3. `./scripts/setup-bridge.sh` after deploy (included in `make deploy`) so the bridge PDA exists and chains are registered — `setup-bridge.sh` picks up `SOLANA_PROGRAM_ID` from that keypair if the env var is unset.
+4. Optional: export `SOLANA_PROGRAM_ID` explicitly when your deployed program id does not match the repo default placeholder (must match `declare_id!` / the deploy keypair).
+
+**Program id resolution**
+
+- **Makefile / CI:** `make solana-test-e2e` sets `SOLANA_PROGRAM_ID` from the deploy keypair when the env var is empty (same path as `setup-bridge.sh`).
+- **Cargo only:** `cd packages/e2e && SOLANA_PROGRAM_ID=... cargo test --test test_solana_flows -- --ignored` — or rely on the default placeholder id only if that is what you deployed.
+
+**Airdrop failures**
+
+The validator must expose RPC (and faucet) on the same URL the tests use (`localhost:8899` with the default Docker compose mapping). If airdrop returns zero balance, confirm you are not pointing at devnet/mainnet and that the Solana container is healthy (`make status`).
+
 ---
 
 ## Test Environment Variables
@@ -449,6 +469,9 @@ TERRA_KEY_NAME=test1
 # Test accounts
 EVM_TEST_ADDRESS=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 TERRA_TEST_ADDRESS=terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v
+
+# Solana (optional — defaults to deploy keypair / placeholder for local)
+# SOLANA_PROGRAM_ID=<pubkey from solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json>
 ```
 
 Load before running tests:

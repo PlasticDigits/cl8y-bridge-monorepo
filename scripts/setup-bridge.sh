@@ -11,8 +11,14 @@
 #
 # Usage:
 #   EVM_BRIDGE_ADDRESS=0x... TERRA_BRIDGE_ADDRESS=terra1... ./scripts/setup-bridge.sh
+#
+# Solana: set SOLANA_PROGRAM_ID, or rely on packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json
+# after `make deploy-solana` (script derives the program id automatically).
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
@@ -27,6 +33,14 @@ EVM_CHAIN_REGISTRY="${EVM_CHAIN_REGISTRY:-}"
 TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-}"
 SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:-}"
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
+# Used by Anchor/ts-mocha in setup_solana_side (same default as Solana CLI)
+SOLANA_KEYPAIR="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
+
+# Resolve program id: explicit SOLANA_PROGRAM_ID, else Anchor deploy keypair (after `make deploy-solana`)
+SOLANA_DEPLOY_KEYPAIR="${REPO_ROOT}/packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json"
+if [ -z "${SOLANA_PROGRAM_ID}" ] && [ -f "$SOLANA_DEPLOY_KEYPAIR" ] && command -v solana-keygen >/dev/null 2>&1; then
+    SOLANA_PROGRAM_ID=$(solana-keygen pubkey "$SOLANA_DEPLOY_KEYPAIR" 2>/dev/null || true)
+fi
 
 # Keys
 EVM_PRIVATE_KEY="${EVM_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -210,11 +224,13 @@ setup_solana_side() {
 
     # Register EVM chain on Solana bridge (chain ID 0x00000001)
     log_info "Registering EVM chain on Solana bridge..."
-    if [ -x "$(command -v npx)" ] && [ -d "packages/contracts-solana" ]; then
-        cd "$PROJECT_ROOT/packages/contracts-solana"
-        npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "register" 2>/dev/null \
+    if [ -x "$(command -v npx)" ] && [ -d "$REPO_ROOT/packages/contracts-solana" ]; then
+        cd "$REPO_ROOT/packages/contracts-solana"
+        ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
+        ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+            npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "register" 2>/dev/null \
             || log_warn "Solana chain registration via test runner failed (may need manual setup)"
-        cd "$PROJECT_ROOT"
+        cd "$REPO_ROOT"
     else
         log_warn "npx or contracts-solana not available — run Solana registration manually"
     fi

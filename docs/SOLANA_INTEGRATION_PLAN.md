@@ -4,6 +4,8 @@
 **Scope:** All packages — contracts, operator, canceler, multichain-rs, frontend, e2e
 **Status:** In progress — implementation on feat/solana-integration
 
+**Deployment (mainnet rehearsal, upgrade, faucet):** [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md)
+
 ---
 
 ## Table of Contents

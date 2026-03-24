@@ -12,7 +12,7 @@ help:
 	@echo "  make logs           - View service logs"
 	@echo ""
 	@echo "Development:"
-	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana)"
+	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana) + setup-bridge"
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
@@ -22,7 +22,7 @@ help:
 	@echo "  make solana-build             - Build Solana programs"
 	@echo "  make solana-test              - Run Solana program tests"
 	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
-	@echo "  make solana-test-e2e          - Run ignored Rust Solana cross-chain flow tests (live validator)"
+	@echo "  make solana-test-e2e          - Rust Solana on-chain tests (needs validator; optional SOLANA_PROGRAM_ID)"
 	@echo "  make solana-logs              - Follow Solana program logs"
 	@echo ""
 	@echo "Building:"
@@ -74,7 +74,7 @@ help:
 	@echo "  make e2e-single TEST=x  - Run single test by name"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy             - Deploy all contracts locally (EVM, Terra, Solana)"
+	@echo "  make deploy             - Deploy all contracts locally + setup-bridge (Solana program id auto-detected)"
 	@echo "  make deploy-evm         - Deploy EVM contracts to Anvil"
 	@echo "  make deploy-terra       - Deploy Terra contracts to LocalTerra"
 	@echo "  make deploy-solana      - Deploy Solana program to local validator"
@@ -147,8 +147,10 @@ solana-deploy-local: ## Deploy Solana program to local validator
 	cd packages/contracts-solana && anchor deploy --provider.cluster localnet
 
 .PHONY: solana-test-e2e
-solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + initialized bridge)
-	cd packages/e2e && cargo test --test test_solana_flows -- --ignored --nocapture
+solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + deploy/init bridge)
+	cd packages/e2e && \
+	SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
+		cargo test --test test_solana_flows -- --ignored --nocapture
 
 .PHONY: solana-logs
 solana-logs: ## Follow Solana program logs
