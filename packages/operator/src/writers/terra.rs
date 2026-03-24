@@ -78,6 +78,8 @@ pub struct TerraWriter {
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     /// Set of hashes we've already approved (bounded to prevent unbounded growth)
     approved_hashes: BoundedHashCache,
+    /// Optional Solana source config for verifying Solana-origin deposits
+    solana_source_config: Option<super::SolanaSourceConfig>,
 }
 
 impl TerraWriter {
@@ -92,6 +94,7 @@ impl TerraWriter {
     pub async fn new(
         terra_config: &TerraConfig,
         source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
+        solana_source_config: Option<super::SolanaSourceConfig>,
         db: PgPool,
     ) -> Result<Self> {
         let client = Client::builder()
@@ -175,6 +178,7 @@ impl TerraWriter {
                 let cc = crate::bounded_cache::CacheConfig::from_env();
                 BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
             },
+            solana_source_config,
         })
     }
 
@@ -430,8 +434,11 @@ impl TerraWriter {
                     "Processing unapproved withdrawal, verifying EVM deposit..."
                 );
 
-                // Verify the deposit exists on the correct source EVM chain
-                match self.verify_evm_deposit(&hash_bytes, &src_chain_id).await {
+                // Verify the deposit exists on the correct source chain
+                match self
+                    .verify_evm_deposit(&hash_bytes, &src_chain_id, nonce)
+                    .await
+                {
                     Ok(true) => {
                         // Deposit verified — approve on Terra
                         info!(
@@ -593,17 +600,37 @@ impl TerraWriter {
 
     /// Verify that a deposit with the given hash exists on the correct EVM source chain.
     ///
-    /// Routes verification to the EVM chain identified by `src_chain_id` (V2 4-byte ID)
-    /// from the pending withdrawal entry.
+    /// Routes verification to the source chain identified by `src_chain_id` (V2 4-byte ID).
     ///
-    /// Returns `true` only when the deposit record has a non-zero timestamp on the
-    /// source chain indicated by `src_chain_id`.
+    /// Handles EVM, Solana, and unknown source chains:
+    /// - Solana source → DepositRecord PDA query
+    /// - Known EVM source → getDeposit(hash) on source chain
+    /// - Unknown source → fail closed (refuse to approve)
     async fn verify_evm_deposit(
         &self,
         xchain_hash_id: &[u8; 32],
         src_chain_id: &[u8; 4],
+        nonce: u64,
     ) -> Result<bool> {
         let src_chain_hex = format!("0x{}", hex::encode(src_chain_id));
+
+        // Solana-source deposits: verify against Solana DepositRecord PDA
+        if let Some(ref sol_config) = self.solana_source_config {
+            if src_chain_id == &sol_config.chain_id {
+                debug!(
+                    xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                    src_chain = %src_chain_hex,
+                    "Routing source deposit verification to Solana"
+                );
+                return super::verify_deposit_on_solana_source(
+                    &self.client,
+                    sol_config,
+                    xchain_hash_id,
+                    nonce,
+                )
+                .await;
+            }
+        }
 
         // Try the specific source chain first (preferred — O(1) routing)
         if let Some((rpc_url, bridge_address)) = self.source_chain_endpoints.get(src_chain_id) {

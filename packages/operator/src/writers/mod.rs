@@ -18,6 +18,106 @@ pub use retry::{classify_error, RetryConfig};
 pub use solana::SolanaWriter;
 pub use terra::TerraWriter;
 
+/// Solana source chain configuration for deposit verification.
+/// Used by EVM and Terra writers to verify deposits originating from Solana.
+#[derive(Debug, Clone)]
+pub struct SolanaSourceConfig {
+    pub rpc_url: String,
+    pub program_id: [u8; 32],
+    pub chain_id: [u8; 4],
+}
+
+/// Verify a deposit exists on Solana by querying the DepositRecord PDA.
+///
+/// Derives the PDA from seeds `["deposit", nonce.to_le_bytes()]`, fetches account
+/// data via JSON-RPC, and checks that the stored transfer_hash (bytes 8..40 of the
+/// Anchor account) matches `xchain_hash_id`.
+pub(crate) async fn verify_deposit_on_solana_source(
+    http: &reqwest::Client,
+    config: &SolanaSourceConfig,
+    xchain_hash_id: &[u8; 32],
+    nonce: u64,
+) -> eyre::Result<bool> {
+    use base64::Engine;
+    use solana_sdk::pubkey::Pubkey;
+    use tracing::{info, warn};
+
+    let nonce_bytes = nonce.to_le_bytes();
+    let program_id = Pubkey::new_from_array(config.program_id);
+    let (deposit_pda, _bump) =
+        Pubkey::find_program_address(&[b"deposit", &nonce_bytes], &program_id);
+    let deposit_pda_str = deposit_pda.to_string();
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getAccountInfo",
+        "params": [
+            deposit_pda_str,
+            {"encoding": "base64", "commitment": "finalized"}
+        ]
+    });
+
+    let resp = http
+        .post(&config.rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| eyre::eyre!("Solana RPC request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        warn!(
+            status = %resp.status(),
+            "Solana RPC error during deposit verification"
+        );
+        return Err(eyre::eyre!("Solana RPC returned {}", resp.status()));
+    }
+
+    let json: serde_json::Value = resp.json().await?;
+    let result = &json["result"]["value"];
+
+    if result.is_null() {
+        info!(
+            hash = %hex::encode(xchain_hash_id),
+            nonce = nonce,
+            pda = %deposit_pda_str,
+            "No deposit PDA found on Solana source chain"
+        );
+        return Ok(false);
+    }
+
+    if let Some(data_arr) = result["data"].as_array() {
+        if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
+            if let Ok(data_bytes) = base64::engine::general_purpose::STANDARD.decode(data_b64) {
+                if data_bytes.len() >= 40 {
+                    let stored_hash = &data_bytes[8..40];
+                    if stored_hash == xchain_hash_id {
+                        info!(
+                            hash = %hex::encode(xchain_hash_id),
+                            nonce = nonce,
+                            "Deposit verified on Solana source chain"
+                        );
+                        return Ok(true);
+                    } else {
+                        warn!(
+                            expected = %hex::encode(xchain_hash_id),
+                            got = %hex::encode(stored_hash),
+                            "Solana deposit exists but hash mismatch"
+                        );
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+    }
+
+    warn!(
+        hash = %hex::encode(xchain_hash_id),
+        "Solana deposit PDA data could not be parsed"
+    );
+    Ok(false)
+}
+
 /// Circuit breaker configuration for writer managers
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerConfig {
@@ -99,16 +199,35 @@ impl WriterManager {
             "Built source chain verification endpoints for deposit routing"
         );
 
+        let solana_source_config = config.solana.as_ref().map(|sol| {
+            let program_id: [u8; 32] = sol
+                .program_id
+                .parse::<solana_sdk::pubkey::Pubkey>()
+                .expect("SOLANA_PROGRAM_ID already validated in config")
+                .to_bytes();
+            SolanaSourceConfig {
+                rpc_url: sol.rpc_url.clone(),
+                program_id,
+                chain_id: sol.bytes4_chain_id,
+            }
+        });
+
         let evm_writer = EvmWriter::new(
             &config.evm,
             Some(&config.terra),
             &config.fees,
             db.clone(),
             source_chain_endpoints.clone(),
+            solana_source_config.clone(),
         )
         .await?;
-        let terra_writer =
-            TerraWriter::new(&config.terra, source_chain_endpoints.clone(), db.clone()).await?;
+        let terra_writer = TerraWriter::new(
+            &config.terra,
+            source_chain_endpoints.clone(),
+            solana_source_config.clone(),
+            db.clone(),
+        )
+        .await?;
 
         // Create per-chain EVM writers from MultiEvmConfig
         let mut evm_chain_writers = HashMap::new();
@@ -122,6 +241,7 @@ impl WriterManager {
                     &config.fees,
                     db.clone(),
                     source_chain_endpoints.clone(),
+                    solana_source_config.clone(),
                 )
                 .await
                 {

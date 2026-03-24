@@ -122,9 +122,38 @@ async fn async_main() -> eyre::Result<()> {
             .parse()
             .map_err(|e| eyre::eyre!("Invalid SOLANA_PROGRAM_ID for writer: {}", e))?;
         let keypair = solana_sdk::signature::Keypair::from_base58_string(&sol_cfg.private_key);
-        match writers::SolanaWriter::new(&sol_cfg.rpc_url, program_id, keypair, db.clone()) {
+
+        // Build EVM source chain endpoints for deposit verification
+        let mut evm_endpoints = std::collections::HashMap::new();
+        if let Some(v2_id) = config.evm.this_chain_id {
+            if let Ok(bridge) = config
+                .evm
+                .bridge_address
+                .parse::<alloy::primitives::Address>()
+            {
+                evm_endpoints.insert(
+                    types::ChainId::from_u32(v2_id).0,
+                    (config.evm.rpc_url.clone(), bridge),
+                );
+            }
+        }
+        if let Some(ref multi) = config.multi_evm {
+            for chain in multi.enabled_chains() {
+                if let Ok(bridge) = chain.bridge_address.parse::<alloy::primitives::Address>() {
+                    evm_endpoints.insert(chain.this_chain_id.0, (chain.rpc_url.clone(), bridge));
+                }
+            }
+        }
+
+        match writers::SolanaWriter::new(
+            &sol_cfg.rpc_url,
+            program_id,
+            keypair,
+            db.clone(),
+            evm_endpoints,
+        ) {
             Ok(w) => {
-                tracing::info!("Solana writer created");
+                tracing::info!("Solana writer created with EVM source verification");
                 Some(w)
             }
             Err(e) => {

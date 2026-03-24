@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use alloy::primitives::{Address, FixedBytes};
+use alloy::providers::ProviderBuilder;
 use eyre::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -10,7 +14,9 @@ use solana_sdk::{
 };
 use sqlx::PgPool;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
+
+use crate::contracts::evm_bridge::Bridge;
 
 pub struct SolanaWriter {
     rpc_client: RpcClient,
@@ -18,10 +24,18 @@ pub struct SolanaWriter {
     keypair: Keypair,
     db: PgPool,
     poll_interval: Duration,
+    /// Source chain endpoints for EVM deposit verification, keyed by V2 4-byte chain ID
+    source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
 }
 
 impl SolanaWriter {
-    pub fn new(rpc_url: &str, program_id: Pubkey, keypair: Keypair, db: PgPool) -> Result<Self> {
+    pub fn new(
+        rpc_url: &str,
+        program_id: Pubkey,
+        keypair: Keypair,
+        db: PgPool,
+        source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
+    ) -> Result<Self> {
         let rpc_client =
             RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
         Ok(Self {
@@ -30,6 +44,7 @@ impl SolanaWriter {
             keypair,
             db,
             poll_interval: Duration::from_secs(5),
+            source_chain_endpoints,
         })
     }
 
@@ -37,7 +52,8 @@ impl SolanaWriter {
         info!(
             program_id = %self.program_id,
             operator = %self.keypair.pubkey(),
-            "Starting Solana writer"
+            source_chains = self.source_chain_endpoints.len(),
+            "Starting Solana writer with source-chain verification"
         );
 
         loop {
@@ -57,10 +73,11 @@ impl SolanaWriter {
 
     #[allow(clippy::type_complexity)]
     async fn process_pending_approvals(&self) -> Result<usize> {
-        let rows: Vec<(i64, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+        let rows: Vec<(i64, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, String)> = sqlx::query_as(
             r#"
-            SELECT nonce, transfer_hash, src_account, dest_account, token, dest_chain FROM (
-                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain
+            SELECT nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type FROM (
+                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain,
+                       'evm'::text as source_type
                 FROM evm_deposits d
                 WHERE d.status = 'confirmed'
                   AND d.dest_chain_key LIKE 'solana%'
@@ -68,7 +85,8 @@ impl SolanaWriter {
                     SELECT 1 FROM approvals a WHERE a.xchain_hash_id = d.transfer_hash
                   )
                 UNION ALL
-                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain
+                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain,
+                       'solana'::text as source_type
                 FROM solana_deposits d
                 WHERE d.processed = FALSE
                   AND NOT EXISTS (
@@ -83,7 +101,45 @@ impl SolanaWriter {
         .map_err(|e| eyre::eyre!("Failed to query pending approvals: {}", e))?;
 
         let mut count = 0;
-        for (nonce, transfer_hash, _src_account, dest_account, _token, _dest_chain) in &rows {
+        for (nonce, transfer_hash, _src_account, dest_account, _token, _dest_chain, source_type) in
+            &rows
+        {
+            let hash_hex = hex::encode(transfer_hash);
+
+            // Verify deposit on source chain before approving
+            if source_type == "evm" {
+                let mut hash_arr = [0u8; 32];
+                if transfer_hash.len() == 32 {
+                    hash_arr.copy_from_slice(transfer_hash);
+                } else {
+                    warn!(nonce, hash = %hash_hex, "Invalid transfer_hash length, skipping");
+                    continue;
+                }
+
+                match self.verify_evm_source_deposit(&hash_arr).await {
+                    Ok(true) => {
+                        debug!(hash = %hash_hex, "EVM source deposit verified");
+                    }
+                    Ok(false) => {
+                        warn!(
+                            nonce,
+                            hash = %hash_hex,
+                            "No verified EVM source deposit found, skipping (will retry)"
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!(
+                            nonce,
+                            hash = %hash_hex,
+                            error = %e,
+                            "EVM source verification failed, will retry"
+                        );
+                        continue;
+                    }
+                }
+            }
+
             match self.submit_approval(transfer_hash, dest_account).await {
                 Ok(sig) => {
                     if let Err(e) = self
@@ -92,14 +148,14 @@ impl SolanaWriter {
                     {
                         warn!(
                             nonce = nonce,
-                            hash = hex::encode(transfer_hash),
+                            hash = %hash_hex,
                             error = %e,
                             "Failed to record approval in DB (tx already submitted)"
                         );
                     }
                     info!(
                         nonce = nonce,
-                        hash = hex::encode(transfer_hash),
+                        hash = %hash_hex,
                         tx = %sig,
                         "Submitted Solana withdraw_approve"
                     );
@@ -108,7 +164,7 @@ impl SolanaWriter {
                 Err(e) => {
                     warn!(
                         nonce = nonce,
-                        hash = hex::encode(transfer_hash),
+                        hash = %hash_hex,
                         error = %e,
                         "Failed to submit Solana approval"
                     );
@@ -117,6 +173,55 @@ impl SolanaWriter {
         }
 
         Ok(count)
+    }
+
+    /// Verify a deposit exists on any known EVM source chain.
+    ///
+    /// Queries `getDeposit(hash)` on each configured EVM source chain endpoint
+    /// until a non-zero-timestamp deposit is found.
+    async fn verify_evm_source_deposit(&self, xchain_hash_id: &[u8; 32]) -> Result<bool> {
+        if self.source_chain_endpoints.is_empty() {
+            warn!("No EVM source chain endpoints configured — refusing to approve");
+            return Ok(false);
+        }
+
+        let hash_fixed = FixedBytes::from(*xchain_hash_id);
+
+        for (chain_id, (rpc_url, bridge_address)) in &self.source_chain_endpoints {
+            let provider = match rpc_url.parse() {
+                Ok(url) => ProviderBuilder::new().on_http(url),
+                Err(_) => continue,
+            };
+            let contract = Bridge::new(*bridge_address, &provider);
+
+            match contract.getDeposit(hash_fixed).call().await {
+                Ok(result) => {
+                    if !result.timestamp.is_zero() {
+                        info!(
+                            hash = %hex::encode(xchain_hash_id),
+                            source_chain = %format!("0x{}", hex::encode(chain_id)),
+                            "Deposit verified on EVM source chain"
+                        );
+                        return Ok(true);
+                    }
+                }
+                Err(e) => {
+                    debug!(
+                        source_chain = %format!("0x{}", hex::encode(chain_id)),
+                        error = %e,
+                        "getDeposit call failed on source chain, trying next"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        info!(
+            hash = %hex::encode(xchain_hash_id),
+            chains_checked = self.source_chain_endpoints.len(),
+            "No deposit found on any EVM source chain"
+        );
+        Ok(false)
     }
 
     async fn submit_approval(
