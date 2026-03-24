@@ -58,6 +58,15 @@ describe('ChainCard', () => {
     expect(screen.getByText('https://rpc.ankr.com/eth')).toBeInTheDocument()
   })
 
+  it('renders Solana type and RPC URL', () => {
+    render(
+      <ChainCard name="Solana Localnet" chainId="solana-localnet" type="solana" rpcUrl="http://localhost:8899" />
+    )
+    expect(screen.getByText('Solana Localnet')).toBeInTheDocument()
+    expect(screen.getByText(/· Solana/)).toBeInTheDocument()
+    expect(screen.getByText(/RPC: http:\/\/localhost:8899/)).toBeInTheDocument()
+  })
+
   it('renders explorer link when provided', () => {
     render(
       <ChainCard

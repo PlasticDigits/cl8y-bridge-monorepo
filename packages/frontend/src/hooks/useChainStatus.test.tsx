@@ -104,6 +104,27 @@ describe('useChainStatus', () => {
     expect(result.current.data?.error).toBe('Network error')
   })
 
+  it('pings Solana RPC and returns ok on valid response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: 'ok' }),
+    })
+
+    const { result } = renderHook(() => useChainStatus('http://localhost:8899', 'solana'), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data?.ok).toBe(true)
+    expect(result.current.data?.latencyMs).toBeGreaterThanOrEqual(0)
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:8899',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getHealth' }),
+      })
+    )
+  })
+
   it('returns error when LCD returns non-ok status', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
