@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+
 use crate::bounded_cache::BoundedHashCache;
 
 use alloy::primitives::{Address, FixedBytes};
@@ -759,10 +761,44 @@ impl TerraWriter {
             self.lcd_url, self.contract_address, query_b64
         );
         let response: serde_json::Value = self.client.get(&url).send().await?.json().await?;
-        let token_type = response["data"]["token_type"]
-            .as_str()
-            .unwrap_or("lock_unlock")
-            .to_string();
+        // gRPC-gateway may return `data` as a JSON object or as a base64-encoded JSON string.
+        let data_val = &response["data"];
+        let raw: String = if let Some(b64) = data_val.as_str() {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .map_err(|e| eyre!("token_type query: base64-decode data: {}", e))?;
+            let inner: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                eyre!(
+                    "token_type query: parse decoded data as JSON: {} (len={})",
+                    e,
+                    bytes.len()
+                )
+            })?;
+            inner["token_type"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        } else {
+            data_val["token_type"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let token_type =
+            if raw.eq_ignore_ascii_case("mint_burn") || raw.eq_ignore_ascii_case("mintburn") {
+                "mint_burn".to_string()
+            } else if raw.is_empty() {
+                warn!(
+                    token = %token,
+                    data = %response["data"],
+                    "token_type query returned empty; defaulting to lock_unlock"
+                );
+                "lock_unlock".to_string()
+            } else {
+                "lock_unlock".to_string()
+            };
         Ok(token_type)
     }
 

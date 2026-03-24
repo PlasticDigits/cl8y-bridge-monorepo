@@ -238,6 +238,43 @@ impl CancelerWatcher {
 
             (Some(client), Some(sol_config.bytes4_chain_id))
         } else {
+            // Register HTTP-only Solana deposit verification (no Solana watcher / keypair).
+            // E2E sets SOLANA_DEPOSIT_VERIFY_RPC_URL + SOLANA_DEPOSIT_VERIFY_PROGRAM_ID so
+            // Solana-source fraud approvals hit getAccountInfo → null PDA → Invalid → cancel.
+            if let Ok(rpc_url) = std::env::var("SOLANA_DEPOSIT_VERIFY_RPC_URL") {
+                if let Ok(program_id_str) = std::env::var("SOLANA_DEPOSIT_VERIFY_PROGRAM_ID") {
+                    if let Ok(program_id) = solana_sdk::pubkey::Pubkey::from_str(&program_id_str) {
+                        let chain_id_bytes: [u8; 4] = std::env::var("SOLANA_V2_CHAIN_ID")
+                            .ok()
+                            .and_then(|s| {
+                                let s = s.trim().trim_start_matches("0x");
+                                if let Ok(n) = u32::from_str_radix(s, 16) {
+                                    Some(n.to_be_bytes())
+                                } else if let Ok(n) = s.parse::<u32>() {
+                                    Some(n.to_be_bytes())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or([0x00, 0x00, 0x00, 0x05]);
+                        verifier.register_solana(crate::verifier::SolanaVerifierConfig {
+                            rpc_url,
+                            program_id: program_id.to_bytes(),
+                            chain_id: chain_id_bytes,
+                        });
+                        info!(
+                            chain_id = %hex::encode(chain_id_bytes),
+                            program_id = %program_id_str,
+                            "Registered Solana deposit verifier (SOLANA_DEPOSIT_VERIFY_* — no full Solana watcher)"
+                        );
+                    } else {
+                        warn!(
+                            program_id = %program_id_str,
+                            "SOLANA_DEPOSIT_VERIFY_PROGRAM_ID is not a valid Solana pubkey"
+                        );
+                    }
+                }
+            }
             (None, None)
         };
 

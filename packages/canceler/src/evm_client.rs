@@ -40,7 +40,7 @@ sol! {
         /// Cancel a pending withdrawal (V2: onlyCanceler)
         function withdrawCancel(bytes32 xchainHashId) external;
 
-        /// Get pending withdrawal info (V2: PendingWithdraw struct)
+        /// Get pending withdrawal info (V2: PendingWithdraw struct — must match Bridge.sol / watcher)
         function getPendingWithdraw(bytes32 xchainHashId) external view returns (
             bytes4 srcChain,
             bytes32 srcAccount,
@@ -49,6 +49,8 @@ sol! {
             address recipient,
             uint256 amount,
             uint64 nonce,
+            uint8 srcDecimals,
+            uint8 destDecimals,
             uint256 operatorGas,
             uint256 submittedAt,
             uint256 approvedAt,
