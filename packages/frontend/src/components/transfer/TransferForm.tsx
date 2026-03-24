@@ -1022,7 +1022,9 @@ export function TransferForm() {
         return
       }
       const sourceConfig = sourceChainConfig
-      if (!sourceConfig?.rpcUrl || !sourceConfig?.programId) {
+      // BRIDGE_CHAINS stores the Solana program id as bridgeAddress; optional programId overrides (see useAutoWithdrawSubmit).
+      const solanaProgramIdStr = sourceConfig?.programId || sourceConfig?.bridgeAddress
+      if (!sourceConfig?.rpcUrl || !solanaProgramIdStr) {
         setError(`Missing Solana RPC or program ID config for source chain: ${sourceChain}`)
         frozenChainsRef.current = null
         return
@@ -1036,7 +1038,7 @@ export function TransferForm() {
 
       try {
         const connection = new Connection(sourceConfig.rpcUrl, 'confirmed')
-        const programId = new PublicKey(sourceConfig.programId)
+        const programId = new PublicKey(solanaProgramIdStr)
         const depositNonce = await fetchDepositNonce(connection, programId)
 
         // Encode destination parameters as bytes
@@ -1073,7 +1075,7 @@ export function TransferForm() {
 
         await solanaDeposit({
           rpcUrl: sourceConfig.rpcUrl,
-          programId: sourceConfig.programId,
+          programId: solanaProgramIdStr,
           destChain: destChainBytes,
           destAccount: destAccountBytes,
           destToken: destTokenBytes,
