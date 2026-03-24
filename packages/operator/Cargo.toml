@@ -73,3 +73,7 @@ tokio-test = "0.4"
 [[bin]]
 name = "cl8y-operator"
 path = "src/main.rs"
+
+[[bin]]
+name = "backfill-evm-transfer-hashes"
+path = "src/bin/backfill_evm_transfer_hashes.rs"

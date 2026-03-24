@@ -80,6 +80,7 @@ impl SolanaWriter {
                        'evm'::text as source_type
                 FROM evm_deposits d
                 WHERE d.status = 'confirmed'
+                  AND d.transfer_hash IS NOT NULL
                   AND d.dest_chain_key LIKE 'solana%'
                   AND NOT EXISTS (
                     SELECT 1 FROM approvals a WHERE a.xchain_hash_id = d.transfer_hash

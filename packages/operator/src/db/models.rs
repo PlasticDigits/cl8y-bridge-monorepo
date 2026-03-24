@@ -42,6 +42,9 @@ pub struct EvmDeposit {
     /// This replaces the native chain_id for cross-chain hash matching.
     #[sqlx(default)]
     pub src_v2_chain_id: Option<Vec<u8>>,
+    /// V2 unified transfer hash (see `compute_xchain_hash_id`); NULL for legacy V1 deposits
+    #[sqlx(default)]
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// For inserting new EVM deposits
@@ -64,6 +67,8 @@ pub struct NewEvmDeposit {
     pub src_account: Vec<u8>,
     /// V2 chain ID (4 bytes from ChainRegistry)
     pub src_v2_chain_id: Vec<u8>,
+    /// V2 unified transfer hash; None for V1 deposits
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// Represents a deposit (lock) from Terra Classic
