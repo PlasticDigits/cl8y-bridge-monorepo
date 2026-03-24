@@ -138,7 +138,7 @@ impl E2eSetup {
         self.kill_stale_services().await;
 
         // Stop and remove Docker Compose services + volumes for a clean DB state
-        self.docker.down(true).await?;
+        self.docker.down(true, &self.config.docker).await?;
 
         // Remove broadcast file
         let broadcast_path = self.project_root.join("broadcast");
@@ -198,7 +198,7 @@ impl E2eSetup {
     /// Start all Docker services with E2E profile
     pub async fn start_services(&self) -> Result<()> {
         info!("Starting Docker Compose services");
-        self.docker.up().await?;
+        self.docker.up(&self.config.docker).await?;
         Ok(())
     }
 

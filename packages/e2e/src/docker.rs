@@ -1,11 +1,26 @@
+use crate::config::DockerConfig;
 use bollard::container::ListContainersOptions;
 use bollard::Docker;
 use eyre::{eyre, Result};
 use reqwest::Client;
 use serde_json;
 use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, info, warn};
+
+/// Environment variables consumed by `docker-compose.yml` for host port mapping.
+pub fn apply_compose_port_env(cmd: &mut Command, docker: &DockerConfig) {
+    cmd.env("E2E_TERRA_LCD_PORT", docker.terra_lcd_port.to_string())
+        .env("E2E_TERRA_RPC_PORT", docker.terra_rpc_port.to_string())
+        .env("E2E_TERRA_GRPC_PORT", docker.terra_grpc_port.to_string())
+        .env(
+            "E2E_TERRA_GRPC_WEB_PORT",
+            docker.terra_grpc_web_port.to_string(),
+        )
+        .env("E2E_ANVIL_PORT", docker.anvil_port.to_string())
+        .env("POSTGRES_PORT", docker.postgres_port.to_string());
+}
 
 /// Docker Compose manager for E2E infrastructure
 pub struct DockerCompose {
@@ -30,13 +45,15 @@ impl DockerCompose {
 
     /// Start Docker Compose services with the specified profile
     /// Equivalent to: docker compose --profile e2e up -d
-    pub async fn up(&self) -> Result<()> {
+    pub async fn up(&self, docker_config: &DockerConfig) -> Result<()> {
         info!(
             "Starting Docker Compose services with profile: {}",
             self.profile
         );
 
-        let output = std::process::Command::new("docker")
+        let mut cmd = std::process::Command::new("docker");
+        apply_compose_port_env(&mut cmd, docker_config);
+        let output = cmd
             .args(["compose", "--profile", &self.profile, "up", "-d"])
             .current_dir(&self.project_root)
             .output()?;
@@ -55,7 +72,7 @@ impl DockerCompose {
     /// When `remove_volumes` is true, passes `-v` to remove named volumes
     /// (postgres-data, localterra-data, terrad-keys, etc.) for a fully clean state.
     /// Always passes `--remove-orphans` to clean up stale containers.
-    pub async fn down(&self, remove_volumes: bool) -> Result<()> {
+    pub async fn down(&self, remove_volumes: bool, docker_config: &DockerConfig) -> Result<()> {
         info!(
             "Stopping Docker Compose services (remove_volumes={})",
             remove_volumes
@@ -72,10 +89,9 @@ impl DockerCompose {
             args.push("-v");
         }
 
-        let output = std::process::Command::new("docker")
-            .args(&args)
-            .current_dir(&self.project_root)
-            .output()?;
+        let mut cmd = std::process::Command::new("docker");
+        apply_compose_port_env(&mut cmd, docker_config);
+        let output = cmd.args(&args).current_dir(&self.project_root).output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

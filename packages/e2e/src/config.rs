@@ -237,10 +237,26 @@ impl Default for TerraConfig {
 
 impl TerraConfig {
     pub fn from_env() -> Result<Self> {
-        let rpc_url =
-            std::env::var("TERRA_RPC_URL").unwrap_or_else(|_| "http://localhost:26657".to_string());
-        let lcd_url =
-            std::env::var("TERRA_LCD_URL").unwrap_or_else(|_| "http://localhost:1317".to_string());
+        let rpc_url = match std::env::var("TERRA_RPC_URL") {
+            Ok(url) => url,
+            Err(_) => {
+                let port = std::env::var("E2E_TERRA_RPC_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(26657);
+                format!("http://localhost:{port}")
+            }
+        };
+        let lcd_url = match std::env::var("TERRA_LCD_URL") {
+            Ok(url) => url,
+            Err(_) => {
+                let port = std::env::var("E2E_TERRA_LCD_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(1317);
+                format!("http://localhost:{port}")
+            }
+        };
 
         Ok(Self {
             rpc_url: Url::parse(&rpc_url)?,
@@ -261,6 +277,8 @@ pub struct DockerConfig {
     pub postgres_port: u16,
     pub terra_rpc_port: u16,
     pub terra_lcd_port: u16,
+    pub terra_grpc_port: u16,
+    pub terra_grpc_web_port: u16,
 }
 
 impl Default for DockerConfig {
@@ -271,6 +289,8 @@ impl Default for DockerConfig {
             postgres_port: 5433,
             terra_rpc_port: 26657,
             terra_lcd_port: 1317,
+            terra_grpc_port: 9090,
+            terra_grpc_web_port: 9091,
         }
     }
 }
@@ -296,6 +316,14 @@ impl DockerConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(1317),
+            terra_grpc_port: std::env::var("E2E_TERRA_GRPC_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(9090),
+            terra_grpc_web_port: std::env::var("E2E_TERRA_GRPC_WEB_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(9091),
         })
     }
 }

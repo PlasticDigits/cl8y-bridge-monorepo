@@ -3,7 +3,8 @@
 //! This module provides comprehensive cleanup and teardown functionality
 //! for E2E test infrastructure, replacing shell scripts with idiomatic Rust.
 
-use crate::docker::DockerCompose;
+use crate::config::DockerConfig;
+use crate::docker::{apply_compose_port_env, DockerCompose};
 use crate::services::ServiceManager;
 use eyre::{eyre, Result};
 use std::path::{Path, PathBuf};
@@ -89,6 +90,7 @@ impl E2eTeardown {
 
         // Build the docker compose down args
         let remove_volumes = !options.keep_volumes;
+        let docker_cfg = DockerConfig::from_env().unwrap_or_default();
 
         if options.force {
             // Force mode: use --remove-orphans and -t 0 for immediate stop
@@ -106,10 +108,9 @@ impl E2eTeardown {
             }
 
             info!("Force stopping Docker services with args: {:?}", args);
-            let output = Command::new("docker")
-                .args(&args)
-                .current_dir(&self.project_root)
-                .output()?;
+            let mut cmd = Command::new("docker");
+            apply_compose_port_env(&mut cmd, &docker_cfg);
+            let output = cmd.args(&args).current_dir(&self.project_root).output()?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -117,7 +118,7 @@ impl E2eTeardown {
             }
         } else {
             // Graceful mode: pass remove_volumes to docker compose down
-            self.docker.down(remove_volumes).await?;
+            self.docker.down(remove_volumes, &docker_cfg).await?;
         }
 
         // If volumes were supposed to be removed, do a fallback cleanup of

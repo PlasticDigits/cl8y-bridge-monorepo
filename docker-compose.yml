@@ -7,7 +7,7 @@ services:
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--block-time", "1", "--accounts", "10", "--balance", "10000"]
     ports:
-      - "127.0.0.1:8545:8545"
+      - "127.0.0.1:${E2E_ANVIL_PORT:-8545}:8545"
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 5s
@@ -44,10 +44,12 @@ services:
     image: ghcr.io/plasticdigits/localterra-cl8y:latest
     platform: linux/amd64
     ports:
-      - "127.0.0.1:26657:26657"  # RPC
-      - "127.0.0.1:1317:1317"    # LCD/REST
-      - "127.0.0.1:9090:9090"    # gRPC
-      - "127.0.0.1:9091:9091"    # gRPC-web
+      # Host ports are configurable so a busy default (e.g. 1317) can be remapped:
+      #   E2E_TERRA_RPC_PORT=26657 E2E_TERRA_LCD_PORT=13217 cargo run -p cl8y-e2e -- setup
+      - "127.0.0.1:${E2E_TERRA_RPC_PORT:-26657}:26657"  # RPC
+      - "127.0.0.1:${E2E_TERRA_LCD_PORT:-1317}:1317"    # LCD/REST
+      - "127.0.0.1:${E2E_TERRA_GRPC_PORT:-9090}:9090"    # gRPC
+      - "127.0.0.1:${E2E_TERRA_GRPC_WEB_PORT:-9091}:9091"    # gRPC-web
     volumes:
       # Persist chain data (optional - remove for fresh state each run)
       - localterra-data:/home/terra/.terra
