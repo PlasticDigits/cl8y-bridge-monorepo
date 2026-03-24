@@ -2125,8 +2125,6 @@ dependencies = [
 [[package]]
 name = "solana-slot-hashes"
 version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8691982114513763e88d04094c9caa0376b867a29577939011331134c301ce"
 dependencies = [
  "serde",
  "serde_derive",
