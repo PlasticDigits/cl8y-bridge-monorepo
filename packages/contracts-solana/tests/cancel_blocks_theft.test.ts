@@ -3,7 +3,6 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
 import {
   setupTest,
-  findBridgePda,
   findWithdrawPda,
   findCancelerPda,
   findExecutedHashPda,

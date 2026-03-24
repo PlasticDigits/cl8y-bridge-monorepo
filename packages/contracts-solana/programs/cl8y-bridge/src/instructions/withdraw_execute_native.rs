@@ -42,8 +42,9 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
 
     {
         let pw = &ctx.accounts.pending_withdraw;
-        require!(pw.approved, BridgeError::NotApproved);
+        // Cancelled state is checked before approval so clearing `approved` on cancel still surfaces WithdrawalCancelled.
         require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
+        require!(pw.approved, BridgeError::NotApproved);
         require!(!pw.executed, BridgeError::AlreadyExecuted);
         require!(
             pw.dest_account == ctx.accounts.recipient.key(),

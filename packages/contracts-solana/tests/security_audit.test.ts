@@ -1298,7 +1298,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
 
       pw = await ctx.program.account.pendingWithdraw.fetch(withdrawPda);
       expect(pw.cancelled).to.be.false;
-      expect(pw.approved).to.be.true;
+      expect(pw.approved).to.be.false;
+
+      await approveWithdraw(transferHash, withdrawPda);
 
       await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
 

@@ -1740,12 +1740,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
       const bridgeInfoAfter = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
       const balanceAfter = BigInt(bridgeInfoAfter!.lamports.toString());
-      expect(balanceAfter).to.be.lessThan(balanceBefore);
+      expect(balanceAfter < balanceBefore).to.be.true;
       const delta = balanceBefore - balanceAfter;
-      expect(delta).to.equal(
-        amount,
-        `Bridge PDA should lose exactly the withdrawal amount in lamports (delta=${delta}, amount=${amount})`
-      );
+      // Chai `.equal` is unreliable for bigint; compare explicitly.
+      expect(delta === amount).to.be.true;
     });
   });
 
