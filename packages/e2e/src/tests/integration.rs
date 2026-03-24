@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::helpers::{
-    create_fraudulent_approval, encode_terra_address, execute_deposit, get_terra_chain_key,
-    is_approval_cancelled, query_deposit_nonce,
+    create_fraudulent_approval, encode_terra_address, ensure_test_token_balance, execute_deposit,
+    get_terra_chain_key, is_approval_cancelled, query_deposit_nonce,
 };
 use super::operator_helpers::{
     calculate_evm_fee, poll_terra_for_approval, submit_withdraw_on_terra, TERRA_APPROVAL_TIMEOUT,
@@ -284,6 +284,14 @@ pub async fn test_full_transfer_cycle(
         "Testing full transfer cycle: {} tokens for account {}",
         amount, test_account
     );
+
+    if let Err(e) = ensure_test_token_balance(config, token, amount).await {
+        return TestResult::fail(
+            name,
+            format!("Could not ensure token balance for cycle: {}", e),
+            start.elapsed(),
+        );
+    }
 
     // Step 1: Get initial EVM balance
     let initial_balance =

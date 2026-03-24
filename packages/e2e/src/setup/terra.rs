@@ -226,6 +226,32 @@ impl E2eSetup {
             }
         }
 
+        // Step 7: Outgoing mapping — DepositNative(uluna → EVM) requires per-chain dest token (bytes32)
+        let dest_token_hex = hex::encode(multichain_rs::hash::keccak256(b"uluna"));
+        let set_dest_msg = serde_json::json!({
+            "set_token_destination": {
+                "token": "uluna",
+                "dest_chain": evm_chain_id_b64,
+                "dest_token": dest_token_hex,
+                "dest_decimals": 18
+            }
+        });
+
+        match terra
+            .execute_contract(&bridge_address, &set_dest_msg, None)
+            .await
+        {
+            Ok(tx_hash) => {
+                info!(
+                    "Terra uluna → EVM token destination registered, tx: {}",
+                    tx_hash
+                );
+            }
+            Err(e) => {
+                warn!("Failed to set uluna token destination for EVM: {}", e);
+            }
+        }
+
         info!("Terra bridge deployment complete: {}", bridge_address);
         Ok(Some(bridge_address))
     }

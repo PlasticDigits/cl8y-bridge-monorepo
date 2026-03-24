@@ -171,12 +171,12 @@ impl ServiceManager {
             }
         }
 
-        // Small delay to let the process start
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Allow the detached process to exec the binary (slow disks / cold cache)
+        std::thread::sleep(std::time::Duration::from_millis(2000));
 
-        // Find the operator PID by searching for the process
+        // Find the operator PID by searching for the process (package/binary: cl8y-operator)
         let find_pid = Command::new("pgrep")
-            .args(["-f", "cl8y-relayer"])
+            .args(["-f", "cl8y-operator"])
             .output()
             .map_err(|e| eyre!("Failed to find operator PID: {}", e))?;
 
@@ -624,6 +624,13 @@ impl ServiceManager {
                 format!("{}", evm2.contracts.bridge),
             ));
             env.push(("EVM_PRIVATE_KEY".to_string(), canceler_pk));
+        }
+
+        // Forward Solana watcher config from the parent process (optional).
+        for (k, v) in std::env::vars() {
+            if k.starts_with("SOLANA_") {
+                env.push((k, v));
+            }
         }
 
         env

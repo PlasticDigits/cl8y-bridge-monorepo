@@ -344,6 +344,67 @@ pub async fn register_cosmw_chain_key(
     Ok(predetermined_id)
 }
 
+/// Register an arbitrary chain identifier on ChainRegistry (`registerChain(string,bytes4)`).
+///
+/// Used for Solana V2 (`solana_e2e`) and other non-EVM identifiers that are not CosmWasm “terraclassic_*”.
+pub async fn register_named_chain_key(
+    chain_registry: Address,
+    identifier: &str,
+    predetermined_id: ChainId4,
+    rpc_url: &str,
+    private_key: &str,
+) -> Result<ChainId4> {
+    let chain_id_hex = format!("0x{}", hex::encode(predetermined_id));
+    info!(
+        "Registering chain with identifier: {}, bytes4: {}",
+        identifier, chain_id_hex
+    );
+
+    let existing = get_chain_id_by_identifier(chain_registry, identifier, rpc_url).await?;
+    if existing != ChainId4::ZERO {
+        info!(
+            "Chain already registered with ID: 0x{}",
+            hex::encode(existing)
+        );
+        return Ok(existing);
+    }
+
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            &format!("{}", chain_registry),
+            "registerChain(string,bytes4)",
+            identifier,
+            &chain_id_hex,
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("already")
+            || stderr.contains("ChainAlreadyRegistered")
+            || stderr.contains("ChainIdAlreadyInUse")
+        {
+            let existing = get_chain_id_by_identifier(chain_registry, identifier, rpc_url).await?;
+            info!(
+                "Chain already registered with ID: 0x{}",
+                hex::encode(existing)
+            );
+            return Ok(existing);
+        }
+        return Err(eyre!("Failed to register chain: {}", stderr));
+    }
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    info!("Chain registered with ID: {}", chain_id_hex);
+    Ok(predetermined_id)
+}
+
 /// Get the chain ID for a COSMW chain from ChainRegistry
 ///
 /// Uses computeIdentifierHash + getChainIdFromHash to look up the bytes4 chain ID.

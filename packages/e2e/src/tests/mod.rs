@@ -19,6 +19,7 @@ mod address_codec;
 mod canceler;
 mod canceler_execution;
 mod canceler_helpers;
+mod canceler_solana_destination;
 mod chain_registry;
 mod configuration;
 mod connectivity;
@@ -189,6 +190,12 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
     results.push(canceler_execution::test_canceler_solana_source_fraud_detection(config).await);
     results.push(canceler_execution::test_operator_rejects_unverified_solana_source(config).await);
+    results.push(
+        canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
+    );
+    results
+        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     // Live Operator Execution Tests - IMPLEMENTED in operator_execution.rs
     // Operator is started by E2E setup (same as canceler). These tests verify
@@ -332,6 +339,12 @@ pub async fn run_live_execution_tests(
     results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
     results.push(canceler_execution::test_canceler_solana_source_fraud_detection(config).await);
     results.push(canceler_execution::test_operator_rejects_unverified_solana_source(config).await);
+    results.push(
+        canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
+    );
+    results
+        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     results
 }

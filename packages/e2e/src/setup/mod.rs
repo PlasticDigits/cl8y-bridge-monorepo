@@ -171,7 +171,7 @@ impl E2eSetup {
 
     /// Kill any stale operator/canceler processes left over from previous runs
     async fn kill_stale_services(&self) {
-        for process_name in &["cl8y-relayer", "cl8y-canceler"] {
+        for process_name in &["cl8y-operator", "cl8y-relayer", "cl8y-canceler"] {
             let output = std::process::Command::new("pgrep")
                 .args(["-f", process_name])
                 .output();
@@ -570,6 +570,14 @@ impl E2eSetup {
             }
         };
         on_step(SetupStep::RegisterChainKeys, terra_chain_key.is_some());
+
+        match self.register_solana_chain_key(&deployed).await {
+            Ok(()) => {}
+            Err(e) => warn!(
+                "Failed to register Solana chain on ChainRegistry (Solana-source fraud tests may fail): {}",
+                e
+            ),
+        }
 
         // Register Tokens (test tokens with destination chain mappings)
         on_step(SetupStep::RegisterTokens, true);
