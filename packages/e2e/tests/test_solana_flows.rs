@@ -44,58 +44,33 @@ fn solana_rpc() -> RpcClient {
     RpcClient::new_with_commitment(url, CommitmentConfig::confirmed())
 }
 
-/// Request an airdrop and block until the balance is credited.
-/// Retries up to 5 times with exponential backoff — Docker validators
-/// can be slow to process the faucet transfer.
-fn airdrop_and_confirm(client: &RpcClient, pubkey: &Pubkey, lamports: u64) {
-    let max_retries: u32 = 5;
-    for attempt in 0..max_retries {
-        let balance = client.get_balance(pubkey).unwrap_or(0);
-        if balance >= lamports {
-            return;
-        }
-
-        let sig = match client.request_airdrop(pubkey, lamports) {
-            Ok(s) => s,
-            Err(e) => {
-                if attempt + 1 < max_retries {
-                    eprintln!(
-                        "airdrop attempt {}/{} failed: {} — retrying",
-                        attempt + 1,
-                        max_retries,
-                        e
-                    );
-                    thread::sleep(Duration::from_millis(500 * 2u64.pow(attempt)));
-                    continue;
-                }
-                panic!("airdrop failed after {} attempts: {}", max_retries, e);
-            }
-        };
-
-        for _ in 0..30 {
-            if let Ok(Some(status)) = client.get_signature_status(&sig) {
-                if status.is_ok() {
-                    let bal = client.get_balance(pubkey).unwrap_or(0);
-                    if bal >= lamports {
-                        return;
-                    }
-                }
-            }
-            thread::sleep(Duration::from_millis(200));
-        }
-
-        if attempt + 1 < max_retries {
-            eprintln!(
-                "airdrop attempt {}/{}: confirmation timed out — retrying",
-                attempt + 1,
-                max_retries
-            );
-        }
+/// Transfer SOL from the admin wallet to a test account.
+/// SOL distribution is handled by the setup script (`setup-bridge.sh`),
+/// not the validator faucet — the cl8y_faucet program is for test SPL tokens only.
+fn fund_from_admin(client: &RpcClient, recipient: &Pubkey, lamports: u64) {
+    let balance = client.get_balance(recipient).unwrap_or(0);
+    if balance >= lamports {
+        return;
     }
-    panic!(
-        "airdrop of {} lamports to {} not confirmed after {} attempts",
-        lamports, pubkey, max_retries
+
+    let admin = load_keypair_json(&default_wallet_path());
+    let admin_balance = client
+        .get_balance(&admin.pubkey())
+        .expect("admin wallet must be funded by setup script (run: make deploy)");
+    assert!(
+        admin_balance >= lamports,
+        "Admin wallet {} has {} lamports but {} needed. Run: make deploy (setup-bridge.sh funds SOL)",
+        admin.pubkey(),
+        admin_balance,
+        lamports,
     );
+
+    let ix = solana_sdk::system_instruction::transfer(&admin.pubkey(), recipient, lamports);
+    let bh = client.get_latest_blockhash().expect("blockhash");
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], bh);
+    client
+        .send_and_confirm_transaction(&tx)
+        .expect("SOL transfer from admin to test account");
 }
 
 fn get_program_id() -> Pubkey {
@@ -443,20 +418,27 @@ fn test_solana_validator_running() {
     assert!(!version.solana_core.is_empty());
 }
 
+/// Verify that the setup script (`setup-bridge.sh`) funded the admin wallet with SOL.
+/// SOL distribution is a setup concern — the cl8y_faucet program handles test SPL tokens only.
 #[test]
 #[ignore = "requires local Solana validator"]
-fn test_solana_airdrop() {
+fn test_solana_admin_funded() {
     let client = solana_rpc();
-    let keypair = Keypair::new();
-
-    airdrop_and_confirm(&client, &keypair.pubkey(), 1_000_000_000);
+    let admin_path = default_wallet_path();
+    let admin = load_keypair_json(&admin_path);
 
     let balance = client
-        .get_balance(&keypair.pubkey())
-        .expect("Balance check failed");
+        .get_balance(&admin.pubkey())
+        .expect("Admin wallet balance check failed — is the validator running?");
+    println!(
+        "Admin wallet {} balance: {} lamports ({:.2} SOL)",
+        admin.pubkey(),
+        balance,
+        balance as f64 / 1_000_000_000.0
+    );
     assert!(
         balance >= 1_000_000_000,
-        "Expected >= 1 SOL, got {} lamports",
+        "Admin wallet should have >= 1 SOL (funded by setup-bridge.sh). Got {} lamports. Run: make deploy",
         balance
     );
 }
@@ -478,7 +460,7 @@ fn test_solana_bridge_program_exists() {
 fn test_solana_to_evm_deposit_flow() {
     let client = solana_rpc();
     let user = Keypair::new();
-    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
+    fund_from_admin(&client, &user.pubkey(), 10_000_000_000);
 
     let program_id = get_program_id();
     let (bridge_pda, _) = derive_bridge_pda(&program_id);
@@ -555,7 +537,7 @@ fn test_evm_to_solana_flow() {
     let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
 
     let user = Keypair::new();
-    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
+    fund_from_admin(&client, &user.pubkey(), 10_000_000_000);
 
     // Fund bridge via deposit_native (same pattern as TS integration tests)
     let fund_amount: u64 = 2_000_000_000;
@@ -672,7 +654,7 @@ fn test_solana_cancel_flow() {
     let operator = resolve_keypair_for_pubkey(&operator_pk, "operator");
 
     let canceler = Keypair::new();
-    airdrop_and_confirm(&client, &canceler.pubkey(), 5_000_000_000);
+    fund_from_admin(&client, &canceler.pubkey(), 5_000_000_000);
 
     let (canceler_entry_pda, _) = derive_canceler_entry_pda(&program_id, &canceler.pubkey());
     let add_ix = build_add_canceler_ix(
@@ -686,7 +668,7 @@ fn test_solana_cancel_flow() {
     send_tx(&client, &admin, vec![add_ix]);
 
     let user = Keypair::new();
-    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
+    fund_from_admin(&client, &user.pubkey(), 10_000_000_000);
 
     let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
     let bridge_refresh =

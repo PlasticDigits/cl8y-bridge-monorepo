@@ -148,6 +148,7 @@ solana-deploy-local: ## Deploy Solana program to local validator
 
 .PHONY: solana-test-e2e
 solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + deploy/init bridge)
+	. ./scripts/lib-local-deploy-env.sh && load_local_deploy_env; \
 	cd packages/e2e && \
 	SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
 	SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
@@ -277,6 +278,9 @@ deploy-terra-local: deploy-terra
 deploy-solana:
 	@echo "Deploying Solana program to local validator..."
 	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --no-idl --provider.cluster localnet
+	@bash -c '. ./scripts/lib-local-deploy-env.sh && \
+		PID=$$(solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null) && \
+		if [ -n "$$PID" ]; then write_deploy_env_solana "$$PID"; echo "  SOLANA_PROGRAM_ID=$$PID saved to .deploy/local.env"; fi' || true
 
 deploy-terra-cw20:
 	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."
