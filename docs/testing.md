@@ -422,6 +422,8 @@ Options:
 | `scripts/test-transfer.sh` | Interactive transfer tests | `./scripts/test-transfer.sh` |
 | `scripts/deploy-terra-local.sh` | Deploy Terra contracts | `./scripts/deploy-terra-local.sh` |
 | `scripts/setup-bridge.sh` | Configure cross-chain | `./scripts/setup-bridge.sh` |
+| `scripts/deploy-evm-local.sh` | Deploy EVM to Anvil + write `.deploy/local.env` | Used by `make deploy-evm` |
+| `scripts/lib-local-deploy-env.sh` | Helpers for `.deploy/local.env` | Sourced by deploy + `setup-bridge` |
 
 ### Solana Rust E2E (`make solana-test-e2e`)
 

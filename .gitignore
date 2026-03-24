@@ -1,6 +1,7 @@
 # ===================
 # Shared
 # ===================
+.deploy/
 .env
 .env.*
 !.env.example

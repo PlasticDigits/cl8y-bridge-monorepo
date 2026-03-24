@@ -10,7 +10,11 @@
 # - Environment variables set (or pass as args)
 #
 # Usage:
-#   EVM_BRIDGE_ADDRESS=0x... TERRA_BRIDGE_ADDRESS=terra1... ./scripts/setup-bridge.sh
+#   ./scripts/setup-bridge.sh
+# Or set EVM_BRIDGE_ADDRESS / TERRA_BRIDGE_ADDRESS explicitly (overrides .deploy/local.env).
+#
+# After `make deploy-evm` and `make deploy-terra`, addresses are stored in .deploy/local.env
+# and loaded automatically when unset.
 #
 # Solana: set SOLANA_PROGRAM_ID, or rely on packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json
 # after `make deploy-solana` (script derives the program id automatically).
@@ -19,6 +23,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ ! -f "$REPO_ROOT/scripts/lib-local-deploy-env.sh" ]; then
+    echo "[ERROR] Missing $REPO_ROOT/scripts/lib-local-deploy-env.sh" >&2
+    exit 1
+fi
+# shellcheck source=lib-local-deploy-env.sh
+source "$REPO_ROOT/scripts/lib-local-deploy-env.sh"
+load_local_deploy_env
 
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
@@ -64,21 +76,21 @@ terrad_exec() {
 # Validate addresses
 check_addresses() {
     if [ -z "$EVM_BRIDGE_ADDRESS" ]; then
-        log_error "EVM_BRIDGE_ADDRESS not set"
-        log_info "Deploy EVM contracts first: make deploy-evm"
+        log_error "EVM_BRIDGE_ADDRESS not set (and not loaded from .deploy/local.env)"
+        qa_hint_evm_bridge_missing
         exit 1
     fi
-    
+
     if [ -z "$TERRA_BRIDGE_ADDRESS" ]; then
-        log_error "TERRA_BRIDGE_ADDRESS not set"
-        log_info "Deploy Terra contracts first: ./scripts/deploy-terra-local.sh"
+        log_error "TERRA_BRIDGE_ADDRESS not set (and not loaded from .deploy/local.env)"
+        qa_hint_terra_bridge_missing
         exit 1
     fi
-    
+
     # Check LocalTerra container is running
     if ! docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
         log_error "LocalTerra container not running: $CONTAINER_NAME"
-        log_info "Start with: docker compose up -d localterra"
+        qa_hint_localterra_not_running "$CONTAINER_NAME"
         exit 1
     fi
     

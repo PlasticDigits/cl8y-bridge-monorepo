@@ -560,13 +560,13 @@ make stop           # Stops all Docker services
 
 `make deploy` handles everything: EVM contracts to Anvil, Terra contracts to
 LocalTerra, Solana program to the local validator, and cross-chain bridge
-registration (`setup-bridge.sh`). For Solana, `setup-bridge.sh` sets the program
-id from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` when
-`SOLANA_PROGRAM_ID` is not exported, so Solana-side registration runs after
-`deploy-solana`. You still need `EVM_BRIDGE_ADDRESS` and `TERRA_BRIDGE_ADDRESS`
-in the environment (or your usual deploy wrapper) before `setup-bridge` can run.
-Contract addresses are printed in the deploy output — copy them into
-`packages/frontend/.env.local`.
+registration (`setup-bridge.sh`). Deployed EVM and Terra bridge addresses are
+written to **`.deploy/local.env`** (gitignored) by `deploy-evm-local.sh` and
+`deploy-terra-local.sh`; `setup-bridge.sh` loads them automatically when those
+variables are not already exported. For Solana, `setup-bridge.sh` sets the
+program id from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`
+when `SOLANA_PROGRAM_ID` is not exported. Copy addresses from the terminal output
+or from `.deploy/local.env` into `packages/frontend/.env.local` as needed.
 
 > **Note:** The Solana test validator requires high file descriptor limits.
 > This is handled automatically via `ulimits` in `docker-compose.yml`. If you

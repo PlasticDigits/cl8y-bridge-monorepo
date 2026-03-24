@@ -330,7 +330,8 @@ See [Testing Guide](./docs/testing.md) for environment setup and troubleshooting
 | [`scripts/deploy-terra-local.sh`](./scripts/deploy-terra-local.sh) | Deploy Terra contracts to LocalTerra |
 | [`scripts/deploy-terra-testnet.sh`](./scripts/deploy-terra-testnet.sh) | Deploy Terra contracts to testnet |
 | [`scripts/deploy-terra-mainnet.sh`](./scripts/deploy-terra-mainnet.sh) | Deploy Terra contracts to mainnet |
-| [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections (Solana program id from deploy keypair if unset) |
+| [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections (loads `.deploy/local.env`; Solana id from deploy keypair if unset) |
+| [`scripts/deploy-evm-local.sh`](./scripts/deploy-evm-local.sh) | Deploy EVM to Anvil and record addresses in `.deploy/local.env` |
 | [`scripts/test-transfer.sh`](./scripts/test-transfer.sh) | Interactive transfer testing |
 | [`scripts/e2e-test.sh`](./scripts/e2e-test.sh) | Automated E2E test suite (watchtower pattern) |
 

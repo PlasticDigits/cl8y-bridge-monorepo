@@ -408,7 +408,14 @@ main() {
     instantiate_test_cw20
     configure_local
     verify_deployment
-    
+
+    if [ -f "$SCRIPT_DIR/lib-local-deploy-env.sh" ]; then
+        # shellcheck source=lib-local-deploy-env.sh
+        source "$SCRIPT_DIR/lib-local-deploy-env.sh"
+        write_deploy_env_terra "$BRIDGE_CONTRACT"
+        log_info "Recorded TERRA_BRIDGE_ADDRESS in ${DEPLOY_ENV_FILE}"
+    fi
+
     echo ""
     log_info "=== Deployment Complete ==="
     echo ""

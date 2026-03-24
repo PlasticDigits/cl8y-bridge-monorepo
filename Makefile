@@ -254,11 +254,7 @@ deploy: deploy-evm deploy-terra deploy-solana setup-bridge
 
 deploy-evm:
 	@echo "Deploying EVM contracts to Anvil..."
-	cd packages/contracts-evm && forge script script/DeployLocal.s.sol:DeployLocal \
-		--broadcast \
-		--rpc-url http://localhost:8545 \
-		--sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
-		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+	./scripts/deploy-evm-local.sh
 
 deploy-test-token:
 	@echo "Deploying test ERC20 token to Anvil..."
