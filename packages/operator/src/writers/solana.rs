@@ -73,41 +73,45 @@ impl SolanaWriter {
 
     #[allow(clippy::type_complexity)]
     async fn process_pending_approvals(&self) -> Result<usize> {
-        let rows: Vec<(i64, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, String)> = sqlx::query_as(
-            r#"
-            SELECT nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type FROM (
-                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain,
-                       'evm'::text as source_type
+        let rows: Vec<(i64, i64, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, String)> =
+            sqlx::query_as(
+                r#"
+            SELECT id, nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type FROM (
+                SELECT d.id, d.nonce, d.transfer_hash, d.src_account, d.dest_account,
+                       d.dest_token_address AS token, d.dest_chain_key AS dest_chain,
+                       'evm'::text AS source_type
                 FROM evm_deposits d
-                WHERE d.status = 'confirmed'
+                WHERE d.status = 'pending'
                   AND d.transfer_hash IS NOT NULL
-                  AND d.dest_chain_key LIKE 'solana%'
-                  AND NOT EXISTS (
-                    SELECT 1 FROM approvals a WHERE a.xchain_hash_id = d.transfer_hash
-                  )
+                  AND d.dest_chain_type = 'solana'
                 UNION ALL
-                SELECT d.nonce, d.transfer_hash, d.src_account, d.dest_account, d.token, d.dest_chain,
-                       'solana'::text as source_type
+                SELECT d.id, d.nonce, d.transfer_hash, d.src_account, d.dest_account,
+                       d.token, d.dest_chain,
+                       'solana'::text AS source_type
                 FROM solana_deposits d
                 WHERE d.processed = FALSE
-                  AND NOT EXISTS (
-                    SELECT 1 FROM approvals a WHERE a.xchain_hash_id = d.transfer_hash
-                  )
             ) combined
             LIMIT 10
             "#,
-        )
-        .fetch_all(&self.db)
-        .await
-        .map_err(|e| eyre::eyre!("Failed to query pending approvals: {}", e))?;
+            )
+            .fetch_all(&self.db)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to query pending approvals: {}", e))?;
 
         let mut count = 0;
-        for (nonce, transfer_hash, _src_account, dest_account, _token, _dest_chain, source_type) in
-            &rows
+        for (
+            id,
+            nonce,
+            transfer_hash,
+            _src_account,
+            dest_account,
+            _token,
+            _dest_chain,
+            source_type,
+        ) in &rows
         {
             let hash_hex = hex::encode(transfer_hash);
 
-            // Verify deposit on source chain before approving
             if source_type == "evm" {
                 let mut hash_arr = [0u8; 32];
                 if transfer_hash.len() == 32 {
@@ -143,15 +147,12 @@ impl SolanaWriter {
 
             match self.submit_approval(transfer_hash, dest_account).await {
                 Ok(sig) => {
-                    if let Err(e) = self
-                        .record_approval(transfer_hash, &sig.to_string(), *nonce)
-                        .await
-                    {
+                    if let Err(e) = self.mark_deposit_processed(*id, *nonce, source_type).await {
                         warn!(
                             nonce = nonce,
                             hash = %hash_hex,
                             error = %e,
-                            "Failed to record approval in DB (tx already submitted)"
+                            "Failed to mark deposit processed (tx already submitted)"
                         );
                     }
                     info!(
@@ -269,31 +270,36 @@ impl SolanaWriter {
         Ok(sig)
     }
 
-    async fn record_approval(
+    async fn mark_deposit_processed(
         &self,
-        transfer_hash: &[u8],
-        tx_signature: &str,
+        deposit_id: i64,
         nonce: i64,
+        source_type: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO approvals (xchain_hash_id, chain_type, tx_hash, created_at)
-            VALUES ($1, 'solana', $2, NOW())
-            ON CONFLICT (xchain_hash_id) DO NOTHING
-            "#,
-        )
-        .bind(transfer_hash)
-        .bind(tx_signature)
-        .execute(&self.db)
-        .await
-        .map_err(|e| eyre::eyre!("Failed to insert approval: {}", e))?;
-
-        sqlx::query("UPDATE solana_deposits SET processed = TRUE WHERE nonce = $1")
-            .bind(nonce)
-            .execute(&self.db)
-            .await
-            .map_err(|e| eyre::eyre!("Failed to mark deposit processed: {}", e))?;
-
+        match source_type {
+            "evm" => {
+                sqlx::query("UPDATE evm_deposits SET status = 'processed' WHERE id = $1")
+                    .bind(deposit_id)
+                    .execute(&self.db)
+                    .await
+                    .map_err(|e| {
+                        eyre::eyre!("Failed to mark evm_deposit {} processed: {}", deposit_id, e)
+                    })?;
+            }
+            _ => {
+                sqlx::query("UPDATE solana_deposits SET processed = TRUE WHERE nonce = $1")
+                    .bind(nonce)
+                    .execute(&self.db)
+                    .await
+                    .map_err(|e| {
+                        eyre::eyre!(
+                            "Failed to mark solana_deposit nonce={} processed: {}",
+                            nonce,
+                            e
+                        )
+                    })?;
+            }
+        }
         Ok(())
     }
 }
