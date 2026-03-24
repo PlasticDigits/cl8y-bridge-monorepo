@@ -114,6 +114,8 @@ pub struct CancelerWatcher {
     solana_client: Option<SolanaCancelerClient>,
     /// V2 chain ID for Solana (if configured)
     solana_chain_id: Option<[u8; 4]>,
+    /// Solana bridge `withdraw_delay` in seconds (from on-chain config; default 300).
+    solana_cancel_window_secs: u64,
     /// Last processed Solana signature for cursor-based pagination
     last_solana_signature: Option<solana_sdk::signature::Signature>,
     /// Hashes we've already verified (C3: bounded)
@@ -278,6 +280,25 @@ impl CancelerWatcher {
             (None, None)
         };
 
+        let mut solana_cancel_window_secs = 300u64;
+        if let Some(ref sc) = solana_client {
+            match sc.read_bridge_withdraw_delay_secs() {
+                Ok(d) => {
+                    solana_cancel_window_secs = d;
+                    info!(
+                        withdraw_delay_secs = d,
+                        "Read withdraw_delay from Solana bridge config"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to read Solana bridge withdraw_delay; using default 300s"
+                    );
+                }
+            }
+        }
+
         // Use the already-resolved V2 chain ID (guaranteed by resolve_v2_chain_ids_required)
         let this_chain_id = evm_v2;
 
@@ -323,6 +344,7 @@ impl CancelerWatcher {
             terra_client,
             solana_client,
             solana_chain_id,
+            solana_cancel_window_secs,
             last_solana_signature: None,
             verified_hashes: BoundedHashCache::new(
                 config.dedupe_cache_max_size,
@@ -1557,7 +1579,7 @@ impl CancelerWatcher {
                     amount: pw.amount,
                     nonce: pw.nonce,
                     approved_at_timestamp: pw.approved_at as u64,
-                    cancel_window: 300,
+                    cancel_window: self.solana_cancel_window_secs,
                 },
                 Err(e) => {
                     warn!(

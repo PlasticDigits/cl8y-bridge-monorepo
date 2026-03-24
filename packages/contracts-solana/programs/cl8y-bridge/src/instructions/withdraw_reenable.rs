@@ -33,7 +33,9 @@ pub fn handler(ctx: Context<WithdrawReenable>) -> Result<()> {
     require!(!pw.executed, BridgeError::AlreadyExecuted);
 
     pw.cancelled = false;
-    pw.approved_at = Clock::get()?.unix_timestamp;
+    // Operator must approve again after re-enable; do not reuse stale approval timestamps.
+    pw.approved = false;
+    pw.approved_at = 0;
 
     emit!(WithdrawReenableEvent {
         transfer_hash: pw.transfer_hash,

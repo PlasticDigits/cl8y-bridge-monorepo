@@ -37,6 +37,7 @@ pub fn handler(ctx: Context<WithdrawCancel>) -> Result<()> {
     require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
 
     pw.cancelled = true;
+    pw.approved = false;
 
     emit!(WithdrawCancelEvent {
         transfer_hash: pw.transfer_hash,

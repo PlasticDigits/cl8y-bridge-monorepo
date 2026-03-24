@@ -1,3 +1,4 @@
+use borsh::BorshDeserialize;
 use eyre::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -12,6 +13,21 @@ use multichain_rs::solana::{
     get_signatures_for_program, get_transaction, parse_anchor_events, SolanaEvent,
     SolanaWithdrawApproveEvent,
 };
+
+/// On-chain `BridgeConfig` (borsh layout after 8-byte Anchor discriminator).
+#[derive(BorshDeserialize)]
+#[allow(dead_code)]
+struct BridgeConfigData {
+    admin: [u8; 32],
+    operator: [u8; 32],
+    fee_bps: u16,
+    withdraw_delay: i64,
+    deposit_nonce: u64,
+    accrued_native_fees: u64,
+    paused: bool,
+    chain_id: [u8; 4],
+    bump: u8,
+}
 
 /// Parsed PendingWithdraw PDA data
 pub struct PendingWithdrawData {
@@ -35,6 +51,21 @@ pub struct SolanaCancelerClient {
 }
 
 impl SolanaCancelerClient {
+    /// Read `withdraw_delay` (seconds) from the bridge config account.
+    pub fn read_bridge_withdraw_delay_secs(&self) -> Result<u64> {
+        let (bridge_pda, _) = Pubkey::find_program_address(&[b"bridge"], &self.program_id);
+        let account = self
+            .rpc_client
+            .get_account(&bridge_pda)
+            .map_err(|e| eyre::eyre!("Failed to read bridge config account: {}", e))?;
+        if account.data.len() < 8 {
+            return Err(eyre::eyre!("Bridge account data too short"));
+        }
+        let cfg = BridgeConfigData::try_from_slice(&account.data[8..])
+            .map_err(|e| eyre::eyre!("Failed to decode bridge config: {}", e))?;
+        Ok(cfg.withdraw_delay.max(0) as u64)
+    }
+
     pub fn new(rpc_url: &str, program_id: Pubkey, keypair: Keypair, commitment: &str) -> Self {
         let commitment_config = match commitment {
             "confirmed" => CommitmentConfig::confirmed(),

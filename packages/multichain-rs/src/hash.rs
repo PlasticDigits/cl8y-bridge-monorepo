@@ -859,3 +859,98 @@ mod tests {
         );
     }
 }
+
+/// Property-based tests for V2 hash identity (determinism, sensitivity, parity).
+#[cfg(test)]
+mod proptest_xchain_hash {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn chain4() -> impl Strategy<Value = [u8; 4]> {
+        prop::array::uniform4(any::<u8>())
+    }
+
+    fn bytes32() -> impl Strategy<Value = [u8; 32]> {
+        prop::array::uniform32(any::<u8>())
+    }
+
+    proptest! {
+        #[test]
+        fn compute_xchain_hash_id_is_deterministic(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h2 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_eq!(h1, h2);
+        }
+
+        #[test]
+        fn deposit_and_withdraw_same_inputs_same_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let deposit_side = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let withdraw_side = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_eq!(deposit_side, withdraw_side);
+        }
+
+        #[test]
+        fn changing_amount_by_one_changes_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            prop_assume!(amount < u128::MAX);
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount + 1, nonce);
+            prop_assert_ne!(h0, h1);
+        }
+
+        #[test]
+        fn changing_nonce_by_one_changes_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            prop_assume!(nonce < u64::MAX);
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce + 1);
+            prop_assert_ne!(h0, h1);
+        }
+
+        #[test]
+        fn flipping_src_chain_byte_changes_hash(
+            mut sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            sc[0] ^= 0xFF;
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_ne!(h0, h1);
+        }
+    }
+}

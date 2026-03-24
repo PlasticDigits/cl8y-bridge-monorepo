@@ -149,6 +149,7 @@ solana-deploy-local: ## Deploy Solana program to local validator
 .PHONY: solana-test-e2e
 solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + deploy/init bridge)
 	cd packages/e2e && \
+	SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
 	SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
 		cargo test --test test_solana_flows -- --ignored --nocapture
 

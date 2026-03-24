@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use alloy::primitives::{Address, FixedBytes};
+use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::ProviderBuilder;
 use eyre::Result;
 use solana_client::rpc_client::RpcClient;
@@ -73,13 +73,22 @@ impl SolanaWriter {
 
     #[allow(clippy::type_complexity)]
     async fn process_pending_approvals(&self) -> Result<usize> {
-        let rows: Vec<(i64, i64, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, String)> =
-            sqlx::query_as(
+        let rows: Vec<(
+            i64,
+            i64,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            String,
+            String,
+        )> = sqlx::query_as(
                 r#"
-            SELECT id, nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type FROM (
+            SELECT id, nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type, amount::text AS amount_text FROM (
                 SELECT d.id, d.nonce, d.transfer_hash, d.src_account, d.dest_account,
                        d.dest_token_address AS token, d.dest_chain_key AS dest_chain,
-                       'evm'::text AS source_type
+                       'evm'::text AS source_type, d.amount
                 FROM evm_deposits d
                 WHERE d.status = 'pending'
                   AND d.transfer_hash IS NOT NULL
@@ -87,7 +96,7 @@ impl SolanaWriter {
                 UNION ALL
                 SELECT d.id, d.nonce, d.transfer_hash, d.src_account, d.dest_account,
                        d.token, d.dest_chain,
-                       'solana'::text AS source_type
+                       'solana'::text AS source_type, d.amount
                 FROM solana_deposits d
                 WHERE d.processed = FALSE
             ) combined
@@ -108,20 +117,47 @@ impl SolanaWriter {
             _token,
             _dest_chain,
             source_type,
+            amount_text,
         ) in &rows
         {
             let hash_hex = hex::encode(transfer_hash);
 
-            if source_type == "evm" {
-                let mut hash_arr = [0u8; 32];
-                if transfer_hash.len() == 32 {
-                    hash_arr.copy_from_slice(transfer_hash);
-                } else {
-                    warn!(nonce, hash = %hash_hex, "Invalid transfer_hash length, skipping");
+            if transfer_hash.len() != 32 {
+                warn!(nonce, hash = %hash_hex, "Invalid transfer_hash length, skipping");
+                continue;
+            }
+
+            let expected_amount: u128 = match amount_text.parse() {
+                Ok(a) => a,
+                Err(_) => {
+                    warn!(
+                        nonce,
+                        hash = %hash_hex,
+                        "Invalid amount from DB, skipping"
+                    );
                     continue;
                 }
+            };
+            let expected_nonce: u64 = match u64::try_from(*nonce) {
+                Ok(n) => n,
+                Err(_) => {
+                    warn!(
+                        nonce,
+                        hash = %hash_hex,
+                        "Invalid nonce for DB row, skipping"
+                    );
+                    continue;
+                }
+            };
 
-                match self.verify_evm_source_deposit(&hash_arr).await {
+            if source_type == "evm" {
+                let mut hash_arr = [0u8; 32];
+                hash_arr.copy_from_slice(transfer_hash);
+
+                match self
+                    .verify_evm_source_deposit(&hash_arr, expected_amount, expected_nonce)
+                    .await
+                {
                     Ok(true) => {
                         debug!(hash = %hash_hex, "EVM source deposit verified");
                     }
@@ -181,13 +217,19 @@ impl SolanaWriter {
     ///
     /// Queries `getDeposit(hash)` on each configured EVM source chain endpoint
     /// until a non-zero-timestamp deposit is found.
-    async fn verify_evm_source_deposit(&self, xchain_hash_id: &[u8; 32]) -> Result<bool> {
+    async fn verify_evm_source_deposit(
+        &self,
+        xchain_hash_id: &[u8; 32],
+        expected_amount: u128,
+        expected_nonce: u64,
+    ) -> Result<bool> {
         if self.source_chain_endpoints.is_empty() {
             warn!("No EVM source chain endpoints configured — refusing to approve");
             return Ok(false);
         }
 
         let hash_fixed = FixedBytes::from(*xchain_hash_id);
+        let expected_amount_u256 = U256::from(expected_amount);
 
         for (chain_id, (rpc_url, bridge_address)) in &self.source_chain_endpoints {
             let provider = match rpc_url.parse() {
@@ -198,14 +240,31 @@ impl SolanaWriter {
 
             match contract.getDeposit(hash_fixed).call().await {
                 Ok(result) => {
-                    if !result.timestamp.is_zero() {
-                        info!(
+                    if result.timestamp.is_zero() {
+                        continue;
+                    }
+                    if result.amount != expected_amount_u256 {
+                        warn!(
                             hash = %hex::encode(xchain_hash_id),
                             source_chain = %format!("0x{}", hex::encode(chain_id)),
-                            "Deposit verified on EVM source chain"
+                            "Amount mismatch on EVM source deposit"
                         );
-                        return Ok(true);
+                        return Ok(false);
                     }
+                    if result.nonce != expected_nonce {
+                        warn!(
+                            hash = %hex::encode(xchain_hash_id),
+                            source_chain = %format!("0x{}", hex::encode(chain_id)),
+                            "Nonce mismatch on EVM source deposit"
+                        );
+                        return Ok(false);
+                    }
+                    info!(
+                        hash = %hex::encode(xchain_hash_id),
+                        source_chain = %format!("0x{}", hex::encode(chain_id)),
+                        "Deposit verified on EVM source chain"
+                    );
+                    return Ok(true);
                 }
                 Err(e) => {
                     debug!(

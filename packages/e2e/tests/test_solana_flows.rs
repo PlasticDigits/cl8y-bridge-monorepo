@@ -36,11 +36,66 @@ const EVM_CHAIN_ID: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 /// Anchor workspace default in `packages/contracts-solana` (must match `declare_id!` / deploy keypair).
 const DEFAULT_SOLANA_PROGRAM_ID: &str = "CL8YBr1dg3So1ana111111111111111111111111111";
 
+const DEFAULT_SOLANA_RPC_URL: &str = "http://localhost:8899";
+
 fn solana_rpc() -> RpcClient {
-    RpcClient::new_with_commitment(
-        "http://localhost:8899".to_string(),
-        CommitmentConfig::confirmed(),
-    )
+    let url =
+        std::env::var("SOLANA_RPC_URL").unwrap_or_else(|_| DEFAULT_SOLANA_RPC_URL.to_string());
+    RpcClient::new_with_commitment(url, CommitmentConfig::confirmed())
+}
+
+/// Request an airdrop and block until the balance is credited.
+/// Retries up to 5 times with exponential backoff — Docker validators
+/// can be slow to process the faucet transfer.
+fn airdrop_and_confirm(client: &RpcClient, pubkey: &Pubkey, lamports: u64) {
+    let max_retries: u32 = 5;
+    for attempt in 0..max_retries {
+        let balance = client.get_balance(pubkey).unwrap_or(0);
+        if balance >= lamports {
+            return;
+        }
+
+        let sig = match client.request_airdrop(pubkey, lamports) {
+            Ok(s) => s,
+            Err(e) => {
+                if attempt + 1 < max_retries {
+                    eprintln!(
+                        "airdrop attempt {}/{} failed: {} — retrying",
+                        attempt + 1,
+                        max_retries,
+                        e
+                    );
+                    thread::sleep(Duration::from_millis(500 * 2u64.pow(attempt)));
+                    continue;
+                }
+                panic!("airdrop failed after {} attempts: {}", max_retries, e);
+            }
+        };
+
+        for _ in 0..30 {
+            if let Ok(Some(status)) = client.get_signature_status(&sig) {
+                if status.is_ok() {
+                    let bal = client.get_balance(pubkey).unwrap_or(0);
+                    if bal >= lamports {
+                        return;
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+
+        if attempt + 1 < max_retries {
+            eprintln!(
+                "airdrop attempt {}/{}: confirmation timed out — retrying",
+                attempt + 1,
+                max_retries
+            );
+        }
+    }
+    panic!(
+        "airdrop of {} lamports to {} not confirmed after {} attempts",
+        lamports, pubkey, max_retries
+    );
 }
 
 fn get_program_id() -> Pubkey {
@@ -394,17 +449,16 @@ fn test_solana_airdrop() {
     let client = solana_rpc();
     let keypair = Keypair::new();
 
-    let sig = client
-        .request_airdrop(&keypair.pubkey(), 1_000_000_000)
-        .expect("Airdrop failed");
-    client
-        .confirm_transaction(&sig)
-        .expect("Confirmation failed");
+    airdrop_and_confirm(&client, &keypair.pubkey(), 1_000_000_000);
 
     let balance = client
         .get_balance(&keypair.pubkey())
         .expect("Balance check failed");
-    assert_eq!(balance, 1_000_000_000);
+    assert!(
+        balance >= 1_000_000_000,
+        "Expected >= 1 SOL, got {} lamports",
+        balance
+    );
 }
 
 #[test]
@@ -424,10 +478,7 @@ fn test_solana_bridge_program_exists() {
 fn test_solana_to_evm_deposit_flow() {
     let client = solana_rpc();
     let user = Keypair::new();
-    let sig = client
-        .request_airdrop(&user.pubkey(), 10_000_000_000)
-        .unwrap();
-    client.confirm_transaction(&sig).unwrap();
+    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
 
     let program_id = get_program_id();
     let (bridge_pda, _) = derive_bridge_pda(&program_id);
@@ -504,10 +555,7 @@ fn test_evm_to_solana_flow() {
     let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
 
     let user = Keypair::new();
-    let sig = client
-        .request_airdrop(&user.pubkey(), 10_000_000_000)
-        .unwrap();
-    client.confirm_transaction(&sig).unwrap();
+    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
 
     // Fund bridge via deposit_native (same pattern as TS integration tests)
     let fund_amount: u64 = 2_000_000_000;
@@ -624,10 +672,7 @@ fn test_solana_cancel_flow() {
     let operator = resolve_keypair_for_pubkey(&operator_pk, "operator");
 
     let canceler = Keypair::new();
-    let sig = client
-        .request_airdrop(&canceler.pubkey(), 5_000_000_000)
-        .unwrap();
-    client.confirm_transaction(&sig).unwrap();
+    airdrop_and_confirm(&client, &canceler.pubkey(), 5_000_000_000);
 
     let (canceler_entry_pda, _) = derive_canceler_entry_pda(&program_id, &canceler.pubkey());
     let add_ix = build_add_canceler_ix(
@@ -641,10 +686,7 @@ fn test_solana_cancel_flow() {
     send_tx(&client, &admin, vec![add_ix]);
 
     let user = Keypair::new();
-    let sig = client
-        .request_airdrop(&user.pubkey(), 10_000_000_000)
-        .unwrap();
-    client.confirm_transaction(&sig).unwrap();
+    airdrop_and_confirm(&client, &user.pubkey(), 10_000_000_000);
 
     let (dest_chain_pda, _) = derive_chain_pda(&program_id, &EVM_CHAIN_ID);
     let bridge_refresh =
