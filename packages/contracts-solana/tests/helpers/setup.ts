@@ -4,9 +4,12 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import * as fs from "fs";
+import * as path from "path";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
@@ -14,7 +17,7 @@ import {
   mintTo,
   getAssociatedTokenAddress,
 } from "@solana/spl-token";
-import { Cl8yBridge } from "../target/types/cl8y_bridge";
+import { Cl8yBridge } from "../../target/types/cl8y_bridge";
 
 /** Canonical token identifier for native SOL — all-zeros, matching Rust NATIVE_SOL_TOKEN. */
 export const NATIVE_SOL_TOKEN = new PublicKey(Buffer.alloc(32));
@@ -27,30 +30,86 @@ export const TOKEN_SEED = Buffer.from("token");
 export const CANCELER_SEED = Buffer.from("canceler");
 export const EXECUTED_SEED = Buffer.from("executed");
 
+const DEVNET_KEYS_DIR = path.resolve(__dirname, "../../.devnet-keys");
+
+function isLocalhost(rpcUrl: string): boolean {
+  try {
+    const host = new URL(rpcUrl).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return true;
+  }
+}
+
+const FUND_AMOUNT = 100 * LAMPORTS_PER_SOL;
+
+/**
+ * Top up the admin wallet via requestAirdrop if it needs more SOL.
+ * Only hits the faucet once per run (or not at all if already funded).
+ */
+async function ensureAdminFunded(
+  connection: anchor.web3.Connection,
+  admin: PublicKey,
+  totalNeeded: number
+): Promise<void> {
+  const balance = await connection.getBalance(admin);
+  if (balance >= totalNeeded) return;
+
+  const sig = await connection.requestAirdrop(
+    admin,
+    Math.max(totalNeeded - balance, LAMPORTS_PER_SOL)
+  );
+  await connection.confirmTransaction(sig, "confirmed");
+}
+
+/**
+ * Transfer SOL from admin to a test account. No faucet involved.
+ */
+async function transferSol(
+  connection: anchor.web3.Connection,
+  from: Keypair,
+  to: PublicKey,
+  amount: number
+): Promise<void> {
+  const balance = await connection.getBalance(to);
+  if (balance >= amount) return;
+
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: from.publicKey,
+      toPubkey: to,
+      lamports: amount - balance,
+    })
+  );
+  await sendAndConfirmTransaction(connection, tx, [from]);
+}
+
+/**
+ * Fund a test account.
+ *
+ * - **Localhost**: requestAirdrop directly (unlimited, no rate limits).
+ * - **Devnet / remote**: transfers SOL from the admin wallet. The admin
+ *   is topped up with a single requestAirdrop if needed — one faucet call
+ *   per run instead of one per account.
+ */
 export async function airdrop(
   connection: anchor.web3.Connection,
   pubkey: PublicKey,
-  amount: number = 100 * LAMPORTS_PER_SOL
+  amount: number = FUND_AMOUNT
 ): Promise<void> {
-  const minBalance = Math.min(amount, LAMPORTS_PER_SOL);
   const balance = await connection.getBalance(pubkey);
-  if (balance >= minBalance) return;
+  if (balance >= amount) return;
 
-  const MAX_RETRIES = 3;
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const sig = await connection.requestAirdrop(pubkey, amount);
-      await connection.confirmTransaction(sig, "confirmed");
-      return;
-    } catch (err: any) {
-      const is429 = err?.message?.includes("429") || err?.status === 429;
-      if (is429 && attempt < MAX_RETRIES - 1) {
-        await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
-        continue;
-      }
-      throw err;
-    }
+  if (isLocalhost(connection.rpcEndpoint)) {
+    const sig = await connection.requestAirdrop(pubkey, amount - balance);
+    await connection.confirmTransaction(sig, "confirmed");
+    return;
   }
+
+  const provider = anchor.getProvider() as anchor.AnchorProvider;
+  const admin = (provider.wallet as anchor.Wallet).payer;
+  await ensureAdminFunded(connection, admin.publicKey, amount);
+  await transferSol(connection, admin, pubkey, amount);
 }
 
 export function findBridgePda(programId: PublicKey): [PublicKey, number] {
@@ -142,9 +201,8 @@ export async function initializeBridgeIfNeeded(
   await ctx.program.methods
     .initialize(params)
     .accounts({
-      bridge: ctx.bridgePda,
+
       admin: ctx.admin.publicKey,
-      systemProgram: SystemProgram.programId,
     })
     .rpc();
 }
@@ -160,10 +218,8 @@ export async function registerChainIfNeeded(
   await ctx.program.methods
     .registerChain({ chainId, identifier })
     .accounts({
-      bridge: ctx.bridgePda,
-      chainEntry: chainPda,
+
       admin: ctx.admin.publicKey,
-      systemProgram: SystemProgram.programId,
     })
     .rpc();
   return chainPda;
@@ -175,18 +231,37 @@ export async function getNextDepositNonce(ctx: TestContext): Promise<number> {
 }
 
 /**
- * Load operator keypair from SOLANA_OPERATOR_KEYPAIR env var (JSON keypair file path),
- * falling back to a random keypair for standalone anchor test runs.
- * setup-bridge.sh sets this to the admin wallet so operator = admin on local validators,
- * ensuring E2E tests can sign as the operator with a known keypair.
+ * Load a keypair from an env-var file path, or auto-persist to .devnet-keys/
+ * on non-localhost clusters so funded wallets survive across test runs.
+ * Falls back to Keypair.generate() on localhost.
  */
-function loadOperatorKeypair(): Keypair {
-  const envPath = process.env.SOLANA_OPERATOR_KEYPAIR;
+function loadOrPersistKeypair(role: string, envVar: string): Keypair {
+  const envPath = process.env[envVar];
   if (envPath) {
     const raw = JSON.parse(fs.readFileSync(envPath, "utf-8"));
     return Keypair.fromSecretKey(Uint8Array.from(raw));
   }
-  return Keypair.generate();
+
+  const rpcUrl =
+    process.env.ANCHOR_PROVIDER_URL || "http://localhost:8899";
+
+  if (isLocalhost(rpcUrl)) {
+    return Keypair.generate();
+  }
+
+  if (!fs.existsSync(DEVNET_KEYS_DIR)) {
+    fs.mkdirSync(DEVNET_KEYS_DIR, { recursive: true });
+  }
+
+  const keyFile = path.join(DEVNET_KEYS_DIR, `${role}.json`);
+  if (fs.existsSync(keyFile)) {
+    const raw = JSON.parse(fs.readFileSync(keyFile, "utf-8"));
+    return Keypair.fromSecretKey(Uint8Array.from(raw));
+  }
+
+  const kp = Keypair.generate();
+  fs.writeFileSync(keyFile, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
 }
 
 export async function setupTest(): Promise<TestContext> {
@@ -195,13 +270,25 @@ export async function setupTest(): Promise<TestContext> {
   const program = anchor.workspace.Cl8yBridge as Program<Cl8yBridge>;
 
   const admin = provider.wallet as anchor.Wallet;
-  const operator = loadOperatorKeypair();
-  const user = Keypair.generate();
-  const canceler = Keypair.generate();
+  const operator = loadOrPersistKeypair("operator", "SOLANA_OPERATOR_KEYPAIR");
+  const user = loadOrPersistKeypair("user", "SOLANA_USER_KEYPAIR");
+  const canceler = loadOrPersistKeypair("canceler", "SOLANA_CANCELER_KEYPAIR");
 
-  await airdrop(provider.connection, operator.publicKey);
-  await airdrop(provider.connection, user.publicKey);
-  await airdrop(provider.connection, canceler.publicKey);
+  const conn = provider.connection;
+  const accounts = [operator.publicKey, user.publicKey, canceler.publicKey];
+
+  if (isLocalhost(conn.rpcEndpoint)) {
+    for (const acct of accounts) {
+      await airdrop(conn, acct);
+    }
+  } else {
+    // One faucet call to top up admin, then distribute via transfers
+    const totalNeeded = accounts.length * FUND_AMOUNT;
+    await ensureAdminFunded(conn, admin.publicKey, totalNeeded);
+    for (const acct of accounts) {
+      await transferSol(conn, admin.payer, acct, FUND_AMOUNT);
+    }
+  }
 
   const [bridgePda, bridgeBump] = findBridgePda(program.programId);
 
