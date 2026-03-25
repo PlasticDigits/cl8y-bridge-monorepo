@@ -17,5 +17,11 @@ url = "https://api.apr.dev"
 cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
+[test]
+startup_wait = 10000
+
+[test.validator]
+ledger = ".anchor/test-ledger"
+
 [scripts]
 test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.test.ts"

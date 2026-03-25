@@ -268,6 +268,7 @@ setup_solana_side() {
         SOLANA_PROGRAM_ID="$SOLANA_PROGRAM_ID" \
         SOLANA_RPC_URL="$SOLANA_RPC_URL" \
         SOLANA_KEYPAIR="$SOLANA_KEYPAIR" \
+        SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
         OPERATOR_PUBKEY="$(solana-keygen pubkey "${SOLANA_KEYPAIR}" 2>/dev/null || echo "")" \
             "$REPO_ROOT/scripts/solana/initialize-bridge.sh" \
             || log_warn "Solana bridge initialization failed (may already be initialized)"
@@ -275,6 +276,7 @@ setup_solana_side() {
         cd "$REPO_ROOT/packages/contracts-solana"
         ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
         ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+        SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
             npx ts-mocha -p ./tsconfig.json -t 60000 tests/bridge.test.ts --grep "initialize" 2>/dev/null \
             || log_warn "Solana bridge initialization via test runner failed"
         cd "$REPO_ROOT"
@@ -286,6 +288,7 @@ setup_solana_side() {
         cd "$REPO_ROOT/packages/contracts-solana"
         ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
         ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+        SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
             npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "register" 2>/dev/null \
             || log_warn "Solana chain registration via test runner failed (may need manual setup)"
         cd "$REPO_ROOT"

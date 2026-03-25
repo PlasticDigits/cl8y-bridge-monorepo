@@ -6,6 +6,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+import * as fs from "fs";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
@@ -173,13 +174,28 @@ export async function getNextDepositNonce(ctx: TestContext): Promise<number> {
   return bridge.depositNonce.toNumber() + 1;
 }
 
+/**
+ * Load operator keypair from SOLANA_OPERATOR_KEYPAIR env var (JSON keypair file path),
+ * falling back to a random keypair for standalone anchor test runs.
+ * setup-bridge.sh sets this to the admin wallet so operator = admin on local validators,
+ * ensuring E2E tests can sign as the operator with a known keypair.
+ */
+function loadOperatorKeypair(): Keypair {
+  const envPath = process.env.SOLANA_OPERATOR_KEYPAIR;
+  if (envPath) {
+    const raw = JSON.parse(fs.readFileSync(envPath, "utf-8"));
+    return Keypair.fromSecretKey(Uint8Array.from(raw));
+  }
+  return Keypair.generate();
+}
+
 export async function setupTest(): Promise<TestContext> {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Cl8yBridge as Program<Cl8yBridge>;
 
   const admin = provider.wallet as anchor.Wallet;
-  const operator = Keypair.generate();
+  const operator = loadOperatorKeypair();
   const user = Keypair.generate();
   const canceler = Keypair.generate();
 

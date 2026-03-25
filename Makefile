@@ -1,4 +1,4 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e
+.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
@@ -20,7 +20,9 @@ help:
 	@echo "  make solana-validator         - Start Solana test validator (Docker; binds 127.0.0.1)"
 	@echo "  make solana-validator-native  - Run solana-test-validator on host (loopback; safe on public IPs)"
 	@echo "  make solana-build             - Build Solana programs"
-	@echo "  make solana-test              - Run Solana program tests"
+	@echo "  make solana-test              - Run Solana program tests (Anchor-managed validator, clean state)"
+	@echo "  make solana-test-docker       - Run Solana tests against Docker validator (resets ledger first)"
+	@echo "  make solana-reset             - Recreate Docker Solana validator with fresh ledger"
 	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
 	@echo "  make solana-test-e2e          - Rust Solana on-chain tests (needs validator; optional SOLANA_PROGRAM_ID)"
 	@echo "  make solana-logs              - Follow Solana program logs"
@@ -134,13 +136,34 @@ solana-validator-native: ## Run solana-test-validator on host — loopback bind 
 	@chmod +x "$(CURDIR)/scripts/solana/run-test-validator.sh" 2>/dev/null || true
 	"$(CURDIR)/scripts/solana/run-test-validator.sh"
 
+.PHONY: solana-reset
+solana-reset: ## Recreate Solana validator container with a clean ledger
+	@echo "Recreating Solana validator with fresh ledger..."
+	docker compose rm -sf solana
+	docker compose up -d solana
+	@echo "Waiting for validator to be healthy..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if docker compose exec -T solana solana cluster-version --url http://localhost:8899 >/dev/null 2>&1; then \
+			echo "Solana validator ready."; break; \
+		fi; \
+		sleep 2; \
+	done
+
 .PHONY: solana-build
 solana-build: ## Build Solana programs
 	cd packages/contracts-solana && anchor build
 
 .PHONY: solana-test
-solana-test: ## Run Solana program tests
+solana-test: ## Run Solana program tests (stops Docker validator so Anchor manages its own clean one)
+	@if docker compose ps --status running 2>/dev/null | grep -q solana; then \
+		echo "Stopping Docker Solana validator so Anchor can manage its own clean instance..."; \
+		docker compose stop solana; \
+	fi
 	cd packages/contracts-solana && anchor test
+
+.PHONY: solana-test-docker
+solana-test-docker: solana-reset ## Run Solana tests against Docker validator (fresh ledger)
+	cd packages/contracts-solana && anchor test --skip-local-validator
 
 .PHONY: solana-deploy-local
 solana-deploy-local: ## Deploy Solana program to local validator

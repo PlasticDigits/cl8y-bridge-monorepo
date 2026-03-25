@@ -56,6 +56,7 @@ echo "Sending initialize transaction..."
 cd "$REPO_ROOT/packages/contracts-solana"
 ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
 ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
+SOLANA_OPERATOR_KEYPAIR="${SOLANA_OPERATOR_KEYPAIR:-${SOLANA_KEYPAIR}}" \
   npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "initialize"
 
 echo "Bridge initialized!"

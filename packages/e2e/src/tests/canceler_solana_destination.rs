@@ -204,6 +204,27 @@ fn resolve_keypair_for_pubkey(expected: &Pubkey, role: &str) -> eyre::Result<Key
     ))
 }
 
+/// Transfer SOL from the admin wallet to a test account.
+/// Consistent with test_solana_flows.rs — SOL distribution is a setup concern,
+/// not an RPC airdrop concern (cl8y_faucet is for test SPL tokens only).
+fn fund_from_admin(client: &RpcClient, recipient: &Pubkey, lamports: u64) -> eyre::Result<()> {
+    let balance = client.get_balance(recipient).unwrap_or(0);
+    if balance >= lamports {
+        return Ok(());
+    }
+
+    let admin = load_keypair_json(&default_wallet_path())?;
+    let ix = solana_sdk::system_instruction::transfer(&admin.pubkey(), recipient, lamports);
+    let bh = client
+        .get_latest_blockhash()
+        .map_err(|e| eyre::eyre!("blockhash: {}", e))?;
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], bh);
+    client
+        .send_and_confirm_transaction(&tx)
+        .map_err(|e| eyre::eyre!("fund_from_admin transfer: {}", e))?;
+    Ok(())
+}
+
 fn send_tx(client: &RpcClient, payer: &Keypair, ixs: Vec<Instruction>) -> eyre::Result<()> {
     let bh = client
         .get_latest_blockhash()
@@ -270,12 +291,7 @@ pub(super) async fn run_solana_destination_fraud_test(config: &E2eConfig) -> Tes
             let operator = resolve_keypair_for_pubkey(&operator_pk, "operator")?;
 
             let user = Keypair::new();
-            let sig = client
-                .request_airdrop(&user.pubkey(), 10_000_000_000)
-                .map_err(|e| eyre::eyre!("airdrop: {}", e))?;
-            client
-                .confirm_transaction(&sig)
-                .map_err(|e| eyre::eyre!("confirm airdrop: {}", e))?;
+            fund_from_admin(&client, &user.pubkey(), 10_000_000_000)?;
 
             // No matching EVM deposit for this nonce / src_account.
             let withdraw_nonce: u64 = std::time::SystemTime::now()
