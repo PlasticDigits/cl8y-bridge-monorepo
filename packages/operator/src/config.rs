@@ -128,7 +128,8 @@ pub struct SolanaConfig {
     pub program_id: String,
     pub private_key: String,
     pub poll_interval_ms: u64,
-    pub bytes4_chain_id: [u8; 4],
+    /// All registered SVM V2 chain IDs (mainnet, testnets, future SVM forks). Same RPC/program for all in phase 1.
+    pub bytes4_chain_ids: Vec<[u8; 4]>,
     pub commitment: String,
 }
 
@@ -140,12 +141,47 @@ impl fmt::Debug for SolanaConfig {
             .field("private_key", &"<redacted>")
             .field("poll_interval_ms", &self.poll_interval_ms)
             .field(
-                "bytes4_chain_id",
-                &format!("0x{}", hex::encode(self.bytes4_chain_id)),
+                "bytes4_chain_ids",
+                &self
+                    .bytes4_chain_ids
+                    .iter()
+                    .map(|b| format!("0x{}", hex::encode(b)))
+                    .collect::<Vec<_>>(),
             )
             .field("commitment", &self.commitment)
             .finish()
     }
+}
+
+/// Parse one 4-byte V2 chain id (hex or decimal).
+fn parse_one_u32_chain_bytes(s: &str) -> Result<[u8; 4]> {
+    let s = s.trim().trim_start_matches("0x");
+    let n: u32 = u32::from_str_radix(s, 16)
+        .or_else(|_| s.parse::<u32>())
+        .wrap_err_with(|| format!("invalid V2 chain id segment: {s}"))?;
+    Ok(n.to_be_bytes())
+}
+
+/// `SOLANA_V2_CHAIN_IDS` (comma-separated) or single `SOLANA_V2_CHAIN_ID`, else default dev id 5.
+fn parse_solana_v2_chain_ids_from_env() -> Result<Vec<[u8; 4]>> {
+    if let Ok(raw) = env::var("SOLANA_V2_CHAIN_IDS") {
+        let mut out = Vec::new();
+        for part in raw.split(',') {
+            let p = part.trim();
+            if p.is_empty() {
+                continue;
+            }
+            out.push(parse_one_u32_chain_bytes(p)?);
+        }
+        if out.is_empty() {
+            return Err(eyre!("SOLANA_V2_CHAIN_IDS produced no chain IDs"));
+        }
+        return Ok(out);
+    }
+    if let Ok(v) = env::var("SOLANA_V2_CHAIN_ID") {
+        return Ok(vec![parse_one_u32_chain_bytes(&v)?]);
+    }
+    Ok(vec![[0, 0, 0, 5]])
 }
 
 /// Relayer configuration
@@ -303,25 +339,15 @@ impl Config {
                 let commitment =
                     env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
 
-                let bytes4_chain_id = match env::var("SOLANA_V2_CHAIN_ID") {
-                    Ok(v) => {
-                        let parsed: u32 = if let Some(hex_str) = v.strip_prefix("0x") {
-                            u32::from_str_radix(hex_str, 16)
-                                .wrap_err("SOLANA_V2_CHAIN_ID: invalid hex")?
-                        } else {
-                            v.parse().wrap_err("SOLANA_V2_CHAIN_ID: invalid u32")?
-                        };
-                        parsed.to_be_bytes()
-                    }
-                    Err(_) => [0, 0, 0, 5],
-                };
+                let bytes4_chain_ids = parse_solana_v2_chain_ids_from_env()
+                    .wrap_err("SOLANA_V2_CHAIN_IDS / SOLANA_V2_CHAIN_ID: invalid chain id list")?;
 
                 Some(SolanaConfig {
                     rpc_url,
                     program_id,
                     private_key,
                     poll_interval_ms,
-                    bytes4_chain_id,
+                    bytes4_chain_ids,
                     commitment,
                 })
             }
@@ -419,6 +445,12 @@ impl Config {
                         chain.chain_id
                     ));
                 }
+            }
+        }
+
+        if let Some(ref sol) = self.solana {
+            if sol.bytes4_chain_ids.is_empty() {
+                return Err(eyre!("solana.bytes4_chain_ids must be non-empty"));
             }
         }
 

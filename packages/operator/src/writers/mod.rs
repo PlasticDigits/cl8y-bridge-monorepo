@@ -24,7 +24,8 @@ pub use terra::TerraWriter;
 pub struct SolanaSourceConfig {
     pub rpc_url: String,
     pub program_id: [u8; 32],
-    pub chain_id: [u8; 4],
+    /// All SVM V2 chain IDs that share this RPC + program (multi-SVM / forks).
+    pub chain_ids: Vec<[u8; 4]>,
 }
 
 /// Verify a deposit exists on Solana by querying the DepositRecord PDA.
@@ -208,7 +209,7 @@ impl WriterManager {
             SolanaSourceConfig {
                 rpc_url: sol.rpc_url.clone(),
                 program_id,
-                chain_id: sol.bytes4_chain_id,
+                chain_ids: sol.bytes4_chain_ids.clone(),
             }
         });
 

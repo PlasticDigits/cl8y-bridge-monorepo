@@ -784,7 +784,7 @@ impl EvmWriter {
 
         // Solana-source withdrawals are verified against the Solana DepositRecord PDA.
         if let Some(ref sol_config) = self.solana_source_config {
-            if src_chain_id == &sol_config.chain_id {
+            if sol_config.chain_ids.iter().any(|id| id == src_chain_id) {
                 debug!(
                     hash = %bytes32_to_hex(xchain_hash_id),
                     src_chain = %format!("0x{}", hex::encode(src_chain_id)),

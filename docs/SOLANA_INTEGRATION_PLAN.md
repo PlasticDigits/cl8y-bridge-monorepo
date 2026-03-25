@@ -556,6 +556,15 @@ WriterManager
 | `packages/operator/src/writers/mod.rs` | Register Solana writer in `WriterManager` |
 | DB migration | `solana_deposits` and `solana_blocks` tables |
 
+### 6b.1 Environment variables (operator / canceler, multi-SVM)
+
+| Variable | Description |
+|----------|-------------|
+| `SOLANA_V2_CHAIN_IDS` | Comma-separated V2 chain IDs (hex `0x...` or decimal), e.g. `5,7`. Use when more than one SVM network shares the same RPC and program id. |
+| `SOLANA_V2_CHAIN_ID` | Single id when `SOLANA_V2_CHAIN_IDS` is not set (defaults to `5` for local dev). |
+
+**SolanaWriter** submits `withdraw_approve` for: (1) pending **EVM** deposits with `dest_chain_type = 'solana'` after `getDeposit` verification; (2) pending **Terra** deposits whose `dest_chain_id` matches any configured Solana V2 id and whose `transfer_hash` column is set from the Terra wasm `xchain_hash_id` attribute, after Terra LCD `DepositHash` verification. Outbound **Solana** deposits (`solana_deposits` from `SolanaWatcher`) are not queued for Solana approvals—destination-side writers handle those.
+
 ### 6c. SolanaWatcher Design
 
 ```rust

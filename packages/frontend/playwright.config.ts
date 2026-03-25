@@ -24,9 +24,8 @@ export default defineConfig({
   globalSetup: './src/test/e2e-infra/setup.ts',
   globalTeardown: './src/test/e2e-infra/teardown.ts',
 
-  // Run tests in parallel with 20 workers
   fullyParallel: true,
-  workers: 20,
+  workers: 5,
 
   // Timeout for each test (2 minutes for on-chain interactions)
   timeout: 120_000,

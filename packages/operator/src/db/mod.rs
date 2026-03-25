@@ -223,8 +223,8 @@ pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> R
     // Note: amount is stored as NUMERIC(78,0) in the database, so we cast the text value
     let row = sqlx::query(
         r#"
-        INSERT INTO terra_deposits (tx_hash, nonce, sender, recipient, token, amount, dest_chain_id, block_height, dest_token_address)
-        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7, $8, $9)
+        INSERT INTO terra_deposits (tx_hash, nonce, sender, recipient, token, amount, dest_chain_id, block_height, dest_token_address, transfer_hash)
+        VALUES ($1, $2, $3, $4, $5, $6::NUMERIC, $7, $8, $9, $10)
         RETURNING id
         "#,
     )
@@ -237,6 +237,7 @@ pub async fn insert_terra_deposit(pool: &PgPool, deposit: &NewTerraDeposit) -> R
     .bind(deposit.dest_chain_id)
     .bind(deposit.block_height)
     .bind(&deposit.dest_token_address)
+    .bind(&deposit.transfer_hash)
     .fetch_one(pool)
     .await
     .wrap_err("Failed to insert Terra deposit")?;
@@ -249,7 +250,7 @@ pub async fn get_pending_terra_deposits(pool: &PgPool) -> Result<Vec<TerraDeposi
     // Cast amount to TEXT since sqlx can't automatically convert NUMERIC to String
     let rows = sqlx::query_as::<_, TerraDeposit>(
         r#"SELECT id, tx_hash, nonce, sender, recipient, token, amount::TEXT as amount, 
-                  dest_chain_id, block_height, status, created_at, updated_at, dest_token_address 
+                  dest_chain_id, block_height, status, created_at, updated_at, dest_token_address, transfer_hash
            FROM terra_deposits WHERE status = 'pending'"#,
     )
     .fetch_all(pool)

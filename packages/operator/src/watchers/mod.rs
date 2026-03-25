@@ -66,7 +66,10 @@ impl WatcherManager {
                 program_id,
                 db,
                 sol_cfg.poll_interval_ms,
-                sol_cfg.bytes4_chain_id,
+                *sol_cfg
+                    .bytes4_chain_ids
+                    .first()
+                    .unwrap_or(&[0x00, 0x00, 0x00, 0x05]),
             ) {
                 Ok(w) => {
                     info!(

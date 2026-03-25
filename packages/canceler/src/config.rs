@@ -1,9 +1,39 @@
 //! Canceler configuration
 
-use eyre::{eyre, Result};
+use eyre::{eyre, Result, WrapErr};
 use std::env;
 use std::fmt;
 use url::Url;
+
+fn parse_one_u32_chain_bytes(s: &str) -> Result<[u8; 4]> {
+    let s = s.trim().trim_start_matches("0x");
+    let n: u32 = u32::from_str_radix(s, 16)
+        .or_else(|_| s.parse::<u32>())
+        .wrap_err_with(|| format!("invalid V2 chain id segment: {s}"))?;
+    Ok(n.to_be_bytes())
+}
+
+/// `SOLANA_V2_CHAIN_IDS` (comma-separated) or single `SOLANA_V2_CHAIN_ID`, else default dev id 5.
+pub fn parse_solana_v2_chain_ids_from_env() -> Result<Vec<[u8; 4]>> {
+    if let Ok(raw) = env::var("SOLANA_V2_CHAIN_IDS") {
+        let mut out = Vec::new();
+        for part in raw.split(',') {
+            let p = part.trim();
+            if p.is_empty() {
+                continue;
+            }
+            out.push(parse_one_u32_chain_bytes(p)?);
+        }
+        if out.is_empty() {
+            return Err(eyre!("SOLANA_V2_CHAIN_IDS produced no chain IDs"));
+        }
+        return Ok(out);
+    }
+    if let Ok(v) = env::var("SOLANA_V2_CHAIN_ID") {
+        return Ok(vec![parse_one_u32_chain_bytes(&v)?]);
+    }
+    Ok(vec![[0x00, 0x00, 0x00, 0x05]])
+}
 
 /// Canceler configuration
 ///
@@ -107,7 +137,8 @@ pub struct SolanaConfig {
     pub keypair_path: String,
     pub commitment: String,
     pub poll_interval_ms: u64,
-    pub bytes4_chain_id: [u8; 4],
+    /// All SVM V2 chain IDs this deployment treats as Solana-family (mainnet, testnets, future SVM).
+    pub chain_ids: Vec<[u8; 4]>,
     pub enabled: bool,
 }
 
@@ -119,7 +150,10 @@ impl fmt::Debug for SolanaConfig {
             .field("keypair_path", &"<redacted>")
             .field("commitment", &self.commitment)
             .field("poll_interval_ms", &self.poll_interval_ms)
-            .field("bytes4_chain_id", &hex::encode(self.bytes4_chain_id))
+            .field(
+                "chain_ids",
+                &self.chain_ids.iter().map(hex::encode).collect::<Vec<_>>(),
+            )
             .field("enabled", &self.enabled)
             .finish()
     }
@@ -279,19 +313,7 @@ impl Config {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(2000);
 
-                let bytes4_chain_id = env::var("SOLANA_V2_CHAIN_ID")
-                    .ok()
-                    .and_then(|s| {
-                        let s = s.trim().trim_start_matches("0x");
-                        if let Ok(n) = u32::from_str_radix(s, 16) {
-                            Some(n.to_be_bytes())
-                        } else if let Ok(n) = s.parse::<u32>() {
-                            Some(n.to_be_bytes())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or([0x00, 0x00, 0x00, 0x05]);
+                let chain_ids = parse_solana_v2_chain_ids_from_env()?;
 
                 Some(SolanaConfig {
                     rpc_url,
@@ -299,7 +321,7 @@ impl Config {
                     keypair_path,
                     commitment,
                     poll_interval_ms,
-                    bytes4_chain_id,
+                    chain_ids,
                     enabled,
                 })
             } else {

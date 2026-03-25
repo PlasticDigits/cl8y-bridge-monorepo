@@ -121,7 +121,7 @@ pub struct ApprovalVerifier {
 pub struct SolanaVerifierConfig {
     pub rpc_url: String,
     pub program_id: [u8; 32],
-    pub chain_id: [u8; 4],
+    pub chain_ids: Vec<[u8; 4]>,
 }
 
 impl ApprovalVerifier {
@@ -658,9 +658,13 @@ impl ApprovalVerifier {
     /// Register Solana chain configuration for deposit verification.
     pub fn register_solana(&mut self, config: SolanaVerifierConfig) {
         info!(
-            chain_id = %hex::encode(config.chain_id),
+            chain_ids = ?config
+                .chain_ids
+                .iter()
+                .map(hex::encode)
+                .collect::<Vec<_>>(),
             rpc = %config.rpc_url,
-            "Registered Solana chain for deposit verification"
+            "Registered Solana chain(s) for deposit verification"
         );
         self.solana_config = Some(config);
     }
@@ -695,11 +699,11 @@ impl ApprovalVerifier {
         *id == self.terra_chain_id
     }
 
-    /// Check if chain ID matches the known Solana chain
+    /// Check if chain ID matches any configured SVM (Solana-family) chain
     fn is_solana_chain(&self, id: &[u8; 4]) -> bool {
         self.solana_config
             .as_ref()
-            .is_some_and(|c| *id == c.chain_id)
+            .is_some_and(|c| c.chain_ids.iter().any(|cid| cid == id))
     }
 
     /// C6: Return the count of unknown source chain events (for metrics/alerting)

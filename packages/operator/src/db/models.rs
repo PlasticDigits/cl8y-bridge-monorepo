@@ -88,6 +88,9 @@ pub struct TerraDeposit {
     pub updated_at: DateTime<Utc>,
     /// Destination token address on the target chain (from deposit event's dest_token_address)
     pub dest_token_address: Option<String>,
+    /// V2 32-byte xchain hash (from wasm `xchain_hash_id` attribute)
+    #[sqlx(default)]
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// For inserting new Terra deposits
@@ -103,6 +106,8 @@ pub struct NewTerraDeposit {
     pub block_height: i64,
     /// Destination token address on the target chain (from deposit event)
     pub dest_token_address: Option<String>,
+    /// V2 32-byte xchain hash (from wasm `xchain_hash_id` attribute)
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// Represents a withdrawal approval submitted to an EVM chain

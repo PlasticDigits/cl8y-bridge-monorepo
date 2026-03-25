@@ -244,6 +244,9 @@ export default async function setup(): Promise<void> {
       'VITE_NETWORK=local',
       'VITE_POLLING_INTERVAL=5000',
       '',
+      '# Solana local RPC (optional validator)',
+      'VITE_SOLANA_RPC_URL=http://127.0.0.1:8899',
+      '',
     ].join('\n')
 
     writeFileSync(ENV_FILE, envContent, 'utf8')
@@ -263,6 +266,9 @@ export default async function setup(): Promise<void> {
       `VITE_TERRA_BRIDGE_ADDRESS=${terraBridgeAddress}`,
       `VITE_LOCK_UNLOCK_ADDRESS=${anvilContracts.lockUnlockAddress}`,
       `VITE_BRIDGE_TOKEN_ADDRESS=${tokenAddresses.anvil.lunc}`,
+      '',
+      '# Local Solana (optional — run solana-test-validator for live RPC)',
+      'VITE_SOLANA_RPC_URL=http://127.0.0.1:8899',
       '',
     ].join('\n')
     writeFileSync(VITE_ENV_FILE, viteEnvContent, 'utf8')

@@ -335,6 +335,11 @@ impl TerraWatcher {
             // dest_token_address is emitted by the contract per the TOKEN_DEST_MAPPINGS lookup
             let dest_token_address = extract_string(&event.attributes, "dest_token_address").ok();
 
+            // V2 unified hash (same as EVM/Solana compute_xchain_hash_id) — required for Solana-destination routing
+            let transfer_hash = extract_string(&event.attributes, "xchain_hash_id")
+                .ok()
+                .and_then(|h| Self::hex_to_bytes32_opt(&h));
+
             return Ok(Some(NewTerraDeposit {
                 tx_hash: tx.txhash.clone(),
                 nonce: nonce as i64,
@@ -345,10 +350,20 @@ impl TerraWatcher {
                 dest_chain_id: dest_chain_id as i64,
                 block_height: tx.height,
                 dest_token_address,
+                transfer_hash,
             }));
         }
 
         Ok(None)
+    }
+
+    /// Parse `xchain_hash_id` wasm attribute (0x + 64 hex or 64 hex) to 32 bytes.
+    fn hex_to_bytes32_opt(s: &str) -> Option<Vec<u8>> {
+        let hex = s.strip_prefix("0x").unwrap_or(s);
+        if hex.len() != 64 {
+            return None;
+        }
+        hex::decode(hex).ok().filter(|b| b.len() == 32)
     }
 
     /// Parse V2 destination chain ID from event attribute
