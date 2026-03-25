@@ -33,6 +33,9 @@ use std::time::Duration;
 
 const EVM_CHAIN_ID: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
+/// Matches `NATIVE_SOL_TOKEN` in `cl8y-bridge` — native SOL withdrawals must use this as `dest_token`.
+const NATIVE_SOL_TOKEN_BYTES: [u8; 32] = [0u8; 32];
+
 /// Anchor workspace default in `packages/contracts-solana` (must match `declare_id!` / deploy keypair).
 const DEFAULT_SOLANA_PROGRAM_ID: &str = "CL8YBr1dg3So1ana111111111111111111111111111";
 
@@ -566,15 +569,13 @@ fn test_evm_to_solana_flow() {
         .as_secs();
     let withdraw_amount: u128 = 500_000_000;
     let src_account = [0xAAu8; 32];
-    let dest_token_kp = Keypair::new();
-    let dest_token = dest_token_kp.pubkey();
 
     let transfer_hash = multichain_rs::hash::compute_xchain_hash_id(
         &EVM_CHAIN_ID,
         &solana_chain_id,
         &src_account,
         &user.pubkey().to_bytes(),
-        &dest_token.to_bytes(),
+        &NATIVE_SOL_TOKEN_BYTES,
         withdraw_amount,
         withdraw_nonce,
     );
@@ -591,7 +592,7 @@ fn test_evm_to_solana_flow() {
         WithdrawSubmitArgs {
             src_chain: EVM_CHAIN_ID,
             src_account,
-            dest_token: dest_token.to_bytes(),
+            dest_token: NATIVE_SOL_TOKEN_BYTES,
             amount: withdraw_amount,
             nonce: withdraw_nonce,
         },

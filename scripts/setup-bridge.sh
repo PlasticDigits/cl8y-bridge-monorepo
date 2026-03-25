@@ -289,7 +289,7 @@ setup_solana_side() {
         ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
         ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
         SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
-            npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "register" 2>/dev/null \
+            npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "registers a chain" 2>/dev/null \
             || log_warn "Solana chain registration via test runner failed (may need manual setup)"
         cd "$REPO_ROOT"
     else

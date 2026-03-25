@@ -175,7 +175,7 @@ solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs loc
 	cd packages/e2e && \
 	SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
 	SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
-		cargo test --test test_solana_flows -- --ignored --nocapture
+		cargo test --test test_solana_flows -- --ignored --nocapture --test-threads=1
 
 .PHONY: solana-logs
 solana-logs: ## Follow Solana program logs
