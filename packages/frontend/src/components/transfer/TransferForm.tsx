@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
 import { Address, getAddress, type Hex } from 'viem'
@@ -21,6 +22,9 @@ import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useSolanaWallet } from '../../hooks/useSolanaWallet'
 import { useSolanaDeposit } from '../../hooks/useSolanaDeposit'
 import { fetchDepositNonce } from '../../services/solana/transaction'
+import { solanaAddressToBytes32 } from '../../services/solana/address'
+import { queryTokenDestMapping } from '../../services/terraTokenDestMapping'
+import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
@@ -222,7 +226,14 @@ export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
   const { connected: isSolanaConnected, address: solanaAddress, setShowWalletModal: setShowSolanaModal } = useSolanaWallet()
-  const { step: solanaStep, txSignature: solanaTxSig, error: _solanaError, deposit: solanaDeposit, reset: resetSolana } = useSolanaDeposit()
+  const {
+    step: solanaStep,
+    txSignature: solanaTxSig,
+    confirmedDepositNonce,
+    error: _solanaError,
+    deposit: solanaDeposit,
+    reset: resetSolana,
+  } = useSolanaDeposit()
   const { data: registryTokens, isLoading: isRegistryLoading } = useTokenRegistry()
   const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
@@ -370,6 +381,24 @@ export function TransferForm() {
     const reg = registryTokens?.find((t) => t.token === selectedTokenId)
     return reg?.evm_token_address ? bytes32ToAddress(reg.evm_token_address) : ''
   }, [destChainConfig?.type, tokenDestMappingAddr, registryTokens, selectedTokenId])
+
+  const { data: solanaDestTokenMappingQuery } = useQuery({
+    queryKey: ['solanaDepositDestToken', selectedTokenId, destChainBytes4],
+    queryFn: () => queryTokenDestMapping(selectedTokenId!, destChainBytes4!),
+    enabled: !!isSourceSolana && !!selectedTokenId && !!destChainBytes4,
+  })
+
+  /** 32-byte dest-chain token id for Solana `deposit_native` TokenMapping PDA (matches on-chain registry). */
+  const solanaTokenMappingDest32 = useMemo(() => {
+    if (!isSourceSolana) return null
+    if (solanaDestTokenMappingQuery?.hex) {
+      return hexToUint8Array(solanaDestTokenMappingQuery.hex)
+    }
+    if (destChainConfig?.type === 'evm' && destTokenAddr) {
+      return hexToUint8Array(evmAddressToBytes32(destTokenAddr as `0x${string}`))
+    }
+    return null
+  }, [isSourceSolana, solanaDestTokenMappingQuery, destChainConfig?.type, destTokenAddr])
 
   // Destination chain limits (max transfer, withdraw rate limit) cap the MAX amount
   const destChainUnifiedConfig = useMemo(
@@ -930,9 +959,24 @@ export function TransferForm() {
 
   // Solana deposit success: record transfer and navigate to status page
   useEffect(() => {
-    if (solanaStep === 'confirmed' && solanaTxSig) {
+    if (solanaStep === 'confirmed' && solanaTxSig && confirmedDepositNonce != null) {
       const frozen = frozenChainsRef.current
       if (!frozen) return
+
+      const destTokHex =
+        solanaDestTokenMappingQuery?.hex ||
+        (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : undefined)
+
+      let destAccStored = recipientAddr
+      if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+        destAccStored = evmAddressToBytes32(recipientAddr as `0x${string}`)
+      } else if (recipientAddr && !recipientAddr.startsWith('0x')) {
+        try {
+          destAccStored = solanaAddressToBytes32(recipientAddr)
+        } catch {
+          /* keep raw */
+        }
+      }
 
       recordTransfer({
         sourceChain: frozen.sourceChain,
@@ -942,16 +986,33 @@ export function TransferForm() {
         token: 'SOL',
         amount: parseAmount(amount, amountDecimals),
         status: 'confirmed',
-        srcAccount: solanaAddress || '',
+        srcAccount: solanaAddress ? solanaAddressToBytes32(solanaAddress) : '',
         txHash: solanaTxSig,
         lifecycle: 'deposited',
         sourceChainIdBytes4: sourceChainConfig?.bytes4ChainId,
+        depositNonce: confirmedDepositNonce,
+        destAccount: destAccStored,
+        destToken: destTokHex,
       })
       frozenChainsRef.current = null
       resetSolana()
       navigate(`/transfer/${solanaTxSig}`)
     }
-  }, [solanaStep, solanaTxSig, amount, amountDecimals, solanaAddress, sourceChainConfig, recordTransfer, resetSolana, navigate])
+  }, [
+    solanaStep,
+    solanaTxSig,
+    confirmedDepositNonce,
+    amount,
+    amountDecimals,
+    solanaAddress,
+    sourceChainConfig,
+    recipientAddr,
+    destTokenAddr,
+    solanaDestTokenMappingQuery,
+    recordTransfer,
+    resetSolana,
+    navigate,
+  ])
 
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
@@ -1068,8 +1129,13 @@ export function TransferForm() {
           }
         }
 
-        // Destination token as 32 bytes (use zero for native SOL bridge)
-        const destTokenBytes = new Uint8Array(32)
+        if (!solanaTokenMappingDest32) {
+          setError(
+            'Could not resolve destination token mapping for this route. Ensure the token is registered for the destination chain (Terra LCD mapping or EVM dest address).'
+          )
+          frozenChainsRef.current = null
+          return
+        }
 
         const amountLamports = BigInt(parseAmount(amount, amountDecimals))
 
@@ -1078,7 +1144,7 @@ export function TransferForm() {
           programId: solanaProgramIdStr,
           destChain: destChainBytes,
           destAccount: destAccountBytes,
-          destToken: destTokenBytes,
+          tokenMappingDestToken: solanaTokenMappingDest32,
           amount: amountLamports,
           depositNonce,
         })

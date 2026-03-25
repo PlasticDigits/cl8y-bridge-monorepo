@@ -17,15 +17,17 @@ pub struct WithdrawReenable<'info> {
     )]
     pub pending_withdraw: Account<'info, PendingWithdraw>,
 
-    pub admin: Signer<'info>,
+    /// Operator or admin (EVM: operator-only uncancel; we allow admin too for ops).
+    pub authority: Signer<'info>,
 }
 
 pub fn handler(ctx: Context<WithdrawReenable>) -> Result<()> {
     let bridge = &ctx.accounts.bridge;
     require!(!bridge.paused, BridgeError::BridgePaused);
+    let k = ctx.accounts.authority.key();
     require!(
-        ctx.accounts.admin.key() == bridge.admin,
-        BridgeError::UnauthorizedAdmin
+        k == bridge.admin || k == bridge.operator,
+        BridgeError::UnauthorizedOperator
     );
 
     let pw = &mut ctx.accounts.pending_withdraw;
@@ -33,9 +35,9 @@ pub fn handler(ctx: Context<WithdrawReenable>) -> Result<()> {
     require!(!pw.executed, BridgeError::AlreadyExecuted);
 
     pw.cancelled = false;
-    // Operator must approve again after re-enable; do not reuse stale approval timestamps.
-    pw.approved = false;
-    pw.approved_at = 0;
+    // Restart cancel window; keep approval valid (EVM/Terra uncancel semantics).
+    pw.approved = true;
+    pw.approved_at = Clock::get()?.unix_timestamp;
 
     emit!(WithdrawReenableEvent {
         transfer_hash: pw.transfer_hash,

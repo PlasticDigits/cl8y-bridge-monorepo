@@ -29,6 +29,7 @@ export const CHAIN_SEED = Buffer.from("chain");
 export const TOKEN_SEED = Buffer.from("token");
 export const CANCELER_SEED = Buffer.from("canceler");
 export const EXECUTED_SEED = Buffer.from("executed");
+export const NONCE_USED_SEED = Buffer.from("nonce_used");
 
 const DEVNET_KEYS_DIR = path.resolve(__dirname, "../../.devnet-keys");
 
@@ -172,6 +173,19 @@ export function findExecutedHashPda(
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [EXECUTED_SEED, transferHash],
+    programId
+  );
+}
+
+export function findNonceUsedPda(
+  programId: PublicKey,
+  srcChain: Buffer,
+  nonce: bigint
+): [PublicKey, number] {
+  const nonceBuf = Buffer.alloc(8);
+  nonceBuf.writeBigUInt64LE(nonce);
+  return PublicKey.findProgramAddressSync(
+    [NONCE_USED_SEED, srcChain, nonceBuf],
     programId
   );
 }

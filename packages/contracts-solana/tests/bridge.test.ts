@@ -59,7 +59,7 @@ describe("cl8y-bridge", () => {
           .setConfig({
             newAdmin: null,
             operator: null,
-            feeBps: 10001,
+            feeBps: 101,
             withdrawDelay: null,
             paused: null,
           })
@@ -293,6 +293,7 @@ describe("cl8y-bridge", () => {
             destToken: Array.from(destToken),
             mode: { lockUnlock: {} },
             decimals: 9,
+            srcDecimals: 18,
           })
           .accounts({
             bridge: ctx.bridgePda,
@@ -335,6 +336,7 @@ describe("cl8y-bridge", () => {
             destToken: Array.from(destToken),
             mode: { lockUnlock: {} },
             decimals: 9,
+            srcDecimals: 18,
           })
           .accounts({
             bridge: ctx.bridgePda,

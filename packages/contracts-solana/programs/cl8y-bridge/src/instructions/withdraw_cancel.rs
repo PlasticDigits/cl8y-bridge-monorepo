@@ -32,12 +32,20 @@ pub fn handler(ctx: Context<WithdrawCancel>) -> Result<()> {
         BridgeError::UnauthorizedCanceler
     );
 
+    let bridge = &ctx.accounts.bridge;
     let pw = &mut ctx.accounts.pending_withdraw;
     require!(!pw.executed, BridgeError::AlreadyExecuted);
     require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
+    require!(pw.approved, BridgeError::NotApproved);
+
+    let now = Clock::get()?.unix_timestamp;
+    let window_end = pw
+        .approved_at
+        .checked_add(bridge.withdraw_delay)
+        .ok_or(BridgeError::ArithmeticOverflow)?;
+    require!(now <= window_end, BridgeError::CancelWindowExpired);
 
     pw.cancelled = true;
-    pw.approved = false;
 
     emit!(WithdrawCancelEvent {
         transfer_hash: pw.transfer_hash,

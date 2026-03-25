@@ -1,7 +1,7 @@
 use crate::address_codec::pubkey_to_bytes32;
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
-use crate::state::{BridgeConfig, ChainEntry, DepositRecord};
+use crate::state::{BridgeConfig, ChainEntry, DepositRecord, TokenMapping};
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
@@ -9,7 +9,6 @@ use anchor_lang::system_program;
 pub struct DepositNativeParams {
     pub dest_chain: [u8; 4],
     pub dest_account: [u8; 32],
-    pub dest_token: [u8; 32],
     pub amount: u64,
 }
 
@@ -38,6 +37,17 @@ pub struct DepositNative<'info> {
     )]
     pub dest_chain_entry: Account<'info, ChainEntry>,
 
+    #[account(
+        seeds = [
+            TokenMapping::SEED,
+            params.dest_chain.as_ref(),
+            token_mapping.dest_token.as_ref(),
+        ],
+        bump = token_mapping.bump,
+        constraint = token_mapping.dest_chain == params.dest_chain @ BridgeError::TokenNotRegistered
+    )]
+    pub token_mapping: Account<'info, TokenMapping>,
+
     #[account(mut)]
     pub depositor: Signer<'info>,
 
@@ -48,6 +58,8 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
     let bridge = &mut ctx.accounts.bridge;
     require!(!bridge.paused, BridgeError::BridgePaused);
     require!(params.amount > 0, BridgeError::ZeroAmount);
+
+    let dest_token = ctx.accounts.token_mapping.dest_token;
 
     let fee = (params.amount as u128)
         .checked_mul(bridge.fee_bps as u128)
@@ -89,7 +101,7 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
         &params.dest_chain,
         &src_account,
         &params.dest_account,
-        &params.dest_token,
+        &dest_token,
         net_amount_u128,
         nonce,
     );
@@ -99,7 +111,7 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
     deposit.src_account = ctx.accounts.depositor.key();
     deposit.dest_chain = params.dest_chain;
     deposit.dest_account = params.dest_account;
-    deposit.token = params.dest_token;
+    deposit.token = dest_token;
     deposit.amount = net_amount_u128;
     deposit.nonce = nonce;
     deposit.timestamp = Clock::get()?.unix_timestamp;
@@ -110,7 +122,7 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
         src_account,
         dest_chain: params.dest_chain,
         dest_account: params.dest_account,
-        token: params.dest_token,
+        token: dest_token,
         amount: net_amount_u128,
         fee: fee as u128,
         nonce,

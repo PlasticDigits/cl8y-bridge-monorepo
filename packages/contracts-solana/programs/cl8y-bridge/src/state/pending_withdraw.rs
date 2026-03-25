@@ -10,6 +10,12 @@ pub struct PendingWithdraw {
     pub token: Pubkey,
     pub amount: u128,
     pub nonce: u64,
+    /// Decimals of the token on the source chain (from token mapping).
+    pub src_decimals: u8,
+    /// Decimals of the local (destination) token mint.
+    pub dest_decimals: u8,
+    /// Lamports escrowed on submit; paid to operator on approve (EVM `operatorGas`).
+    pub operator_gas: u64,
     pub approved: bool,
     pub approved_at: i64,
     pub cancelled: bool,

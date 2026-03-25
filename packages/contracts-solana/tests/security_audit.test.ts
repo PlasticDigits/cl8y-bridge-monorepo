@@ -34,11 +34,19 @@ import {
   registerChainIfNeeded,
   setupTest,
   NATIVE_SOL_TOKEN,
+  findNonceUsedPda,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
 const WITHDRAW_DELAY_SECONDS = 15;
+
+/** Remote native SOL id on EVM (matches deposit_withdraw tests). */
+const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
+EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
+/** Destination token bytes32 for deposit_native token_mapping PDA. */
+const DEPOSIT_DEST_TOKEN = Buffer.alloc(32);
+DEPOSIT_DEST_TOKEN[31] = 0xcc;
 
 function keccak256(data: Buffer): Buffer {
   const { keccak_256 } = require("js-sha3");
@@ -110,6 +118,8 @@ async function sleep(ms: number): Promise<void> {
 describe("security audit: top-20 Solana vulnerability patterns", () => {
   let ctx: TestContext;
   let evmChainPda: PublicKey;
+  let withdrawNativeTokenMappingPda: PublicKey;
+  let depositTokenMappingPda: PublicKey;
 
   before(async () => {
     ctx = await setupTest();
@@ -138,6 +148,62 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       EVM_CHAIN_ID,
       "evm_audit"
     );
+
+    [depositTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      DEPOSIT_DEST_TOKEN
+    );
+    const depInfo = await ctx.provider.connection.getAccountInfo(
+      depositTokenMappingPda
+    );
+    if (!depInfo) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(DEPOSIT_DEST_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: depositTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+
+    [withdrawNativeTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      EVM_REMOTE_NATIVE_TOKEN
+    );
+    const wInfo = await ctx.provider.connection.getAccountInfo(
+      withdrawNativeTokenMappingPda
+    );
+    if (!wInfo) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: withdrawNativeTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
   });
 
   async function registerTokenMapping(
@@ -161,6 +227,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           destToken: Array.from(destToken),
           mode,
           decimals: 9,
+          srcDecimals: 9,
         })
         .accounts({
           bridge: ctx.bridgePda,
@@ -244,7 +311,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     tokenPubkey: PublicKey,
     amount: bigint,
     nonce: bigint,
-    srcAccountByte: number
+    srcAccountByte: number,
+    remoteDestToken: Buffer,
+    tokenMappingPda: PublicKey
   ) {
     const srcAccount = Buffer.alloc(32, srcAccountByte);
     const transferHash = computeTransferHash(
@@ -265,12 +334,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       .withdrawSubmit({
         srcChain: EVM_CHAIN_ID,
         srcAccount: Array.from(srcAccount),
+        srcToken: Array.from(remoteDestToken),
         destToken: tokenPubkey,
         amount: toBn(amount),
         nonce: toBn(nonce),
+        operatorGas: new anchor.BN(0),
       })
       .accounts({
         bridge: ctx.bridgePda,
+        srcChainEntry: evmChainPda,
+        tokenMapping: tokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
         recipient: recipient.publicKey,
@@ -281,13 +354,24 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     return { transferHash, withdrawPda, executedHashPda, srcAccount };
   }
 
-  async function approveWithdraw(transferHash: Buffer, withdrawPda: PublicKey) {
+  async function approveWithdraw(
+    transferHash: Buffer,
+    withdrawPda: PublicKey,
+    nonce: bigint
+  ) {
+    const [nonceUsedPda] = findNonceUsedPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      nonce
+    );
     await ctx.program.methods
       .withdrawApprove({ transferHash: Array.from(transferHash) })
       .accounts({
         bridge: ctx.bridgePda,
         pendingWithdraw: withdrawPda,
+        nonceUsed: nonceUsedPda,
         operator: ctx.operator.publicKey,
+        systemProgram: SystemProgram.programId,
       })
       .signers([ctx.operator])
       .rpc();
@@ -361,7 +445,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9001n,
-        0xa1
+        0xa1,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       const fakeSigner = Keypair.generate();
       await airdrop(ctx.provider.connection, fakeSigner.publicKey);
@@ -371,7 +457,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
+            nonceUsed: findNonceUsedPda(
+              ctx.program.programId,
+              Buffer.from(EVM_CHAIN_ID),
+              9001n
+            )[0],
             operator: fakeSigner.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([fakeSigner])
           .rpc();
@@ -389,7 +481,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9002n,
-        0xa2
+        0xa2,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       const fakeSigner = Keypair.generate();
       await airdrop(ctx.provider.connection, fakeSigner.publicKey);
@@ -429,17 +523,23 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       const nextNonce = await getNextDepositNonce(ctx);
       const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
       try {
+        const badDestTok = Buffer.alloc(32);
+        const [badTokenMapping] = findTokenPda(
+          ctx.program.programId,
+          Buffer.from(badChainId),
+          badDestTok
+        );
         await ctx.program.methods
           .depositNative({
             destChain: badChainId,
             destAccount: Array.from(Buffer.alloc(32)),
-            destToken: Array.from(Buffer.alloc(32)),
             amount: new anchor.BN(LAMPORTS_PER_SOL),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: fakePda,
+            tokenMapping: badTokenMapping,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -458,7 +558,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         200_000n,
         9003n,
-        0xa3
+        0xa3,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       const fakeHash = computeTransferHash(
         EVM_CHAIN_ID,
@@ -479,7 +581,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: wrongWithdrawPda,
+            nonceUsed: findNonceUsedPda(
+              ctx.program.programId,
+              Buffer.from(EVM_CHAIN_ID),
+              9003n
+            )[0],
             operator: ctx.operator.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.operator])
           .rpc();
@@ -571,13 +679,15 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         amount,
         nonce,
-        0xa4
+        0xa4,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       transferHash = result.transferHash;
       withdrawPda = result.withdrawPda;
       executedHashPda = result.executedHashPda;
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const bridgeInfo = await ctx.provider.connection.getAccountInfo(
         ctx.bridgePda
@@ -632,12 +742,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
             amount: toBn(amount),
             nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: replayWithdrawPda,
             executedHashCheck: replayExecutedPda,
             recipient: ctx.user.publicKey,
@@ -684,13 +798,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32, 0xbb)),
-            destToken: Array.from(Buffer.alloc(32, 0xcc)),
             amount: toBn(largeAmount),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: richUser.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -706,12 +820,12 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       }
     });
 
-    it("fee calculation doesn't overflow for max feeBps (10000) * large amount", async () => {
+    it("fee calculation doesn't overflow for max feeBps (100) * large amount", async () => {
       await ctx.program.methods
         .setConfig({
           newAdmin: null,
           operator: null,
-          feeBps: 10000,
+          feeBps: 100,
           withdrawDelay: null,
           paused: null,
         })
@@ -719,26 +833,28 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .rpc();
 
       const amount = 5_000_000_000n;
+      const fee = (amount * 100n) / 10000n;
+      const net = amount - fee;
       const nextNonce = await getNextDepositNonce(ctx);
       const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
       await ctx.program.methods
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(Buffer.alloc(32, 0xbb)),
-          destToken: Array.from(Buffer.alloc(32, 0xcc)),
           amount: toBn(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])
         .rpc();
       const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-      expect(Number(deposit.amount)).to.equal(0);
+      expect(Number(deposit.amount)).to.equal(Number(net));
 
       await ctx.program.methods
         .setConfig({
@@ -760,9 +876,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     it("user A cannot execute user B's approved withdrawal", async () => {
       const destToken = NATIVE_SOL_TOKEN;
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, destToken, 100_000n, 9010n, 0xb1);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          destToken,
+          100_000n,
+          9010n,
+          0xb1,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9010n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const attacker = Keypair.generate();
       await airdrop(ctx.provider.connection, attacker.publicKey);
@@ -827,12 +951,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
             amount: toBn(50_000n),
             nonce: toBn(9011n),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
             recipient: attacker.publicKey,
@@ -889,13 +1017,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32)),
-            destToken: Array.from(Buffer.alloc(32)),
             amount: new anchor.BN(LAMPORTS_PER_SOL),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -983,12 +1111,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
             amount: toBn(100_000n),
             nonce: toBn(9020n),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
             recipient: ctx.user.publicKey,
@@ -1005,9 +1137,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     it("blocks withdraw_execute_native when paused", async () => {
       const destToken = NATIVE_SOL_TOKEN;
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, destToken, 100_000n, 9021n, 0xe3);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          destToken,
+          100_000n,
+          9021n,
+          0xe3,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9021n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .setConfig({
@@ -1068,9 +1208,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .rpc();
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, fixture.mint, net, 9022n, 0xe5);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          9022n,
+          0xe5,
+          fixture.destToken,
+          fixture.tokenPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9022n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .setConfig({
@@ -1214,11 +1362,23 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
   describe("13. rent exemption safety", () => {
     it("native withdrawal fails when bridge balance would drop below rent-exempt", async () => {
       const destToken = NATIVE_SOL_TOKEN;
-      const hugeAmount = 999_999_999_999n;
+      const bridgeLamports = await ctx.provider.connection.getBalance(
+        ctx.bridgePda
+      );
+      // 18→9 decimal normalize divides by 1e9; request more lamports than bridge holds.
+      const hugeAmount = (BigInt(bridgeLamports) + 100n) * 1_000_000_000n;
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, destToken, hugeAmount, 9030n, 0xc1);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          destToken,
+          hugeAmount,
+          9030n,
+          0xc1,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9030n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -1237,7 +1397,8 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         const msg = err.toString();
         expect(
           msg.includes("InsufficientBridgeBalance") ||
-            msg.includes("custom program error")
+            msg.includes("Bridge balance would fall below") ||
+            msg.includes("6023")
         ).to.be.true;
       }
     });
@@ -1253,8 +1414,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       const amount = 200_000n;
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, destToken, amount, 9040n, 0xc2);
-      await approveWithdraw(transferHash, withdrawPda);
+        await submitWithdraw(
+          ctx.user,
+          destToken,
+          amount,
+          9040n,
+          0xc2,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9040n);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -1292,17 +1461,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
-          admin: ctx.admin.publicKey,
+          authority: ctx.admin.publicKey,
         })
+        .signers([ctx.admin])
         .rpc();
 
       pw = await ctx.program.account.pendingWithdraw.fetch(withdrawPda);
       expect(pw.cancelled).to.be.false;
-      expect(pw.approved).to.be.false;
+      expect(pw.approved).to.be.true;
 
-      await approveWithdraw(transferHash, withdrawPda);
-
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const bridgeInfo = await ctx.provider.connection.getAccountInfo(
         ctx.bridgePda
@@ -1352,7 +1520,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9050n,
-        0xc3
+        0xc3,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
 
       const newOperator = Keypair.generate();
@@ -1374,7 +1544,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
+            nonceUsed: findNonceUsedPda(
+              ctx.program.programId,
+              Buffer.from(EVM_CHAIN_ID),
+              9050n
+            )[0],
             operator: ctx.operator.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.operator])
           .rpc();
@@ -1388,7 +1564,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
+          nonceUsed: findNonceUsedPda(
+            ctx.program.programId,
+            Buffer.from(EVM_CHAIN_ID),
+            9050n
+          )[0],
           operator: newOperator.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([newOperator])
         .rpc();
@@ -1416,7 +1598,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
     it("deposit_native stores hash matching TS computeTransferHash", async () => {
       const amount = 2 * LAMPORTS_PER_SOL;
       const destAccount = Buffer.alloc(32, 0xdd);
-      const destToken = Buffer.alloc(32, 0xee);
       const fee = feeFor(BigInt(amount));
       const netAmount = BigInt(amount) - fee;
 
@@ -1427,13 +1608,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(destAccount),
-          destToken: Array.from(destToken),
           amount: new anchor.BN(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1446,7 +1627,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         EVM_CHAIN_ID,
         ctx.user.publicKey.toBuffer(),
         destAccount,
-        destToken,
+        DEPOSIT_DEST_TOKEN,
         netAmount,
         BigInt(nextNonce)
       );
@@ -1647,21 +1828,27 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         tokenA,
         100_000n,
         9060n,
-        0xd1
+        0xd1,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       const resultB = await submitWithdraw(
         userB,
         tokenB,
         200_000n,
         9061n,
-        0xd2
+        0xd2,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
       const resultC = await submitWithdraw(
         userC,
         tokenC,
         300_000n,
         9062n,
-        0xd3
+        0xd3,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
 
       expect(resultA.transferHash.toString("hex")).to.not.equal(
@@ -1671,11 +1858,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         resultC.transferHash.toString("hex")
       );
 
-      await approveWithdraw(resultA.transferHash, resultA.withdrawPda);
-      await approveWithdraw(resultB.transferHash, resultB.withdrawPda);
-      await approveWithdraw(resultC.transferHash, resultC.withdrawPda);
+      await approveWithdraw(resultA.transferHash, resultA.withdrawPda, 9060n);
+      await approveWithdraw(resultB.transferHash, resultB.withdrawPda, 9061n);
+      await approveWithdraw(resultC.transferHash, resultC.withdrawPda, 9062n);
 
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const balABefore = await ctx.provider.connection.getBalance(
         userA.publicKey
@@ -1870,9 +2057,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       );
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, fixture.mint, net, 9070n, 0xf7);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          9070n,
+          0xf7,
+          fixture.destToken,
+          fixture.tokenPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9070n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecute()
@@ -1954,6 +2149,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             destToken: Array.from(destToken),
             mode: { lockUnlock: {} },
             decimals: 9,
+            srcDecimals: 9,
           })
           .accounts({
             bridge: ctx.bridgePda,
@@ -2026,9 +2222,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9080n,
-        0xc5
+        0xc5,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, 9080n);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -2049,13 +2247,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
-            admin: rogue.publicKey,
+            authority: rogue.publicKey,
           })
           .signers([rogue])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
-        expect(err.toString()).to.contain("UnauthorizedAdmin");
+        expect(err.toString()).to.contain("UnauthorizedOperator");
       }
     });
   });
@@ -2194,9 +2392,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       const remainingBalance = BigInt(userTokenAfterDeposit.amount);
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, fixture.mint, net, 9090n, 0xfb);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          9090n,
+          0xfb,
+          fixture.destToken,
+          fixture.tokenPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9090n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecute()
@@ -2259,9 +2465,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .rpc();
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, fixture.mint, net, 9200n, 0xfc);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          9200n,
+          0xfc,
+          fixture.destToken,
+          fixture.tokenPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9200n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -2285,9 +2499,17 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       const fixture = await createSplFixture({ lockUnlock: {} }, 0xfd);
 
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, NATIVE_SOL_TOKEN, 100_000n, 9201n, 0xfd);
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          9201n,
+          0xfd,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9201n);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -2314,8 +2536,16 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
 
     it("hash re-verification at execution time prevents tampered PW data", async () => {
       const { transferHash, withdrawPda, executedHashPda } =
-        await submitWithdraw(ctx.user, NATIVE_SOL_TOKEN, 100_000n, 9202n, 0xfe);
-      await approveWithdraw(transferHash, withdrawPda);
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          9202n,
+          0xfe,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
+      await approveWithdraw(transferHash, withdrawPda, 9202n);
 
       const pw = await ctx.program.account.pendingWithdraw.fetch(withdrawPda);
       const recomputedHash = computeTransferHash(
@@ -2346,9 +2576,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9100n,
-        0xc6
+        0xc6,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, 9100n);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -2385,9 +2617,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9101n,
-        0xc7
+        0xc7,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, 9101n);
 
       try {
         await ctx.program.methods
@@ -2395,8 +2629,9 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
-            admin: ctx.admin.publicKey,
+            authority: ctx.admin.publicKey,
           })
+          .signers([ctx.admin])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -2412,23 +2647,26 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9102n,
-        0xc8
+        0xc8,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
 
-      await ctx.program.methods
-        .withdrawCancel()
-        .accounts({
-          bridge: ctx.bridgePda,
-          pendingWithdraw: withdrawPda,
-          cancelerEntry: cancelerPda,
-          canceler: ctx.canceler.publicKey,
-        })
-        .signers([ctx.canceler])
-        .rpc();
-
-      const pw = await ctx.program.account.pendingWithdraw.fetch(withdrawPda);
-      expect(pw.cancelled).to.be.true;
-      expect(pw.approved).to.be.false;
+      try {
+        await ctx.program.methods
+          .withdrawCancel()
+          .accounts({
+            bridge: ctx.bridgePda,
+            pendingWithdraw: withdrawPda,
+            cancelerEntry: cancelerPda,
+            canceler: ctx.canceler.publicKey,
+          })
+          .signers([ctx.canceler])
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.toString()).to.contain("NotApproved");
+      }
     });
 
     it("cannot execute an unapproved withdrawal even after delay", async () => {
@@ -2438,9 +2676,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         destToken,
         100_000n,
         9103n,
-        0xc9
+        0xc9,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -2474,13 +2714,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32, i + 1)),
-            destToken: Array.from(Buffer.alloc(32, i + 1)),
             amount: new anchor.BN(LAMPORTS_PER_SOL / 10),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -2505,13 +2745,13 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32, 0x10 + i)),
-            destToken: Array.from(Buffer.alloc(32, 0x20 + i)),
             amount: new anchor.BN(LAMPORTS_PER_SOL / 10),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })

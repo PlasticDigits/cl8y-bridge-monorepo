@@ -1,5 +1,5 @@
 use crate::error::BridgeError;
-use crate::state::{BridgeConfig, PendingWithdraw};
+use crate::state::{BridgeConfig, NonceUsed, PendingWithdraw};
 use anchor_lang::prelude::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -11,6 +11,7 @@ pub struct WithdrawApproveParams {
 #[instruction(params: WithdrawApproveParams)]
 pub struct WithdrawApprove<'info> {
     #[account(
+        mut,
         seeds = [BridgeConfig::SEED],
         bump = bridge.bump,
     )]
@@ -23,7 +24,23 @@ pub struct WithdrawApprove<'info> {
     )]
     pub pending_withdraw: Account<'info, PendingWithdraw>,
 
+    #[account(
+        init,
+        payer = operator,
+        space = 8 + NonceUsed::INIT_SPACE,
+        seeds = [
+            NonceUsed::SEED,
+            pending_withdraw.src_chain.as_ref(),
+            &pending_withdraw.nonce.to_le_bytes(),
+        ],
+        bump,
+    )]
+    pub nonce_used: Account<'info, NonceUsed>,
+
+    #[account(mut)]
     pub operator: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<WithdrawApprove>, params: WithdrawApproveParams) -> Result<()> {
@@ -38,8 +55,31 @@ pub fn handler(ctx: Context<WithdrawApprove>, params: WithdrawApproveParams) -> 
     require!(!pw.approved, BridgeError::AlreadyApproved);
     require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
 
+    // Forward operator gas (EVM: msg.sender.call{value: operatorGas})
+    let gas = pw.operator_gas;
+    if gas > 0 {
+        let bridge_info = ctx.accounts.bridge.to_account_info();
+        let operator_info = ctx.accounts.operator.to_account_info();
+        let rent_exempt = Rent::get()?.minimum_balance(8 + BridgeConfig::INIT_SPACE);
+        let available = bridge_info.lamports().saturating_sub(rent_exempt);
+        require!(
+            available >= gas,
+            BridgeError::OperatorGasTransferFailed
+        );
+        **bridge_info.try_borrow_mut_lamports()? = bridge_info
+            .lamports()
+            .checked_sub(gas)
+            .ok_or(BridgeError::ArithmeticOverflow)?;
+        **operator_info.try_borrow_mut_lamports()? = operator_info
+            .lamports()
+            .checked_add(gas)
+            .ok_or(BridgeError::ArithmeticOverflow)?;
+    }
+
     pw.approved = true;
     pw.approved_at = Clock::get()?.unix_timestamp;
+
+    ctx.accounts.nonce_used.bump = ctx.bumps.nonce_used;
 
     emit!(WithdrawApproveEvent {
         transfer_hash: params.transfer_hash,

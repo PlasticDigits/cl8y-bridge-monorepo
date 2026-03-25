@@ -34,6 +34,8 @@ import {
 } from '../services/terra/withdrawSubmit'
 import { isTerraContractError, TERRA_TX_ERROR } from '../services/terra/transaction'
 import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
+import { solanaAddressToBytes32 } from '../services/solana/address'
+import { bytes32HexToPublicKey } from '../services/solana/transaction'
 import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
@@ -290,6 +292,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         let srcAccountHex = (transfer.srcAccount || '0x' + '0'.repeat(64)) as Hex
         if (transfer.srcAccount?.startsWith('terra1')) {
           srcAccountHex = terraAddressToBytes32(transfer.srcAccount)
+        } else if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
+          try {
+            srcAccountHex = solanaAddressToBytes32(transfer.srcAccount)
+          } catch {
+            /* leave as-is */
+          }
         }
 
         // V2 fix: resolve the correct destination token
@@ -361,10 +369,19 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           }
         }
 
-        // srcAccount: should be the EVM depositor address as bytes32
-        const srcAccountBytes32 = transfer.srcAccount
-          ? hexToUint8Array(transfer.srcAccount)
-          : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
+        // srcAccount: EVM depositor as bytes32, or Solana base58 → bytes32 for solana→terra
+        let srcAccountBytes32: Uint8Array
+        if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
+          try {
+            srcAccountBytes32 = hexToUint8Array(solanaAddressToBytes32(transfer.srcAccount))
+          } catch {
+            srcAccountBytes32 = evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
+          }
+        } else {
+          srcAccountBytes32 = transfer.srcAccount
+            ? hexToUint8Array(transfer.srcAccount)
+            : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
+        }
 
         // Resolve the Terra denom for the token parameter.
         // The Terra contract expects a native denom (e.g. "uluna") or CW20 address (terra1...),
@@ -478,11 +495,67 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
-        const srcAccountBytes32 = transfer.srcAccount
-          ? hexToUint8Array(transfer.srcAccount)
-          : new Uint8Array(32)
+        let srcAccountBytes32Sol: Uint8Array
+        if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
+          try {
+            srcAccountBytes32Sol = hexToUint8Array(solanaAddressToBytes32(transfer.srcAccount))
+          } catch {
+            srcAccountBytes32Sol = new Uint8Array(32)
+          }
+        } else {
+          srcAccountBytes32Sol = transfer.srcAccount
+            ? hexToUint8Array(transfer.srcAccount)
+            : new Uint8Array(32)
+        }
 
-        const destToken = transfer.destToken || '11111111111111111111111111111111'
+        let destTokenHex: string | undefined = transfer.destToken
+        if (!destTokenHex || destTokenHex === '0x' + '0'.repeat(64)) {
+          const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
+          const chains = BRIDGE_CHAINS[tier]
+          const srcCfg = chains[transfer.sourceChain]
+          if (srcCfg?.type === 'evm' && srcCfg.bridgeAddress && transfer.token?.startsWith('0x') && destChainConfig.bytes4ChainId) {
+            try {
+              const srcClient = getEvmClient(srcCfg)
+              const dt = await getDestToken(
+                srcClient,
+                srcCfg.bridgeAddress as Address,
+                transfer.token as Address,
+                destChainConfig.bytes4ChainId as Hex
+              )
+              if (dt) destTokenHex = dt
+            } catch (e) {
+              console.warn(`${LOG} getDestToken (Solana dest) failed:`, e)
+            }
+          }
+        }
+        if (!destTokenHex || destTokenHex === '0x' + '0'.repeat(64)) {
+          const msg = 'Missing Solana destination mint (destToken) for withdrawSubmit'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        let srcTokenBytes = new Uint8Array(32)
+        const tok = transfer.token || ''
+        if (tok.startsWith('0x') && tok.length === 42) {
+          srcTokenBytes = new Uint8Array(evmAddressToBytes32Array(tok))
+        } else if (tok.startsWith('0x') && tok.length === 66) {
+          srcTokenBytes = new Uint8Array(hexToUint8Array(tok))
+        } else if (tok.startsWith('0x')) {
+          srcTokenBytes = new Uint8Array(evmAddressToBytes32Array(tok as Address))
+        } else {
+          const msg =
+            'Solana withdrawSubmit requires a 32-byte or 20-byte hex token in the transfer record (EVM source)'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        const destMintPk = bytes32HexToPublicKey(destTokenHex)
 
         console.info(
           `${LOG} Submitting Solana withdrawSubmit: program=${destChainConfig.programId}, ` +
@@ -493,13 +566,15 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           rpcUrl: destChainConfig.rpcUrl,
           programId: destChainConfig.programId || destChainConfig.bridgeAddress,
           srcChain: srcChainBytes4Data,
-          srcAccount: srcAccountBytes32,
-          destToken,
+          srcAccount: srcAccountBytes32Sol,
+          srcToken: srcTokenBytes,
+          destTokenMint: destMintPk.toBase58(),
           amount: BigInt(transfer.amount || '0'),
           nonce: BigInt(transfer.depositNonce || 0),
           bridgeChainId: destChainConfig.bytes4ChainId
             ? hexToUint8Array(destChainConfig.bytes4ChainId)
             : new Uint8Array([0, 0, 0, 5]),
+          operatorGas: 0n,
         })
 
         if (solanaTxSig) {

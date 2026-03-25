@@ -7,9 +7,18 @@ import {
 } from "@solana/web3.js";
 import { keccak256 } from "viem";
 import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
+import { hexToUint8Array } from "../terra/withdrawSubmit";
+
+const BRIDGE_SEED = Buffer.from("bridge");
+const DEPOSIT_SEED = Buffer.from("deposit");
+const CHAIN_SEED = Buffer.from("chain");
+const TOKEN_MAPPING_SEED = Buffer.from("token");
+const WITHDRAW_SEED = Buffer.from("withdraw");
+const EXECUTED_SEED = Buffer.from("executed");
 
 /**
  * Build a deposit_native instruction for the Solana bridge program.
+ * Accounts: bridge, deposit_record, dest_chain_entry, token_mapping, depositor, system_program.
  */
 export async function buildDepositNativeInstruction(
   programId: PublicKey,
@@ -17,34 +26,40 @@ export async function buildDepositNativeInstruction(
   amount: bigint,
   destChain: Uint8Array,
   destAccount: Uint8Array,
-  destToken: Uint8Array,
+  /** 32-byte destination-chain token id (must match on-chain TokenMapping.dest_token). */
+  tokenMappingDestToken: Uint8Array,
   depositNonce: number,
 ): Promise<TransactionInstruction> {
-  const [bridgePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("bridge")],
-    programId
-  );
+  if (tokenMappingDestToken.length !== 32) {
+    throw new Error("tokenMappingDestToken must be 32 bytes");
+  }
+
+  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
 
   const nonceBuffer = Buffer.alloc(8);
   nonceBuffer.writeBigUInt64LE(BigInt(depositNonce + 1));
   const [depositPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("deposit"), nonceBuffer],
-    programId
+    [DEPOSIT_SEED, nonceBuffer],
+    programId,
   );
 
   const [destChainPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("chain"), Buffer.from(destChain)],
-    programId
+    [CHAIN_SEED, Buffer.from(destChain)],
+    programId,
+  );
+
+  const [tokenMappingPda] = PublicKey.findProgramAddressSync(
+    [TOKEN_MAPPING_SEED, Buffer.from(destChain), Buffer.from(tokenMappingDestToken)],
+    programId,
   );
 
   const discriminator = anchorDiscriminator("deposit_native");
 
-  const data = Buffer.alloc(8 + 4 + 32 + 32 + 8);
+  const data = Buffer.alloc(8 + 4 + 32 + 8);
   discriminator.copy(data, 0);
   Buffer.from(destChain).copy(data, 8);
   Buffer.from(destAccount).copy(data, 12);
-  Buffer.from(destToken).copy(data, 44);
-  data.writeBigUInt64LE(amount, 76);
+  data.writeBigUInt64LE(amount, 44);
 
   return new TransactionInstruction({
     programId,
@@ -52,6 +67,7 @@ export async function buildDepositNativeInstruction(
       { pubkey: bridgePda, isSigner: false, isWritable: true },
       { pubkey: depositPda, isSigner: false, isWritable: true },
       { pubkey: destChainPda, isSigner: false, isWritable: false },
+      { pubkey: tokenMappingPda, isSigner: false, isWritable: false },
       { pubkey: depositor, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
@@ -102,7 +118,7 @@ export async function fetchDepositNonce(
   programId: PublicKey,
 ): Promise<number> {
   const [bridgePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("bridge")],
+    [BRIDGE_SEED],
     programId,
   );
 
@@ -111,7 +127,6 @@ export async function fetchDepositNonce(
     throw new Error("Bridge PDA not found — is the program deployed and initialized?");
   }
 
-  // Anchor discriminator (8) + admin (32) + operator (32) + fee_bps (2) + withdraw_delay (8) = 82
   const nonceOffset = 8 + 32 + 32 + 2 + 8;
   if (account.data.length < nonceOffset + 8) {
     throw new Error("Bridge PDA data too short to contain deposit_nonce");
@@ -138,22 +153,12 @@ export function computeTransferHash(
 ): Uint8Array {
   const buf = new Uint8Array(224);
 
-  // srcChain: 4 bytes left-aligned in 32-byte slot
   buf.set(srcChain.slice(0, 4), 0);
-
-  // destChain: 4 bytes left-aligned in 32-byte slot
   buf.set(destChain.slice(0, 4), 32);
-
-  // srcAccount: 32 bytes
   buf.set(srcAccount.slice(0, 32), 64);
-
-  // destAccount: 32 bytes
   buf.set(destAccount.slice(0, 32), 96);
-
-  // token: 32 bytes
   buf.set(token.slice(0, 32), 128);
 
-  // amount: u128 big-endian in upper 16 bytes of 32-byte slot (bytes 176..192)
   const amountBytes = new Uint8Array(16);
   let temp = amount;
   for (let i = 15; i >= 0; i--) {
@@ -162,7 +167,6 @@ export function computeTransferHash(
   }
   buf.set(amountBytes, 176);
 
-  // nonce: u64 big-endian in upper 8 bytes of 32-byte slot (bytes 216..224)
   const nonceBytes = new Uint8Array(8);
   temp = nonce;
   for (let i = 7; i >= 0; i--) {
@@ -187,41 +191,55 @@ export function buildWithdrawSubmitInstruction(
   recipient: PublicKey,
   srcChain: Uint8Array,
   srcAccount: Uint8Array,
-  destToken: PublicKey,
+  /** Remote source token id (bytes32), must match TokenMapping PDA seeds. */
+  srcToken: Uint8Array,
+  destTokenMint: PublicKey,
   amount: bigint,
   nonce: bigint,
   bridgeChainId: Uint8Array,
+  operatorGas = 0n,
 ): TransactionInstruction {
+  if (srcToken.length !== 32) {
+    throw new Error("srcToken must be 32 bytes");
+  }
+
   const transferHash = computeTransferHash(
     srcChain,
     bridgeChainId,
     srcAccount,
     recipient.toBytes(),
-    destToken.toBytes(),
+    destTokenMint.toBytes(),
     amount,
     nonce,
   );
 
-  const [bridgePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("bridge")],
+  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+
+  const [srcChainEntryPda] = PublicKey.findProgramAddressSync(
+    [CHAIN_SEED, Buffer.from(srcChain)],
+    programId,
+  );
+
+  const [tokenMappingPda] = PublicKey.findProgramAddressSync(
+    [TOKEN_MAPPING_SEED, Buffer.from(srcChain), Buffer.from(srcToken)],
     programId,
   );
 
   const [pendingWithdrawPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("withdraw"), Buffer.from(transferHash)],
+    [WITHDRAW_SEED, Buffer.from(transferHash)],
     programId,
   );
 
   const [executedHashCheck] = PublicKey.findProgramAddressSync(
-    [Buffer.from("executed"), Buffer.from(transferHash)],
+    [EXECUTED_SEED, Buffer.from(transferHash)],
     programId,
   );
 
   const discriminator = anchorDiscriminator("withdraw_submit");
 
-  // WithdrawSubmitParams Borsh serialization:
-  // src_chain [u8;4] + src_account [u8;32] + dest_token Pubkey(32) + amount u128(16) + nonce u64(8)
-  const paramsSize = 4 + 32 + 32 + 16 + 8;
+  // WithdrawSubmitParams: src_chain(4) + src_account(32) + src_token(32) + dest_token(32)
+  // + amount(u128 le) + nonce(u64 le) + operator_gas(u64 le)
+  const paramsSize = 4 + 32 + 32 + 32 + 16 + 8 + 8;
   const data = Buffer.alloc(8 + paramsSize);
   let offset = 0;
 
@@ -234,10 +252,12 @@ export function buildWithdrawSubmitInstruction(
   Buffer.from(srcAccount).copy(data, offset);
   offset += 32;
 
-  destToken.toBuffer().copy(data, offset);
+  Buffer.from(srcToken).copy(data, offset);
   offset += 32;
 
-  // amount as u128 LE
+  destTokenMint.toBuffer().copy(data, offset);
+  offset += 32;
+
   let amt = amount;
   for (let i = 0; i < 16; i++) {
     data[offset + i] = Number(amt & 0xffn);
@@ -245,17 +265,25 @@ export function buildWithdrawSubmitInstruction(
   }
   offset += 16;
 
-  // nonce as u64 LE
   let n = nonce;
   for (let i = 0; i < 8; i++) {
     data[offset + i] = Number(n & 0xffn);
     n >>= 8n;
   }
+  offset += 8;
+
+  let og = operatorGas;
+  for (let i = 0; i < 8; i++) {
+    data[offset + i] = Number(og & 0xffn);
+    og >>= 8n;
+  }
 
   return new TransactionInstruction({
     programId,
     keys: [
-      { pubkey: bridgePda, isSigner: false, isWritable: false },
+      { pubkey: bridgePda, isSigner: false, isWritable: true },
+      { pubkey: srcChainEntryPda, isSigner: false, isWritable: false },
+      { pubkey: tokenMappingPda, isSigner: false, isWritable: false },
       { pubkey: pendingWithdrawPda, isSigner: false, isWritable: true },
       { pubkey: executedHashCheck, isSigner: false, isWritable: false },
       { pubkey: recipient, isSigner: true, isWritable: true },
@@ -263,4 +291,13 @@ export function buildWithdrawSubmitInstruction(
     ],
     data,
   });
+}
+
+/** Parse a 0x-prefixed 32-byte hex string into a Solana mint/recipient public key. */
+export function bytes32HexToPublicKey(hex: string): PublicKey {
+  const bytes = hexToUint8Array(hex);
+  if (bytes.length !== 32) {
+    throw new Error("Expected 32-byte hex for Solana pubkey");
+  }
+  return new PublicKey(bytes);
 }

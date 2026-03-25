@@ -1,25 +1,48 @@
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
-use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw};
+use crate::state::{BridgeConfig, ChainEntry, ExecutedHash, PendingWithdraw, TokenMapping};
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawSubmitParams {
     pub src_chain: [u8; 4],
     pub src_account: [u8; 32],
+    /// Remote token identifier (bytes32); must match registered [`TokenMapping::dest_token`].
+    pub src_token: [u8; 32],
     pub dest_token: Pubkey,
     pub amount: u128,
     pub nonce: u64,
+    /// Lamports escrowed for the operator; paid on approve (EVM `operatorGas`).
+    pub operator_gas: u64,
 }
 
 #[derive(Accounts)]
 #[instruction(params: WithdrawSubmitParams)]
 pub struct WithdrawSubmit<'info> {
     #[account(
+        mut,
         seeds = [BridgeConfig::SEED],
         bump = bridge.bump,
     )]
     pub bridge: Account<'info, BridgeConfig>,
+
+    #[account(
+        seeds = [ChainEntry::SEED, params.src_chain.as_ref()],
+        bump = src_chain_entry.bump,
+    )]
+    pub src_chain_entry: Account<'info, ChainEntry>,
+
+    #[account(
+        seeds = [
+            TokenMapping::SEED,
+            params.src_chain.as_ref(),
+            params.src_token.as_ref(),
+        ],
+        bump = token_mapping.bump,
+        constraint = token_mapping.local_mint == params.dest_token @ BridgeError::TokenMappingMismatch
+    )]
+    pub token_mapping: Account<'info, TokenMapping>,
 
     #[account(
         init,
@@ -64,6 +87,10 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
     let bridge = &ctx.accounts.bridge;
     require!(!bridge.paused, BridgeError::BridgePaused);
     require!(params.amount > 0, BridgeError::ZeroAmount);
+    require!(
+        params.src_chain != bridge.chain_id,
+        BridgeError::SameChainTransfer
+    );
 
     // Reject if this transfer hash was already executed (close+reinit protection)
     require!(
@@ -84,6 +111,20 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
         params.nonce,
     );
 
+    let tm = &ctx.accounts.token_mapping;
+    if params.operator_gas > 0 {
+        system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.recipient.to_account_info(),
+                    to: ctx.accounts.bridge.to_account_info(),
+                },
+            ),
+            params.operator_gas,
+        )?;
+    }
+
     let pw = &mut ctx.accounts.pending_withdraw;
     pw.transfer_hash = transfer_hash;
     pw.src_chain = params.src_chain;
@@ -92,6 +133,9 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
     pw.token = params.dest_token;
     pw.amount = params.amount;
     pw.nonce = params.nonce;
+    pw.src_decimals = tm.src_decimals;
+    pw.dest_decimals = tm.decimals;
+    pw.operator_gas = params.operator_gas;
     pw.approved = false;
     pw.approved_at = 0;
     pw.cancelled = false;
@@ -105,6 +149,7 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
         token: token_bytes,
         amount: params.amount,
         nonce: params.nonce,
+        operator_gas: params.operator_gas,
     });
 
     Ok(())
@@ -118,4 +163,5 @@ pub struct WithdrawSubmitEvent {
     pub token: [u8; 32],
     pub amount: u128,
     pub nonce: u64,
+    pub operator_gas: u64,
 }

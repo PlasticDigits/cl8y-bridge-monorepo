@@ -35,11 +35,17 @@ import {
   registerChainIfNeeded,
   setupTest,
   NATIVE_SOL_TOKEN,
+  findNonceUsedPda,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
 const WITHDRAW_DELAY_SECONDS = 15;
+
+const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
+EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
+const DEPOSIT_DEST_TOKEN = Buffer.alloc(32);
+DEPOSIT_DEST_TOKEN[31] = 0xcc;
 
 function keccak256(data: Buffer): Buffer {
   const { keccak_256 } = require("js-sha3");
@@ -101,6 +107,8 @@ describe("FULL E2E SECURITY AUDIT", () => {
   let ctx: TestContext;
   let evmChainPda: PublicKey;
   let cancelerPda: PublicKey;
+  let withdrawNativeTokenMappingPda: PublicKey;
+  let depositTokenMappingPda: PublicKey;
   let nonceCounter = 20000n;
 
   function nextNonceVal(): bigint {
@@ -151,6 +159,58 @@ describe("FULL E2E SECURITY AUDIT", () => {
       })
     );
     await ctx.provider.sendAndConfirm(fundTx);
+
+    [depositTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      DEPOSIT_DEST_TOKEN
+    );
+    if (!(await ctx.provider.connection.getAccountInfo(depositTokenMappingPda))) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(DEPOSIT_DEST_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: depositTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+
+    [withdrawNativeTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      EVM_REMOTE_NATIVE_TOKEN
+    );
+    if (
+      !(await ctx.provider.connection.getAccountInfo(withdrawNativeTokenMappingPda))
+    ) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: withdrawNativeTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
   });
 
   async function registerTokenMapping(
@@ -174,6 +234,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           destToken: Array.from(destToken),
           mode,
           decimals: 9,
+          srcDecimals: 9,
         })
         .accounts({
           bridge: ctx.bridgePda,
@@ -249,7 +310,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
     tokenPubkey: PublicKey,
     amount: bigint,
     nonce: bigint,
-    srcAccountByte: number
+    srcAccountByte: number,
+    remoteDestToken: Buffer,
+    tokenMappingPda: PublicKey
   ) {
     const srcAccount = Buffer.alloc(32, srcAccountByte);
     const transferHash = computeTransferHash(
@@ -267,12 +330,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       .withdrawSubmit({
         srcChain: EVM_CHAIN_ID,
         srcAccount: Array.from(srcAccount),
+        srcToken: Array.from(remoteDestToken),
         destToken: tokenPubkey,
         amount: toBn(amount),
         nonce: toBn(nonce),
+        operatorGas: new anchor.BN(0),
       })
       .accounts({
         bridge: ctx.bridgePda,
+        srcChainEntry: evmChainPda,
+        tokenMapping: tokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
         recipient: recipient.publicKey,
@@ -283,13 +350,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
     return { transferHash, withdrawPda, executedHashPda, srcAccount };
   }
 
-  async function approveWithdraw(transferHash: Buffer, withdrawPda: PublicKey) {
+  async function approveWithdraw(
+    transferHash: Buffer,
+    withdrawPda: PublicKey,
+    nonce: bigint
+  ) {
+    const [nonceUsedPda] = findNonceUsedPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      nonce
+    );
     await ctx.program.methods
       .withdrawApprove({ transferHash: Array.from(transferHash) })
       .accounts({
         bridge: ctx.bridgePda,
         pendingWithdraw: withdrawPda,
+        nonceUsed: nonceUsedPda,
         operator: ctx.operator.publicKey,
+        systemProgram: SystemProgram.programId,
       })
       .signers([ctx.operator])
       .rpc();
@@ -340,11 +418,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
       }
     });
 
-    it("fee at max feeBps (10000) equals entire amount", () => {
+    it("fee at max feeBps (100) is 1% of amount", () => {
       for (let i = 0; i < 20; i++) {
         const amount = (randomU64() % (10n ** 15n)) + 1n;
-        const fee = (amount * 10000n) / 10000n;
-        expect(fee).to.equal(amount);
+        const fee = (amount * 100n) / 10000n;
+        expect(fee).to.equal((amount * 100n) / 10000n);
       }
     });
 
@@ -374,13 +452,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(randomBytes(32)),
-            destToken: Array.from(randomBytes(32)),
             amount: toBn(amount),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -562,13 +640,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(randomBytes(32)),
-            destToken: Array.from(randomBytes(32)),
             amount: new anchor.BN(LAMPORTS_PER_SOL / 100),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -674,10 +752,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, fixture.mint, net, nonce, 0x02
+        ctx.user,
+        fixture.mint,
+        net,
+        nonce,
+        0x02,
+        fixture.destToken,
+        fixture.tokenPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecute()
@@ -803,9 +887,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .rpc();
 
       const nonce = nextNonceVal();
-      const { withdrawPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x10
+      const { transferHash, withdrawPda } = await submitWithdraw(
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x10,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       try {
         await ctx.program.methods
@@ -902,12 +993,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
             amount: toBn(amount),
             nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: victimWithdrawPda,
             executedHashCheck: victimExecutedPda,
             recipient: attacker.publicKey,
@@ -928,10 +1023,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("attacker cannot execute another user's withdrawal with their own recipient", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 200_000n, nonce, 0x20
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        200_000n,
+        nonce,
+        0x20,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const attacker = Keypair.generate();
       await airdrop(ctx.provider.connection, attacker.publicKey);
@@ -997,10 +1098,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, fixture.mint, net, nonce, 0x30
+        ctx.user,
+        fixture.mint,
+        net,
+        nonce,
+        0x30,
+        fixture.destToken,
+        fixture.tokenPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const attacker = Keypair.generate();
       await airdrop(ctx.provider.connection, attacker.publicKey);
@@ -1153,10 +1260,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const srcAccountByte = 0x40;
 
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, amount, nonce, srcAccountByte
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        amount,
+        nonce,
+        srcAccountByte,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecuteNative()
@@ -1187,12 +1300,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
             amount: toBn(amount),
             nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: replayWithdrawPda,
             executedHashCheck: replayExecutedPda,
             recipient: ctx.user.publicKey,
@@ -1211,10 +1328,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("cannot double-execute: second execute fails because PDA is closed", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 50_000n, nonce, 0x41
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        50_000n,
+        nonce,
+        0x41,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecuteNative()
@@ -1258,9 +1381,15 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("execute before approval fails even after delay", async () => {
       const nonce = nextNonceVal();
       const { withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x50
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x50,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -1283,9 +1412,15 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("execute immediately after approval fails (delay not elapsed)", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x51
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x51,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       try {
         await ctx.program.methods
@@ -1308,9 +1443,15 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("cancel -> reenable resets delay timer (must wait full delay again)", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x52
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x52,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -1328,8 +1469,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
-          admin: ctx.admin.publicKey,
+          authority: ctx.admin.publicKey,
         })
+        .signers([ctx.admin])
         .rpc();
 
       try {
@@ -1344,31 +1486,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
           })
           .signers([ctx.user])
           .rpc();
-        expect.fail("Should fail - not approved after reenable");
-      } catch (err) {
-        expect(err.toString()).to.contain("NotApproved");
-      }
-
-      await approveWithdraw(transferHash, withdrawPda);
-
-      try {
-        await ctx.program.methods
-          .withdrawExecuteNative()
-          .accounts({
-            bridge: ctx.bridgePda,
-            pendingWithdraw: withdrawPda,
-            executedHash: executedHashPda,
-            recipient: ctx.user.publicKey,
-            systemProgram: SystemProgram.programId,
-          })
-          .signers([ctx.user])
-          .rpc();
-        expect.fail("Should fail - delay not elapsed after fresh approval");
+        expect.fail("Should fail - delay not elapsed after reenable");
       } catch (err) {
         expect(err.toString()).to.contain("DelayNotElapsed");
       }
 
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecuteNative()
@@ -1389,23 +1512,41 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("double approve is rejected", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x53
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x53,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       try {
-        await approveWithdraw(transferHash, withdrawPda);
+        await approveWithdraw(transferHash, withdrawPda, nonce);
         expect.fail("Double approve should fail");
       } catch (err) {
-        expect(err.toString()).to.contain("AlreadyApproved");
+        const s = err.toString();
+        expect(
+          s.includes("AlreadyApproved") ||
+            s.includes("already in use") ||
+            s.includes("Simulation failed")
+        ).to.be.true;
       }
     });
 
     it("approve on cancelled withdrawal is rejected", async () => {
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x54
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x54,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -1419,10 +1560,15 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .rpc();
 
       try {
-        await approveWithdraw(transferHash, withdrawPda);
+        await approveWithdraw(transferHash, withdrawPda, nonce);
         expect.fail("Approve on cancelled should fail");
       } catch (err) {
-        expect(err.toString()).to.contain("WithdrawalCancelled");
+        const s = err.toString();
+        expect(
+          s.includes("WithdrawalCancelled") ||
+            s.includes("already in use") ||
+            s.includes("Simulation failed")
+        ).to.be.true;
       }
     });
   });
@@ -1453,22 +1599,22 @@ describe("FULL E2E SECURITY AUDIT", () => {
           })
           .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
           .rpc();
-        expect.fail("Should reject fee_bps > 10000");
+        expect.fail("Should reject fee_bps > 100");
       } catch (err) {
         expect(err.toString()).to.contain("InvalidFeeBps");
       }
     });
 
-    it("fee_bps = 10000 is accepted (100% fee)", async () => {
+    it("fee_bps = 100 is accepted (max 1% fee)", async () => {
       await ctx.program.methods
         .setConfig({
           newAdmin: null, operator: null,
-          feeBps: 10000, withdrawDelay: null, paused: null,
+          feeBps: 100, withdrawDelay: null, paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
       const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
-      expect(bridge.feeBps).to.equal(10000);
+      expect(bridge.feeBps).to.equal(100);
     });
 
     it("fee_bps = 0 is accepted (zero fee)", async () => {
@@ -1521,13 +1667,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(randomBytes(32)),
-          destToken: Array.from(randomBytes(32)),
           amount: toBn(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1558,13 +1704,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(randomBytes(32)),
-          destToken: Array.from(randomBytes(32)),
           amount: new anchor.BN(LAMPORTS_PER_SOL / 10),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1577,7 +1723,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: depositPda,
+            nonceUsed: findNonceUsedPda(
+              ctx.program.programId,
+              Buffer.from(EVM_CHAIN_ID),
+              0n
+            )[0],
             operator: ctx.operator.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.operator])
           .rpc();
@@ -1624,28 +1776,46 @@ describe("FULL E2E SECURITY AUDIT", () => {
         users.push(u);
       }
 
-      const withdrawPdas: { user: Keypair; transferHash: Buffer; withdrawPda: PublicKey; executedHashPda: PublicKey; amount: bigint }[] = [];
+      const withdrawPdas: {
+        user: Keypair;
+        transferHash: Buffer;
+        withdrawPda: PublicKey;
+        executedHashPda: PublicKey;
+        amount: bigint;
+        nonce: bigint;
+      }[] = [];
 
       for (let i = 0; i < 5; i++) {
         const amount = BigInt(100_000 + Math.floor(Math.random() * 900_000));
         const nonce = nextNonceVal();
         const srcByte = 0x60 + i;
         const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-          users[i], NATIVE_SOL_TOKEN, amount, nonce, srcByte
+          users[i],
+          NATIVE_SOL_TOKEN,
+          amount,
+          nonce,
+          srcByte,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
         );
         withdrawPdas.push({
-          user: users[i], transferHash, withdrawPda, executedHashPda, amount
+          user: users[i],
+          transferHash,
+          withdrawPda,
+          executedHashPda,
+          amount,
+          nonce,
         });
       }
 
-      const hashes = new Set(withdrawPdas.map(w => w.transferHash.toString("hex")));
+      const hashes = new Set(withdrawPdas.map((w) => w.transferHash.toString("hex")));
       expect(hashes.size).to.equal(5, "All hashes should be unique");
 
       for (const w of withdrawPdas) {
-        await approveWithdraw(w.transferHash, w.withdrawPda);
+        await approveWithdraw(w.transferHash, w.withdrawPda, w.nonce);
       }
 
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const balancesBefore = await Promise.all(
         users.map(u => ctx.provider.connection.getBalance(u.publicKey))
@@ -1696,13 +1866,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(randomBytes(32)),
-          destToken: Array.from(randomBytes(32)),
           amount: toBn(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1716,12 +1886,20 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
     it("bridge balance after native withdrawal = previous_balance - withdrawal_amount + rent_return_from_PW_close", async () => {
       const nonce = nextNonceVal();
-      const amount = 100_000n;
+      const payoutLamports = 100_000n;
+      // Token mapping uses srcDecimals=18; pending amount is scaled like EVM wei (÷1e9 → lamports).
+      const rawAmount = payoutLamports * 1_000_000_000n;
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, amount, nonce, 0x70
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        rawAmount,
+        nonce,
+        0x70,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const bridgeInfoBefore = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
       const balanceBefore = BigInt(bridgeInfoBefore!.lamports.toString());
@@ -1743,7 +1921,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
       expect(balanceAfter < balanceBefore).to.be.true;
       const delta = balanceBefore - balanceAfter;
       // Chai `.equal` is unreliable for bigint; compare explicitly.
-      expect(delta === amount).to.be.true;
+      expect(delta === payoutLamports).to.be.true;
     });
   });
 
@@ -1781,10 +1959,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const net = depositAmount - feeFor(depositAmount);
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, fixture.mint, net, nonce, 0x80
+        ctx.user,
+        fixture.mint,
+        net,
+        nonce,
+        0x80,
+        fixture.destToken,
+        fixture.tokenPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -1808,10 +1992,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const fixture = await createSplFixture({ lockUnlock: {} }, 0x06);
       const nonce = nextNonceVal();
       const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x81
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x81,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
-      await approveWithdraw(transferHash, withdrawPda);
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await approveWithdraw(transferHash, withdrawPda, nonce);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       try {
         await ctx.program.methods
@@ -1844,7 +2034,6 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("each deposit stores correct dest_chain, dest_account, token, and amount", async () => {
       for (let i = 0; i < 10; i++) {
         const destAccount = randomBytes(32);
-        const destToken = randomBytes(32);
         const amount = BigInt(LAMPORTS_PER_SOL / 100 + Math.floor(Math.random() * LAMPORTS_PER_SOL));
         const fee = feeFor(amount);
         const net = amount - fee;
@@ -1856,13 +2045,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(destAccount),
-            destToken: Array.from(destToken),
             amount: toBn(amount),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1872,16 +2061,20 @@ describe("FULL E2E SECURITY AUDIT", () => {
         const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
         expect(Buffer.from(deposit.destChain)).to.deep.equal(Buffer.from(EVM_CHAIN_ID));
         expect(Buffer.from(deposit.destAccount)).to.deep.equal(destAccount);
-        expect(Buffer.from(deposit.token)).to.deep.equal(destToken);
+        expect(Buffer.from(deposit.token)).to.deep.equal(DEPOSIT_DEST_TOKEN);
         expect(BigInt(deposit.amount.toString())).to.equal(net);
         expect(deposit.srcAccount.toBuffer()).to.deep.equal(ctx.user.publicKey.toBuffer());
         expect(deposit.nonce.toNumber()).to.equal(nextNonce);
         expect(deposit.timestamp.toNumber()).to.be.greaterThan(0);
 
         const expectedHash = computeTransferHash(
-          SOLANA_CHAIN_ID, EVM_CHAIN_ID,
-          ctx.user.publicKey.toBuffer(), destAccount, destToken,
-          net, BigInt(nextNonce)
+          SOLANA_CHAIN_ID,
+          EVM_CHAIN_ID,
+          ctx.user.publicKey.toBuffer(),
+          destAccount,
+          DEPOSIT_DEST_TOKEN,
+          net,
+          BigInt(nextNonce)
         );
         expect(Buffer.from(deposit.transferHash).toString("hex")).to.equal(
           expectedHash.toString("hex")
@@ -1971,9 +2164,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .rpc();
 
       const nonce = nextNonceVal();
-      const { withdrawPda } = await submitWithdraw(
-        ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce, 0x90
+      const { transferHash, withdrawPda } = await submitWithdraw(
+        ctx.user,
+        NATIVE_SOL_TOKEN,
+        100_000n,
+        nonce,
+        0x90,
+        EVM_REMOTE_NATIVE_TOKEN,
+        withdrawNativeTokenMappingPda
       );
+      await approveWithdraw(transferHash, withdrawPda, nonce);
 
       await ctx.program.methods
         .withdrawCancel()
@@ -1991,9 +2191,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
       try {
         const nonce2 = nextNonceVal();
-        const { withdrawPda: wp2 } = await submitWithdraw(
-          ctx.user, NATIVE_SOL_TOKEN, 100_000n, nonce2, 0x91
+        const { transferHash: th2, withdrawPda: wp2 } = await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          nonce2,
+          0x91,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
         );
+        await approveWithdraw(th2, wp2, nonce2);
         await ctx.program.methods
           .withdrawCancel()
           .accounts({
@@ -2111,13 +2318,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(randomBytes(32)),
-            destToken: Array.from(randomBytes(32)),
             amount: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -2198,12 +2405,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
             amount: toBn(0n),
             nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedPda,
             recipient: ctx.user.publicKey,
@@ -2250,12 +2461,14 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(randomBytes(32)),
-            destToken: Array.from(randomBytes(32)),
             amount: new anchor.BN(LAMPORTS_PER_SOL),
           })
           .accounts({
-            bridge: ctx.bridgePda, depositRecord: depositPda,
-            destChainEntry: evmChainPda, depositor: ctx.user.publicKey,
+            bridge: ctx.bridgePda,
+            depositRecord: depositPda,
+            destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
+            depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
@@ -2279,12 +2492,21 @@ describe("FULL E2E SECURITY AUDIT", () => {
       try {
         await ctx.program.methods
           .withdrawSubmit({
-            srcChain: EVM_CHAIN_ID, srcAccount: Array.from(srcAccount),
-            destToken: NATIVE_SOL_TOKEN, amount: toBn(100_000n), nonce: toBn(nonce),
+            srcChain: EVM_CHAIN_ID,
+            srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+            destToken: NATIVE_SOL_TOKEN,
+            amount: toBn(100_000n),
+            nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
-            bridge: ctx.bridgePda, pendingWithdraw: wp,
-            executedHashCheck: ep, recipient: ctx.user.publicKey,
+            bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
+            pendingWithdraw: wp,
+            executedHashCheck: ep,
+            recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])

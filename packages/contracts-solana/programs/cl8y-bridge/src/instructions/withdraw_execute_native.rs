@@ -1,3 +1,4 @@
+use crate::decimal::normalize_decimals;
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
 use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw, NATIVE_SOL_TOKEN};
@@ -42,7 +43,6 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
 
     {
         let pw = &ctx.accounts.pending_withdraw;
-        // Cancelled state is checked before approval so clearing `approved` on cancel still surfaces WithdrawalCancelled.
         require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
         require!(pw.approved, BridgeError::NotApproved);
         require!(!pw.executed, BridgeError::AlreadyExecuted);
@@ -67,8 +67,12 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
         require!(recomputed == pw.transfer_hash, BridgeError::HashMismatch);
 
         let clock = Clock::get()?;
+        let window_end = pw
+            .approved_at
+            .checked_add(bridge.withdraw_delay)
+            .ok_or(BridgeError::ArithmeticOverflow)?;
         require!(
-            clock.unix_timestamp >= pw.approved_at + bridge.withdraw_delay,
+            clock.unix_timestamp > window_end,
             BridgeError::DelayNotElapsed
         );
     }
@@ -76,7 +80,7 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
     let pw = &mut ctx.accounts.pending_withdraw;
     pw.executed = true;
 
-    let amount_u128 = pw.amount;
+    let amount_u128 = normalize_decimals(pw.amount, pw.src_decimals, pw.dest_decimals)?;
     let amount: u64 = amount_u128
         .try_into()
         .map_err(|_| BridgeError::AmountExceedsU64)?;

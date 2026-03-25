@@ -26,6 +26,7 @@ import {
   findExecutedHashPda,
   findTokenPda,
   findWithdrawPda,
+  findNonceUsedPda,
   getNextDepositNonce,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
@@ -36,6 +37,9 @@ import {
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
 const WITHDRAW_DELAY_SECONDS = 15;
+
+const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
+EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
 
 function keccak256(data: Buffer): Buffer {
   const { keccak_256 } = require("js-sha3");
@@ -133,6 +137,8 @@ describe("bridge SPL security and multi-user coverage", () => {
           destToken: Array.from(destToken),
           mode,
           decimals: 9,
+          // Match SPL test amounts (9-decimal minimal units); avoids execute-time normalize 18→9 truncating to 0.
+          srcDecimals: 9,
         })
         .accounts({
           bridge: ctx.bridgePda,
@@ -222,7 +228,9 @@ describe("bridge SPL security and multi-user coverage", () => {
     mint: PublicKey,
     amount: bigint,
     nonce: bigint,
-    srcAccountByte: number
+    srcAccountByte: number,
+    remoteDestToken: Buffer,
+    tokenPda: PublicKey
   ) {
     const srcAccount = Buffer.alloc(32, srcAccountByte);
     const transferHash = computeTransferHash(
@@ -244,12 +252,16 @@ describe("bridge SPL security and multi-user coverage", () => {
       .withdrawSubmit({
         srcChain: EVM_CHAIN_ID,
         srcAccount: Array.from(srcAccount),
+        srcToken: Array.from(remoteDestToken),
         destToken: mint,
         amount: toBn(amount),
         nonce: toBn(nonce),
+        operatorGas: new anchor.BN(0),
       })
       .accounts({
         bridge: ctx.bridgePda,
+        srcChainEntry: evmChainPda,
+        tokenMapping: tokenPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
         recipient: recipient.publicKey,
@@ -376,7 +388,15 @@ describe("bridge SPL security and multi-user coverage", () => {
         fixture.mint,
         expectedNet,
         5001n,
-        0xcd
+        0xcd,
+        fixture.destToken,
+        fixture.tokenPda
+      );
+
+      const [nonceUsedPda] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        5001n
       );
 
       await ctx.program.methods
@@ -384,12 +404,14 @@ describe("bridge SPL security and multi-user coverage", () => {
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
+          nonceUsed: nonceUsedPda,
           operator: ctx.operator.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([ctx.operator])
         .rpc();
 
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecute()
@@ -460,7 +482,15 @@ describe("bridge SPL security and multi-user coverage", () => {
         fixture.mint,
         expectedNet,
         6001n,
-        0xef
+        0xef,
+        fixture.destToken,
+        fixture.tokenPda
+      );
+
+      const [nonceUsedMb] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        6001n
       );
 
       await ctx.program.methods
@@ -468,12 +498,14 @@ describe("bridge SPL security and multi-user coverage", () => {
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
+          nonceUsed: nonceUsedMb,
           operator: ctx.operator.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([ctx.operator])
         .rpc();
 
-      await sleep((WITHDRAW_DELAY_SECONDS + 1) * 1000);
+      await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       await ctx.program.methods
         .withdrawExecute()
@@ -541,7 +573,9 @@ describe("bridge SPL security and multi-user coverage", () => {
         fixture.mint,
         amount,
         7001n,
-        0x91
+        0x91,
+        fixture.destToken,
+        fixture.tokenPda
       );
 
       try {
@@ -566,12 +600,20 @@ describe("bridge SPL security and multi-user coverage", () => {
         expect(err.toString()).to.contain("NotApproved");
       }
 
+      const [nonceUsed7001] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        7001n
+      );
+
       await ctx.program.methods
         .withdrawApprove({ transferHash: Array.from(transferHash) })
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
+          nonceUsed: nonceUsed7001,
           operator: ctx.operator.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([ctx.operator])
         .rpc();
@@ -702,6 +744,50 @@ describe("bridge SPL security and multi-user coverage", () => {
       const secondUser = Keypair.generate();
       await airdrop(ctx.provider.connection, secondUser.publicKey, 3 * LAMPORTS_PER_SOL);
 
+      const destTokB1 = Buffer.alloc(32);
+      destTokB1[31] = 0xb1;
+      const destTokB2 = Buffer.alloc(32);
+      destTokB2[31] = 0xb2;
+
+      for (const dt of [destTokB1, destTokB2]) {
+        const [tmap] = findTokenPda(
+          ctx.program.programId,
+          Buffer.from(EVM_CHAIN_ID),
+          dt
+        );
+        const ex = await ctx.provider.connection.getAccountInfo(tmap);
+        if (!ex) {
+          await ctx.program.methods
+            .registerToken({
+              localMint: PublicKey.default,
+              destChain: EVM_CHAIN_ID,
+              destToken: Array.from(dt),
+              mode: { lockUnlock: {} },
+              decimals: 9,
+              srcDecimals: 18,
+            })
+            .accounts({
+              bridge: ctx.bridgePda,
+              tokenMapping: tmap,
+              mint: null,
+              admin: ctx.admin.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+        }
+      }
+
+      const [mapB1] = findTokenPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        destTokB1
+      );
+      const [mapB2] = findTokenPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        destTokB2
+      );
+
       const amountA = 1_000_000_000n;
       const amountB = 2_000_000_000n;
       const feeA = feeFor(amountA);
@@ -714,13 +800,13 @@ describe("bridge SPL security and multi-user coverage", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(Buffer.alloc(32, 0xa1)),
-          destToken: Array.from(Buffer.alloc(32, 0xb1)),
           amount: toBn(amountA),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPdaA,
           destChainEntry: evmChainPda,
+          tokenMapping: mapB1,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -733,13 +819,13 @@ describe("bridge SPL security and multi-user coverage", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(Buffer.alloc(32, 0xa2)),
-          destToken: Array.from(Buffer.alloc(32, 0xb2)),
           amount: toBn(amountB),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPdaB,
           destChainEntry: evmChainPda,
+          tokenMapping: mapB2,
           depositor: secondUser.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -787,6 +873,35 @@ describe("bridge SPL security and multi-user coverage", () => {
       const srcAccount = Buffer.alloc(32, 0x77);
       const amount = 100_000n;
       const nonce = 8888n;
+
+      const [withdrawNativeMap] = findTokenPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        EVM_REMOTE_NATIVE_TOKEN
+      );
+      const wInfo = await ctx.provider.connection.getAccountInfo(
+        withdrawNativeMap
+      );
+      if (!wInfo) {
+        await ctx.program.methods
+          .registerToken({
+            localMint: PublicKey.default,
+            destChain: EVM_CHAIN_ID,
+            destToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+            mode: { lockUnlock: {} },
+            decimals: 9,
+            srcDecimals: 18,
+          })
+          .accounts({
+            bridge: ctx.bridgePda,
+            tokenMapping: withdrawNativeMap,
+            mint: null,
+            admin: ctx.admin.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
+
       const transferHash = computeTransferHash(
         EVM_CHAIN_ID,
         SOLANA_CHAIN_ID,
@@ -818,12 +933,16 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawSubmit({
             srcChain: EVM_CHAIN_ID,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
             amount: toBn(amount),
             nonce: toBn(nonce),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeMap,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
             recipient: ctx.user.publicKey,

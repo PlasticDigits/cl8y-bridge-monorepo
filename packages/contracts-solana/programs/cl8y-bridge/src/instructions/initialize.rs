@@ -28,7 +28,7 @@ pub struct Initialize<'info> {
 }
 
 pub fn handler(ctx: Context<Initialize>, params: InitializeParams) -> Result<()> {
-    require!(params.fee_bps <= 10000, BridgeError::InvalidFeeBps);
+    require!(params.fee_bps <= 100, BridgeError::InvalidFeeBps);
     require!(
         params.withdraw_delay >= 15 && params.withdraw_delay <= 86400,
         BridgeError::InvalidWithdrawDelay

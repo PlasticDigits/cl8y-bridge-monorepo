@@ -30,7 +30,7 @@ pub enum BridgeError {
     AlreadyExecuted,
     #[msg("Withdrawal is not cancelled")]
     NotCancelled,
-    #[msg("Invalid fee basis points (max 10000)")]
+    #[msg("Invalid fee basis points (max 100 = 1%, matching EVM MAX_FEE_BPS)")]
     InvalidFeeBps,
     #[msg("Invalid withdraw delay")]
     InvalidWithdrawDelay,
@@ -56,4 +56,16 @@ pub enum BridgeError {
     InvalidDecimals,
     #[msg("MintBurn mode requires the bridge PDA to be the mint authority")]
     MintAuthorityNotBridge,
+    #[msg("Cancel window has expired")]
+    CancelWindowExpired,
+    #[msg("This source-chain nonce was already approved")]
+    NonceAlreadyApproved,
+    #[msg("Source chain cannot equal this chain")]
+    SameChainTransfer,
+    #[msg("Token mapping does not match withdraw parameters")]
+    TokenMappingMismatch,
+    #[msg("Operator gas transfer failed")]
+    OperatorGasTransferFailed,
+    #[msg("Native SOL token mapping must use LockUnlock mode")]
+    InvalidNativeTokenMode,
 }

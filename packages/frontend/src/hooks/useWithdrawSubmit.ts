@@ -27,10 +27,15 @@ export interface WithdrawSubmitSolanaParams {
   programId: string
   srcChain: Uint8Array
   srcAccount: Uint8Array
-  destToken: string
+  /** Remote source token id (32 bytes); must match TokenMapping PDA seeds. */
+  srcToken: Uint8Array
+  /** Solana SPL mint (base58) for the destination token. */
+  destTokenMint: string
   amount: bigint
   nonce: bigint
   bridgeChainId: Uint8Array
+  /** Lamports escrowed for operator; paid on approve (default 0). */
+  operatorGas?: bigint
 }
 
 export type WithdrawSubmitStatus =
@@ -136,17 +141,19 @@ export function useWithdrawSubmit() {
         const connection = new Connection(params.rpcUrl, 'confirmed')
         const programId = new PublicKey(params.programId)
         const recipient = new PublicKey(solanaWallet.address)
-        const destToken = new PublicKey(params.destToken)
+        const destMint = new PublicKey(params.destTokenMint)
 
         const instruction = buildWithdrawSubmitInstruction(
           programId,
           recipient,
           params.srcChain,
           params.srcAccount,
-          destToken,
+          params.srcToken,
+          destMint,
           params.amount,
           params.nonce,
           params.bridgeChainId,
+          params.operatorGas ?? 0n,
         )
 
         const tx = new Transaction().add(instruction)

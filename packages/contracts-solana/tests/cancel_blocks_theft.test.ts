@@ -6,14 +6,20 @@ import {
   findWithdrawPda,
   findCancelerPda,
   findExecutedHashPda,
+  findTokenPda,
+  findNonceUsedPda,
   TestContext,
   initializeBridgeIfNeeded,
+  registerChainIfNeeded,
   NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
 const WITHDRAW_DELAY_SECS = 15;
+
+const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
+EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
 
 function keccak256(data: Buffer): Buffer {
   const { keccak_256 } = require("js-sha3");
@@ -55,6 +61,8 @@ describe("cancel blocks theft (full guarantee)", () => {
   let withdrawPda: PublicKey;
   let executedHashPda: PublicKey;
   let cancelerPda: PublicKey;
+  let evmChainPda: PublicKey;
+  let withdrawNativeTokenMappingPda: PublicKey;
 
   const srcAccount = Buffer.alloc(32, 0x33);
   const amount = 400_000n;
@@ -82,6 +90,36 @@ describe("cancel blocks theft (full guarantee)", () => {
         admin: ctx.admin.publicKey,
       })
       .rpc();
+
+    evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_1");
+
+    [withdrawNativeTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      EVM_REMOTE_NATIVE_TOKEN
+    );
+    const wInfo = await ctx.provider.connection.getAccountInfo(
+      withdrawNativeTokenMappingPda
+    );
+    if (!wInfo) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: withdrawNativeTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
 
     [cancelerPda] = findCancelerPda(
       ctx.program.programId,
@@ -116,12 +154,16 @@ describe("cancel blocks theft (full guarantee)", () => {
       .withdrawSubmit({
         srcChain: EVM_CHAIN_ID,
         srcAccount: Array.from(srcAccount),
+        srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
         destToken: NATIVE_SOL_TOKEN,
-        amount: new anchor.BN(Number(amount)),
+        amount: new anchor.BN(amount.toString()),
         nonce: new anchor.BN(Number(nonce)),
+        operatorGas: new anchor.BN(0),
       })
       .accounts({
         bridge: ctx.bridgePda,
+        srcChainEntry: evmChainPda,
+        tokenMapping: withdrawNativeTokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
         recipient: ctx.user.publicKey,
@@ -130,18 +172,26 @@ describe("cancel blocks theft (full guarantee)", () => {
       .signers([ctx.user])
       .rpc();
 
+    const [nonceUsedPda] = findNonceUsedPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      nonce
+    );
+
     await ctx.program.methods
       .withdrawApprove({ transferHash: Array.from(transferHash) })
       .accounts({
         bridge: ctx.bridgePda,
         pendingWithdraw: withdrawPda,
+        nonceUsed: nonceUsedPda,
         operator: ctx.operator.publicKey,
+        systemProgram: SystemProgram.programId,
       })
       .signers([ctx.operator])
       .rpc();
   });
 
-  it("operator approve → cancel → past delay → execute blocked; reenable requires re-approval; second cancel still blocks", async () => {
+  it("operator approve → cancel → past delay → execute blocked; reenable keeps approval; second cancel still blocks", async () => {
     const bridgeBefore = (
       await ctx.provider.connection.getAccountInfo(ctx.bridgePda)
     )!.lamports;
@@ -186,7 +236,7 @@ describe("cancel blocks theft (full guarantee)", () => {
       .accounts({
         bridge: ctx.bridgePda,
         pendingWithdraw: withdrawPda,
-        admin: ctx.admin.publicKey,
+        authority: ctx.admin.publicKey,
       })
       .rpc();
 
@@ -194,7 +244,7 @@ describe("cancel blocks theft (full guarantee)", () => {
       withdrawPda
     );
     expect(pwAfterReenable.cancelled).to.be.false;
-    expect(pwAfterReenable.approved).to.be.false;
+    expect(pwAfterReenable.approved).to.be.true;
 
     try {
       await ctx.program.methods
@@ -208,20 +258,10 @@ describe("cancel blocks theft (full guarantee)", () => {
         })
         .signers([ctx.user])
         .rpc();
-      expect.fail("execute should fail without re-approval");
+      expect.fail("execute should fail until delay after uncancel");
     } catch (err) {
-      expect(err.toString()).to.contain("NotApproved");
+      expect(err.toString()).to.contain("DelayNotElapsed");
     }
-
-    await ctx.program.methods
-      .withdrawApprove({ transferHash: Array.from(transferHash) })
-      .accounts({
-        bridge: ctx.bridgePda,
-        pendingWithdraw: withdrawPda,
-        operator: ctx.operator.publicKey,
-      })
-      .signers([ctx.operator])
-      .rpc();
 
     await ctx.program.methods
       .withdrawCancel()
@@ -233,6 +273,8 @@ describe("cancel blocks theft (full guarantee)", () => {
       })
       .signers([ctx.canceler])
       .rpc();
+
+    await sleep((WITHDRAW_DELAY_SECS + 1) * 1000);
 
     try {
       await ctx.program.methods

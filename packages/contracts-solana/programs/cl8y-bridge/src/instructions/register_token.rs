@@ -9,7 +9,10 @@ pub struct RegisterTokenParams {
     pub dest_chain: [u8; 4],
     pub dest_token: [u8; 32],
     pub mode: TokenMode,
+    /// Decimals of `local_mint` on Solana (or 9 for native SOL sentinel).
     pub decimals: u8,
+    /// Decimals of `dest_token` on the remote chain.
+    pub src_decimals: u8,
 }
 
 #[derive(Accounts)]
@@ -30,10 +33,8 @@ pub struct RegisterToken<'info> {
     )]
     pub token_mapping: Account<'info, TokenMapping>,
 
-    #[account(
-        constraint = mint.key() == params.local_mint @ BridgeError::TokenNotRegistered
-    )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    /// SPL mint account; omit when `local_mint` is `Pubkey::default()` (native SOL mapping).
+    pub mint: Option<InterfaceAccount<'info, Mint>>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -48,18 +49,34 @@ pub fn handler(ctx: Context<RegisterToken>, params: RegisterTokenParams) -> Resu
         BridgeError::UnauthorizedAdmin
     );
 
-    let mint = &ctx.accounts.mint;
-    require!(
-        params.decimals == mint.decimals,
-        BridgeError::InvalidDecimals
-    );
-
-    if params.mode == TokenMode::MintBurn {
-        let bridge_pda = ctx.accounts.bridge.key();
+    if params.local_mint == Pubkey::default() {
+        require!(ctx.accounts.mint.is_none(), BridgeError::InvalidDecimals);
         require!(
-            mint.mint_authority.contains(&bridge_pda),
-            BridgeError::MintAuthorityNotBridge
+            matches!(params.mode, TokenMode::LockUnlock),
+            BridgeError::InvalidNativeTokenMode
         );
+    } else {
+        let mint = ctx
+            .accounts
+            .mint
+            .as_ref()
+            .ok_or(BridgeError::TokenNotRegistered)?;
+        require!(
+            mint.key() == params.local_mint,
+            BridgeError::TokenNotRegistered
+        );
+        require!(
+            params.decimals == mint.decimals,
+            BridgeError::InvalidDecimals
+        );
+
+        if params.mode == TokenMode::MintBurn {
+            let bridge_pda = ctx.accounts.bridge.key();
+            require!(
+                mint.mint_authority.contains(&bridge_pda),
+                BridgeError::MintAuthorityNotBridge
+            );
+        }
     }
 
     let mapping = &mut ctx.accounts.token_mapping;
@@ -68,6 +85,7 @@ pub fn handler(ctx: Context<RegisterToken>, params: RegisterTokenParams) -> Resu
     mapping.dest_token = params.dest_token;
     mapping.mode = params.mode;
     mapping.decimals = params.decimals;
+    mapping.src_decimals = params.src_decimals;
     mapping.accrued_fees = 0;
     mapping.bump = ctx.bumps.token_mapping;
 

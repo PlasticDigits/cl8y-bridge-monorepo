@@ -15,6 +15,8 @@ import {
   findChainPda,
   findWithdrawPda,
   findExecutedHashPda,
+  findTokenPda,
+  findNonceUsedPda,
   airdrop,
   TestContext,
   initializeBridgeIfNeeded,
@@ -25,6 +27,16 @@ import {
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
+
+/** Must match `setConfig` withdraw delay in `before` (+ buffer for strict `>` execute boundary). */
+const WITHDRAW_DELAY_SECONDS = 15;
+
+/** bytes32 used in deposit_native token mapping (destination token on EVM). */
+const DEPOSIT_DEST_TOKEN = Buffer.alloc(32, 0xcc);
+
+/** Remote token id for incoming native SOL withdrawals (EVM side representation). */
+const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
+EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
 
 function keccak256(data: Buffer): Buffer {
   const { keccak_256 } = require("js-sha3");
@@ -46,12 +58,10 @@ function computeTransferHash(
   srcAccount.copy(buf, 64);
   destAccount.copy(buf, 96);
   token.copy(buf, 128);
-  // amount as u128 big-endian, right-aligned in 32-byte slot (bytes 176..192)
   const amountBuf = Buffer.alloc(16);
   amountBuf.writeBigUInt64BE(amount >> 64n, 0);
   amountBuf.writeBigUInt64BE(amount & 0xffffffffffffffffn, 8);
   amountBuf.copy(buf, 176);
-  // nonce as u64 big-endian, right-aligned in 32-byte slot (bytes 216..224)
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64BE(nonce);
   nonceBuf.copy(buf, 216);
@@ -61,6 +71,8 @@ function computeTransferHash(
 describe("deposit and withdraw flow", () => {
   let ctx: TestContext;
   let evmChainPda: PublicKey;
+  let depositTokenMappingPda: PublicKey;
+  let withdrawNativeTokenMappingPda: PublicKey;
 
   before(async () => {
     ctx = await setupTest();
@@ -86,6 +98,62 @@ describe("deposit and withdraw flow", () => {
       .rpc();
 
     evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_1");
+
+    [depositTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      DEPOSIT_DEST_TOKEN
+    );
+    const depInfo = await ctx.provider.connection.getAccountInfo(
+      depositTokenMappingPda
+    );
+    if (!depInfo) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(DEPOSIT_DEST_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: depositTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+
+    [withdrawNativeTokenMappingPda] = findTokenPda(
+      ctx.program.programId,
+      Buffer.from(EVM_CHAIN_ID),
+      EVM_REMOTE_NATIVE_TOKEN
+    );
+    const wInfo = await ctx.provider.connection.getAccountInfo(
+      withdrawNativeTokenMappingPda
+    );
+    if (!wInfo) {
+      await ctx.program.methods
+        .registerToken({
+          localMint: PublicKey.default,
+          destChain: EVM_CHAIN_ID,
+          destToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
+          mode: { lockUnlock: {} },
+          decimals: 9,
+          srcDecimals: 18,
+        })
+        .accounts({
+          bridge: ctx.bridgePda,
+          tokenMapping: withdrawNativeTokenMappingPda,
+          mint: null,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
   });
 
   describe("deposit_native", () => {
@@ -95,7 +163,6 @@ describe("deposit and withdraw flow", () => {
     it("deposits SOL and creates deposit record", async () => {
       const amount = 1 * LAMPORTS_PER_SOL;
       const destAccount = Array.from(Buffer.alloc(32, 0xbb));
-      const destToken = Array.from(Buffer.alloc(32, 0xcc));
 
       firstDepositNonce = await getNextDepositNonce(ctx);
       [firstDepositPda] = findDepositPda(
@@ -107,13 +174,13 @@ describe("deposit and withdraw flow", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: destAccount,
-          destToken: destToken,
           amount: new anchor.BN(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: firstDepositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -150,7 +217,7 @@ describe("deposit and withdraw flow", () => {
         EVM_CHAIN_ID,
         ctx.user.publicKey.toBuffer(),
         Buffer.alloc(32, 0xbb),
-        Buffer.alloc(32, 0xcc),
+        DEPOSIT_DEST_TOKEN,
         expectedNet,
         BigInt(firstDepositNonce)
       );
@@ -169,13 +236,13 @@ describe("deposit and withdraw flow", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32)),
-            destToken: Array.from(Buffer.alloc(32)),
             amount: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -201,13 +268,13 @@ describe("deposit and withdraw flow", () => {
           .depositNative({
             destChain: unregisteredChain,
             destAccount: Array.from(Buffer.alloc(32)),
-            destToken: Array.from(Buffer.alloc(32)),
             amount: new anchor.BN(1000000),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: fakePda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -238,13 +305,13 @@ describe("deposit and withdraw flow", () => {
           .depositNative({
             destChain: EVM_CHAIN_ID,
             destAccount: Array.from(Buffer.alloc(32)),
-            destToken: Array.from(Buffer.alloc(32)),
             amount: new anchor.BN(1000000),
           })
           .accounts({
             bridge: ctx.bridgePda,
             depositRecord: depositPda,
             destChainEntry: evmChainPda,
+            tokenMapping: depositTokenMappingPda,
             depositor: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -287,13 +354,13 @@ describe("deposit and withdraw flow", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(Buffer.alloc(32, 0xbb)),
-          destToken: Array.from(Buffer.alloc(32, 0xcc)),
           amount: new anchor.BN(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -315,12 +382,12 @@ describe("deposit and withdraw flow", () => {
         .rpc();
     });
 
-    it("fee math: 10000 bps (100%) leaves net = 0", async () => {
+    it("fee math: max 100 bps (1%) leaves net = 99% of gross", async () => {
       await ctx.program.methods
         .setConfig({
           newAdmin: null,
           operator: null,
-          feeBps: 10000,
+          feeBps: 100,
           withdrawDelay: null,
           paused: null,
         })
@@ -335,13 +402,13 @@ describe("deposit and withdraw flow", () => {
         .depositNative({
           destChain: EVM_CHAIN_ID,
           destAccount: Array.from(Buffer.alloc(32, 0xbb)),
-          destToken: Array.from(Buffer.alloc(32, 0xcc)),
           amount: new anchor.BN(amount),
         })
         .accounts({
           bridge: ctx.bridgePda,
           depositRecord: depositPda,
           destChainEntry: evmChainPda,
+          tokenMapping: depositTokenMappingPda,
           depositor: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -349,7 +416,8 @@ describe("deposit and withdraw flow", () => {
         .rpc();
 
       const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-      expect(Number(deposit.amount)).to.equal(0);
+      const expectedNet = amount - Math.floor((amount * 100) / 10000);
+      expect(Number(deposit.amount)).to.equal(expectedNet);
 
       await ctx.program.methods
         .setConfig({
@@ -396,12 +464,16 @@ describe("deposit and withdraw flow", () => {
         .withdrawSubmit({
           srcChain: srcChain,
           srcAccount: Array.from(srcAccount),
+          srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
           destToken: destToken,
-          amount: new anchor.BN(Number(withdrawAmount)),
+          amount: new anchor.BN(withdrawAmount.toString()),
           nonce: new anchor.BN(Number(withdrawNonce)),
+          operatorGas: new anchor.BN(0),
         })
         .accounts({
           bridge: ctx.bridgePda,
+          srcChainEntry: evmChainPda,
+          tokenMapping: withdrawNativeTokenMappingPda,
           pendingWithdraw: withdrawPda,
           executedHashCheck: executedHashPda,
           recipient: ctx.user.publicKey,
@@ -414,13 +486,18 @@ describe("deposit and withdraw flow", () => {
       expect(pw.approved).to.be.false;
       expect(pw.cancelled).to.be.false;
       expect(pw.executed).to.be.false;
-      expect(Number(pw.amount)).to.equal(Number(withdrawAmount));
+      expect(pw.amount.toString()).to.equal(withdrawAmount.toString());
     });
 
     it("non-operator cannot approve", async () => {
       const [withdrawPda] = findWithdrawPda(
         ctx.program.programId,
         transferHash
+      );
+      const [nonceUsedPda] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        withdrawNonce
       );
 
       try {
@@ -429,7 +506,9 @@ describe("deposit and withdraw flow", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
+            nonceUsed: nonceUsedPda,
             operator: ctx.user.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
           .rpc();
@@ -444,13 +523,20 @@ describe("deposit and withdraw flow", () => {
         ctx.program.programId,
         transferHash
       );
+      const [nonceUsedPda] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        withdrawNonce
+      );
 
       await ctx.program.methods
         .withdrawApprove({ transferHash: Array.from(transferHash) })
         .accounts({
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
+          nonceUsed: nonceUsedPda,
           operator: ctx.operator.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([ctx.operator])
         .rpc();
@@ -465,6 +551,11 @@ describe("deposit and withdraw flow", () => {
         ctx.program.programId,
         transferHash
       );
+      const [nonceUsedPda] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        withdrawNonce
+      );
 
       try {
         await ctx.program.methods
@@ -472,18 +563,25 @@ describe("deposit and withdraw flow", () => {
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
+            nonceUsed: nonceUsedPda,
             operator: ctx.operator.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
-        expect(err.toString()).to.contain("AlreadyApproved");
+        expect(err.toString()).to.satisfy(
+          (s: string) =>
+            s.includes("AlreadyApproved") || s.includes("already in use")
+        );
       }
     });
 
     it("execute native withdrawal after delay", async () => {
-      await new Promise((r) => setTimeout(r, 16000));
+      await new Promise((r) =>
+        setTimeout(r, (WITHDRAW_DELAY_SECONDS + 3) * 1000)
+      );
 
       const [withdrawPda] = findWithdrawPda(
         ctx.program.programId,
@@ -534,12 +632,16 @@ describe("deposit and withdraw flow", () => {
           .withdrawSubmit({
             srcChain: srcChain,
             srcAccount: Array.from(srcAccount),
+            srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
-            amount: new anchor.BN(Number(withdrawAmount)),
+            amount: new anchor.BN(withdrawAmount.toString()),
             nonce: new anchor.BN(Number(withdrawNonce)),
+            operatorGas: new anchor.BN(0),
           })
           .accounts({
             bridge: ctx.bridgePda,
+            srcChainEntry: evmChainPda,
+            tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
             recipient: ctx.user.publicKey,
@@ -584,12 +686,16 @@ describe("deposit and withdraw flow", () => {
         .withdrawSubmit({
           srcChain: EVM_CHAIN_ID,
           srcAccount: Array.from(srcAccount),
+          srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
           destToken: destToken,
-          amount: new anchor.BN(Number(amount)),
+          amount: new anchor.BN(amount.toString()),
           nonce: new anchor.BN(Number(nonce)),
+          operatorGas: new anchor.BN(0),
         })
         .accounts({
           bridge: ctx.bridgePda,
+          srcChainEntry: evmChainPda,
+          tokenMapping: withdrawNativeTokenMappingPda,
           pendingWithdraw: withdrawPda,
           executedHashCheck: executedHashPda,
           recipient: ctx.user.publicKey,
@@ -609,13 +715,21 @@ describe("deposit and withdraw flow", () => {
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
 
+      const [nonceUsedPda] = findNonceUsedPda(
+        ctx.program.programId,
+        Buffer.from(EVM_CHAIN_ID),
+        nonce
+      );
+
       try {
         await ctx.program.methods
           .withdrawApprove({ transferHash: Array.from(hash) })
           .accounts({
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
+            nonceUsed: nonceUsedPda,
             operator: ctx.operator.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([ctx.operator])
           .rpc();

@@ -37,7 +37,7 @@ pub fn handler(ctx: Context<SetConfig>, params: SetConfigParams) -> Result<()> {
         bridge.operator = operator;
     }
     if let Some(fee_bps) = params.fee_bps {
-        require!(fee_bps <= 10000, BridgeError::InvalidFeeBps);
+        require!(fee_bps <= 100, BridgeError::InvalidFeeBps);
         bridge.fee_bps = fee_bps;
     }
     if let Some(delay) = params.withdraw_delay {
