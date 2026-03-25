@@ -68,4 +68,10 @@ pub enum BridgeError {
     OperatorGasTransferFailed,
     #[msg("Native SOL token mapping must use LockUnlock mode")]
     InvalidNativeTokenMode,
+    #[msg("Withdraw amount below configured minimum per transaction")]
+    RateLimitBelowMin,
+    #[msg("Withdraw amount exceeds configured maximum per transaction")]
+    RateLimitExceededPerTx,
+    #[msg("Withdraw would exceed configured maximum per 24h window")]
+    RateLimitExceededPerPeriod,
 }

@@ -1,7 +1,9 @@
 use crate::decimal::normalize_decimals;
 use crate::error::BridgeError;
 use crate::hash::compute_transfer_hash;
-use crate::state::{BridgeConfig, ExecutedHash, PendingWithdraw, NATIVE_SOL_TOKEN};
+use crate::state::{
+    BridgeConfig, ExecutedHash, PendingWithdraw, WithdrawRateLimit, NATIVE_SOL_TOKEN,
+};
 use anchor_lang::prelude::*;
 
 #[derive(Accounts)]
@@ -29,6 +31,15 @@ pub struct WithdrawExecuteNative<'info> {
         bump,
     )]
     pub executed_hash: Account<'info, ExecutedHash>,
+
+    #[account(
+        init_if_needed,
+        payer = recipient,
+        space = 8 + WithdrawRateLimit::INIT_SPACE,
+        seeds = [WithdrawRateLimit::SEED, NATIVE_SOL_TOKEN.as_ref()],
+        bump,
+    )]
+    pub withdraw_rate_limit: Account<'info, WithdrawRateLimit>,
 
     #[account(mut)]
     pub recipient: Signer<'info>,
@@ -77,13 +88,44 @@ pub fn handler(ctx: Context<WithdrawExecuteNative>) -> Result<()> {
         );
     }
 
-    let pw = &mut ctx.accounts.pending_withdraw;
-    pw.executed = true;
-
-    let amount_u128 = normalize_decimals(pw.amount, pw.src_decimals, pw.dest_decimals)?;
+    let amount_u128 = normalize_decimals(
+        ctx.accounts.pending_withdraw.amount,
+        ctx.accounts.pending_withdraw.src_decimals,
+        ctx.accounts.pending_withdraw.dest_decimals,
+    )?;
     let amount: u64 = amount_u128
         .try_into()
         .map_err(|_| BridgeError::AmountExceedsU64)?;
+
+    {
+        let wr = &mut ctx.accounts.withdraw_rate_limit;
+        wr.bump = ctx.bumps.withdraw_rate_limit;
+        // No on-chain total supply for native SOL; Terra uses bank supply — match implicit-default path (zero supply).
+        let supply = 0u128;
+        let (min_tx, max_tx, max_period) = crate::rate_limit::resolve_effective_limits(
+            wr.explicit_config,
+            wr.min_per_transaction,
+            wr.max_per_transaction,
+            wr.max_per_period,
+            supply,
+        );
+        let mut window_start = wr.window_start;
+        let mut used = wr.used;
+        crate::rate_limit::check_and_update_withdraw_rate_limit(
+            Clock::get()?.unix_timestamp,
+            amount_u128,
+            min_tx,
+            max_tx,
+            max_period,
+            &mut window_start,
+            &mut used,
+        )?;
+        wr.window_start = window_start;
+        wr.used = used;
+    }
+
+    let pw = &mut ctx.accounts.pending_withdraw;
+    pw.executed = true;
     let transfer_hash = pw.transfer_hash;
     let dest_account = pw.dest_account;
 

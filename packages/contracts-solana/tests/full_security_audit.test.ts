@@ -30,6 +30,7 @@ import {
   findExecutedHashPda,
   findTokenPda,
   findWithdrawPda,
+  findWithdrawRateLimitPda,
   getNextDepositNonce,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
@@ -773,6 +774,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1044,6 +1046,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1060,6 +1063,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1126,6 +1130,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             recipientTokenAccount: attackerToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
             recipient: attacker.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -1277,6 +1282,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1345,6 +1351,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1358,6 +1365,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1398,6 +1406,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1429,6 +1438,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1481,6 +1491,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1499,6 +1510,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1828,6 +1840,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: w.withdrawPda,
             executedHash: w.executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: w.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1910,6 +1923,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1977,6 +1991,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -2014,6 +2029,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,

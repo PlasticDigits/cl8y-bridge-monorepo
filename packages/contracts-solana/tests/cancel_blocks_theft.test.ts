@@ -4,6 +4,7 @@ import { expect } from "chai";
 import {
   setupTest,
   findWithdrawPda,
+  findWithdrawRateLimitPda,
   findCancelerPda,
   findExecutedHashPda,
   findTokenPda,
@@ -216,6 +217,7 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -253,6 +255,7 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -283,6 +286,7 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })

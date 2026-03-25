@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 pub mod address_codec;
 pub mod decimal;
 pub mod error;
+pub mod rate_limit;
 pub mod hash;
 pub mod instructions;
 pub mod state;
@@ -67,6 +68,10 @@ pub mod cl8y_bridge {
 
     pub fn set_config(ctx: Context<SetConfig>, params: SetConfigParams) -> Result<()> {
         instructions::set_config::handler(ctx, params)
+    }
+
+    pub fn set_rate_limit(ctx: Context<SetRateLimit>, params: SetRateLimitParams) -> Result<()> {
+        instructions::set_rate_limit::handler(ctx, params)
     }
 
     pub fn add_canceler(ctx: Context<AddCanceler>, params: AddCancelerParams) -> Result<()> {

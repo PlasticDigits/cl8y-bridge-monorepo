@@ -30,6 +30,18 @@ export const TOKEN_SEED = Buffer.from("token");
 export const CANCELER_SEED = Buffer.from("canceler");
 export const EXECUTED_SEED = Buffer.from("executed");
 export const NONCE_USED_SEED = Buffer.from("nonce_used");
+export const WITHDRAW_RATE_LIMIT_SEED = Buffer.from("w_rate_lim");
+
+/** PDA for per-mint withdraw rate limit state (matches `WithdrawRateLimit::SEED`). */
+export function findWithdrawRateLimitPda(
+  programId: PublicKey,
+  mint: PublicKey
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [WITHDRAW_RATE_LIMIT_SEED, mint.toBuffer()],
+    programId
+  );
+}
 
 const DEVNET_KEYS_DIR = path.resolve(__dirname, "../../.devnet-keys");
 

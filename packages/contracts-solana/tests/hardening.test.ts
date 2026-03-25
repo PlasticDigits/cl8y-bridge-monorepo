@@ -26,6 +26,7 @@ import {
   findExecutedHashPda,
   findTokenPda,
   findWithdrawPda,
+  findWithdrawRateLimitPda,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
   setupTest,
@@ -745,6 +746,7 @@ describe("hardening tests", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
+          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -759,6 +761,7 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -812,6 +815,7 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: wrongExecutedPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -964,6 +968,7 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
