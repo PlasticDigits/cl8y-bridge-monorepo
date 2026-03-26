@@ -24,7 +24,7 @@ help:
 	@echo "  make solana-test-docker       - Run Solana tests against Docker validator (resets ledger first)"
 	@echo "  make solana-reset             - Recreate Docker Solana validator with fresh ledger"
 	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
-	@echo "  make solana-test-e2e          - Rust Solana on-chain tests (needs validator; optional SOLANA_PROGRAM_ID)"
+	@echo "  make solana-test-e2e          - Rust Solana offline checks (PDA/hash parity; optional SOLANA_PROGRAM_ID)"
 	@echo "  make solana-logs              - Follow Solana program logs"
 	@echo ""
 	@echo "Building:"
@@ -170,12 +170,11 @@ solana-deploy-local: ## Deploy Solana program to local validator
 	cd packages/contracts-solana && anchor deploy --provider.cluster localnet
 
 .PHONY: solana-test-e2e
-solana-test-e2e: ## Run cross-chain Solana E2E harness (ignored tests; needs localhost:8899 + deploy/init bridge)
-	. ./scripts/lib-local-deploy-env.sh && load_local_deploy_env; \
-	cd packages/e2e && \
-	SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
-	SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
-		cargo test --test test_solana_flows -- --ignored --nocapture --test-threads=1
+solana-test-e2e: ## Run Solana bridge offline Rust tests (test_solana_flows; no live validator required)
+	bash -c '. ./scripts/lib-local-deploy-env.sh && load_local_deploy_env && cd packages/e2e && \
+		SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
+		SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
+		cargo test --test test_solana_flows -- --nocapture --test-threads=1'
 
 .PHONY: solana-logs
 solana-logs: ## Follow Solana program logs
