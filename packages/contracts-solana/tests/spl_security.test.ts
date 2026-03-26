@@ -31,6 +31,7 @@ import {
   getNextDepositNonce,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
+  setExplicitUnlimitedWithdrawRateLimit,
   setupTest,
   NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
@@ -114,6 +115,8 @@ describe("bridge SPL security and multi-user coverage", () => {
       .rpc();
 
     evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_security");
+
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, NATIVE_SOL_TOKEN);
   });
 
   async function registerTokenMapping(
@@ -212,6 +215,8 @@ describe("bridge SPL security and multi-user coverage", () => {
       destTokenByte,
       mode
     );
+
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, mint);
 
     return {
       mint,

@@ -251,6 +251,36 @@ export async function registerChainIfNeeded(
   return chainPda;
 }
 
+/**
+ * Sets explicit withdraw rate limits to zero (unlimited min/tx/period), matching admin `set_rate_limit`
+ * semantics used in production registries. Implicit defaults use mint supply/1000 per 24h for SPL,
+ * which security suites can exceed across many withdrawals in one validator run.
+ */
+export async function setExplicitUnlimitedWithdrawRateLimit(
+  ctx: TestContext,
+  localMint: PublicKey
+): Promise<void> {
+  const [withdrawRateLimit] = findWithdrawRateLimitPda(
+    ctx.program.programId,
+    localMint
+  );
+  await ctx.program.methods
+    .setRateLimit({
+      localMint,
+      minPerTransaction: new anchor.BN(0),
+      maxPerTransaction: new anchor.BN(0),
+      maxPerPeriod: new anchor.BN(0),
+    })
+    .accounts({
+      bridge: ctx.bridgePda,
+      withdrawRateLimit,
+      admin: ctx.admin.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([ctx.admin])
+    .rpc();
+}
+
 export async function getNextDepositNonce(ctx: TestContext): Promise<number> {
   const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
   return bridge.depositNonce.toNumber() + 1;

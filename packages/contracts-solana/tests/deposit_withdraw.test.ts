@@ -435,7 +435,8 @@ describe("deposit and withdraw flow", () => {
 
   describe("withdraw lifecycle: submit -> approve -> delay -> execute_native", () => {
     let transferHash: Buffer;
-    const withdrawAmount = 500000000n; // 0.5 SOL
+    /** 0.5 SOL expressed with src_decimals=18 (matches EVM remote native mapping). */
+    const withdrawAmount = 500_000_000_000_000_000n;
     const withdrawNonce = 100n;
     const srcChain = EVM_CHAIN_ID;
     const srcAccount = Buffer.alloc(32, 0xaa);

@@ -33,6 +33,7 @@ import {
   getNextDepositNonce,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
+  setExplicitUnlimitedWithdrawRateLimit,
   setupTest,
   NATIVE_SOL_TOKEN,
   findNonceUsedPda,
@@ -205,6 +206,8 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         })
         .rpc();
     }
+
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, NATIVE_SOL_TOKEN);
   });
 
   async function registerTokenMapping(
@@ -296,6 +299,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       destTokenByte,
       mode
     );
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, mint);
     return {
       mint,
       tokenPda,

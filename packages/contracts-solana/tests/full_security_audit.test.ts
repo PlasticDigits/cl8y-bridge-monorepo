@@ -34,6 +34,7 @@ import {
   getNextDepositNonce,
   initializeBridgeIfNeeded,
   registerChainIfNeeded,
+  setExplicitUnlimitedWithdrawRateLimit,
   setupTest,
   NATIVE_SOL_TOKEN,
   findNonceUsedPda,
@@ -212,6 +213,8 @@ describe("FULL E2E SECURITY AUDIT", () => {
         })
         .rpc();
     }
+
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, NATIVE_SOL_TOKEN);
   });
 
   async function registerTokenMapping(
@@ -303,6 +306,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
       destTokenByte,
       mode
     );
+    await setExplicitUnlimitedWithdrawRateLimit(ctx, mint);
     return { mint, tokenPda, destToken, userToken, bridgeToken, adminToken, initialSupply };
   }
 
@@ -1056,6 +1060,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       } catch (err) {
         expect(err.toString()).to.contain("WrongRecipient");
       }
+
+      // `withdraw_delay` uses strict `clock > approved_at + delay`; a second sleep avoids flaky DelayNotElapsed at the boundary.
+      await sleep(2000);
 
       await ctx.program.methods
         .withdrawExecuteNative()
