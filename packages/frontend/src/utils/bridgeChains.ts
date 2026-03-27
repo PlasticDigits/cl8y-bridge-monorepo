@@ -7,7 +7,7 @@
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
-import { DEFAULT_NETWORK } from './constants'
+import { DEFAULT_NETWORK, LOCAL_TERRA_LCD_URL, LOCAL_TERRA_RPC_URL } from './constants'
 import { getChainlist, getChainlistEntry } from './chainlist'
 
 export type NetworkTier = 'local' | 'testnet' | 'mainnet'
@@ -38,9 +38,9 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       chainId: 'localterra',
       type: 'cosmos',
       name: 'LocalTerra',
-      rpcUrl: 'http://localhost:26657',
-      lcdUrl: 'http://localhost:1317',
-      lcdFallbacks: ['http://localhost:1317'],
+      rpcUrl: LOCAL_TERRA_RPC_URL,
+      lcdUrl: LOCAL_TERRA_LCD_URL,
+      lcdFallbacks: [LOCAL_TERRA_LCD_URL],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000002', // V2 chain ID 2 (local Terra)
     },

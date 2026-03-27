@@ -2,6 +2,10 @@
  * Constants for CL8Y Bridge Frontend
  */
 
+/** Local Terra endpoints — defaults match docker compose; QA shared-host uses remapped ports via VITE_*. */
+export const LOCAL_TERRA_RPC_URL = import.meta.env.VITE_TERRA_RPC_URL || 'http://localhost:26657'
+export const LOCAL_TERRA_LCD_URL = import.meta.env.VITE_TERRA_LCD_URL || 'http://localhost:1317'
+
 // Network configuration
 export const NETWORKS = {
   // Local development (Anvil + LocalTerra)
@@ -9,10 +13,10 @@ export const NETWORKS = {
     terra: {
       chainId: 'localterra',
       name: 'LocalTerra',
-      rpc: 'http://localhost:26657',
-      lcd: 'http://localhost:1317',
-      lcdFallbacks: ['http://localhost:1317'],
-      scanner: 'http://localhost:1317',
+      rpc: LOCAL_TERRA_RPC_URL,
+      lcd: LOCAL_TERRA_LCD_URL,
+      lcdFallbacks: [LOCAL_TERRA_LCD_URL],
+      scanner: LOCAL_TERRA_LCD_URL,
     },
     evm: {
       chainId: 31337,

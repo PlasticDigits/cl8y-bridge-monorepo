@@ -38,7 +38,10 @@ make start-qa
 
 **Before** starting, this stops any existing canceler, operator, and runs **`docker compose down`** so you always get a clean bring-up.
 
-It then starts Docker (Anvil, LocalTerra, Solana, Postgres), runs migrations, **`make deploy`** (EVM/Terra deploy scripts **merge** bridge addresses into existing **`.env`** files; **`deploy-solana`** runs **`scripts/solana/airdrop-for-anchor-deploy.sh`** so the Anchor deploy keypair is funded on localnet), writes **`.env.e2e.local`** and **`packages/frontend/.env.local`**, starts **operator** and **canceler**, verifies **`/health`**, and prints a **copy-paste `ssh -N -L …`** command for your laptop (ports come from **`scripts/qa/qa-host.env`**). Optionally set **`QA_SSH_DEST=user@host`** in the environment when running **`make start-qa`** to bake your SSH login into that command instead of **`$(whoami)@$(hostname -f)`**.
+It then starts Docker (Anvil, LocalTerra, Solana, Postgres), runs migrations, **`make deploy`** (EVM/Terra deploy scripts **merge** bridge addresses into existing **`.env`** files; **`deploy-solana`** runs **`scripts/solana/airdrop-for-anchor-deploy.sh`** so the Anchor deploy keypair is funded on localnet), writes **`.env.e2e.local`** and **`packages/frontend/.env.local`**, starts **operator** and **canceler**, verifies **`/health`**, and prints a **copy-paste `ssh -4 -L …`** command for your laptop (ports come from **`scripts/qa/qa-host.env`**). When running **`make start-qa`** on the server, you can set:
+
+- **`QA_SSH_DEST=user@203.0.113.7`** — fixed IP or hostname for **`ssh`** / **`scp`** hints (default is **`$(whoami)@$(hostname -f)`**).
+- **`QA_SSH_PORT=2223`** — if SSH listens on a non-default port (printed as **`ssh -p`** / **`scp -P`**).
 
 4. Stop:
 
@@ -48,13 +51,14 @@ make stop-qa
 
 ## Laptop + SSH (still required)
 
-The UI runs in a browser on the laptop. **`make start-qa`** prints the exact **`ssh -4 -L 127.0.0.1:…`** block at the end. Use that on your laptop, or set **`QA_SSH_DEST=brouie-cl8y-qa@your-host`** when running **`make start-qa`** so the printed `scp`/`ssh` lines use your login.
+The UI runs in a browser on the laptop. **`make start-qa`** prints the exact **`ssh -4 -L 127.0.0.1:…`** block at the end. Use that on your laptop, or set **`QA_SSH_DEST`** / **`QA_SSH_PORT`** on the server when running **`make start-qa`** so the printed `scp`/`ssh` lines match your login, IP, and SSH port.
 
 **Frontend env (no manual `VITE_*` sync):** URLs for QA shared-host are fixed in **`scripts/qa/qa-host.env`** (same ports as Docker / SSH forwards). Contract addresses live in **`.deploy/local.env`** after deploy. On your laptop clone:
 
 ```bash
 mkdir -p .deploy
 scp USER@QA_HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env
+# Non-default SSH port: scp -P 2223 USER@QA_HOST:.../.deploy/local.env .deploy/local.env
 ./scripts/qa/write-frontend-env-local.sh
 # or: npm run env:local --prefix packages/frontend
 cd packages/frontend && npm ci && npm run dev

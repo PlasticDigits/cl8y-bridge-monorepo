@@ -26,10 +26,10 @@ describe('NETWORKS', () => {
   it('local network has correct structure', () => {
     const local = NETWORKS.local
     
-    // Terra config
+    // Terra config (defaults use localhost; QA may set VITE_* to 127.0.0.1 + remapped ports)
     expect(local.terra.chainId).toBe('localterra')
-    expect(local.terra.lcd).toContain('localhost')
-    expect(local.terra.rpc).toContain('localhost')
+    expect(local.terra.lcd).toMatch(/localhost|127\.0\.0\.1/)
+    expect(local.terra.rpc).toMatch(/localhost|127\.0\.0\.1/)
     expect(Array.isArray(local.terra.lcdFallbacks)).toBe(true)
     
     // EVM config
