@@ -319,7 +319,7 @@ function registerChainsOnTerra(terraBridgeAddress: string): void {
       execSync(
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${registerEvm}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-          `--fees 10000000uluna -y 2>/dev/null`,
+          `--fees 10000000uluna -y`,
         { encoding: 'utf8', timeout: 30_000 }
       )
       console.log(`[register-tokens] Registered chain "${identifier}" (V2 ID 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}) on Terra bridge`)
@@ -338,15 +338,13 @@ function registerTerraTokensForEvmChains(
   const keyName = 'test1'
 
   // Step 1: Add uluna (native) token with EVM representation = LUNC on Anvil
-  const evmLuncAnvil = tokens.anvil.lunc.slice(2).toLowerCase().padStart(64, '0')
+  // Matches bridge ExecuteMsg::AddToken (no evm_* fields — EVM mapping is via set_token_destination).
   const addUlunaMsg = JSON.stringify({
     add_token: {
       token: 'uluna',
       is_native: true,
       token_type: 'lock_unlock',
-      evm_token_address: evmLuncAnvil,
       terra_decimals: 6,
-      evm_decimals: 6,
     },
   })
 
@@ -354,7 +352,7 @@ function registerTerraTokensForEvmChains(
     execSync(
       `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${addUlunaMsg}' ` +
         `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-        `--fees 10000000uluna -y 2>/dev/null`,
+        `--fees 10000000uluna -y`,
       { encoding: 'utf8', timeout: 30_000 }
     )
     console.log('[register-tokens] Added uluna token to Terra bridge')
@@ -384,7 +382,7 @@ function registerTerraTokensForEvmChains(
       execSync(
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-          `--fees 10000000uluna -y 2>/dev/null`,
+          `--fees 10000000uluna -y`,
         { encoding: 'utf8', timeout: 30_000 }
       )
       console.log(`[register-tokens] Set token_destination for uluna -> chain 0x${chainId[3]!.toString(16).padStart(2, '0')}`)
@@ -412,7 +410,7 @@ function registerTerraTokensForEvmChains(
       execSync(
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-          `--fees 10000000uluna -y 2>/dev/null`,
+          `--fees 10000000uluna -y`,
         { encoding: 'utf8', timeout: 30_000 }
       )
       console.log(`[register-tokens] Set incoming token mapping for uluna (chain 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}) on Terra bridge`)
@@ -448,15 +446,12 @@ function registerTerraTokensForEvmChains(
       continue
     }
 
-    const evmToken = tokens.anvil[tokenKey].slice(2).toLowerCase().padStart(64, '0')
     const addTokenMsg = JSON.stringify({
       add_token: {
         token: tokenAddr,
         is_native: false,
         token_type: 'lock_unlock',
-        evm_token_address: evmToken,
         terra_decimals: 6,
-        evm_decimals: 18,
       },
     })
 
@@ -464,7 +459,7 @@ function registerTerraTokensForEvmChains(
       execSync(
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${addTokenMsg}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-          `--fees 10000000uluna -y 2>/dev/null`,
+          `--fees 10000000uluna -y`,
         { encoding: 'utf8', timeout: 30_000 }
       )
       console.log(`[register-tokens] Added CW20 token ${tokenAddr.slice(0, 20)}... to Terra bridge`)
@@ -491,7 +486,7 @@ function registerTerraTokensForEvmChains(
         execSync(
           `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
             `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-            `--fees 10000000uluna -y 2>/dev/null`,
+            `--fees 10000000uluna -y`,
           { encoding: 'utf8', timeout: 30_000 }
         )
         console.log(`[register-tokens] Set token_destination for CW20 ${tokenKey} -> ${dest.chainLabel}`)
@@ -521,7 +516,7 @@ function registerTerraTokensForEvmChains(
         execSync(
           `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
             `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-            `--fees 10000000uluna -y 2>/dev/null`,
+            `--fees 10000000uluna -y`,
           { encoding: 'utf8', timeout: 30_000 }
         )
         console.log(`[register-tokens] Set incoming mapping for CW20 ${tokenKey} (chain ${dest.chainLabel}) with src_decimals=18`)
@@ -535,22 +530,19 @@ function registerTerraTokensForEvmChains(
   // KDEC (decimal normalization test token) — 6 decimals on Terra, 18 on Anvil, 12 on Anvil1
   const kdecAddr = tokens.terra.kdec
   if (!isPlaceholderAddress(kdecAddr)) {
-    const kdecEvmToken = tokens.anvil.kdec.slice(2).toLowerCase().padStart(64, '0')
     const addKdecMsg = JSON.stringify({
       add_token: {
         token: kdecAddr,
         is_native: false,
         token_type: 'lock_unlock',
-        evm_token_address: kdecEvmToken,
         terra_decimals: KDEC_DECIMALS.terra,
-        evm_decimals: KDEC_DECIMALS.anvil,
       },
     })
     try {
       execSync(
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${addKdecMsg}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-          `--fees 10000000uluna -y 2>/dev/null`,
+          `--fees 10000000uluna -y`,
         { encoding: 'utf8', timeout: 30_000 }
       )
       console.log('[register-tokens] Added CW20 KDEC token to Terra bridge')
@@ -579,7 +571,7 @@ function registerTerraTokensForEvmChains(
         execSync(
           `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
             `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-            `--fees 10000000uluna -y 2>/dev/null`,
+            `--fees 10000000uluna -y`,
           { encoding: 'utf8', timeout: 30_000 }
         )
         console.log(`[register-tokens] Set KDEC token_destination -> ${dest.label} (${dest.decimals}d)`)
@@ -606,7 +598,7 @@ function registerTerraTokensForEvmChains(
         execSync(
           `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
             `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
-            `--fees 10000000uluna -y 2>/dev/null`,
+            `--fees 10000000uluna -y`,
           { encoding: 'utf8', timeout: 30_000 }
         )
         console.log(`[register-tokens] Set incoming KDEC mapping from ${dest.label} (src_decimals=${dest.decimals})`)
