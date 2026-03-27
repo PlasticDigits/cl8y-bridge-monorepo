@@ -1,4 +1,4 @@
-.PHONY: start stop start-qa stop-qa qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
+.PHONY: start stop start-qa stop-qa qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
@@ -6,7 +6,8 @@ help:
 	@echo ""
 	@echo "Infrastructure:"
 	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
-	@echo "  make start-qa       - QA server: Docker + migrate + deploy + operator + canceler; prints step-by-step laptop workflow (SSH, scp, env, dev — see scripts/qa/README.md)"
+	@echo "  make start-qa       - QA server: Docker (2x Anvil) + migrate + deploy + full e2e token setup + operator + canceler; see scripts/qa/README.md"
+	@echo "  make qa-full-token-setup - After make deploy: full e2e-infra tokens + registerAllTokens + Solana (same as start-qa token phase)"
 	@echo "  make stop           - Stop Docker services"
 	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
 	@echo "  make reset          - Stop and remove all volumes"
@@ -80,7 +81,8 @@ help:
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy             - Deploy all contracts locally + setup-bridge (Solana program id auto-detected)"
-	@echo "  make deploy-evm         - Deploy EVM contracts to Anvil"
+	@echo "  make deploy-evm         - Deploy EVM contracts to first Anvil (8545)"
+	@echo "  make deploy-evm1        - Deploy EVM contracts to second Anvil / anvil1 (8546)"
 	@echo "  make deploy-terra       - Deploy Terra bridge + CW20 test token to LocalTerra"
 	@echo "  make deploy-solana      - Deploy Solana program to local validator"
 	@echo "  make deploy-test-token  - Deploy test ERC20 for integration tests"
@@ -106,6 +108,10 @@ start:
 start-qa:
 	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh
 	./scripts/qa/start-qa.sh
+
+# After `make deploy`, runs full e2e-infra token matrix + registerAllTokens + Solana register_token (same as start-qa token step)
+qa-full-token-setup:
+	cd packages/frontend && npm run qa:full-token-setup
 
 qa-frontend-env:
 	@chmod +x scripts/qa/write-frontend-env-local.sh
@@ -290,12 +296,17 @@ test-frontend-integration:
 test: test-evm test-terra test-operator test-canceler test-frontend
 
 # Deployment - Local
-deploy: deploy-evm deploy-terra deploy-solana setup-bridge
+deploy: deploy-evm deploy-evm1 deploy-terra deploy-solana setup-bridge
 	@echo "Deployment complete!"
 
 deploy-evm:
 	@echo "Deploying EVM contracts to Anvil..."
 	./scripts/deploy-evm-local.sh
+
+deploy-evm1:
+	@echo "Deploying EVM contracts to Anvil1 (second chain, port 8546)..."
+	@chmod +x "$(CURDIR)/scripts/deploy-evm1-local.sh" 2>/dev/null || true
+	./scripts/deploy-evm1-local.sh
 
 deploy-test-token:
 	@chmod +x "$(CURDIR)/scripts/record-test-token-deploy.sh" 2>/dev/null || true

@@ -32,9 +32,13 @@ make start-qa
 
 **Before** starting, this stops canceler/operator and runs **`docker compose down`** for a clean stack.
 
-It then: starts Docker (Anvil, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (EVM + Terra with **CW20** test token + Solana + **`setup-bridge`**) → **`make deploy-tokens`** (test ERC20 on Anvil, recorded in **`.deploy/local.env`**) → **`make register-tokens`** (registers tokens on the bridges so the **transfer UI** and **`useTokenRegistry`** see them) → merges deploy outputs into operator **`.env`** → writes **`.env.e2e.local`** and **`packages/frontend/.env.local` on the server** → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)**.
+It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (EVM + **EVM1** second deploy + Terra with **CW20** + Solana + **`setup-bridge`** with Terra **`register_chain`**) → **`npm ci`** in **`packages/frontend`** when needed (no **`node_modules`**, or **`package-lock.json`** newer than **`node_modules`**) → **`npm run qa:full-token-setup`** in **`packages/frontend`** (same **full E2E token matrix** as Vitest e2e-infra: TokenA/B/C, LUNC, KDEC on both Anvils + Terra, **`registerAllTokens`**, LockUnlock funding, cancel window, canceler registration, **`scripts/solana/register-tokens.sh`**) → merges deploy outputs + **`EVM_CHAINS_COUNT` / `EVM_CHAIN_1_*`** (multi-EVM operator) into repo-root **`.env`** → writes **`.env.e2e.local`** and **`packages/frontend/.env.local`** (including **`VITE_EVM1_*`**) → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)**.
 
-**Settings → Faucet** rows for dedicated faucet **contracts** (EVM/Terra faucet dApps) are separate from bridge test tokens; they need extra deploy + **`VITE_*_FAUCET_ADDRESS`** if you use that UI. Bridge **token selectors** use the Terra bridge registry populated by **`register-tokens`**.
+**Manual token step (after `make deploy` only):** `make qa-full-token-setup` or `cd packages/frontend && npm run qa:full-token-setup`.
+
+**Settings → Faucet** rows for dedicated faucet **contracts** (EVM/Terra faucet dApps) are separate from bridge test tokens; they need extra deploy + **`VITE_*_FAUCET_ADDRESS`** if you use that UI. Bridge **token selectors** use registries populated by the QA token setup above.
+
+**Legacy minimal path:** **`make deploy-tokens`** + **`make register-tokens`** (single test ERC20 + bash registration) remains available; **`start-qa`** uses the full matrix instead.
 
 **Optional — bake SSH host/port into that printed block** (set on the server when you run **`make start-qa`**). The printed destination is **`whoami@host`**: **`host`** comes from **`QA_SSH_HOST`** (or this machine’s hostname), and **`whoami`** is whoever runs **`make start-qa`** on the server.
 
@@ -42,6 +46,7 @@ It then: starts Docker (Anvil, LocalTerra, Solana, Postgres) → migrations → 
 |----------|---------|
 | **`QA_SSH_HOST`** | Hostname or IP as seen from the laptop (default: this machine’s **`hostname -f`** or **`hostname`**) |
 | **`QA_SSH_PORT`** | If SSH is not on port 22; the printed **`ssh`** / **`scp`** lines include **`-p`** / **`-P`** |
+| **`START_QA_SKIP_NPM_CI`** | Set to **`1`** to skip the automatic **`npm ci`** in **`packages/frontend`** when **`make start-qa`** would otherwise run it (missing **`node_modules`** or **`package-lock.json`** newer than **`node_modules`**) |
 
 ### Stop the QA stack
 
@@ -102,8 +107,8 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 | Symptom | What to do |
 |--------|------------|
 | **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_*` bridge addresses** are set. Restart Vite. |
-| **Bridge page: no tokens in the selector** | On the **server**, tokens must be **deployed and registered** ( **`make start-qa`** now runs **`deploy-tokens`** + **`register-tokens`** after **`deploy`**). Or run **`make deploy-tokens && make register-tokens`** manually after **`make deploy`**. |
-| **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered via **`register-tokens`**. |
+| **Bridge page: no tokens in the selector** | On the **server**, run **`make start-qa`** (includes **`qa:full-token-setup`**) or after **`make deploy`** run **`make qa-full-token-setup`**. Legacy: **`make deploy-tokens && make register-tokens`**. |
+| **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered by the full QA token setup. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
 | **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
 | **`scp` fails (other)** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |

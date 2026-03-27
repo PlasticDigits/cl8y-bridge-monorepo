@@ -30,18 +30,23 @@ source "$REPO_ROOT/.env"
 source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
-echo "==> Starting Docker Compose (bridge infrastructure)..."
+EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"
+
+echo "==> Starting Docker Compose (anvil + anvil1 + localterra + postgres + solana)..."
 if docker compose up --help 2>&1 | grep -q -- '--wait'; then
-  docker compose up -d --wait
+  docker compose up -d --wait anvil anvil1 localterra postgres solana
 else
-  docker compose up -d
+  docker compose up -d anvil anvil1 localterra postgres solana
 fi
 
-echo "==> Waiting for chain RPCs (up to ~90s)..."
+echo "==> Waiting for chain RPCs: EVM + EVM1 + Terra + Solana (up to ~90s)..."
 for _ in $(seq 1 45); do
   if curl -sf -X POST -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
     "$EVM_RPC_URL" >/dev/null 2>&1 \
+    && curl -sf -X POST -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+      "$EVM1_RPC_URL" >/dev/null 2>&1 \
     && curl -sf "$TERRA_LCD_URL/cosmos/base/tendermint/v1beta1/blocks/latest" >/dev/null 2>&1 \
     && curl -sf -X POST -H 'Content-Type: application/json' \
       -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
@@ -61,12 +66,27 @@ echo "==> Deploy contracts + setup-bridge (uses TERRA_RPC_URL / TERRA_LCD_URL fr
 # Force remapped LocalTerra URLs into deploy / setup-bridge (override stale .env from operator template).
 export TERRA_RPC_URL="http://127.0.0.1:${E2E_TERRA_RPC_PORT:-26658}"
 export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
-export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL SOLANA_RPC_URL
+export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL EVM1_RPC_URL SOLANA_RPC_URL
 make deploy
 
-echo "==> Test ERC20 + register tokens on bridges (needed for transfer UI token list + Terra registry queries)..."
-make deploy-tokens
-make register-tokens
+FE_DIR="$REPO_ROOT/packages/frontend"
+if [ "${START_QA_SKIP_NPM_CI:-}" != "1" ] && command -v npm >/dev/null 2>&1; then
+  _need_npm_ci=0
+  if [ ! -d "$FE_DIR/node_modules" ]; then
+    _need_npm_ci=1
+  elif [ -f "$FE_DIR/package-lock.json" ] && [ "$FE_DIR/package-lock.json" -nt "$FE_DIR/node_modules" ]; then
+    _need_npm_ci=1
+  fi
+  if [ "$_need_npm_ci" -eq 1 ]; then
+    echo "==> Frontend dependencies: npm ci ($FE_DIR) — first run, missing node_modules, or package-lock newer than node_modules..."
+    ( cd "$FE_DIR" && npm ci )
+  fi
+elif ! command -v npm >/dev/null 2>&1; then
+  echo "[start-qa] WARN: npm not on PATH — ensure packages/frontend deps are installed before qa:full-token-setup." >&2
+fi
+
+echo "==> Full E2E token matrix + cross-chain registration (e2e-infra) + Solana register_token..."
+( cd "$FE_DIR" && npm run qa:full-token-setup )
 
 echo "==> Merging deploy outputs into repo-root .env for operator..."
 if [ -f "$REPO_ROOT/.deploy/local.env" ]; then
@@ -80,6 +100,15 @@ if [ -f "$REPO_ROOT/.deploy/local.env" ]; then
   fi
   "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" TERRA_RPC_URL "${TERRA_RPC_URL}"
   "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" TERRA_LCD_URL "${TERRA_LCD_URL}"
+  if [ -n "${EVM1_BRIDGE_ADDRESS:-}" ]; then
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAINS_COUNT "1"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_NAME "anvil1"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_CHAIN_ID "31338"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_THIS_CHAIN_ID "3"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_RPC_URL "${EVM1_RPC_URL}"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_BRIDGE_ADDRESS "${EVM1_BRIDGE_ADDRESS}"
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" EVM_CHAIN_1_FINALITY_BLOCKS "1"
+  fi
 fi
 
 echo "==> Writing .env.e2e.local + packages/frontend/.env.local..."
