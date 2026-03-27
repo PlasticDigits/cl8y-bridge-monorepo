@@ -30,6 +30,22 @@ log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
 log_error() { echo -e "\033[0;31m[ERROR]\033[0m $1"; }
 log_warn() { echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
+# Note: this script is often run as `if build_cw20_wasm ...`; errexit is disabled there,
+# so every critical step must check exit status explicitly.
+
+check_artifacts_writable() {
+  local probe
+  probe="$ARTIFACTS_DIR/.qa_write_probe_$$"
+  mkdir -p "$ARTIFACTS_DIR" || true
+  if ! ( umask 022 && : >"$probe" ) 2>/dev/null; then
+    log_error "Cannot write to $ARTIFACTS_DIR (e.g. owned by root from a prior sudo deploy)."
+    log_error "Fix ownership, then retry: sudo chown -R \"$(id -un)\":\"$(id -gn)\" \"$ARTIFACTS_DIR\""
+    return 1
+  fi
+  rm -f "$probe"
+  return 0
+}
+
 verify_wasm_magic() {
   local f=$1
   if command -v python3 >/dev/null 2>&1; then
@@ -121,8 +137,14 @@ build_cw20_wasm() {
     log_error "Expected wasm missing: $built"
     return 1
   fi
-  mkdir -p "$ARTIFACTS_DIR"
-  cp -f "$built" "$OUTPUT_FILE"
+  if ! check_artifacts_writable; then
+    return 1
+  fi
+  if ! cp -f "$built" "$OUTPUT_FILE"; then
+    log_error "Cannot write $OUTPUT_FILE (permission denied)."
+    log_error "Fix: sudo chown -R \"$(id -un)\":\"$(id -gn)\" \"$ARTIFACTS_DIR\""
+    return 1
+  fi
   log_success "Copied to $OUTPUT_FILE"
   if verify_wasm_magic "$OUTPUT_FILE"; then
     log_success "WASM magic bytes OK"
@@ -143,6 +165,10 @@ mkdir -p "$ARTIFACTS_DIR"
 if [[ -f "$OUTPUT_FILE" ]]; then
   log_info "CW20 WASM already exists at $OUTPUT_FILE"
   exit 0
+fi
+
+if ! check_artifacts_writable; then
+  exit 1
 fi
 
 if ! command -v git >/dev/null 2>&1; then

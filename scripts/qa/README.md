@@ -117,6 +117,7 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 | **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
 | **`scp` fails (other)** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |
 | **`ensure-terra-artifacts` / `cw20_mintable.wasm` fails** | **`scripts/ensure-cw20-mintable-wasm.sh`** clones **cw-plus** (or **`CW20_MINTABLE_REPO_URL`**) into **`packages/contracts-terraclassic/external/cw20-mintable`** and builds **`cw20-base`**, then falls back to **`scripts/download-cw20-wasm.sh`**. If GitHub is blocked for both git and curl, set **`CW20_WASM_URL_OVERRIDE`** to a mirror, or copy **`cw20_mintable.wasm`** into **`packages/contracts-terraclassic/artifacts/`**. Needs **Rust** + **`wasm32-unknown-unknown`** for the build path. |
+| **Permission denied when writing Terra `artifacts/*.wasm`** | The **`packages/contracts-terraclassic/artifacts/`** tree is often root-owned if something was run with **sudo**. Run **`make start-qa`** as the same user that owns the repo, and fix ownership once: **`sudo chown -R "$(whoami):$(whoami)" packages/contracts-terraclassic/artifacts`**. Same idea if **`bridge.wasm`** fails to write. |
 
 ---
 

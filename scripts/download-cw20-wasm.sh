@@ -32,12 +32,31 @@ log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
 log_error() { echo -e "\033[0;31m[ERROR]\033[0m $1"; }
 log_warn() { echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
+# try_url is used inside `if try_url ...`; errexit is off — check mv explicitly.
+
+check_artifacts_writable() {
+  local probe
+  probe="$ARTIFACTS_DIR/.qa_write_probe_$$"
+  mkdir -p "$ARTIFACTS_DIR" || true
+  if ! ( umask 022 && : >"$probe" ) 2>/dev/null; then
+    log_error "Cannot write to $ARTIFACTS_DIR (e.g. owned by root from a prior sudo deploy)."
+    log_error "Fix: sudo chown -R \"$(id -un)\":\"$(id -gn)\" \"$ARTIFACTS_DIR\""
+    return 1
+  fi
+  rm -f "$probe"
+  return 0
+}
+
 mkdir -p "$ARTIFACTS_DIR"
 
 if [ -f "$OUTPUT_FILE" ]; then
   log_info "CW20 WASM already exists at $OUTPUT_FILE"
   log_info "To re-download, delete the file first"
   exit 0
+fi
+
+if ! check_artifacts_writable; then
+  exit 1
 fi
 
 download_with_curl() {
@@ -65,16 +84,24 @@ try_url() {
   tmp=$(mktemp)
   if command -v curl >/dev/null 2>&1; then
     if download_with_curl "$url" "$tmp"; then
-      mv -f "$tmp" "$OUTPUT_FILE"
-      return 0
+      if mv -f "$tmp" "$OUTPUT_FILE"; then
+        return 0
+      fi
+      log_error "Cannot write $OUTPUT_FILE after download (permission denied?)"
+      rm -f "$tmp"
+      return 1
     fi
   fi
   rm -f "$tmp"
   tmp=$(mktemp)
   if command -v wget >/dev/null 2>&1; then
     if download_with_wget "$url" "$tmp"; then
-      mv -f "$tmp" "$OUTPUT_FILE"
-      return 0
+      if mv -f "$tmp" "$OUTPUT_FILE"; then
+        return 0
+      fi
+      log_error "Cannot write $OUTPUT_FILE after download (permission denied?)"
+      rm -f "$tmp"
+      return 1
     fi
   fi
   rm -f "$tmp"
