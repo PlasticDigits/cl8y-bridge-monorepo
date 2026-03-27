@@ -1,7 +1,7 @@
 /**
  * Operator Start/Stop Module for E2E Tests
  *
- * Builds and starts the cl8y-relayer operator process with correct env vars
+ * Builds and starts the cl8y-operator process with correct env vars
  * for the local devnet. Manages PID file for cleanup.
  *
  * Pattern matches packages/e2e/src/services.rs.
@@ -18,7 +18,7 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 const PID_FILE = resolve(ROOT_DIR, '.e2e-operator.pid')
 const LOG_FILE = resolve(ROOT_DIR, '.operator.log')
 const START_SCRIPT = resolve(ROOT_DIR, '.operator-start.sh')
-const OPERATOR_BINARY = resolve(ROOT_DIR, 'packages/operator/target/release/cl8y-relayer')
+const OPERATOR_BINARY = resolve(ROOT_DIR, 'packages/operator/target/release/cl8y-operator')
 const HEALTH_URL = 'http://localhost:9092/health'
 
 // Default test accounts (Anvil deterministic)
@@ -214,7 +214,7 @@ exec ${OPERATOR_BINARY} >> ${LOG_FILE} 2>&1
 
   // Find PID
   try {
-    const pidStr = execSync('pgrep -f cl8y-relayer', {
+    const pidStr = execSync('pgrep -f cl8y-operator', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
@@ -274,7 +274,7 @@ export async function stopOperator(): Promise<void> {
 
   // Fallback: kill by name
   try {
-    execSync('pgrep -f cl8y-relayer | xargs kill -9 2>/dev/null || true', {
+    execSync('pgrep -f cl8y-operator | xargs kill -9 2>/dev/null || true', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     })
