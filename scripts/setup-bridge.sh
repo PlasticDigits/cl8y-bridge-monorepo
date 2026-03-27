@@ -101,9 +101,17 @@ check_addresses() {
 # Register Terra chain on EVM bridge
 setup_evm_side() {
     log_info "=== Configuring EVM Side ==="
-    
+
+    if ! command -v cast >/dev/null 2>&1; then
+        log_error "cast (Foundry) is not on PATH — required for setup-bridge EVM steps."
+        echo "  Install: https://book.getfoundry.sh/getting-started/installation" >&2
+        echo "  Ensure ~/.foundry/bin is on PATH when running make (e.g. login shell or export PATH)." >&2
+        exit 1
+    fi
+
     # Compute Terra chain key: keccak256(abi.encode("COSMOS", "localterra", "terra"))
-    TERRA_CHAIN_KEY=$(cast keccak "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')")
+    TERRA_CHAIN_KEY=$(cast keccak "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')") \
+        || { log_error "cast keccak/abi-encode failed"; exit 1; }
     log_info "Terra Chain Key: $TERRA_CHAIN_KEY"
     
     # Check if ChainRegistry is set (optional - might be combined with bridge)
@@ -272,26 +280,26 @@ setup_solana_side() {
         OPERATOR_PUBKEY="$(solana-keygen pubkey "${SOLANA_KEYPAIR}" 2>/dev/null || echo "")" \
             "$REPO_ROOT/scripts/solana/initialize-bridge.sh" \
             || log_warn "Solana bridge initialization failed (may already be initialized)"
-    elif [ -x "$(command -v npx)" ] && [ -d "$REPO_ROOT/packages/contracts-solana" ]; then
-        cd "$REPO_ROOT/packages/contracts-solana"
+    elif command -v npx >/dev/null 2>&1 && [ -d "$REPO_ROOT/packages/contracts-solana" ]; then
+        cd "$REPO_ROOT/packages/contracts-solana" || { log_error "cd packages/contracts-solana failed"; exit 1; }
         ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
         ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
         SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
             npx ts-mocha -p ./tsconfig.json -t 60000 tests/bridge.test.ts --grep "initialize" 2>/dev/null \
             || log_warn "Solana bridge initialization via test runner failed"
-        cd "$REPO_ROOT"
+        cd "$REPO_ROOT" || { log_error "cd REPO_ROOT failed"; exit 1; }
     fi
 
     # Step 3: Register EVM chain on Solana bridge (chain ID 0x00000001)
     log_info "Registering EVM chain on Solana bridge..."
-    if [ -x "$(command -v npx)" ] && [ -d "$REPO_ROOT/packages/contracts-solana" ]; then
-        cd "$REPO_ROOT/packages/contracts-solana"
+    if command -v npx >/dev/null 2>&1 && [ -d "$REPO_ROOT/packages/contracts-solana" ]; then
+        cd "$REPO_ROOT/packages/contracts-solana" || { log_error "cd packages/contracts-solana failed"; exit 1; }
         ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
         ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
         SOLANA_OPERATOR_KEYPAIR="${SOLANA_KEYPAIR}" \
             npx ts-mocha -p ./tsconfig.json -t 30000 tests/bridge.test.ts --grep "registers a chain" 2>/dev/null \
             || log_warn "Solana chain registration via test runner failed (may need manual setup)"
-        cd "$REPO_ROOT"
+        cd "$REPO_ROOT" || { log_error "cd REPO_ROOT failed"; exit 1; }
     else
         log_warn "npx or contracts-solana not available — run Solana registration manually"
     fi
@@ -327,8 +335,14 @@ verify_config() {
         log_warn "Could not query Terra bridge config"
     fi
     
-    # Query EVM bridge withdraw delay
-    DELAY=$(cast call "$EVM_BRIDGE_ADDRESS" "withdrawDelay()" --rpc-url "$EVM_RPC_URL" 2>/dev/null | cast to-dec 2>/dev/null || echo "N/A")
+    # Query EVM bridge withdraw delay (avoid set -e + pipeline surprises)
+    DELAY="N/A"
+    if command -v cast >/dev/null 2>&1; then
+        raw=$(cast call "$EVM_BRIDGE_ADDRESS" "withdrawDelay()" --rpc-url "$EVM_RPC_URL" 2>/dev/null) || raw=""
+        if [ -n "$raw" ]; then
+            DELAY=$(printf '%s\n' "$raw" | cast to-dec 2>/dev/null) || DELAY="N/A"
+        fi
+    fi
     log_info "EVM withdraw delay: $DELAY seconds"
 }
 
