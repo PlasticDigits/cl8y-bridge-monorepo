@@ -67,6 +67,7 @@
     "patch-package": "^8.0.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.3.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
