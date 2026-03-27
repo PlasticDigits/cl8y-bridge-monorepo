@@ -38,6 +38,7 @@ import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
 import { parseTerraLockReceipt } from '../../services/terra/depositReceipt'
 import { getDestToken } from '../../services/evm/tokenRegistry'
+import { bytes32ToSolanaAddress } from '../../services/solana/address'
 import { getEvmClient } from '../../services/evmClient'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../../services/hashVerification'
 import type { ChainInfo } from '../../lib/chains'
@@ -318,17 +319,19 @@ export function TransferForm() {
     !!isSourceEvm && !!sourceChainBytes4
   )
   // Query dest chain mappings for token filtering (Terra→EVM) and dest decimals (all→EVM).
+  const isDestSolanaChain = destChainConfig?.type === 'solana'
   const { mappings: destChainMappings, decimalsMap: destChainDecimals, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
     registryTokens,
     destChainBytes4,
-    !!isDestEvmChain && !!destChainBytes4
+    !!destChainBytes4 && (isDestEvmChain || isDestSolanaChain)
   )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
   // Only apply chain mapping filters once ALL queries are done.
   // Partial results would exclude tokens whose queries are still in flight.
   const readySourceMappings = isSourceEvm && !isSourceMappingsLoading ? sourceChainMappings : undefined
-  const readyDestMappings = isSourceTerra && isDestEvmChain && !isDestMappingsLoading ? destChainMappings : undefined
+  const readyDestMappings =
+    isSourceTerra && (isDestEvmChain || isDestSolanaChain) && !isDestMappingsLoading ? destChainMappings : undefined
   const transferTokens = useMemo(
     () =>
       buildTransferTokens(
@@ -372,7 +375,7 @@ export function TransferForm() {
   const { data: tokenDestMappingAddr } = useTokenDestMapping(
     selectedTokenId || undefined,
     destChainBytes4,
-    !!destChainBytes4 && !!isDestEvmChain
+    !!destChainBytes4 && (!!isDestEvmChain || isDestSolanaChain)
   )
 
   const destTokenAddr = useMemo(() => {
@@ -460,6 +463,35 @@ export function TransferForm() {
       sourceChainConfig: config,
     }
   }, [sourceChain])
+
+  /** EVM → Solana: TokenRegistry stores SPL mint as bytes32; validators need base58 mint. */
+  const { data: evmToSolanaDestMint, isLoading: isEvmToSolanaDestLoading } = useQuery({
+    queryKey: ['evmToSolanaDestMint', sourceBridgeConfig?.bridgeAddress, tokenConfig?.address, destChainBytes4],
+    queryFn: async () => {
+      if (!sourceBridgeConfig || !tokenConfig?.address || !destChainBytes4) return null
+      const client = getEvmClient(sourceBridgeConfig.sourceChainConfig)
+      const dt = await getDestToken(
+        client,
+        sourceBridgeConfig.bridgeAddress,
+        tokenConfig.address as Address,
+        destChainBytes4 as Hex
+      )
+      if (!dt || dt === ('0x' + '0'.repeat(64))) return null
+      return bytes32ToSolanaAddress(dt as `0x${string}`)
+    },
+    enabled:
+      direction === 'evm-to-solana' &&
+      !!sourceBridgeConfig &&
+      !!tokenConfig?.address &&
+      !!destChainBytes4,
+  })
+
+  const solanaDestTokenIdForRoute = useMemo(() => {
+    if (destChainConfig?.type !== 'solana') return undefined
+    if (direction === 'terra-to-solana') return tokenDestMappingAddr ?? undefined
+    if (direction === 'evm-to-solana') return evmToSolanaDestMint ?? undefined
+    return undefined
+  }, [destChainConfig?.type, direction, tokenDestMappingAddr, evmToSolanaDestMint])
 
   const {
     deposit: evmDeposit,
@@ -1267,7 +1299,8 @@ export function TransferForm() {
 
   const isTokenInfoLoading =
     (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)) ||
-    (isSourceTerra && (isRegistryLoading || isDestMappingsLoading))
+    (isSourceTerra && (isRegistryLoading || isDestMappingsLoading)) ||
+    (direction === 'evm-to-solana' && isEvmToSolanaDestLoading)
   const {
     isValid: isRouteValid,
     error: routeValidationError,
@@ -1286,7 +1319,12 @@ export function TransferForm() {
     sourceMappingAddress: readySourceMappings?.[selectedTokenId],
     destTokenAddress: destChainConfig?.type === 'evm' ? (destTokenAddr || undefined) : undefined,
     destMappingAddress: destChainConfig?.type === 'evm' ? (tokenDestMappingAddr || undefined) : undefined,
-    destTokenId: destChainConfig?.type === 'cosmos' ? ((terraCw20Address ?? selectedTokenId) || undefined) : undefined,
+    destTokenId:
+      destChainConfig?.type === 'cosmos'
+        ? (terraCw20Address ?? selectedTokenId) || undefined
+        : destChainConfig?.type === 'solana'
+          ? solanaDestTokenIdForRoute
+          : undefined,
   })
   const submitGuardError =
     !isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid

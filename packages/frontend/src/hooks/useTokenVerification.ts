@@ -20,6 +20,7 @@ import {
   getSrcTokenDecimals,
   bytes32ToAddress,
 } from '../services/evm/tokenRegistry'
+import { bytes32ToSolanaAddress } from '../services/solana/address'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
 import type { BridgeChainConfig } from '../types/chain'
@@ -55,6 +56,18 @@ interface TerraIncomingMappingResponse {
 }
 
 type ChainEntry = [string, BridgeChainConfig & { bytes4ChainId: string }]
+
+/** Human-readable dest token for TokenRegistry bytes32 (EVM address vs SPL mint). */
+function formatDestTokenLabel(dest: `0x${string}`, otherConfig: BridgeChainConfig): string {
+  if (otherConfig.type === 'solana') {
+    try {
+      return `SPL mint ${bytes32ToSolanaAddress(dest)}`
+    } catch {
+      return String(dest)
+    }
+  }
+  return `Mapped to ${bytes32ToAddress(dest)}`
+}
 
 function getConfiguredChains(): ChainEntry[] {
   const tier = DEFAULT_NETWORK as NetworkTier
@@ -174,6 +187,7 @@ export function useTokenVerification() {
 
     const allChains = getConfiguredChains()
     const evmChains = allChains.filter(([_, c]) => c.type === 'evm')
+    const solanaChains = allChains.filter(([_, c]) => c.type === 'solana')
     const cosmosChains = allChains.filter(([_, c]) => c.type === 'cosmos')
     const chainVerifications: ChainVerification[] = []
 
@@ -222,7 +236,7 @@ export function useTokenVerification() {
             label: `Dest mapping → ${otherName}`,
             status: dest ? 'pass' : 'fail',
             detail: dest
-              ? `Mapped to ${bytes32ToAddress(dest)}`
+              ? formatDestTokenLabel(dest, otherConfig)
               : `No outgoing dest mapping — call setTokenDestinationWithDecimals()`,
           })
         } catch (err) {
@@ -271,6 +285,23 @@ export function useTokenVerification() {
             status: mapping ? 'pass' : 'fail',
             detail: mapping
               ? `Mapped to ${bytes32ToAddress(mapping.hex as Hex)} (${mapping.decimals} dec)`
+              : `No outgoing dest mapping — call set_token_destination`,
+          })
+        } catch (err) {
+          checks.push({ label: `Dest mapping → ${otherName}`, status: 'error', detail: String(err) })
+        }
+      }
+
+      // 1b. Outgoing dest mappings from Terra to Solana
+      for (const [otherKey, otherConfig] of solanaChains) {
+        const otherName = otherConfig.name ?? otherKey
+        try {
+          const mapping = await queryTokenDestMapping(terraTokenId, otherConfig.bytes4ChainId)
+          checks.push({
+            label: `Dest mapping → ${otherName}`,
+            status: mapping ? 'pass' : 'fail',
+            detail: mapping
+              ? `Mapped to SPL ${bytes32ToSolanaAddress(mapping.hex as `0x${string}`)} (${mapping.decimals} dec)`
               : `No outgoing dest mapping — call set_token_destination`,
           })
         } catch (err) {

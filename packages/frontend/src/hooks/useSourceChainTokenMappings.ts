@@ -7,7 +7,15 @@
 import { useQueries } from '@tanstack/react-query'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { bytes32ToAddress } from '../services/evm/tokenRegistry'
+import { bytes32ToSolanaAddress } from '../services/solana/address'
 import { CONTRACTS, DEFAULT_NETWORK } from '../utils/constants'
+
+/** V2 chain id for Solana (matches bridge `solana_localnet` registration). */
+function isSolanaBytes4(bytes4: string | undefined): boolean {
+  if (!bytes4) return false
+  const h = bytes4.replace(/^0x/i, '').toLowerCase().padStart(8, '0')
+  return h.slice(-8) === '00000005'
+}
 
 export interface SourceChainTokenMappings {
   /** Map terra token id -> evm address on source chain. Only tokens with a mapping. */
@@ -39,7 +47,11 @@ export function useSourceChainTokenMappings(
         if (!t.token || !sourceChainBytes4) return null
         const result = await queryTokenDestMapping(t.token, sourceChainBytes4)
         if (!result) return null
-        return { address: bytes32ToAddress(result.hex as `0x${string}`), decimals: result.decimals }
+        const hex = result.hex as `0x${string}`
+        const address = isSolanaBytes4(sourceChainBytes4)
+          ? bytes32ToSolanaAddress(hex)
+          : bytes32ToAddress(hex)
+        return { address, decimals: result.decimals }
       },
       enabled: enabled && !!t.token && !!sourceChainBytes4,
       staleTime: 60_000,
