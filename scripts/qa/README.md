@@ -48,9 +48,19 @@ make stop-qa
 
 ## Laptop + SSH (still required)
 
-The UI runs in a browser on the laptop. **`make start-qa`** prints the exact **`ssh -N -L … user@host`** block at the end (after health checks). Use that command on your laptop, or set **`QA_SSH_DEST=brouie-cl8y-qa@your-host`** when running **`make start-qa`** on the server so the printed destination matches your account.
+The UI runs in a browser on the laptop. **`make start-qa`** prints the exact **`ssh -4 -L 127.0.0.1:…`** block at the end. Use that on your laptop, or set **`QA_SSH_DEST=brouie-cl8y-qa@your-host`** when running **`make start-qa`** so the printed `scp`/`ssh` lines use your login.
 
-Then open the app at `http://localhost:5173` with `npm run dev` locally (`.env.local` should use `127.0.0.1` — `make start-qa` generates matching `packages/frontend/.env.local` on the server; copy or sync to your laptop).
+**Frontend env (no manual `VITE_*` sync):** URLs for QA shared-host are fixed in **`scripts/qa/qa-host.env`** (same ports as Docker / SSH forwards). Contract addresses live in **`.deploy/local.env`** after deploy. On your laptop clone:
+
+```bash
+mkdir -p .deploy
+scp USER@QA_HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env
+./scripts/qa/write-frontend-env-local.sh
+# or: npm run env:local --prefix packages/frontend
+cd packages/frontend && npm ci && npm run dev
+```
+
+Then open `http://localhost:5173`. You only copy **one small file** from the server, not a hand-edited `.env.local`.
 
 ## Operator API port
 

@@ -1,4 +1,4 @@
-.PHONY: start stop start-qa stop-qa reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
+.PHONY: start stop start-qa stop-qa qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
@@ -15,6 +15,7 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana) + setup-bridge"
+	@echo "  make qa-frontend-env - Write packages/frontend/.env.local from .deploy/local.env + qa-host.env (laptop after scp)"
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
 	@echo ""
@@ -103,8 +104,12 @@ start:
 
 # Full QA server bootstrap (shared host with remapped Terra ports — scripts/qa/qa-host.env)
 start-qa:
-	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/stop-qa.sh
+	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh
 	./scripts/qa/start-qa.sh
+
+qa-frontend-env:
+	@chmod +x scripts/qa/write-frontend-env-local.sh
+	./scripts/qa/write-frontend-env-local.sh
 
 stop-qa:
 	@chmod +x scripts/qa/stop-qa.sh
