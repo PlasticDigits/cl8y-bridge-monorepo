@@ -4,7 +4,6 @@
  *
  * Usage (from repo root): `cd packages/frontend && npm run qa:full-token-setup`
  */
-import { execSync } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -44,7 +43,7 @@ function req(env: Record<string, string>, key: string): string {
   return v
 }
 
-function main(): void {
+async function main(): Promise<void> {
   console.log('[qa-full-token-setup] Loading', DEPLOY_ENV)
   const env = loadDeployEnv()
 
@@ -66,7 +65,7 @@ function main(): void {
   const evm1Rpc = process.env.EVM1_RPC_URL || 'http://127.0.0.1:8546'
 
   console.log('\n[qa-full-token-setup] Deploying tokens across chains...')
-  const tokenAddresses = deployAllTokens(terraBridge)
+  const tokenAddresses = await deployAllTokens(terraBridge)
 
   console.log('\n[qa-full-token-setup] Registering tokens across bridges...')
   registerAllTokens(
@@ -128,24 +127,10 @@ function main(): void {
     console.warn('[qa-full-token-setup] canceler registration:', (err as Error).message)
   }
 
-  const solScript = resolve(REPO_ROOT, 'scripts/solana/register-tokens.sh')
-  if (existsSync(solScript)) {
-    console.log('\n[qa-full-token-setup] Solana register_token (Anchor test grep)...')
-    execSync(`bash "${solScript}"`, {
-      cwd: REPO_ROOT,
-      stdio: 'inherit',
-      env: { ...process.env },
-    })
-  } else {
-    console.warn('[qa-full-token-setup] Skipping Solana —', solScript, 'not found')
-  }
-
-  console.log('\n[qa-full-token-setup] Done.')
+  console.log('\n[qa-full-token-setup] Done (includes Solana register-qa-tokens via registerAllTokens).')
 }
 
-try {
-  main()
-} catch (e) {
+main().catch((e) => {
   console.error(e)
   process.exit(1)
-}
+})

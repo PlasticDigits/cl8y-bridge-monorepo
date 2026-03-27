@@ -4,9 +4,16 @@
  */
 
 import { execSync } from 'child_process'
+import { mkdirSync, writeFileSync } from 'fs'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
+import { PublicKey } from '@solana/web3.js'
 import type { TokenAddresses } from './deploy-tokens'
 import { KDEC_DECIMALS } from './deploy-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
+
+const __registerTokensDir = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT_REGISTER_TOKENS = resolve(__registerTokensDir, '../../../../..')
 
 const DEPLOYER_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 
@@ -36,6 +43,8 @@ const CHAIN_KEYS = {
   anvil: '0x00000001',
   terra: '0x00000002',
   anvil1: '0x00000003',
+  /** V2 ID for Solana localnet (matches setup-bridge.sh SOLANA_CHAIN_ID) */
+  solana: '0x00000005',
 } as const
 
 /**
@@ -47,7 +56,7 @@ export function registerAllTokens(
 ): void {
   console.log('[register-tokens] Registering tokens across all chains...')
 
-  // Register chains on each EVM bridge
+  // Register chains on each EVM bridge (including Solana)
   registerChainsOnEvm(bridges)
 
   // Register tokens on Anvil for Terra (0x00000002) and Anvil1 (0x00000003) destinations
@@ -84,10 +93,44 @@ export function registerAllTokens(
   // Register tokens on Terra bridge for EVM destinations
   registerTerraTokensForEvmChains(bridges.terra, tokens)
 
+  // EVM ↔ Solana (TokenRegistry): same SPL mints as destinations / incoming sources
+  registerEvmSolanaMappings(
+    'http://localhost:8545',
+    bridges.anvil.tokenRegistry,
+    tokens.anvil,
+    tokens
+  )
+  registerEvmSolanaMappings(
+    'http://localhost:8546',
+    bridges.anvil1.tokenRegistry,
+    tokens.anvil1,
+    tokens
+  )
+
+  // Terra ↔ Solana (CW20 / uluna mappings)
+  registerTerraSolanaMappings(bridges.terra, tokens)
+
+  // Solana program: register_token for each mint × (Anvil, Terra, Anvil1)
+  runSolanaRegisterQaTokens(tokens)
+
   console.log('[register-tokens] All tokens registered successfully')
 }
 
 function registerChainsOnEvm(bridges: BridgeAddresses): void {
+  // On Anvil (V2 ID 1): register Solana (V2 ID 5) for TokenRegistry mappings
+  castSend(
+    'http://localhost:8545',
+    bridges.anvil.chainRegistry,
+    '"registerChain(string,bytes4)"',
+    `"solana_localnet" ${CHAIN_KEYS.solana}`
+  )
+  castSend(
+    'http://localhost:8546',
+    bridges.anvil1.chainRegistry,
+    '"registerChain(string,bytes4)"',
+    `"solana_localnet" ${CHAIN_KEYS.solana}`
+  )
+
   // On Anvil (V2 ID 1): register Terra (V2 ID 2) and Anvil1 (V2 ID 3)
   castSend(
     'http://localhost:8545',
@@ -115,6 +158,92 @@ function registerChainsOnEvm(bridges: BridgeAddresses): void {
     '"registerChain(string,bytes4)"',
     `"evm_31337" ${CHAIN_KEYS.anvil}`
   )
+}
+
+type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
+
+/** Encode SPL mint pubkey as `0x` + 64 hex chars (32 raw bytes). */
+function splMintToBytes32Hex(mintBase58: string): string {
+  return '0x' + Buffer.from(new PublicKey(mintBase58).toBytes()).toString('hex')
+}
+
+/** Base64-encoded 32-byte SPL mint (for Terra wasm `Binary` fields). */
+function splMintToSrcTokenB64(mintBase58: string): string {
+  return Buffer.from(new PublicKey(mintBase58).toBytes()).toString('base64')
+}
+
+/** SPL decimals on Solana for QA mints (must match deploy-solana.ts). */
+const SPL_TOKEN_ABC_DECIMALS = 9
+const SPL_LUNC_DECIMALS_SOL = 6
+const SPL_KDEC_DECIMALS_SOL = 9
+
+/**
+ * Register each local ERC20 ↔ Solana SPL mint on the EVM TokenRegistry (dest + incoming).
+ */
+function registerEvmSolanaMappings(
+  rpcUrl: string,
+  tokenRegistry: string,
+  sourceEvm: EvmChainTokens,
+  tokens: TokenAddresses
+): void {
+  const sol = CHAIN_KEYS.solana
+  const { solana } = tokens
+
+  const rows: Array<{
+    erc: string
+    spl: string
+    destDecimals: number
+    incomingSrcDecimals: number
+  }> = [
+    {
+      erc: sourceEvm.tokenA,
+      spl: solana.tokenA,
+      destDecimals: SPL_TOKEN_ABC_DECIMALS,
+      incomingSrcDecimals: SPL_TOKEN_ABC_DECIMALS,
+    },
+    {
+      erc: sourceEvm.tokenB,
+      spl: solana.tokenB,
+      destDecimals: SPL_TOKEN_ABC_DECIMALS,
+      incomingSrcDecimals: SPL_TOKEN_ABC_DECIMALS,
+    },
+    {
+      erc: sourceEvm.tokenC,
+      spl: solana.tokenC,
+      destDecimals: SPL_TOKEN_ABC_DECIMALS,
+      incomingSrcDecimals: SPL_TOKEN_ABC_DECIMALS,
+    },
+    {
+      erc: sourceEvm.lunc,
+      spl: solana.lunc,
+      destDecimals: SPL_LUNC_DECIMALS_SOL,
+      incomingSrcDecimals: SPL_LUNC_DECIMALS_SOL,
+    },
+    {
+      erc: sourceEvm.kdec,
+      spl: solana.kdec,
+      destDecimals: SPL_KDEC_DECIMALS_SOL,
+      incomingSrcDecimals: SPL_KDEC_DECIMALS_SOL,
+    },
+  ]
+
+  for (const { erc, spl, destDecimals, incomingSrcDecimals } of rows) {
+    ensureTokenRegistered(rpcUrl, tokenRegistry, erc)
+    const destHex = splMintToBytes32Hex(spl)
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
+      `${erc} ${sol} ${destHex} ${destDecimals}`
+    )
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setIncomingTokenMapping(bytes4,address,uint8)"',
+      `${sol} ${erc} ${incomingSrcDecimals}`
+    )
+  }
+  console.log(`[register-tokens] EVM↔Solana TokenRegistry mappings on ${rpcUrl}`)
 }
 
 /** Cache for keccak256 results */
@@ -157,8 +286,6 @@ function addressToBytes32(addr: string): string {
   // Terra address placeholder - just zero-pad for now
   return '0x' + '0'.repeat(64)
 }
-
-type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
 
 /** Map V2 chain key → KDEC decimals on that chain */
 const KDEC_DECIMALS_BY_CHAIN: Record<string, number> = {
@@ -298,6 +425,19 @@ function ensureTokenRegistered(rpcUrl: string, tokenRegistry: string, token: str
   )
 }
 
+/** Text from execSync failure (stderr is only present when stdio is piped). */
+function execSyncErrorText(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; stderr?: Buffer; stdout?: Buffer }
+    return [e.stderr?.toString(), e.stdout?.toString(), e.message].filter(Boolean).join('\n')
+  }
+  return String(err)
+}
+
+function isTerraChainAlreadyRegisteredError(err: unknown): boolean {
+  return /already registered/i.test(execSyncErrorText(err))
+}
+
 function registerChainsOnTerra(terraBridgeAddress: string): void {
   const containerName = 'cl8y-bridge-monorepo-localterra-1'
   const keyName = 'test1'
@@ -305,7 +445,10 @@ function registerChainsOnTerra(terraBridgeAddress: string): void {
   const chainsToRegister: Array<{ identifier: string; chainIdBytes: number[] }> = [
     { identifier: 'evm_31337', chainIdBytes: [0x00, 0x00, 0x00, 0x01] }, // Anvil
     { identifier: 'evm_31338', chainIdBytes: [0x00, 0x00, 0x00, 0x03] }, // Anvil1
+    { identifier: 'solana_localnet', chainIdBytes: [0x00, 0x00, 0x00, 0x05] }, // Solana
   ]
+
+  const terraExecOpts = { encoding: 'utf8' as const, timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'] }
 
   for (const { identifier, chainIdBytes } of chainsToRegister) {
     const chainIdB64 = Buffer.from(chainIdBytes).toString('base64')
@@ -320,11 +463,17 @@ function registerChainsOnTerra(terraBridgeAddress: string): void {
         `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${registerEvm}' ` +
           `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
           `--fees 10000000uluna -y`,
-        { encoding: 'utf8', timeout: 30_000 }
+        terraExecOpts
       )
       console.log(`[register-tokens] Registered chain "${identifier}" (V2 ID 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}) on Terra bridge`)
     } catch (err) {
-      console.warn(`[register-tokens] Failed to register ${identifier} on Terra:`, (err as Error).message?.slice(0, 100))
+      if (isTerraChainAlreadyRegisteredError(err)) {
+        console.log(
+          `[register-tokens] Chain "${identifier}" already registered on Terra bridge (V2 ID 0x${chainIdBytes[3]!.toString(16).padStart(2, '0')}, ok)`
+        )
+      } else {
+        console.warn(`[register-tokens] Failed to register ${identifier} on Terra:`, execSyncErrorText(err).slice(0, 200))
+      }
     }
     try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
   }
@@ -609,6 +758,122 @@ function registerTerraTokensForEvmChains(
     }
   } else {
     console.log('[register-tokens] Skipping KDEC on Terra (placeholder, not deployed)')
+  }
+}
+
+/**
+ * Terra bridge: map each local asset to its SPL mint on Solana (0x05) and incoming from Solana.
+ */
+function registerTerraSolanaMappings(terraBridgeAddress: string, tokens: TokenAddresses): void {
+  const containerName = 'cl8y-bridge-monorepo-localterra-1'
+  const keyName = 'test1'
+  const destSolChainB64 = Buffer.from([0x00, 0x00, 0x00, 0x05]).toString('base64')
+  const { solana } = tokens
+
+  const run = (label: string, msg: Record<string, unknown>): void => {
+    const payload = JSON.stringify(msg)
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${payload}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log(`[register-tokens] Terra↔Solana: ${label}`)
+    } catch (err) {
+      console.warn(`[register-tokens] Terra↔Solana ${label}:`, (err as Error).message?.slice(0, 120))
+    }
+    try {
+      execSync('sleep 6', { encoding: 'utf8' })
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // uluna ↔ SPL LUNC
+  run('uluna set_token_destination → Solana', {
+    set_token_destination: {
+      token: 'uluna',
+      dest_chain: destSolChainB64,
+      dest_token: splMintToBytes32Hex(solana.lunc),
+      dest_decimals: SPL_LUNC_DECIMALS_SOL,
+    },
+  })
+  run('uluna set_incoming ← Solana', {
+    set_incoming_token_mapping: {
+      src_chain: destSolChainB64,
+      src_token: splMintToSrcTokenB64(solana.lunc),
+      local_token: 'uluna',
+      src_decimals: SPL_LUNC_DECIMALS_SOL,
+    },
+  })
+
+  const cw20Pairs: Array<['tokenA' | 'tokenB' | 'tokenC', string]> = [
+    ['tokenA', tokens.terra.tokenA],
+    ['tokenB', tokens.terra.tokenB],
+    ['tokenC', tokens.terra.tokenC],
+  ]
+  for (const [tkey, addr] of cw20Pairs) {
+    if (addr === 'uluna' || isPlaceholderAddress(addr)) continue
+    const spl =
+      tkey === 'tokenA' ? solana.tokenA : tkey === 'tokenB' ? solana.tokenB : solana.tokenC
+    run(`CW20 ${tkey} set_token_destination → Solana`, {
+      set_token_destination: {
+        token: addr,
+        dest_chain: destSolChainB64,
+        dest_token: splMintToBytes32Hex(spl),
+        dest_decimals: SPL_TOKEN_ABC_DECIMALS,
+      },
+    })
+    run(`CW20 ${tkey} set_incoming ← Solana`, {
+      set_incoming_token_mapping: {
+        src_chain: destSolChainB64,
+        src_token: splMintToSrcTokenB64(spl),
+        local_token: addr,
+        src_decimals: SPL_TOKEN_ABC_DECIMALS,
+      },
+    })
+  }
+
+  const kdecAddr = tokens.terra.kdec
+  if (!isPlaceholderAddress(kdecAddr)) {
+    run('KDEC set_token_destination → Solana', {
+      set_token_destination: {
+        token: kdecAddr,
+        dest_chain: destSolChainB64,
+        dest_token: splMintToBytes32Hex(solana.kdec),
+        dest_decimals: SPL_KDEC_DECIMALS_SOL,
+      },
+    })
+    run('KDEC set_incoming ← Solana', {
+      set_incoming_token_mapping: {
+        src_chain: destSolChainB64,
+        src_token: splMintToSrcTokenB64(solana.kdec),
+        local_token: kdecAddr,
+        src_decimals: SPL_KDEC_DECIMALS_SOL,
+      },
+    })
+  }
+}
+
+function runSolanaRegisterQaTokens(tokens: TokenAddresses): void {
+  const outDir = resolve(REPO_ROOT_REGISTER_TOKENS, '.deploy')
+  try {
+    mkdirSync(outDir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const jsonPath = resolve(outDir, 'qa-tokens.json')
+  writeFileSync(jsonPath, JSON.stringify(tokens), 'utf8')
+  const solPkg = resolve(REPO_ROOT_REGISTER_TOKENS, 'packages/contracts-solana')
+  try {
+    execSync(`npx tsx scripts/register-qa-tokens.ts`, {
+      cwd: solPkg,
+      stdio: 'inherit',
+      env: { ...process.env, QA_TOKEN_JSON: jsonPath },
+    })
+  } catch (err) {
+    console.warn('[register-tokens] Solana register-qa-tokens failed:', (err as Error).message?.slice(0, 200))
   }
 }
 

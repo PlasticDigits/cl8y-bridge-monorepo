@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Register token mappings on the Solana bridge program
+# Register full QA token mappings on the Solana bridge (same matrix as EVM/Terra).
 #
-# Usage: ./scripts/solana/register-tokens.sh
+# Usage:
+#   QA_TOKEN_JSON must point to qa-tokens.json (written by register-tokens / qa:full-token-setup).
+#   ./scripts/solana/register-tokens.sh
 #
 # Env vars:
+#   QA_TOKEN_JSON      - Path to JSON from deploy-tokens (includes solana mints)
 #   SOLANA_RPC_URL     - Solana RPC endpoint (default: http://localhost:8899)
-#   SOLANA_KEYPAIR     - Path to admin keypair JSON (default: ~/.config/solana/id.json)
+#   SOLANA_KEYPAIR     - Admin keypair (default: ~/.config/solana/id.json)
+#   ANCHOR_WALLET      - Same as SOLANA_KEYPAIR if set
 
 set -euo pipefail
 
@@ -15,19 +19,21 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
 SOLANA_KEYPAIR="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
 
-ADMIN_PUBKEY=$(solana-keygen pubkey "${SOLANA_KEYPAIR}")
+if [[ -z "${QA_TOKEN_JSON:-}" ]]; then
+  echo "QA_TOKEN_JSON is not set. Run qa:full-token-setup or point it to .deploy/qa-tokens.json" >&2
+  exit 1
+fi
 
-echo "Registering Token Mappings on Solana Bridge"
-echo "  Admin: ${ADMIN_PUBKEY}"
-echo "  RPC:   ${SOLANA_RPC_URL}"
+echo "Registering QA token mappings on Solana Bridge"
+echo "  QA_TOKEN_JSON: ${QA_TOKEN_JSON}"
+echo "  RPC:           ${SOLANA_RPC_URL}"
 echo ""
 
 cd "$REPO_ROOT/packages/contracts-solana"
 
-echo "Sending register_token transaction via test runner..."
 ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
-ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
-  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "register_token"
+ANCHOR_WALLET="${ANCHOR_WALLET:-${SOLANA_KEYPAIR}}" \
+  npx tsx scripts/register-qa-tokens.ts
 
 echo ""
-echo "Token mappings registered!"
+echo "Solana QA token mappings registered."

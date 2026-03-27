@@ -6,11 +6,13 @@
 
 import { deployThreeTokens, deployLuncToken, deployKdecToken } from './deploy-evm'
 import { deployThreeCw20Tokens, deployCw20KdecToken } from './deploy-terra'
+import { deploySolanaMints, type SolanaTokenMints } from './deploy-solana'
 
 export interface TokenAddresses {
   anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
   anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
   terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string }
+  solana: SolanaTokenMints
 }
 
 /** Per-chain decimals for KDEC token (used for cross-chain decimal normalization testing) */
@@ -25,7 +27,7 @@ export const KDEC_DECIMALS = {
  * LUNC (tLUNC) is the EVM representation of Terra uluna - symbol shows as LUNC in UI.
  * KDEC has different decimals per chain (18/12/6) for decimal normalization testing.
  */
-export function deployAllTokens(terraBridgeAddress: string): TokenAddresses {
+export async function deployAllTokens(terraBridgeAddress: string): Promise<TokenAddresses> {
   console.log('[deploy-tokens] Deploying tokens across all chains...')
 
   // Deploy ERC20 tokens to both Anvil chains
@@ -43,6 +45,11 @@ export function deployAllTokens(terraBridgeAddress: string): TokenAddresses {
   // Deploy CW20 tokens to LocalTerra (TokenA/B/C + KDEC)
   const terraTokens = deployThreeCw20Tokens(terraBridgeAddress)
   const terraKdec = deployCw20KdecToken()
+
+  const solRpc = process.env.SOLANA_RPC_URL || 'http://127.0.0.1:8899'
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+  const solKeypair = process.env.SOLANA_KEYPAIR || `${home}/.config/solana/id.json`
+  const solana = await deploySolanaMints(solRpc, solKeypair)
 
   const result: TokenAddresses = {
     anvil: {
@@ -65,6 +72,7 @@ export function deployAllTokens(terraBridgeAddress: string): TokenAddresses {
       tokenC: terraTokens.tokenC.tokenAddress,
       kdec: terraKdec,
     },
+    solana,
   }
 
   console.log('[deploy-tokens] All tokens deployed:', JSON.stringify(result, null, 2))

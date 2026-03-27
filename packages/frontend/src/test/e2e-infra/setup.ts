@@ -118,7 +118,7 @@ export default async function setup(): Promise<void> {
 
     // 5-6. Deploy tokens and register across bridges
     console.log('\n[setup] Deploying tokens across all chains...')
-    const tokenAddresses = deployAllTokens(terraBridgeAddress)
+    const tokenAddresses = await deployAllTokens(terraBridgeAddress)
 
     // 7. Register tokens across all bridges
     console.log('\n[setup] Registering tokens across bridges...')
