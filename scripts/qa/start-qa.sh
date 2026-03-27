@@ -136,6 +136,7 @@ fi
 
 echo "==> Writing .env.e2e.local + packages/frontend/.env.local..."
 "$REPO_ROOT/scripts/qa/write-qa-env-e2e.sh"
+echo "[start-qa] If Vite is already running for manual QA, restart it so new VITE_* (bridge, LockUnlock, tokens) load."
 
 echo "==> Starting operator (API $OPERATOR_API_URL)..."
 "$REPO_ROOT/scripts/operator-ctl.sh" start

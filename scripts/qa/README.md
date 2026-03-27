@@ -38,7 +38,7 @@ It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postg
 
 **Manual token step (after `make deploy` only):** `make qa-full-token-setup` or `cd packages/frontend && npm run qa:full-token-setup`.
 
-**Settings → Faucet** rows for dedicated faucet **contracts** (EVM/Terra faucet dApps) are separate from bridge test tokens; they need extra deploy + **`VITE_*_FAUCET_ADDRESS`** if you use that UI. Bridge **token selectors** use registries populated by the QA token setup above.
+**Settings → Faucet** for local QA: after **`npm run qa:full-token-setup`**, **`write-frontend-env-local.sh`** emits **`VITE_*_FAUCET_ADDRESS`** and per-chain token mints from **`.deploy/local.env`**. Bridge **token selectors** on Transfer use the same registry setup; **`VITE_LOCK_UNLOCK_ADDRESS`**, **`VITE_EVM1_LOCK_UNLOCK_ADDRESS`**, and **`VITE_BRIDGE_TOKEN_ADDRESS`** (LUNC on Anvil / legacy **`TEST_TOKEN_ADDRESS`**) are written so EVM deposits target the correct LockUnlock on Anvil vs Anvil1.
 
 **Legacy minimal path:** **`make deploy-tokens`** + **`make register-tokens`** (single test ERC20 + bash registration) remains available; **`start-qa`** uses the full matrix instead.
 
@@ -89,6 +89,8 @@ This file holds **bridge contract addresses** (EVM, Terra, Solana program id) pr
 ```bash
 ./scripts/qa/write-frontend-env-local.sh
 ```
+
+Restart **`npm run dev`** after this (or the server’s **`write-qa-env-e2e.sh`** step) so Vite picks up new **`VITE_*`** values—especially after copying an updated **`.deploy/local.env`** or re-running QA token setup.
 
 Or: **`npm run env:local --prefix packages/frontend`**
 

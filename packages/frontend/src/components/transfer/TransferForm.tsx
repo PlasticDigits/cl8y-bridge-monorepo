@@ -113,7 +113,7 @@ function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): Chai
   })
 }
 
-const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address
+const ZERO_LOCK = '0x0000000000000000000000000000000000000000' as Address
 
 /** Build selectable token options from registry for the given direction */
 function buildTransferTokens(
@@ -198,10 +198,12 @@ function getEvmTokenConfig(
   selectedTokenId: string,
   registryTokens: { token: string; evm_token_address?: string; evm_decimals?: number }[] | undefined,
   fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined,
+  /** LockUnlock on the selected source EVM chain (Anvil vs Anvil1 differ). */
+  lockUnlockAddress: Address,
   /** When source is EVM: use per-chain address from token_dest_mapping */
   sourceChainMappings?: Record<string, string>,
   /** Per-chain decimals from token_dest_mapping */
-  sourceChainDecimals?: Record<string, number>
+  sourceChainDecimals?: Record<string, number>,
 ): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
   const mappedAddr = sourceChainMappings?.[selectedTokenId]
@@ -209,7 +211,7 @@ function getEvmTokenConfig(
   if (evmAddr) {
     return {
       address: (mappedAddr ?? bytes32ToAddress(evmAddr)) as Address,
-      lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
+      lockUnlockAddress,
       symbol: getTokenDisplaySymbol(fromRegistry?.token ?? selectedTokenId),
       decimals: sourceChainDecimals?.[selectedTokenId] ?? fromRegistry?.evm_decimals ?? 18,
     }
@@ -333,6 +335,20 @@ export function TransferForm() {
   )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+
+  /** Primary Anvil LockUnlock; Anvil1 uses VITE_EVM1_LOCK_UNLOCK_ADDRESS when set (QA / multi-EVM). */
+  const evmLockForSource = useMemo((): Address => {
+    const primary = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || ZERO_LOCK) as Address
+    const anvil1Lu = (import.meta.env.VITE_EVM1_LOCK_UNLOCK_ADDRESS || primary) as Address
+    if (sourceChain === 'anvil1') return anvil1Lu
+    return primary
+  }, [sourceChain])
+
+  const mergedFallbackTokenConfig = useMemo(() => {
+    if (!fallbackTokenConfig) return undefined
+    return { ...fallbackTokenConfig, lockUnlockAddress: evmLockForSource }
+  }, [fallbackTokenConfig, evmLockForSource])
+
   // Only apply chain mapping filters once ALL queries are done.
   // Partial results would exclude tokens whose queries are still in flight.
   const readySourceMappings = isSourceEvm && !isSourceMappingsLoading ? sourceChainMappings : undefined
@@ -343,12 +359,12 @@ export function TransferForm() {
       buildTransferTokens(
         registryTokens,
         isSourceTerra,
-        fallbackTokenConfig,
+        mergedFallbackTokenConfig,
         tokenlist ?? null,
         readySourceMappings,
         readyDestMappings
       ),
-    [registryTokens, isSourceTerra, fallbackTokenConfig, tokenlist, readySourceMappings, readyDestMappings]
+    [registryTokens, isSourceTerra, mergedFallbackTokenConfig, tokenlist, readySourceMappings, readyDestMappings]
   )
 
   const readySourceDecimals = isSourceEvm && !isSourceMappingsLoading ? sourceChainDecimals : undefined
@@ -357,11 +373,12 @@ export function TransferForm() {
       getEvmTokenConfig(
         selectedTokenId,
         registryTokens,
-        fallbackTokenConfig,
+        mergedFallbackTokenConfig,
+        evmLockForSource,
         readySourceMappings,
-        readySourceDecimals
+        readySourceDecimals,
       ),
-    [selectedTokenId, registryTokens, fallbackTokenConfig, readySourceMappings, readySourceDecimals]
+    [selectedTokenId, registryTokens, mergedFallbackTokenConfig, readySourceMappings, readySourceDecimals, evmLockForSource]
   )
   const tokenConfig = isSourceTerra ? undefined : evmTokenConfig
   const terraDecimals = useMemo(
