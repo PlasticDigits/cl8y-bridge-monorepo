@@ -7,10 +7,13 @@
  *   - Incoming src decimals configured (other chain → token)
  *   - Terra dest mapping configured (token → EVM chain)
  *   - Terra incoming mapping configured (EVM chain → Terra token)
+ *   - Solana (dedicated section): Terra↔Solana LCD mappings + cl8y_bridge TokenMapping PDAs per remote chain
  */
 
 import { useState, useCallback } from 'react'
+import { Connection, PublicKey } from '@solana/web3.js'
 import type { Address, Hex } from 'viem'
+import { hexToBytes, keccak256, pad, toBytes } from 'viem'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 import { getEvmClient } from '../services/evmClient'
@@ -21,6 +24,10 @@ import {
   bytes32ToAddress,
 } from '../services/evm/tokenRegistry'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
+import {
+  bytes4HexToUint8Array,
+  fetchTokenMappingLocalMint,
+} from '../services/solana/transaction'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
 import type { BridgeChainConfig } from '../types/chain'
@@ -84,6 +91,15 @@ function bytes4ToBase64(hex: string): string {
     bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
   }
   return btoa(String.fromCharCode(...bytes))
+}
+
+/** 32-byte dest_token for Solana↔Terra mappings (matches register-qa-tokens keccak256Utf8). */
+function terraTokenIdToDestToken32Bytes(terraTokenId: string): Uint8Array {
+  return hexToBytes(keccak256(toBytes(terraTokenId)) as Hex)
+}
+
+function evmAddrToDestToken32Bytes(addr: Address): Uint8Array {
+  return hexToBytes(pad(addr, { size: 32 }))
 }
 
 /**
@@ -292,23 +308,6 @@ export function useTokenVerification() {
         }
       }
 
-      // 1b. Outgoing dest mappings from Terra to Solana
-      for (const [otherKey, otherConfig] of solanaChains) {
-        const otherName = otherConfig.name ?? otherKey
-        try {
-          const mapping = await queryTokenDestMapping(terraTokenId, otherConfig.bytes4ChainId)
-          checks.push({
-            label: `Dest mapping → ${otherName}`,
-            status: mapping ? 'pass' : 'fail',
-            detail: mapping
-              ? `Mapped to SPL ${bytes32ToSolanaAddress(mapping.hex as `0x${string}`)} (${mapping.decimals} dec)`
-              : `No outgoing dest mapping — call set_token_destination`,
-          })
-        } catch (err) {
-          checks.push({ label: `Dest mapping → ${otherName}`, status: 'error', detail: String(err) })
-        }
-      }
-
       // 2. Incoming mappings from each EVM chain to Terra
       // The protocol uses the bech32-decoded Terra CW20 address as src_token
       // (the cross-chain hash token field is the dest token, which is the Terra address)
@@ -346,6 +345,160 @@ export function useTokenVerification() {
       }
 
       chainVerifications.push({ chainKey, chainName: config.name ?? chainKey, checks })
+    }
+
+    // Phase 4: Solana — Terra↔Solana LCD + on-chain cl8y_bridge token mappings (own section in UI)
+    const remoteChainsForSolana: ChainEntry[] = [...evmChains, ...cosmosChains]
+    for (const [chainKey, solConfig] of solanaChains) {
+      const checks: VerificationCheck[] = []
+      const networkConfig = NETWORKS[DEFAULT_NETWORK].terra
+      const lcdUrls = networkConfig.lcdFallbacks?.length
+        ? [...networkConfig.lcdFallbacks]
+        : [networkConfig.lcd]
+      const terraBridgeAddr = cosmosChains[0]?.[1].bridgeAddress
+
+      let solMapping: Awaited<ReturnType<typeof queryTokenDestMapping>> = null
+      try {
+        solMapping = await queryTokenDestMapping(terraTokenId, solConfig.bytes4ChainId)
+      } catch (err) {
+        checks.push({
+          label: 'Terra bridge: dest mapping (→ Solana)',
+          status: 'error',
+          detail: String(err),
+        })
+      }
+
+      if (checks.length === 0) {
+        checks.push({
+          label: 'Terra bridge: dest mapping (→ Solana)',
+          status: solMapping ? 'pass' : 'fail',
+          detail: solMapping
+            ? `Mapped to SPL ${bytes32ToSolanaAddress(solMapping.hex as `0x${string}`)} (${solMapping.decimals} dec)`
+            : 'No outgoing dest mapping — call set_token_destination',
+        })
+      }
+
+      // Incoming: Solana (src) → Terra
+      if (solMapping?.hex && terraBridgeAddr) {
+        try {
+          const raw = hexToBytes(solMapping.hex as Hex)
+          const srcTokenB64 = btoa(String.fromCharCode(...raw))
+          const srcChainB64 = bytes4ToBase64(solConfig.bytes4ChainId)
+          const res = await queryContract<TerraIncomingMappingResponse>(
+            lcdUrls, terraBridgeAddr,
+            { incoming_token_mapping: { src_chain: srcChainB64, src_token: srcTokenB64 } }
+          )
+          checks.push({
+            label: 'Terra bridge: incoming mapping (← Solana)',
+            status: res?.local_token ? 'pass' : 'fail',
+            detail: res?.local_token
+              ? `Maps to ${res.local_token} (src dec: ${res.src_decimals})`
+              : 'No incoming mapping — call set_incoming_token_mapping',
+          })
+        } catch (err) {
+          checks.push({
+            label: 'Terra bridge: incoming mapping (← Solana)',
+            status: 'error',
+            detail: String(err),
+          })
+        }
+      } else if (!solMapping?.hex) {
+        checks.push({
+          label: 'Terra bridge: incoming mapping (← Solana)',
+          status: 'skip',
+          detail: 'No SPL mint from dest mapping — cannot query incoming',
+        })
+      } else if (!terraBridgeAddr) {
+        checks.push({
+          label: 'Terra bridge: incoming mapping (← Solana)',
+          status: 'skip',
+          detail: 'Terra bridge address not configured',
+        })
+      }
+
+      // On-chain Solana program: token_mapping PDAs per remote chain
+      const programIdStr = solConfig.bridgeAddress?.trim()
+      const rpcUrl = solConfig.rpcUrl?.trim()
+      if (programIdStr && rpcUrl && solMapping?.hex) {
+        let expectedMint: PublicKey
+        try {
+          expectedMint = new PublicKey(bytes32ToSolanaAddress(solMapping.hex as `0x${string}`))
+        } catch (e) {
+          checks.push({
+            label: 'Solana program: SPL mint',
+            status: 'error',
+            detail: `Invalid mint from mapping: ${String(e)}`,
+          })
+          chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
+          continue
+        }
+
+        const connection = new Connection(rpcUrl, 'confirmed')
+        let programId: PublicKey
+        try {
+          programId = new PublicKey(programIdStr)
+        } catch (e) {
+          checks.push({
+            label: 'Solana program: program id',
+            status: 'error',
+            detail: String(e),
+          })
+          chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
+          continue
+        }
+
+        for (const [remoteKey, remoteConfig] of remoteChainsForSolana) {
+          const remoteName = remoteConfig.name ?? remoteKey
+          let destToken32: Uint8Array
+          if (remoteConfig.type === 'evm') {
+            const evmAddr = evmAddresses.get(remoteKey)
+            if (!evmAddr) {
+              checks.push({
+                label: `On-chain mapping (→ ${remoteName})`,
+                status: 'fail',
+                detail: 'No EVM token address — cannot verify PDA',
+              })
+              continue
+            }
+            destToken32 = evmAddrToDestToken32Bytes(evmAddr)
+          } else {
+            destToken32 = terraTokenIdToDestToken32Bytes(terraTokenId)
+          }
+          const destChain = bytes4HexToUint8Array(remoteConfig.bytes4ChainId)
+          try {
+            const localMint = await fetchTokenMappingLocalMint(
+              connection,
+              programId,
+              destChain,
+              destToken32
+            )
+            const ok = localMint !== null && localMint.equals(expectedMint)
+            checks.push({
+              label: `TokenMapping PDA (→ ${remoteName})`,
+              status: ok ? 'pass' : 'fail',
+              detail: ok
+                ? `local_mint ${localMint!.toBase58()} matches SPL mint`
+                : localMint
+                  ? `local_mint ${localMint.toBase58()} ≠ expected ${expectedMint.toBase58()} — re-run register_token`
+                  : 'No TokenMapping account — call register_token on Solana',
+            })
+          } catch (err) {
+            checks.push({
+              label: `TokenMapping PDA (→ ${remoteName})`,
+              status: 'error',
+              detail: String(err),
+            })
+          }
+        }
+      } else if (!programIdStr || !rpcUrl) {
+        checks.push({
+          label: 'Solana program: on-chain checks',
+          status: 'skip',
+          detail: 'VITE_SOLANA_PROGRAM_ID + RPC URL required for PDA verification',
+        })
+      }
+
+      chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
     }
 
     // Compute totals
