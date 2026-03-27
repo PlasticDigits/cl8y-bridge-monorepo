@@ -328,9 +328,10 @@ register-tokens:
 	@echo "Registering test tokens on bridges..."
 	./scripts/register-test-tokens.sh
 
+# Pass SETUP_BRIDGE_DEBUG=1 or SETUP_BRIDGE_TRACE=1 for bash xtrace (e.g. make deploy SETUP_BRIDGE_DEBUG=1).
 setup-bridge:
 	@echo "Configuring bridge connections..."
-	./scripts/setup-bridge.sh
+	SETUP_BRIDGE_DEBUG="$(SETUP_BRIDGE_DEBUG)" SETUP_BRIDGE_TRACE="$(SETUP_BRIDGE_TRACE)" ./scripts/setup-bridge.sh
 
 # Full E2E setup (infrastructure + contracts + tokens)
 e2e-setup:

@@ -18,11 +18,26 @@
 #
 # Solana: set SOLANA_PROGRAM_ID, or rely on packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json
 # after `make deploy-solana` (script derives the program id automatically).
+#
+# Debugging: SETUP_BRIDGE_DEBUG=1 ./scripts/setup-bridge.sh  (or export before make deploy)
+#   prints a bash xtrace with file:line prefixes.
 
-set -e
+set -eE -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+setup_bridge_on_err() {
+    local ec=$?
+    # BASH_COMMAND is the command that failed; BASH_LINENO[0] is the line in this script when using bash 4+.
+    echo "[setup-bridge][FATAL] exit_code=${ec} line=${BASH_LINENO[0]:-?} command: ${BASH_COMMAND}" >&2
+}
+trap setup_bridge_on_err ERR
+
+if [ -n "${SETUP_BRIDGE_DEBUG:-}" ] || [ -n "${SETUP_BRIDGE_TRACE:-}" ]; then
+    export PS4='+ [setup-bridge] ${BASH_SOURCE##*/}:${LINENO}: '
+    set -x
+fi
 
 if [ ! -f "$REPO_ROOT/scripts/lib-local-deploy-env.sh" ]; then
     echo "[ERROR] Missing $REPO_ROOT/scripts/lib-local-deploy-env.sh" >&2
@@ -58,15 +73,20 @@ fi
 EVM_PRIVATE_KEY="${EVM_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 TERRA_KEY="${TERRA_KEY_NAME:-test1}"
 
+echo "[setup-bridge] env: repo=${REPO_ROOT} EVM_RPC_URL=${EVM_RPC_URL} TERRA_NODE=${TERRA_NODE} TERRA_LCD=${TERRA_LCD} CONTAINER_NAME=${CONTAINER_NAME} EVM_BRIDGE=${EVM_BRIDGE_ADDRESS:-<unset>} TERRA_BRIDGE=${TERRA_BRIDGE_ADDRESS:-<unset>} SOLANA_PROGRAM_ID=${SOLANA_PROGRAM_ID:-<unset>}" >&2
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Log to stderr so messages are visible under make/pipes and mixed with command errors.
+log_info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+log_phase() { echo "[setup-bridge] phase: $1" >&2; }
 
 # Run terrad command via docker exec
 terrad_exec() {
@@ -75,6 +95,7 @@ terrad_exec() {
 
 # Validate addresses
 check_addresses() {
+    log_phase "check_addresses"
     if [ -z "$EVM_BRIDGE_ADDRESS" ]; then
         log_error "EVM_BRIDGE_ADDRESS not set (and not loaded from .deploy/local.env)"
         qa_hint_evm_bridge_missing
@@ -100,6 +121,7 @@ check_addresses() {
 
 # Register Terra chain on EVM bridge
 setup_evm_side() {
+    log_phase "setup_evm_side"
     log_info "=== Configuring EVM Side ==="
 
     if ! command -v cast >/dev/null 2>&1; then
@@ -134,6 +156,7 @@ setup_evm_side() {
 
 # Register EVM chain on Terra bridge
 setup_terra_side() {
+    log_phase "setup_terra_side"
     log_info "=== Configuring Terra Side ==="
     
     # Add Anvil (chain ID 31337) as supported chain
@@ -196,6 +219,7 @@ setup_terra_side() {
 
 # Add operator permissions
 setup_operator() {
+    log_phase "setup_operator"
     log_info "=== Configuring Operator ==="
     
     # The test1 key is already the operator from instantiation
@@ -251,6 +275,7 @@ fund_solana_wallets() {
 
 # Setup Solana side (initialize bridge, register chains, fund wallets)
 setup_solana_side() {
+    log_phase "setup_solana_side"
     if [ -z "$SOLANA_PROGRAM_ID" ]; then
         log_warn "SOLANA_PROGRAM_ID not set — skipping Solana bridge configuration"
         return 0
@@ -322,12 +347,16 @@ setup_solana_side() {
 
 # Verify configuration
 verify_config() {
+    log_phase "verify_config"
     log_info "=== Verifying Configuration ==="
-    
-    # Query Terra bridge config
+
+    # Query Terra bridge config (never abort the script if LCD query fails)
     CONFIG_QUERY='{"config":{}}'
-    CONFIG_B64=$(echo -n "$CONFIG_QUERY" | base64 -w0)
-    CONFIG=$(curl -sf "${TERRA_LCD}/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}/smart/${CONFIG_B64}" 2>/dev/null | jq '.data' 2>/dev/null)
+    CONFIG_B64=$(echo -n "$CONFIG_QUERY" | base64 -w0) || CONFIG_B64=""
+    CONFIG=""
+    if [ -n "$CONFIG_B64" ]; then
+        CONFIG=$(curl -sf "${TERRA_LCD}/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}/smart/${CONFIG_B64}" 2>/dev/null | jq '.data' 2>/dev/null) || CONFIG=""
+    fi
     
     if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
         log_info "Terra bridge config: $CONFIG"
@@ -348,8 +377,9 @@ verify_config() {
 
 # Main
 main() {
+    log_phase "main_start"
     log_info "=== CL8Y Bridge Configuration ==="
-    
+
     check_addresses
     setup_evm_side
     setup_terra_side
@@ -359,12 +389,12 @@ main() {
     
     echo ""
     log_info "=== Bridge Configuration Complete ==="
-    echo ""
-    echo "Configuration:"
-    echo "  EVM Bridge:    $EVM_BRIDGE_ADDRESS"
-    echo "  Terra Bridge:  $TERRA_BRIDGE_ADDRESS"
-    echo "  Solana Program: ${SOLANA_PROGRAM_ID:-(not set)}"
-    echo ""
+    echo "" >&2
+    echo "Configuration:" >&2
+    echo "  EVM Bridge:    $EVM_BRIDGE_ADDRESS" >&2
+    echo "  Terra Bridge:  $TERRA_BRIDGE_ADDRESS" >&2
+    echo "  Solana Program: ${SOLANA_PROGRAM_ID:-(not set)}" >&2
+    echo "" >&2
     log_info "Deploy scripts merge bridge addresses into repo / operator .env when those files exist."
     log_info "Start the operator with: make operator-start  (or make start-qa on a QA host)."
 }
