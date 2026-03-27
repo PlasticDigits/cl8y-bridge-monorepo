@@ -34,7 +34,7 @@ load_local_deploy_env
 
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
-TERRA_NODE="http://localhost:26657"
+TERRA_NODE="${TERRA_RPC_URL:-http://localhost:26657}"
 TERRA_LCD="${TERRA_LCD_URL:-http://localhost:1317}"
 TERRA_CHAIN_ID="${TERRA_CHAIN_ID:-localterra}"
 CONTAINER_NAME="${LOCALTERRA_CONTAINER:-cl8y-bridge-monorepo-localterra-1}"

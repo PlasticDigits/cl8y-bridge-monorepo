@@ -1,12 +1,14 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
+.PHONY: start stop start-qa stop-qa reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
 	@echo "CL8Y Bridge Development Commands"
 	@echo ""
 	@echo "Infrastructure:"
-	@echo "  make start          - Start all services (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
-	@echo "  make stop           - Stop all services"
+	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
+	@echo "  make start-qa       - QA server: tear down if running, then Docker + migrate + deploy + operator + canceler + SSH hint (see scripts/qa/README.md)"
+	@echo "  make stop           - Stop Docker services"
+	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
 	@echo "  make reset          - Stop and remove all volumes"
 	@echo "  make status         - Check status of all services"
 	@echo "  make logs           - View service logs"
@@ -98,6 +100,15 @@ start:
 	@echo "Waiting for services to be healthy..."
 	@sleep 5
 	docker compose ps
+
+# Full QA server bootstrap (shared host with remapped Terra ports — scripts/qa/qa-host.env)
+start-qa:
+	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/stop-qa.sh
+	./scripts/qa/start-qa.sh
+
+stop-qa:
+	@chmod +x scripts/qa/stop-qa.sh
+	./scripts/qa/stop-qa.sh
 
 stop:
 	docker compose down

@@ -92,6 +92,14 @@ start_operator() {
         set +a
     fi
 
+    # Shared QA host: remapped Terra ports + operator API port (after .env so URLs win)
+    if [ "${QA_SHARED_HOST:-}" = "1" ] && [ -f "$PROJECT_ROOT/scripts/qa/qa-host.env" ]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$PROJECT_ROOT/scripts/qa/qa-host.env"
+        set +a
+    fi
+
     # Check required env vars
     if [ -z "$DATABASE_URL" ]; then
         export DATABASE_URL="postgres://operator:operator@localhost:5433/operator"

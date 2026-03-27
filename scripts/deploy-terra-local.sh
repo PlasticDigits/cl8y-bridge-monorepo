@@ -15,10 +15,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Configuration
+# Configuration (host may remap LocalTerra — set TERRA_RPC_URL / TERRA_LCD_URL, e.g. from scripts/qa/qa-host.env)
 CHAIN_ID="localterra"
-NODE="http://localhost:26657"
-LCD="http://localhost:1317"
+NODE="${TERRA_RPC_URL:-http://localhost:26657}"
+LCD="${TERRA_LCD_URL:-http://localhost:1317}"
 KEY_NAME="${TERRA_KEY_NAME:-test1}"
 WASM_PATH="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts/bridge.wasm"
 CW20_WASM_PATH="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm"
