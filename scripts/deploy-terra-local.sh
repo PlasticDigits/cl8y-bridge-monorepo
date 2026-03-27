@@ -145,9 +145,10 @@ copy_wasm_to_container() {
     fi
 
     # docker cp preserves host permissions; a 0600 artifact (e.g. umask) is unreadable by terrad if it runs as another UID.
-    docker exec "$CONTAINER_NAME" chmod 0644 /tmp/wasm/bridge.wasm
+    # chmod must run as root: the image default USER may be non-root, so chmod on another UID's file returns EPERM.
+    docker exec -u 0 "$CONTAINER_NAME" chmod 0644 /tmp/wasm/bridge.wasm
     if [ "$DEPLOY_CW20" = true ] && [ -f "$CW20_WASM_PATH" ]; then
-        docker exec "$CONTAINER_NAME" chmod 0644 /tmp/wasm/cw20_mintable.wasm
+        docker exec -u 0 "$CONTAINER_NAME" chmod 0644 /tmp/wasm/cw20_mintable.wasm
     fi
 }
 
