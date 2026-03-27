@@ -245,17 +245,17 @@ build-terra:
 		mkdir -p artifacts && \
 		cp target/wasm32-unknown-unknown/release/bridge.wasm artifacts/
 
-# Used by start-qa before deploy-terra --cw20: bridge from Rust; CW20 test wasm via download (see scripts/download-cw20-wasm.sh).
+# Used by start-qa before deploy-terra --cw20: bridge from Rust; CW20 wasm via clone+build then release download fallback (see scripts/ensure-cw20-mintable-wasm.sh).
 ensure-terra-artifacts:
-	@chmod +x "$(CURDIR)/scripts/download-cw20-wasm.sh" 2>/dev/null || true
+	@chmod +x "$(CURDIR)/scripts/ensure-cw20-mintable-wasm.sh" "$(CURDIR)/scripts/download-cw20-wasm.sh" 2>/dev/null || true
 	@mkdir -p "$(CURDIR)/packages/contracts-terraclassic/artifacts"
 	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/bridge.wasm" ]; then \
 		echo "[ensure-terra-artifacts] Missing bridge.wasm — running make build-terra..."; \
 		$(MAKE) build-terra; \
 	fi
 	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm" ]; then \
-		echo "[ensure-terra-artifacts] Missing cw20_mintable.wasm — running scripts/download-cw20-wasm.sh..."; \
-		"$(CURDIR)/scripts/download-cw20-wasm.sh"; \
+		echo "[ensure-terra-artifacts] Missing cw20_mintable.wasm — running scripts/ensure-cw20-mintable-wasm.sh..."; \
+		"$(CURDIR)/scripts/ensure-cw20-mintable-wasm.sh"; \
 	fi
 
 build-terra-optimized:

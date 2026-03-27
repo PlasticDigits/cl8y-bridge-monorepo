@@ -7,8 +7,9 @@ members = [
     "packages/common",
 ]
 
-# Note: external/cw20-mintable is gitignored and used only for local reference.
-# Clone it manually if needed: git clone <cw20-mintable-repo> external/cw20-mintable
+# Note: external/cw20-mintable is gitignored. QA uses scripts/ensure-cw20-mintable-wasm.sh to
+# clone CW20 sources (default: CosmWasm/cw-plus at v1.1.2) here and build cw20_mintable.wasm,
+# or fall back to scripts/download-cw20-wasm.sh. Override: CW20_MINTABLE_REPO_URL / CW20_MINTABLE_REPO_REF.
 
 [workspace.package]
 version = "0.1.0"

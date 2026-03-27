@@ -112,9 +112,9 @@ function terradTx(...args: string[]): void {
 
 function ensureCw20Wasm(): boolean {
   if (existsSync(CW20_WASM_PATH)) return true
-  console.log('[deploy-terra] CW20 WASM not found, running download script...')
+  console.log('[deploy-terra] CW20 WASM not found, running ensure-cw20-mintable-wasm.sh...')
   try {
-    execSync(`bash ${SCRIPTS_DIR}/download-cw20-wasm.sh`, {
+    execSync(`bash ${SCRIPTS_DIR}/ensure-cw20-mintable-wasm.sh`, {
       cwd: ROOT_DIR,
       encoding: 'utf8',
       stdio: 'inherit',
