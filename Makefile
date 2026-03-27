@@ -310,6 +310,8 @@ deploy-terra-local: deploy-terra
 
 deploy-solana:
 	@echo "Deploying Solana program to local validator..."
+	@chmod +x "$(CURDIR)/scripts/solana/airdrop-for-anchor-deploy.sh" 2>/dev/null || true
+	./scripts/solana/airdrop-for-anchor-deploy.sh
 	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --no-idl --provider.cluster localnet
 	@bash -c '. ./scripts/lib-local-deploy-env.sh && \
 		PID=$$(solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null) && \

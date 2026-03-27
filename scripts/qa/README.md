@@ -38,7 +38,7 @@ make start-qa
 
 **Before** starting, this stops any existing canceler, operator, and runs **`docker compose down`** so you always get a clean bring-up.
 
-It then starts Docker (Anvil, LocalTerra, Solana, Postgres), runs migrations, **`make deploy`**, writes **`.env.e2e.local`** and **`packages/frontend/.env.local`**, starts **operator** and **canceler**, verifies **`/health`**, and prints a **copy-paste `ssh -N -L …`** command for your laptop (ports come from **`scripts/qa/qa-host.env`**). Optionally set **`QA_SSH_DEST=user@host`** in the environment when running **`make start-qa`** to bake your SSH login into that command instead of **`$(whoami)@$(hostname -f)`**.
+It then starts Docker (Anvil, LocalTerra, Solana, Postgres), runs migrations, **`make deploy`** (EVM/Terra deploy scripts **merge** bridge addresses into existing **`.env`** files; **`deploy-solana`** runs **`scripts/solana/airdrop-for-anchor-deploy.sh`** so the Anchor deploy keypair is funded on localnet), writes **`.env.e2e.local`** and **`packages/frontend/.env.local`**, starts **operator** and **canceler**, verifies **`/health`**, and prints a **copy-paste `ssh -N -L …`** command for your laptop (ports come from **`scripts/qa/qa-host.env`**). Optionally set **`QA_SSH_DEST=user@host`** in the environment when running **`make start-qa`** to bake your SSH login into that command instead of **`$(whoami)@$(hostname -f)`**.
 
 4. Stop:
 

@@ -351,10 +351,8 @@ main() {
     echo "  Terra Bridge:  $TERRA_BRIDGE_ADDRESS"
     echo "  Solana Program: ${SOLANA_PROGRAM_ID:-(not set)}"
     echo ""
-    log_info "Next steps:"
-    echo "  1. Update packages/operator/.env with bridge addresses"
-    echo "  2. Run: make operator"
-    echo "  3. Run: make test-transfer"
+    log_info "Deploy scripts merge bridge addresses into repo / operator .env when those files exist."
+    log_info "Start the operator with: make operator-start  (or make start-qa on a QA host)."
 }
 
 main "$@"

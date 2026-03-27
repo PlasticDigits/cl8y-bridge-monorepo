@@ -427,14 +427,16 @@ main() {
     fi
     echo "========================================"
     echo ""
-    log_info "Add to packages/operator/.env:"
-    echo "  TERRA_BRIDGE_ADDRESS=$BRIDGE_CONTRACT"
-    echo ""
-    log_info "Next steps:"
-    echo "  1. Export: export TERRA_BRIDGE_ADDRESS=$BRIDGE_CONTRACT"
-    echo "  2. Run: ./scripts/setup-bridge.sh"
-    echo "  3. Run: make operator"
-    echo "  4. Run: make test-transfer"
+
+    if [ -f "$SCRIPT_DIR/merge-env-var.sh" ]; then
+        chmod +x "$SCRIPT_DIR/merge-env-var.sh" 2>/dev/null || true
+        for envf in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/packages/operator/.env"; do
+            "$SCRIPT_DIR/merge-env-var.sh" "$envf" TERRA_BRIDGE_ADDRESS "$BRIDGE_CONTRACT"
+        done
+        log_info "Merged TERRA_BRIDGE_ADDRESS into existing repo / operator .env files (skipped missing files)."
+    fi
+
+    log_info "Full \`make deploy\` runs ./scripts/setup-bridge.sh after Solana deploy — no manual export/setup-bridge steps."
 }
 
 main "$@"

@@ -42,3 +42,14 @@ echo ""
 echo "[INFO] Recorded EVM addresses in $DEPLOY_ENV_FILE"
 echo "  EVM_BRIDGE_ADDRESS=$EVM_BRIDGE"
 echo "  EVM_CHAIN_REGISTRY=${EVM_CR:-}"
+
+if [ -f "$SCRIPT_DIR/merge-env-var.sh" ]; then
+  chmod +x "$SCRIPT_DIR/merge-env-var.sh" 2>/dev/null || true
+  for envf in "$REPO_ROOT/.env" "$REPO_ROOT/packages/operator/.env"; do
+    "$SCRIPT_DIR/merge-env-var.sh" "$envf" EVM_BRIDGE_ADDRESS "$EVM_BRIDGE"
+    if [ -n "${EVM_CR:-}" ]; then
+      "$SCRIPT_DIR/merge-env-var.sh" "$envf" EVM_CHAIN_REGISTRY "$EVM_CR"
+    fi
+  done
+  echo "[INFO] Merged EVM bridge addresses into existing .env files (if present)."
+fi
