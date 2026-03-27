@@ -338,6 +338,12 @@ describe('Scanner URL functions', () => {
     )
   })
 
+  it('getTokenExplorerUrl builds Solana mint URL', () => {
+    expect(
+      getTokenExplorerUrl('https://explorer.solana.com/?cluster=devnet', 'Mint111111111111111111111111111111111111111', 'solana')
+    ).toBe('https://explorer.solana.com/?cluster=devnet/address/Mint111111111111111111111111111111111111111')
+  })
+
   it('getTokenExplorerUrl returns empty when base or address missing', () => {
     expect(getTokenExplorerUrl('', '0xabc', 'evm')).toBe('')
     expect(getTokenExplorerUrl('https://bscscan.com', '', 'evm')).toBe('')

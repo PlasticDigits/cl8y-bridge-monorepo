@@ -329,3 +329,10 @@ export function getDeployedEvmBridgeChainEntries(): Array<{ chainKey: string; co
 export function getCosmosBridgeChains(): BridgeChainConfig[] {
   return getAllBridgeChains().filter((c) => c.type === 'cosmos')
 }
+
+/**
+ * Get Solana bridge chains only (program id + bytes4 chain key for LCD mappings).
+ */
+export function getSolanaBridgeChains(): BridgeChainConfig[] {
+  return getAllBridgeChains().filter((c) => c.type === 'solana')
+}

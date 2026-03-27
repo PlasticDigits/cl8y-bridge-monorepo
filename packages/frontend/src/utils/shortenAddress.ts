@@ -3,6 +3,8 @@
  * Used for token addresses when no symbol is available.
  */
 
+import { isValidSolanaAddress, shortenSolanaAddress } from '../services/solana/address'
+
 const EVM_PREFIX = 4 // hex chars (0x + 4 = 6 total before ...)
 const EVM_SUFFIX = 4
 const TERRA_PREFIX = 12 // terra1 (6) + 6 more
@@ -14,7 +16,11 @@ const TERRA_SUFFIX = 6
 export function isAddressLike(s: string): boolean {
   if (!s || typeof s !== 'string') return false
   const t = s.trim()
-  return (t.startsWith('0x') && t.length >= 42) || (t.startsWith('terra1') && t.length >= 44)
+  return (
+    (t.startsWith('0x') && t.length >= 42) ||
+    (t.startsWith('terra1') && t.length >= 44) ||
+    isValidSolanaAddress(t)
+  )
 }
 
 /**
@@ -30,6 +36,9 @@ export function shortenAddress(address: string): string {
   }
   if (s.startsWith('terra1') && s.length >= 20) {
     return `${s.slice(0, TERRA_PREFIX)}...${s.slice(-TERRA_SUFFIX)}`
+  }
+  if (isValidSolanaAddress(s)) {
+    return shortenSolanaAddress(s)
   }
   return s
 }

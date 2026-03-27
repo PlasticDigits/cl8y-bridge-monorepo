@@ -19,6 +19,11 @@ describe('shortenAddress', () => {
   it('returns original for short strings', () => {
     expect(shortenAddress('abc')).toBe('abc')
   })
+
+  it('shortens Solana addresses (base58 pubkeys)', () => {
+    const mint = 'So11111111111111111111111111111111111111112'
+    expect(shortenAddress(mint)).toBe('So11...1112')
+  })
 })
 
 describe('isAddressLike', () => {
@@ -33,5 +38,9 @@ describe('isAddressLike', () => {
   it('rejects short strings', () => {
     expect(isAddressLike('0x123')).toBe(false)
     expect(isAddressLike('terra1')).toBe(false)
+  })
+
+  it('identifies Solana addresses', () => {
+    expect(isAddressLike('So11111111111111111111111111111111111111112')).toBe(true)
   })
 })
