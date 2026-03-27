@@ -10,7 +10,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("CL8YBr1dg3So1ana111111111111111111111111111");
+declare_id!("mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb");
 
 #[program]
 pub mod cl8y_bridge {

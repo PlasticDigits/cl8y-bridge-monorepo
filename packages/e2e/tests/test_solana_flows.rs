@@ -10,7 +10,7 @@ use solana_sdk::signature::{Keypair, Signer};
 use std::str::FromStr;
 
 /// Anchor workspace default in `packages/contracts-solana` (must match `declare_id!` / deploy keypair).
-const DEFAULT_SOLANA_PROGRAM_ID: &str = "CL8YBr1dg3So1ana111111111111111111111111111";
+const DEFAULT_SOLANA_PROGRAM_ID: &str = "mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb";
 
 fn get_program_id() -> Pubkey {
     let s = std::env::var("SOLANA_PROGRAM_ID")

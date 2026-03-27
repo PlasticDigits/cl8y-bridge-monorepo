@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Build Anchor programs, sync declare_id! / Anchor.toml with target/deploy keypairs, rebuild, deploy.
-# Without "anchor keys sync", placeholder IDs in lib.rs mismatch deployed program pubkeys → DeclaredProgramIdMismatch.
+# Build and deploy to localnet. Uses committed program keypairs (see keys/localnet/) so
+# declare_id! / Anchor.toml stay stable — no anchor keys sync rewriting lib.rs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KEYS_DIR="$ROOT/packages/contracts-solana/keys/localnet"
 cd "$ROOT/packages/contracts-solana"
 
+mkdir -p target/deploy
+cp "$KEYS_DIR/cl8y_bridge-keypair.json" target/deploy/
+cp "$KEYS_DIR/cl8y_faucet-keypair.json" target/deploy/
+
 anchor build --no-idl
-anchor keys sync
-anchor build --no-idl
-# anchor 0.32+ deploy has no --no-idl (IDL is optional for localnet deploy)
 anchor deploy --provider.cluster localnet

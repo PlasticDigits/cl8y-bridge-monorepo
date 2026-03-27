@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SOLANA_RPC="${SOLANA_RPC_URL:-http://localhost:8899}"
-FAUCET_PROGRAM_ID="${FAUCET_PROGRAM_ID:-CL8YFaucet1111111111111111111111111111111111}"
+FAUCET_PROGRAM_ID="${FAUCET_PROGRAM_ID:-B9zRqdnkfrMjLiW8n5Ejw6KSR9DmQscogpijoi5qyyY2}"
 KEYPAIR="${SOLANA_KEYPAIR:-$HOME/.config/solana/id.json}"
 
 echo "=== CL8Y Solana Test Token Setup ==="

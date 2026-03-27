@@ -49,7 +49,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'solana',
       name: 'Solana Localnet',
       rpcUrl: 'http://localhost:8899',
-      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || 'CL8YBr1dg3So1ana111111111111111111111111111',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || 'mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb',
       bytes4ChainId: '0x00000005',
     },
   },
