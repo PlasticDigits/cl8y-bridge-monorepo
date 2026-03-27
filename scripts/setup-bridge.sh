@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./scripts/setup-bridge.sh
-# Or set EVM_BRIDGE_ADDRESS / TERRA_BRIDGE_ADDRESS explicitly (overrides .deploy/local.env).
+# With .deploy/local.env present, that file wins for deploy addresses (see re-source below).
 #
 # After `make deploy-evm` and `make deploy-terra`, addresses are stored in .deploy/local.env
 # and loaded automatically when unset.
@@ -46,6 +46,16 @@ fi
 # shellcheck source=lib-local-deploy-env.sh
 source "$REPO_ROOT/scripts/lib-local-deploy-env.sh"
 load_local_deploy_env
+
+# `load_local_deploy_env` only fills unset vars — a stale SOLANA_PROGRAM_ID or bridge
+# address exported in the shell (e.g. from an older session) would win over .deploy/local.env
+# after `make deploy`. Re-source the file so deploy output is authoritative.
+if [ -f "$DEPLOY_ENV_FILE" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$DEPLOY_ENV_FILE"
+    set +a
+fi
 
 # Configuration
 EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
