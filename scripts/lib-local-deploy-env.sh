@@ -56,7 +56,12 @@ write_deploy_env_solana() {
 load_local_deploy_env() {
     local f="$DEPLOY_ENV_FILE"
     [ ! -f "$f" ] && return 0
-    while IFS= read -r line || [ -n "$line" ]; do
+    # Use mapfile instead of `while read || [ -n "$line" ]` — the EOF `[ -n "$line" ]` test
+    # returns 1 and can trigger bash ERR traps (set -E) even though the while is exiting normally.
+    local lines
+    mapfile -t lines <"$f" || return 0
+    local line
+    for line in "${lines[@]}"; do
         [[ "$line" =~ ^# ]] && continue
         [[ -z "$line" ]] && continue
         key="${line#export }"
@@ -68,7 +73,7 @@ load_local_deploy_env() {
         TERRA_BRIDGE_ADDRESS) [ -z "${TERRA_BRIDGE_ADDRESS:-}" ] && export TERRA_BRIDGE_ADDRESS="$val" ;;
         SOLANA_PROGRAM_ID) [ -z "${SOLANA_PROGRAM_ID:-}" ] && export SOLANA_PROGRAM_ID="$val" ;;
         esac
-    done <"$f"
+    done
 }
 
 # Console hints for QA when local deploy env is missing or broken (stderr).
