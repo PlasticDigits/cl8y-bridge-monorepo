@@ -64,11 +64,10 @@ This forwards the bridge RPC/LCD/wallet ports from the QA host’s loopback to y
 From your **laptop repo clone** (repo root):
 
 ```bash
-mkdir -p .deploy
 scp PATH_FROM_START_QA_OUTPUT
 ```
 
-Use the exact **`scp`** line from **`make start-qa`** (it includes **`USER@HOST`**, optional **`-P`**, and the full path to **`.deploy/local.env`** on the server).
+The repo includes an empty **`.deploy/`** directory (via **`.deploy/.gitkeep`**) so **`scp … .deploy/local.env`** works without **`mkdir`**. Use the exact **`scp`** line from **`make start-qa`** ( **`USER@HOST`**, optional **`-P`**, path to **`.deploy/local.env`** on the server).
 
 This file holds **bridge contract addresses** (EVM, Terra, Solana program id) produced by deploy.
 
@@ -102,7 +101,8 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 |--------|------------|
 | **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_EVM_BRIDGE_ADDRESS`**, **`VITE_TERRA_BRIDGE_ADDRESS`**, **`VITE_SOLANA_PROGRAM_ID`** are set. Restart Vite. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
-| **`scp` fails** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |
+| **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
+| **`scp` fails (other)** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |
 
 ---
 

@@ -37,7 +37,8 @@ if [ ! -f "$DEPLOY_ENV" ]; then
   if [ "$URLS_ONLY" != "1" ]; then
     echo "[write-frontend-env-local] Missing ${DEPLOY_ENV}" >&2
     echo "  Copy it from the QA host after deploy, then re-run. Example:" >&2
-    echo "    mkdir -p .deploy && scp USER@HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env" >&2
+    echo "    scp USER@HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env" >&2
+    echo "    (.deploy/ exists in the repo via .deploy/.gitkeep; mkdir -p .deploy only if your clone is old.)" >&2
     echo "  Or generate only RPC/LCD URLs (no bridge addresses) for tunnel / Settings checks:" >&2
     echo "    $0 --urls-only" >&2
     exit 1

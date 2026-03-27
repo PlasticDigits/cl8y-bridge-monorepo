@@ -1,7 +1,9 @@
 # ===================
 # Shared
 # ===================
-.deploy/
+# Track .deploy/ for clone layout; ignore generated local.env (see .deploy/.gitkeep)
+.deploy/*
+!.deploy/.gitkeep
 .env
 .env.*
 !.env.example
