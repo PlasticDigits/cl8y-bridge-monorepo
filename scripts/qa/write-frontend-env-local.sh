@@ -26,12 +26,14 @@ if [ ! -f "$DEPLOY_ENV" ]; then
 fi
 
 # Match shared-host QA URLs (remapped Terra ports) so laptop + SSH -L match server loopback.
+# Source deploy env *before* qa-host.env: .deploy/local.env may contain TERRA_LCD_URL / TERRA_RPC_URL
+# from older tooling (e.g. localhost:1317) and would otherwise overwrite remapped ports (1318/26658).
 export QA_SHARED_HOST="${QA_SHARED_HOST:-1}"
 set -a
 # shellcheck source=/dev/null
-source "${REPO_ROOT}/scripts/qa/qa-host.env"
-# shellcheck source=/dev/null
 source "$DEPLOY_ENV"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/scripts/qa/qa-host.env"
 set +a
 
 FE_OUT="${REPO_ROOT}/packages/frontend/.env.local"
@@ -50,4 +52,5 @@ mkdir -p "$(dirname "$FE_OUT")"
 } >"$FE_OUT"
 
 echo "[write-frontend-env-local] Wrote ${FE_OUT}"
+echo "[write-frontend-env-local] Terra (must match SSH -L and Settings): LCD=${TERRA_LCD_URL:-?} RPC=${TERRA_RPC_URL:-?}"
 echo "[write-frontend-env-local] With SSH port forwards, these 127.0.0.1 URLs reach the QA host."

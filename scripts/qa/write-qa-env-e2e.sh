@@ -12,11 +12,13 @@ if [ ! -f "$REPO_ROOT/.deploy/local.env" ]; then
   exit 1
 fi
 
+# Same order as write-frontend-env-local.sh: deploy first, then qa-host (remapped Terra URLs win).
+export QA_SHARED_HOST="${QA_SHARED_HOST:-1}"
 set -a
 # shellcheck source=/dev/null
-source "$REPO_ROOT/scripts/qa/qa-host.env"
-# shellcheck source=/dev/null
 source "$REPO_ROOT/.deploy/local.env"
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
 E2E_OUT="$REPO_ROOT/.env.e2e.local"
