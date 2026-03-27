@@ -177,8 +177,9 @@ solana-test-docker: solana-reset ## Run Solana tests against Docker validator (f
 	cd packages/contracts-solana && anchor test --skip-local-validator
 
 .PHONY: solana-deploy-local
-solana-deploy-local: ## Deploy Solana program to local validator
-	cd packages/contracts-solana && anchor deploy --provider.cluster localnet
+solana-deploy-local: ## Deploy Solana program to local validator (keys sync + build + deploy)
+	@chmod +x "$(CURDIR)/scripts/solana/anchor-deploy-localnet.sh" 2>/dev/null || true
+	./scripts/solana/anchor-deploy-localnet.sh
 
 .PHONY: solana-test-e2e
 solana-test-e2e: ## Run Solana bridge offline Rust tests (test_solana_flows; no live validator required)
@@ -310,9 +311,9 @@ deploy-terra-local: deploy-terra
 
 deploy-solana:
 	@echo "Deploying Solana program to local validator..."
-	@chmod +x "$(CURDIR)/scripts/solana/airdrop-for-anchor-deploy.sh" 2>/dev/null || true
+	@chmod +x "$(CURDIR)/scripts/solana/airdrop-for-anchor-deploy.sh" "$(CURDIR)/scripts/solana/anchor-deploy-localnet.sh" 2>/dev/null || true
 	./scripts/solana/airdrop-for-anchor-deploy.sh
-	cd packages/contracts-solana && anchor build --no-idl && anchor deploy --no-idl --provider.cluster localnet
+	./scripts/solana/anchor-deploy-localnet.sh
 	@bash -c '. ./scripts/lib-local-deploy-env.sh && \
 		PID=$$(solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null) && \
 		if [ -n "$$PID" ]; then write_deploy_env_solana "$$PID"; echo "  SOLANA_PROGRAM_ID=$$PID saved to .deploy/local.env"; fi' || true

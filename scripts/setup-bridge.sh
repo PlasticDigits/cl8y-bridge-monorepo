@@ -88,9 +88,9 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 log_phase() { echo "[setup-bridge] phase: $1" >&2; }
 
-# Run terrad command via docker exec
-terrad_exec() {
-    docker exec "$CONTAINER_NAME" terrad "$@"
+# Run terrad tx via docker exec (must match deploy-terra-local.sh: test keyring in container)
+terrad_tx() {
+    docker exec "$CONTAINER_NAME" terrad "$@" --keyring-backend test
 }
 
 # Validate addresses
@@ -164,7 +164,7 @@ setup_terra_side() {
     
     ADD_CHAIN_MSG="{\"add_chain\":{\"chain_id\":31337,\"name\":\"Anvil Local\",\"bridge_address\":\"$EVM_BRIDGE_ADDRESS\"}}"
     
-    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_CHAIN_MSG" \
+    TX=$(terrad_tx tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_CHAIN_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
@@ -182,7 +182,7 @@ setup_terra_side() {
     log_info "Adding LUNC token..."
     ADD_TOKEN_MSG="{\"add_token\":{\"token\":\"uluna\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000001234\",\"terra_decimals\":6,\"evm_decimals\":18}}"
     
-    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_TOKEN_MSG" \
+    TX=$(terrad_tx tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_TOKEN_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
@@ -200,7 +200,7 @@ setup_terra_side() {
     log_info "Adding USTC token..."
     ADD_USD_MSG="{\"add_token\":{\"token\":\"uusd\",\"is_native\":true,\"evm_token_address\":\"0x0000000000000000000000000000000000005678\",\"terra_decimals\":6,\"evm_decimals\":18}}"
     
-    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_USD_MSG" \
+    TX=$(terrad_tx tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_USD_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
@@ -232,7 +232,7 @@ setup_operator() {
     # Try to add operator if there's an add_operator message
     ADD_OP_MSG="{\"add_operator\":{\"operator\":\"$OPERATOR_TERRA\"}}"
     
-    TX=$(terrad_exec tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_OP_MSG" \
+    TX=$(terrad_tx tx wasm execute "$TERRA_BRIDGE_ADDRESS" "$ADD_OP_MSG" \
         --from "$TERRA_KEY" \
         --chain-id "$TERRA_CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \

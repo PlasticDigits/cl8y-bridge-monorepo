@@ -58,6 +58,9 @@ echo "==> Database migrations (operator)..."
 make operator-migrate
 
 echo "==> Deploy contracts + setup-bridge (uses TERRA_RPC_URL / TERRA_LCD_URL from qa-host.env)..."
+# Force remapped LocalTerra URLs into deploy / setup-bridge (override stale .env from operator template).
+export TERRA_RPC_URL="http://127.0.0.1:${E2E_TERRA_RPC_PORT:-26658}"
+export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL SOLANA_RPC_URL
 make deploy
 
@@ -71,6 +74,8 @@ if [ -f "$REPO_ROOT/.deploy/local.env" ]; then
   if [ -n "${SOLANA_PROGRAM_ID:-}" ]; then
     "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" SOLANA_PROGRAM_ID "$SOLANA_PROGRAM_ID"
   fi
+  "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" TERRA_RPC_URL "${TERRA_RPC_URL}"
+  "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" TERRA_LCD_URL "${TERRA_LCD_URL}"
 fi
 
 echo "==> Writing .env.e2e.local + packages/frontend/.env.local..."

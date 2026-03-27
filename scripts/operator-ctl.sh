@@ -106,7 +106,7 @@ start_operator() {
         set +a
     fi
 
-    # Shared QA host: remapped Terra ports + operator API port (after .env so URLs win)
+    # Shared QA host: qa-host.env forces remapped Terra URLs when QA_SHARED_HOST=1 (overrides stale .env)
     if [ "${QA_SHARED_HOST:-}" = "1" ] && [ -f "$PROJECT_ROOT/scripts/qa/qa-host.env" ]; then
         set -a
         # shellcheck source=/dev/null
