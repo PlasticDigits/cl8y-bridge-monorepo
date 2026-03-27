@@ -30,6 +30,7 @@ import {
 } from '../services/solana/transaction'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
+import { terraAddressToBytes32 } from '../services/hashVerification'
 import type { BridgeChainConfig } from '../types/chain'
 
 export type CheckStatus = 'pass' | 'fail' | 'error' | 'loading' | 'skip'
@@ -103,38 +104,26 @@ function evmAddrToDestToken32Bytes(addr: Address): Uint8Array {
 }
 
 /**
- * Decode a bech32 Terra address to base64-encoded bytes32.
- * Mirrors the deploy script: bech32_decode → convertbits(5→8) → pad to 32 bytes.
+ * Base64-encoded 32-byte `src_token` for Terra `incoming_token_mapping` queries.
+ * Matches `encode_token_address` on the bridge: validated CW20 `terra1…` → bech32 decode + left-pad;
+ * native denoms and everything else → keccak256(UTF-8 bytes). Invalid bech32 falls back to keccak
+ * (same as `addr_validate` failing on chain).
  */
-function terraBech32ToBase64Bytes32(terraAddr: string): string | null {
+function terraTokenIdToIncomingSrcTokenB64(terraTokenId: string): string | null {
   try {
-    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
-    const lower = terraAddr.toLowerCase()
-    const sepIdx = lower.lastIndexOf('1')
-    if (sepIdx < 1) return null
-    const dataPart = lower.slice(sepIdx + 1)
-    const values: number[] = []
-    for (const ch of dataPart) {
-      const idx = CHARSET.indexOf(ch)
-      if (idx < 0) return null
-      values.push(idx)
-    }
-    const data5bit = values.slice(0, -6)
-    let acc = 0
-    let bits = 0
-    const result: number[] = []
-    for (const v of data5bit) {
-      acc = (acc << 5) | v
-      bits += 5
-      while (bits >= 8) {
-        bits -= 8
-        result.push((acc >> bits) & 0xff)
+    const isCw20Shape =
+      terraTokenId.startsWith('terra1') &&
+      (terraTokenId.length === 44 || terraTokenId.length === 64)
+    if (isCw20Shape) {
+      try {
+        const hex = terraAddressToBytes32(terraTokenId)
+        return btoa(String.fromCharCode(...hexToBytes(hex)))
+      } catch {
+        // Contract uses keccak when addr_validate fails
       }
     }
-    const raw = new Uint8Array(result)
-    const padded = new Uint8Array(32)
-    padded.set(raw, 32 - raw.length)
-    return btoa(String.fromCharCode(...padded))
+    const hash = keccak256(toBytes(terraTokenId))
+    return btoa(String.fromCharCode(...hexToBytes(hash)))
   } catch {
     return null
   }
@@ -308,17 +297,15 @@ export function useTokenVerification() {
         }
       }
 
-      // 2. Incoming mappings from each EVM chain to Terra
-      // The protocol uses the bech32-decoded Terra CW20 address as src_token
-      // (the cross-chain hash token field is the dest token, which is the Terra address)
-      const srcTokenB64 = terraBech32ToBase64Bytes32(terraTokenId)
+      // 2. Incoming mappings from each EVM chain to Terra (`src_token` = encode_token_address)
+      const srcTokenB64 = terraTokenIdToIncomingSrcTokenB64(terraTokenId)
       for (const [otherKey, otherConfig] of evmChains) {
         const otherName = otherConfig.name ?? otherKey
         if (!srcTokenB64) {
           checks.push({
             label: `Incoming mapping ← ${otherName}`,
             status: 'skip',
-            detail: 'Could not bech32-decode Terra token address',
+            detail: 'Could not derive src_token bytes32 for this Terra token id',
           })
           continue
         }
