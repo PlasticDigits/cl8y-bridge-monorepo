@@ -141,22 +141,39 @@ setup_evm_side() {
         exit 1
     fi
 
-    # Compute Terra chain key: keccak256(abi.encode("COSMOS", "localterra", "terra"))
-    TERRA_CHAIN_KEY=$(cast keccak "$(cast abi-encode 'f(string,string,string)' 'COSMOS' 'localterra' 'terra')") \
-        || { log_error "cast keccak/abi-encode failed"; exit 1; }
-    log_info "Terra Chain Key: $TERRA_CHAIN_KEY"
-    
-    # Check if ChainRegistry is set (optional - might be combined with bridge)
+    # ChainRegistry V2: registerChain(string identifier, bytes4 chainId).
+    # Matches e2e `register_cosmw_chain_key` / deploy.rs: identifier "terraclassic_{TERRA_CHAIN_ID}",
+    # predetermined Terra bytes4 = 0x00000002 (not the legacy keccak COSMOS/localterra key).
     if [ -n "$EVM_CHAIN_REGISTRY" ]; then
-        log_info "Registering Terra chain in ChainRegistry..."
-        cast send "$EVM_CHAIN_REGISTRY" \
-            "registerChain(bytes32,uint8,string)" \
-            "$TERRA_CHAIN_KEY" \
-            2 \
-            "Terra Classic Local" \
-            --rpc-url "$EVM_RPC_URL" \
-            --private-key "$EVM_PRIVATE_KEY" \
-            || log_warn "Chain registration failed (may already exist)"
+        TERRA_REGISTRY_IDENTIFIER="terraclassic_${TERRA_CHAIN_ID}"
+        TERRA_BYTES4_ID="0x00000002"
+        log_info "ChainRegistry: identifier=${TERRA_REGISTRY_IDENTIFIER} bytes4=${TERRA_BYTES4_ID}"
+
+        IDENT_HASH=$(cast call "$EVM_CHAIN_REGISTRY" \
+            "computeIdentifierHash(string)" \
+            "$TERRA_REGISTRY_IDENTIFIER" \
+            --rpc-url "$EVM_RPC_URL") \
+            || { log_error "cast call computeIdentifierHash failed (ChainRegistry ABI mismatch?)"; exit 1; }
+
+        EXISTING_ID=$(cast call "$EVM_CHAIN_REGISTRY" \
+            "getChainIdFromHash(bytes32)" \
+            "$IDENT_HASH" \
+            --rpc-url "$EVM_RPC_URL") \
+            || { log_error "cast call getChainIdFromHash failed"; exit 1; }
+
+        ZERO_SLOT="0x0000000000000000000000000000000000000000000000000000000000000000"
+        if [ "$EXISTING_ID" != "$ZERO_SLOT" ]; then
+            log_info "Terra chain already registered in ChainRegistry (getChainIdFromHash=${EXISTING_ID})"
+        else
+            log_info "Registering Terra chain in ChainRegistry..."
+            cast send "$EVM_CHAIN_REGISTRY" \
+                "registerChain(string,bytes4)" \
+                "$TERRA_REGISTRY_IDENTIFIER" \
+                "$TERRA_BYTES4_ID" \
+                --rpc-url "$EVM_RPC_URL" \
+                --private-key "$EVM_PRIVATE_KEY" \
+                || log_warn "Chain registration send failed (check deploy account owns ChainRegistry)"
+        fi
     else
         log_info "Skipping ChainRegistry (not deployed separately)"
     fi
