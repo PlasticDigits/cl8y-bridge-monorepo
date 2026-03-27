@@ -61,6 +61,18 @@ echo "==> Deploy contracts + setup-bridge (uses TERRA_RPC_URL / TERRA_LCD_URL fr
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL SOLANA_RPC_URL
 make deploy
 
+echo "==> Merging deploy outputs into repo-root .env for operator..."
+if [ -f "$REPO_ROOT/.deploy/local.env" ]; then
+  chmod +x "$REPO_ROOT/scripts/merge-env-var.sh" 2>/dev/null || true
+  set -a
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.deploy/local.env"
+  set +a
+  if [ -n "${SOLANA_PROGRAM_ID:-}" ]; then
+    "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" SOLANA_PROGRAM_ID "$SOLANA_PROGRAM_ID"
+  fi
+fi
+
 echo "==> Writing .env.e2e.local + packages/frontend/.env.local..."
 "$REPO_ROOT/scripts/qa/write-qa-env-e2e.sh"
 

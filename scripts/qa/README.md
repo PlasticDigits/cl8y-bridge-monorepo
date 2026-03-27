@@ -20,7 +20,7 @@ EOF
 
 ## One command on the QA server
 
-1. One-time: `cp packages/operator/.env.example .env` at repo root and fill **DATABASE_URL**, **EVM_PRIVATE_KEY**, **TERRA_MNEMONIC**, **SOLANA_PRIVATE_KEY** (local dev values from operator README).
+1. One-time: `cp packages/operator/.env.example .env` at repo root and set at least **DATABASE_URL** (e.g. `postgres://operator:operator@127.0.0.1:5433/operator`) and **SOLANA_PRIVATE_KEY** (base58 from the same keypair Anchor uses, usually `~/.config/solana/id.json`). **`scripts/qa/qa-host.env`** fills typical local Anvil/Terra fields when **`QA_SHARED_HOST=1`** (including **EVM_CHAIN_ID**, **FEE_RECIPIENT**, test **TERRA_MNEMONIC**, etc.) so a minimal `.env` is enough.
 
 2. **sqlx CLI** (for `make operator-migrate` / `make start-qa`): install once per machine:
 
