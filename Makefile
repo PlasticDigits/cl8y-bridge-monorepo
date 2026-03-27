@@ -371,7 +371,8 @@ operator-status:
 	./scripts/operator-ctl.sh status
 
 operator-migrate:
-	cd packages/operator && sqlx migrate run
+	@chmod +x "$(CURDIR)/scripts/operator-migrate.sh" 2>/dev/null || true
+	./scripts/operator-migrate.sh
 
 # Canceler
 canceler:

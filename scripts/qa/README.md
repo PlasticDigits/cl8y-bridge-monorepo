@@ -22,7 +22,15 @@ EOF
 
 1. One-time: `cp packages/operator/.env.example .env` at repo root and fill **DATABASE_URL**, **EVM_PRIVATE_KEY**, **TERRA_MNEMONIC**, **SOLANA_PRIVATE_KEY** (local dev values from operator README).
 
-2. Run:
+2. **sqlx CLI** (for `make operator-migrate` / `make start-qa`): install once per machine:
+
+   ```bash
+   cargo install sqlx-cli --no-default-features --features rustls,postgres
+   ```
+
+   Ensure **`sqlx`** is on **`PATH`** (usually `~/.cargo/bin`). If you only have the Cargo subcommand, **`cargo sqlx migrate run`** is used automatically by **`scripts/operator-migrate.sh`**.
+
+3. Run:
 
 ```bash
 make start-qa
@@ -32,7 +40,7 @@ make start-qa
 
 It then starts Docker (Anvil, LocalTerra, Solana, Postgres), runs migrations, **`make deploy`**, writes **`.env.e2e.local`** and **`packages/frontend/.env.local`**, starts **operator** and **canceler**, verifies **`/health`**, and prints a **copy-paste `ssh -N -L …`** command for your laptop (ports come from **`scripts/qa/qa-host.env`**). Optionally set **`QA_SSH_DEST=user@host`** in the environment when running **`make start-qa`** to bake your SSH login into that command instead of **`$(whoami)@$(hostname -f)`**.
 
-3. Stop:
+4. Stop:
 
 ```bash
 make stop-qa
