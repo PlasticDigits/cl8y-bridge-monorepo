@@ -68,6 +68,8 @@ cd packages/frontend && npm ci && npm run dev
 
 Then open `http://localhost:5173`. You only copy **one small file** from the server, not a hand-edited `.env.local`.
 
+**Bridge page only lists Solana (or no tokens):** the transfer UI only shows chains that have **`VITE_*` bridge contract addresses** (EVM, Terra, Solana program id). **`--urls-only`** / RPC-only **`.env.local`** is not enough. Copy **`.deploy/local.env`** from the server and run **`./scripts/qa/write-frontend-env-local.sh`** without **`--urls-only`**, then restart Vite.
+
 **LocalTerra shows `localhost:1317` or “Failed to fetch”:** Settings uses **`VITE_TERRA_LCD_URL`** from **`packages/frontend/.env.local`**. On shared QA, that must be the **remapped** LCD (**1318**), not **`.env.example`**’s **1317**. Run **`./scripts/qa/write-frontend-env-local.sh`** (it logs **`LCD=...`**), then **restart** **`npm run dev`**. A copy of **`.env.example`** → **`.env`** alone is not enough unless **`.env.local`** overrides Terra URLs.
 
 ## Operator API port
