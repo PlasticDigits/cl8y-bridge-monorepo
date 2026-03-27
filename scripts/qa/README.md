@@ -24,15 +24,17 @@ How this doc is organized:
 
    Put **`sqlx`** on **`PATH`** (often `~/.cargo/bin`). If missing, **`cargo sqlx migrate run`** is used via **`scripts/operator-migrate.sh`**.
 
-### Each bring-up: `make start-qa`
+### Each bring-up: `make start-qa` (alias: `make qa-start`)
 
 ```bash
 make start-qa
+# same as:
+make qa-start
 ```
 
 **Before** starting, this stops canceler/operator and runs **`docker compose down`** for a clean stack.
 
-It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (EVM + **EVM1** second deploy + Terra with **CW20** + Solana + **`setup-bridge`** with Terra **`register_chain`**) → **`npm ci`** in **`packages/frontend`** when needed (no **`node_modules`**, or **`package-lock.json`** newer than **`node_modules`**) → **`npm run qa:full-token-setup`** in **`packages/frontend`** (same **full E2E token matrix** as Vitest e2e-infra: TokenA/B/C, LUNC, KDEC on both Anvils + Terra, **`registerAllTokens`**, LockUnlock funding, cancel window, canceler registration, **`scripts/solana/register-tokens.sh`**) → merges deploy outputs + **`EVM_CHAINS_COUNT` / `EVM_CHAIN_1_*`** (multi-EVM operator) into repo-root **`.env`** → writes **`.env.e2e.local`** and **`packages/frontend/.env.local`** (including **`VITE_EVM1_*`**) → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)**.
+It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postgres) → migrations → **`make ensure-terra-artifacts`** ( **`bridge.wasm`** via **`make build-terra`** if missing; **`cw20_mintable.wasm`** via **`scripts/download-cw20-wasm.sh`** if missing) → **`make deploy`** (EVM + **EVM1** second deploy + Terra with **CW20** + Solana + **`setup-bridge`** with Terra **`register_chain`**) → **`npm ci`** in **`packages/frontend`** when needed (no **`node_modules`**, or **`package-lock.json`** newer than **`node_modules`**) → **`npm run qa:full-token-setup`** in **`packages/frontend`** (same **full E2E token matrix** as Vitest e2e-infra: TokenA/B/C, LUNC, KDEC on both Anvils + Terra, **`registerAllTokens`**, LockUnlock funding, cancel window, canceler registration, **`scripts/solana/register-tokens.sh`**) → merges deploy outputs + **`EVM_CHAINS_COUNT` / `EVM_CHAIN_1_*`** (multi-EVM operator) into repo-root **`.env`** → writes **`.env.e2e.local`** and **`packages/frontend/.env.local`** (including **`VITE_EVM1_*`**) → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)**.
 
 **Manual token step (after `make deploy` only):** `make qa-full-token-setup` or `cd packages/frontend && npm run qa:full-token-setup`.
 
@@ -110,7 +112,8 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 | **Bridge page: no tokens in the selector** | On the **server**, run **`make start-qa`** (includes **`qa:full-token-setup`**) or after **`make deploy`** run **`make qa-full-token-setup`**. Legacy: **`make deploy-tokens && make register-tokens`**. |
 | **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered by the full QA token setup. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
-| **`localterra` container exits (1) during `make start-qa`** | **`docker compose logs localterra`** on the server. Often **stale volume**: `docker compose down` then `docker volume rm cl8y-bridge-monorepo_localterra-data` (or **`docker compose down -v`**) and re-run **`make start-qa`**. Or **port in use**: ensure **`E2E_TERRA_*`** in **`.env`** do not clash with another stack; **`ss -tlnp`** / **`lsof`**. On **ARM**, **`platform: linux/amd64`** needs QEMU (**`tonistiigi/binfmt`**) or run on **amd64**. |
+| **`localterra` exits (1), logs: `empty set` / `validator set` / replay error** | The **`localterra-data`** volume has **stale or incompatible chain state** (e.g. after an image upgrade). From the repo: **`docker compose down -v`** (removes named volumes), then **`make start-qa`**. Do not preserve that volume for LocalTerra QA unless you know it is valid. |
+| **`localterra` container exits (1) (other)** | **`docker compose logs localterra`**. **Port in use**: **`E2E_TERRA_*`** in **`.env`** vs **`ss -tlnp`**. **ARM**: **`platform: linux/amd64`** needs QEMU or use **amd64**. |
 | **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
 | **`scp` fails (other)** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |
 

@@ -1,4 +1,4 @@
-.PHONY: start stop start-qa stop-qa qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
+.PHONY: start stop start-qa qa-start stop-qa ensure-terra-artifacts qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
@@ -7,6 +7,7 @@ help:
 	@echo "Infrastructure:"
 	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
 	@echo "  make start-qa       - QA server: Docker (2x Anvil) + migrate + deploy + full e2e token setup + operator + canceler; see scripts/qa/README.md"
+	@echo "  make qa-start       - Same as make start-qa (alias)"
 	@echo "  make qa-full-token-setup - After make deploy: full e2e-infra tokens + registerAllTokens + Solana (same as start-qa token phase)"
 	@echo "  make stop           - Stop Docker services"
 	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
@@ -16,6 +17,7 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana) + setup-bridge"
+	@echo "  make ensure-terra-artifacts - Build bridge.wasm if missing; download cw20_mintable.wasm if missing (used by start-qa)"
 	@echo "  make qa-frontend-env - Write packages/frontend/.env.local from .deploy/local.env + qa-host.env (laptop after scp)"
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
@@ -108,6 +110,8 @@ start:
 start-qa:
 	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh
 	./scripts/qa/start-qa.sh
+
+qa-start: start-qa
 
 # After `make deploy`, runs full e2e-infra token matrix + registerAllTokens + Solana register_token (same as start-qa token step)
 qa-full-token-setup:
@@ -240,6 +244,19 @@ build-terra:
 	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown -p bridge --features cosmwasm_1_2 && \
 		mkdir -p artifacts && \
 		cp target/wasm32-unknown-unknown/release/bridge.wasm artifacts/
+
+# Used by start-qa before deploy-terra --cw20: bridge from Rust; CW20 test wasm via download (see scripts/download-cw20-wasm.sh).
+ensure-terra-artifacts:
+	@chmod +x "$(CURDIR)/scripts/download-cw20-wasm.sh" 2>/dev/null || true
+	@mkdir -p "$(CURDIR)/packages/contracts-terraclassic/artifacts"
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/bridge.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing bridge.wasm — running make build-terra..."; \
+		$(MAKE) build-terra; \
+	fi
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing cw20_mintable.wasm — running scripts/download-cw20-wasm.sh..."; \
+		"$(CURDIR)/scripts/download-cw20-wasm.sh"; \
+	fi
 
 build-terra-optimized:
 	@echo "Building optimized Terra WASM via Docker (cosmwasm_1_2 + BankQuery::Supply)..."

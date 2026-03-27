@@ -43,6 +43,7 @@ _qa_compose_up_failed() {
   echo "" >&2
   echo "[start-qa] Try: check host ports (E2E_TERRA_RPC_PORT / E2E_TERRA_LCD_PORT vs defaults 26657/1317);" >&2
   echo "  reset chain data:  docker compose down -v   # or: docker volume ls | grep localterra  then docker volume rm <name>" >&2
+  echo "  If logs mention 'validator set' / 'empty set' / replay at high height: persisted .terra volume is bad — down -v is required." >&2
   echo "  ARM host + linux/amd64 image: install QEMU/binfmt or use an amd64 runner." >&2
 }
 
@@ -80,6 +81,9 @@ docker compose ps
 
 echo "==> Database migrations (operator)..."
 make operator-migrate
+
+echo "==> Terra WASM artifacts (required for deploy-terra --cw20)..."
+make ensure-terra-artifacts
 
 echo "==> Deploy contracts + setup-bridge (uses TERRA_RPC_URL / TERRA_LCD_URL from qa-host.env)..."
 # Force remapped LocalTerra URLs into deploy / setup-bridge (override stale .env from operator template).
