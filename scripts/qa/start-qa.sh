@@ -117,7 +117,12 @@ SOL_PORT="${SOL_PORT:-8899}"
 WS_PORT="${WS_PORT:-8900}"
 CAN_PORT="${CAN_PORT:-9099}"
 
-SSH_DEST="${QA_SSH_DEST:-$(whoami)@$(hostname -f 2>/dev/null || hostname)}"
+# Printed ssh/scp use whoami@(QA_SSH_HOST or this machine's hostname) so the account matches whoever runs make start-qa.
+if [ -n "${QA_SSH_HOST:-}" ]; then
+  SSH_DEST="$(whoami)@${QA_SSH_HOST}"
+else
+  SSH_DEST="$(whoami)@$(hostname -f 2>/dev/null || hostname)"
+fi
 # Non-default SSH port: OpenSSH uses ssh -p / scp -P
 QA_SSH_PORT="${QA_SSH_PORT:-22}"
 SSH_P_ARGS=""
@@ -135,8 +140,8 @@ echo ""
 echo "  --- Laptop workflow (do these on your laptop, in order) ---"
 echo "  Full doc: scripts/qa/README.md  (section: On your laptop)"
 echo ""
-echo "  Optional next time you run make start-qa here — bake SSH login into the lines below:"
-echo "    QA_SSH_DEST   user@host as seen from the laptop (default: whoami@hostname -f)"
+echo "  Optional next time you run make start-qa here — bake SSH host/port into the lines below:"
+echo "    QA_SSH_HOST   hostname or IP as seen from the laptop (user is $(whoami) from this shell)"
 echo "    QA_SSH_PORT   if SSH is not on port 22 (adds -p / -P to ssh and scp)"
 echo ""
 echo "  Step 1 — SSH port forwards (run on laptop; keep this terminal open)."

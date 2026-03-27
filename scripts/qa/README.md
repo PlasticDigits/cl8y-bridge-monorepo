@@ -34,11 +34,11 @@ make start-qa
 
 It then: starts Docker (Anvil, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (writes bridge addresses into **`.deploy/local.env`**, merges into operator **`.env`**) → writes **`.env.e2e.local`** and **`packages/frontend/.env.local` on the server** → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)** (SSH, **`scp`**, **`write-frontend-env-local.sh`**, **`npm run dev`**).
 
-**Optional — bake your SSH login into that printed block** (set on the server when you run **`make start-qa`**):
+**Optional — bake SSH host/port into that printed block** (set on the server when you run **`make start-qa`**). The printed destination is **`whoami@host`**: **`host`** comes from **`QA_SSH_HOST`** (or this machine’s hostname), and **`whoami`** is whoever runs **`make start-qa`** on the server.
 
 | Variable | Purpose |
 |----------|---------|
-| **`QA_SSH_DEST`** | **`user@host`** as seen from the laptop (default: **`$(whoami)@$(hostname -f)`**) |
+| **`QA_SSH_HOST`** | Hostname or IP as seen from the laptop (default: this machine’s **`hostname -f`** or **`hostname`**) |
 | **`QA_SSH_PORT`** | If SSH is not on port 22; the printed **`ssh`** / **`scp`** lines include **`-p`** / **`-P`** |
 
 ### Stop the QA stack
@@ -102,7 +102,7 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 |--------|------------|
 | **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_EVM_BRIDGE_ADDRESS`**, **`VITE_TERRA_BRIDGE_ADDRESS`**, **`VITE_SOLANA_PROGRAM_ID`** are set. Restart Vite. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
-| **`scp` fails** | Use **`QA_SSH_DEST`** / **`QA_SSH_PORT`** when re-running **`make start-qa`** on the server so the printed **`scp`** matches how you SSH. |
+| **`scp` fails** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |
 
 ---
 
