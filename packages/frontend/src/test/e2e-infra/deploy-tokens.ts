@@ -4,14 +4,14 @@
  * + KDEC (decimal normalization test token) across all 3 chains.
  */
 
-import { deployThreeTokens, deployLuncToken, deployKdecToken } from './deploy-evm'
-import { deployThreeCw20Tokens, deployCw20KdecToken } from './deploy-terra'
+import { deployThreeTokens, deployLuncToken, deployKdecToken, deploySolToken } from './deploy-evm'
+import { deployThreeCw20Tokens, deployCw20KdecToken, deployCw20SolToken } from './deploy-terra'
 import { deploySolanaMints, type SolanaTokenMints } from './deploy-solana'
 
 export interface TokenAddresses {
-  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
-  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
-  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string }
+  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
+  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
+  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string; sol: string }
   solana: SolanaTokenMints
 }
 
@@ -42,9 +42,13 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
   const anvilKdec = deployKdecToken('http://localhost:8545', KDEC_DECIMALS.anvil)
   const anvil1Kdec = deployKdecToken('http://localhost:8546', KDEC_DECIMALS.anvil1)
 
+  const anvilSol = deploySolToken('http://localhost:8545')
+  const anvil1Sol = deploySolToken('http://localhost:8546')
+
   // Deploy CW20 tokens to LocalTerra (TokenA/B/C + KDEC)
   const terraTokens = deployThreeCw20Tokens(terraBridgeAddress)
   const terraKdec = deployCw20KdecToken()
+  const terraSol = deployCw20SolToken()
 
   const solRpc = process.env.SOLANA_RPC_URL || 'http://127.0.0.1:8899'
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
@@ -58,6 +62,7 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
       tokenC: anvilTokens.tokenCAddress,
       lunc: anvilLunc,
       kdec: anvilKdec,
+      sol: anvilSol,
     },
     anvil1: {
       tokenA: anvil1Tokens.tokenAAddress,
@@ -65,12 +70,14 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
       tokenC: anvil1Tokens.tokenCAddress,
       lunc: anvil1Lunc,
       kdec: anvil1Kdec,
+      sol: anvil1Sol,
     },
     terra: {
       tokenA: terraTokens.tokenA.tokenAddress,
       tokenB: terraTokens.tokenB.tokenAddress,
       tokenC: terraTokens.tokenC.tokenAddress,
       kdec: terraKdec,
+      sol: terraSol,
     },
     solana,
   }

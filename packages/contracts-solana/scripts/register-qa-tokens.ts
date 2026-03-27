@@ -21,12 +21,13 @@ const CHAIN_ANVIL1 = [0x00, 0x00, 0x00, 0x03] as const
 const SPL_ABC = 9
 const SPL_LUNC = 6
 const SPL_KDEC = 9
+const SPL_SOL = 9
 
 interface QaTokens {
-  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
-  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
-  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string }
-  solana: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
+  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
+  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
+  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string; sol: string }
+  solana: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; wsol: string }
 }
 
 const keccakCache = new Map<string, string>()
@@ -205,6 +206,16 @@ async function main(): Promise<void> {
       srcAnvil: 18,
       srcTerra: 6,
       srcAnvil1: 12,
+    },
+    {
+      mint: new PublicKey(t.solana.wsol),
+      dec: SPL_SOL,
+      anvilTok: evmAddrToDestTokenBytes(t.anvil.sol),
+      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.sol)),
+      anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.sol),
+      srcAnvil: 9,
+      srcTerra: 9,
+      srcAnvil1: 9,
     },
   ]
 

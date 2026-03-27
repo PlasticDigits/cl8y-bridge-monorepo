@@ -3,6 +3,7 @@ import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { useSolanaWalletStore } from "../stores/solanaWallet";
 import {
   buildDepositNativeInstruction,
+  buildSolanaSplDepositInstructions,
   fetchDepositNonce,
   sendSolanaTransaction,
 } from "../services/solana/transaction";
@@ -28,6 +29,11 @@ export interface SolanaDepositParams {
   tokenMappingDestToken: Uint8Array;
   amount: bigint;
   depositNonce: number;
+  /**
+   * Base58 SPL mint (= TokenMapping.local_mint) for `deposit_spl`.
+   * Omit to use `deposit_native` (lamports only) — e.g. when `local_mint` is WSOL (UX uses native SOL).
+   */
+  splMint?: string;
 }
 
 export function useSolanaDeposit(): UseSolanaDepositReturn {
@@ -54,19 +60,36 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
         const programId = new PublicKey(params.programId);
         const depositor = new PublicKey(address);
 
-        const instruction = await buildDepositNativeInstruction(
-          programId,
-          depositor,
-          params.amount,
-          params.destChain,
-          params.destAccount,
-          params.tokenMappingDestToken,
-          params.depositNonce
-        );
+        let tx: Transaction;
+        if (params.splMint) {
+          const mintPk = new PublicKey(params.splMint);
+          const ixs = await buildSolanaSplDepositInstructions(
+            connection,
+            programId,
+            depositor,
+            params.amount,
+            params.destChain,
+            params.destAccount,
+            params.tokenMappingDestToken,
+            params.depositNonce,
+            mintPk,
+          );
+          tx = new Transaction();
+          for (const ix of ixs) tx.add(ix);
+        } else {
+          const instruction = await buildDepositNativeInstruction(
+            programId,
+            depositor,
+            params.amount,
+            params.destChain,
+            params.destAccount,
+            params.tokenMappingDestToken,
+            params.depositNonce,
+          );
+          tx = new Transaction().add(instruction);
+        }
 
         setStep("signing");
-
-        const tx = new Transaction().add(instruction);
         const signature = await sendSolanaTransaction(connection, tx, walletType);
 
         setStep("confirming");

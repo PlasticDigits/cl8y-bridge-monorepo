@@ -21,7 +21,13 @@ import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidati
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useSolanaWallet } from '../../hooks/useSolanaWallet'
 import { useSolanaDeposit } from '../../hooks/useSolanaDeposit'
-import { fetchDepositNonce } from '../../services/solana/transaction'
+import {
+  WSOL_MINT,
+  bytes4HexToUint8Array,
+  fetchDepositNonce,
+  fetchSplMintDecimals,
+  fetchTokenMappingLocalMint,
+} from '../../services/solana/transaction'
 import { solanaAddressToBytes32 } from '../../services/solana/address'
 import { queryTokenDestMapping } from '../../services/terraTokenDestMapping'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
@@ -403,6 +409,92 @@ export function TransferForm() {
     return null
   }, [isSourceSolana, solanaDestTokenMappingQuery, destChainConfig?.type, destTokenAddr])
 
+  const solanaProgramIdStr = sourceChainConfig?.programId ?? sourceChainConfig?.bridgeAddress
+  const destChainBytesUint8 = useMemo(() => {
+    if (!destChainBytes4) return null
+    return bytes4HexToUint8Array(destChainBytes4)
+  }, [destChainBytes4])
+
+  const solanaMappingQueryEnabled =
+    isSourceSolana &&
+    !!sourceChainConfig?.rpcUrl &&
+    !!solanaProgramIdStr &&
+    !!destChainBytesUint8 &&
+    !!solanaTokenMappingDest32
+
+  const { data: solanaLocalMint, isPending: isSolanaLocalMintPending } = useQuery({
+    queryKey: [
+      'solanaDepositLocalMint',
+      sourceChainConfig?.rpcUrl,
+      solanaProgramIdStr,
+      destChainBytes4,
+      solanaTokenMappingDest32,
+    ],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      const programId = new PublicKey(solanaProgramIdStr!)
+      return fetchTokenMappingLocalMint(
+        connection,
+        programId,
+        destChainBytesUint8!,
+        solanaTokenMappingDest32!,
+      )
+    },
+    enabled: solanaMappingQueryEnabled,
+  })
+
+  const solanaDepositNative = useMemo(
+    () => Boolean(solanaLocalMint && solanaLocalMint.equals(WSOL_MINT)),
+    [solanaLocalMint],
+  )
+  const solanaDepositSpl = useMemo(
+    () => Boolean(solanaLocalMint && !solanaLocalMint.equals(WSOL_MINT)),
+    [solanaLocalMint],
+  )
+
+  const { data: solanaSplDecimals, isPending: isSolanaSplDecimalsPending } = useQuery({
+    queryKey: ['solanaSplDecimals', sourceChainConfig?.rpcUrl, solanaLocalMint?.toBase58()],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      return fetchSplMintDecimals(connection, solanaLocalMint!)
+    },
+    enabled: !!solanaDepositSpl && !!sourceChainConfig?.rpcUrl && !!solanaLocalMint,
+  })
+
+  const { data: solanaSourceBalance } = useQuery({
+    queryKey: [
+      'solanaSourceBalance',
+      sourceChainConfig?.rpcUrl,
+      solanaAddress,
+      solanaDepositNative,
+      solanaLocalMint?.toBase58(),
+    ],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      const addr = new PublicKey(solanaAddress!)
+      if (solanaDepositNative) {
+        return BigInt(await connection.getBalance(addr))
+      }
+      const mint = solanaLocalMint!
+      const mintInfo = await connection.getAccountInfo(mint)
+      if (!mintInfo) return 0n
+      const { getAssociatedTokenAddressSync } = await import('@solana/spl-token')
+      const ata = getAssociatedTokenAddressSync(mint, addr, false, mintInfo.owner)
+      try {
+        const bal = await connection.getTokenAccountBalance(ata)
+        return BigInt(bal.value.amount)
+      } catch {
+        return 0n
+      }
+    },
+    enabled:
+      !!isSourceSolana &&
+      !!sourceChainConfig?.rpcUrl &&
+      !!solanaAddress &&
+      !!solanaLocalMint &&
+      (solanaDepositNative || solanaDepositSpl),
+  })
+
   // Destination chain limits (max transfer, withdraw rate limit) cap the MAX amount
   const destChainUnifiedConfig = useMemo(
     () => bridgeConfigData?.find((c) => c.chainId === destChain) ?? null,
@@ -501,7 +593,7 @@ export function TransferForm() {
     reset: resetEvm,
     tokenBalance,
   } = useBridgeDeposit(
-    tokenConfig
+    tokenConfig && !isSourceSolana
       ? {
           tokenAddress: tokenConfig.address,
           lockUnlockAddress: tokenConfig.lockUnlockAddress,
@@ -512,6 +604,9 @@ export function TransferForm() {
         }
       : undefined
   )
+
+  const effectiveTokenBalance = isSourceSolana ? solanaSourceBalance : tokenBalance
+
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
   const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
@@ -540,7 +635,13 @@ export function TransferForm() {
     evmStatus === 'waiting-deposit' ||
     terraStatus === 'locking'
 
-  const amountDecimals = isSourceTerra ? terraDecimals : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+  const amountDecimals = isSourceTerra
+    ? terraDecimals
+    : isSourceSolana
+      ? solanaDepositSpl
+        ? (solanaSplDecimals ?? tokenConfig?.decimals ?? 9)
+        : 9
+      : (tokenConfig?.decimals ?? DECIMALS.LUNC)
   const destDecimals = isDestEvmChain
     ? (destChainDecimals?.[selectedTokenId]
         ?? registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals
@@ -566,6 +667,8 @@ export function TransferForm() {
     let balanceStr: string | undefined
     if (isSourceTerra) {
       balanceStr = terraSourceBalance
+    } else if (isSourceSolana && effectiveTokenBalance !== undefined) {
+      balanceStr = effectiveTokenBalance.toString()
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     }
@@ -609,7 +712,9 @@ export function TransferForm() {
     }
   }, [
     isSourceTerra,
+    isSourceSolana,
     terraSourceBalance,
+    effectiveTokenBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -632,17 +737,32 @@ export function TransferForm() {
     if (!amount || !isValidAmount(amount)) return false
     if (effectiveMaxInSrc <= 0n) {
       // Distinguish "balance not loaded" (don't block) from "balance is 0" (block)
-      return isSourceTerra || (tokenBalance !== undefined && !!tokenConfig)
+      return (
+        isSourceTerra ||
+        (isSourceSolana && effectiveTokenBalance !== undefined) ||
+        (tokenBalance !== undefined && !!tokenConfig)
+      )
     }
     const parsed = BigInt(parseAmount(amount, amountDecimals))
     return parsed > effectiveMaxInSrc
-  }, [amount, amountDecimals, effectiveMaxInSrc, isSourceTerra, tokenBalance, tokenConfig])
+  }, [
+    amount,
+    amountDecimals,
+    effectiveMaxInSrc,
+    isSourceTerra,
+    isSourceSolana,
+    effectiveTokenBalance,
+    tokenBalance,
+    tokenConfig,
+  ])
 
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string
     if (isSourceTerra) {
       balanceStr = terraSourceBalance
+    } else if (isSourceSolana && effectiveTokenBalance !== undefined) {
+      balanceStr = effectiveTokenBalance.toString()
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     } else {
@@ -669,7 +789,9 @@ export function TransferForm() {
     setAmount(formatAmount(effectiveMax.toString(), srcDecimals))
   }, [
     isSourceTerra,
+    isSourceSolana,
     terraSourceBalance,
+    effectiveTokenBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -1169,7 +1291,15 @@ export function TransferForm() {
           return
         }
 
-        const amountLamports = BigInt(parseAmount(amount, amountDecimals))
+        if (solanaMappingQueryEnabled && solanaLocalMint === null) {
+          setError(
+            'This token is not registered on the Solana bridge for the selected destination chain.',
+          )
+          frozenChainsRef.current = null
+          return
+        }
+
+        const amountBaseUnits = BigInt(parseAmount(amount, amountDecimals))
 
         await solanaDeposit({
           rpcUrl: sourceConfig.rpcUrl,
@@ -1177,8 +1307,10 @@ export function TransferForm() {
           destChain: destChainBytes,
           destAccount: destAccountBytes,
           tokenMappingDestToken: solanaTokenMappingDest32,
-          amount: amountLamports,
+          amount: amountBaseUnits,
           depositNonce,
+          splMint:
+            solanaDepositSpl && solanaLocalMint ? solanaLocalMint.toBase58() : undefined,
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to build Solana deposit')
@@ -1252,6 +1384,8 @@ export function TransferForm() {
 
   const balanceDisplay = isSourceTerra
     ? formatAmount(terraSourceBalance, terraDecimals)
+    : isSourceSolana && effectiveTokenBalance !== undefined
+    ? formatAmount(effectiveTokenBalance.toString(), amountDecimals)
     : tokenBalance !== undefined && tokenConfig
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
@@ -1300,7 +1434,8 @@ export function TransferForm() {
   const isTokenInfoLoading =
     (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)) ||
     (isSourceTerra && (isRegistryLoading || isDestMappingsLoading)) ||
-    (direction === 'evm-to-solana' && isEvmToSolanaDestLoading)
+    (direction === 'evm-to-solana' && isEvmToSolanaDestLoading) ||
+    (isSourceSolana && (isSolanaLocalMintPending || (solanaDepositSpl && isSolanaSplDecimalsPending)))
   const {
     isValid: isRouteValid,
     error: routeValidationError,
@@ -1311,11 +1446,12 @@ export function TransferForm() {
       !!sourceChainConfig &&
       !!destChainConfig &&
       !isChainsLoading &&
-      !isTokenInfoLoading,
+      !isTokenInfoLoading &&
+      (!isSourceSolana || !isSolanaLocalMintPending),
     tokenLabel: selectedSymbol,
     sourceChainConfig,
     destChainConfig,
-    sourceTokenAddress: tokenConfig?.address,
+    sourceTokenAddress: isSourceSolana ? solanaLocalMint?.toBase58() : tokenConfig?.address,
     sourceMappingAddress: readySourceMappings?.[selectedTokenId],
     destTokenAddress: destChainConfig?.type === 'evm' ? (destTokenAddr || undefined) : undefined,
     destMappingAddress: destChainConfig?.type === 'evm' ? (tokenDestMappingAddr || undefined) : undefined,
@@ -1326,10 +1462,19 @@ export function TransferForm() {
           ? solanaDestTokenIdForRoute
           : undefined,
   })
-  const submitGuardError =
-    !isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid
-      ? routeValidationError
+  const solanaMappingGuardError =
+    isSourceSolana &&
+    !isSolanaLocalMintPending &&
+    solanaMappingQueryEnabled &&
+    solanaLocalMint === null
+      ? 'This token is not registered on the Solana bridge for the selected destination chain.'
       : null
+
+  const submitGuardError =
+    solanaMappingGuardError ||
+    (!isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid
+      ? routeValidationError
+      : null)
 
   const buttonText = isChainsLoading
     ? 'Discovering chains...'
@@ -1398,6 +1543,8 @@ export function TransferForm() {
         onChange={setAmount}
         onMax={
           isSourceTerra && terraSourceBalance
+            ? handleMax
+            : isSourceSolana && effectiveTokenBalance !== undefined
             ? handleMax
             : tokenBalance !== undefined && tokenConfig
             ? handleMax

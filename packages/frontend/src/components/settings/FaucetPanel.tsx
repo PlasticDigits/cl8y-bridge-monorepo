@@ -105,13 +105,58 @@ const SOLANA_RPC_OR_FAUCET =
   !!import.meta.env.VITE_SOLANA_RPC_URL ||
   import.meta.env.DEV
 
-const ALL_CHAINS: ChainConfig[] = [
+const IS_LOCAL_NETWORK = DEFAULT_NETWORK === 'local'
+
+/** Local QA (`make deploy` + `qa:full-token-setup`): chain keys must match `BRIDGE_CHAINS.local` (anvil, anvil1, localterra, solana-localnet). */
+const LOCAL_EVM_FAUCET_CHAINS: ChainConfig[] = [
+  {
+    key: 'anvil',
+    name: 'Anvil',
+    chainId: 31337,
+    type: 'evm',
+    faucetAddress: import.meta.env.VITE_ANVIL_FAUCET_ADDRESS || '',
+    explorerTxUrl: '',
+  },
+  {
+    key: 'anvil1',
+    name: 'Anvil1',
+    chainId: 31338,
+    type: 'evm',
+    faucetAddress: import.meta.env.VITE_ANVIL1_FAUCET_ADDRESS || '',
+    explorerTxUrl: '',
+  },
+]
+
+const LOCAL_TERRA_FAUCET_CHAIN: ChainConfig = {
+  key: 'localterra',
+  name: 'LocalTerra',
+  chainId: 'localterra',
+  type: 'cosmos',
+  faucetAddress: import.meta.env.VITE_TERRA_FAUCET_ADDRESS || '',
+  explorerTxUrl: '',
+}
+
+const LOCAL_SOLANA_FAUCET_CHAIN: ChainConfig = {
+  key: 'solana-localnet',
+  name: 'Solana Localnet',
+  chainId: 'solana-localnet',
+  type: 'solana',
+  faucetAddress: import.meta.env.VITE_SOLANA_FAUCET_ADDRESS || '',
+  explorerTxUrl: 'https://explorer.solana.com/tx/',
+}
+
+const LOCAL_SOLANA_RPC_OR_FAUCET =
+  !!import.meta.env.VITE_SOLANA_FAUCET_ADDRESS ||
+  !!import.meta.env.VITE_SOLANA_RPC_URL ||
+  import.meta.env.DEV
+
+const MAINNET_ALL_CHAINS: ChainConfig[] = [
   ...EVM_CHAINS,
   ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : []),
   ...(SOLANA_RPC_OR_FAUCET ? [SOLANA_CHAIN] : []),
 ]
 
-const TOKENS: TokenConfig[] = [
+const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
   {
     symbol: 'testa',
     label: 'Test A (testa-cb)',
@@ -145,6 +190,81 @@ const TOKENS: TokenConfig[] = [
     },
     decimals: { bsc: 18, opbnb: 12, terra: 6, solana: 6 },
   },
+]
+
+const LOCAL_FAUCET_TOKENS: TokenConfig[] = [
+  {
+    symbol: 'tkna',
+    label: 'Token A (TKNA)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_A || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_A || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_A || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_A || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tknb',
+    label: 'Token B (TKNB)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_B || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_B || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_B || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_B || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tknc',
+    label: 'Token C (TKNC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_C || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_C || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_C || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_C || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tdec',
+    label: 'Test Dec (KDEC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_KDEC || '',
+      anvil1: import.meta.env.VITE_ANVIL1_KDEC || '',
+      localterra: import.meta.env.VITE_TERRA_KDEC || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_KDEC || '',
+    },
+    decimals: { anvil: 18, anvil1: 12, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'lunc',
+    label: 'LUNC (tLUNC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_LUNC || '',
+      anvil1: import.meta.env.VITE_ANVIL1_LUNC || '',
+      localterra: '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_LUNC || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 6 },
+  },
+  {
+    symbol: 'sol',
+    label: 'Synthetic SOL',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_SOL || '',
+      anvil1: import.meta.env.VITE_ANVIL1_SOL || '',
+      localterra: import.meta.env.VITE_TERRA_SOL || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_WSOL || '',
+    },
+    decimals: { anvil: 9, anvil1: 9, localterra: 9, 'solana-localnet': 9 },
+  },
+]
+
+const LOCAL_ALL_CHAINS: ChainConfig[] = [
+  ...LOCAL_EVM_FAUCET_CHAINS,
+  LOCAL_TERRA_FAUCET_CHAIN,
+  ...(LOCAL_SOLANA_RPC_OR_FAUCET ? [LOCAL_SOLANA_FAUCET_CHAIN] : []),
 ]
 
 // ---------------------------------------------------------------------------
@@ -781,11 +901,39 @@ function TerraClaimButton({
 // ---------------------------------------------------------------------------
 
 export function FaucetPanel() {
-  const hasEvmOrTerraFaucet = EVM_CHAINS.some((c) => !!c.faucetAddress) || !!TERRA_CHAIN.faucetAddress
-  const hasSolanaPanel = SOLANA_RPC_OR_FAUCET
+  const allChains = IS_LOCAL_NETWORK ? LOCAL_ALL_CHAINS : MAINNET_ALL_CHAINS
+  const tokens = IS_LOCAL_NETWORK ? LOCAL_FAUCET_TOKENS : MAINNET_FAUCET_TOKENS
+
+  const hasEvmOrTerraFaucet = IS_LOCAL_NETWORK
+    ? LOCAL_EVM_FAUCET_CHAINS.some((c) => !!c.faucetAddress) || !!LOCAL_TERRA_FAUCET_CHAIN.faucetAddress
+    : EVM_CHAINS.some((c) => !!c.faucetAddress) || !!TERRA_CHAIN.faucetAddress
+
+  const hasSolanaPanel = IS_LOCAL_NETWORK ? LOCAL_SOLANA_RPC_OR_FAUCET : SOLANA_RPC_OR_FAUCET
   const hasAnyFaucet = hasEvmOrTerraFaucet || hasSolanaPanel
 
-  if (!hasAnyFaucet) {
+  if (IS_LOCAL_NETWORK && !import.meta.env.VITE_ANVIL_TOKEN_A) {
+    return (
+      <div className="space-y-4">
+        <div className="border-2 border-yellow-700/50 bg-yellow-900/15 p-4">
+          <p className="text-sm text-yellow-300">
+            Local QA token matrix is not in the frontend env yet. After <code className="text-xs">make deploy</code>, run{' '}
+            <code className="text-xs">npm run qa:full-token-setup</code> from <code className="text-xs">packages/frontend</code>, then refresh{' '}
+            <code className="text-xs">packages/frontend/.env.local</code> (e.g. <code className="text-xs">./scripts/qa/write-frontend-env-local.sh</code> or your <code className="text-xs">make start-qa</code> step).
+          </p>
+        </div>
+        {LOCAL_SOLANA_RPC_OR_FAUCET && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <SolAirdropButton />
+            <span className="text-[10px] text-gray-500">
+              (Connect a Solana wallet — airdrop only works on local validator / devnet.)
+            </span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (!IS_LOCAL_NETWORK && !hasAnyFaucet) {
     return (
       <div className="border-2 border-yellow-700/50 bg-yellow-900/15 p-4">
         <p className="text-sm text-yellow-300">
@@ -817,7 +965,7 @@ export function FaucetPanel() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
-        {TOKENS.map((token) => (
+        {tokens.map((token) => (
           <Card key={token.symbol} className="p-4 overflow-hidden">
             <h4 className="mb-3 font-medium text-white">{token.label}</h4>
             <div className="overflow-x-auto">
@@ -830,7 +978,7 @@ export function FaucetPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ALL_CHAINS.map((chain) => {
+                  {allChains.map((chain) => {
                     const addr = token.addresses[chain.key]
                     const decimals = token.decimals[chain.key] ?? 18
                     if (!addr) return null

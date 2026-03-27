@@ -42,6 +42,8 @@ It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postg
 
 **Legacy minimal path:** **`make deploy-tokens`** + **`make register-tokens`** (single test ERC20 + bash registration) remains available; **`start-qa`** uses the full matrix instead.
 
+**Solana / SOL:** Full QA registration includes synthetic **SOL** on both Anvils (ERC20, 9 decimals), a **CW20 SOL** on Terra, and the canonical **WSOL** mint address on Solana (`So1111…1112`) in the token matrix. Bridging SOL from Solana uses **`deposit_native`** when the mapping’s `local_mint` is WSOL (lamports-only UX); other SPL assets use **`deposit_spl`**. See [docs/SOLANA_BRIDGE_DEPOSITS.md](../../docs/SOLANA_BRIDGE_DEPOSITS.md).
+
 **Optional — bake SSH host/port into that printed block** (set on the server when you run **`make start-qa`**). The printed destination is **`whoami@host`**: **`host`** comes from **`QA_SSH_HOST`** (or this machine’s hostname), and **`whoami`** is whoever runs **`make start-qa`** on the server.
 
 | Variable | Purpose |

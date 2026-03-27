@@ -15,6 +15,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [EVM Contracts](./contracts-evm.md)
 - [Terra Classic Contracts](./contracts-terraclassic.md)
 - [Terra Classic Upgrade Spec](./terraclassic-upgrade-spec.md)
+- [Solana bridge deposits](./SOLANA_BRIDGE_DEPOSITS.md) — `deposit_native` vs `deposit_spl` (source chain)
 
 ### Operations
 

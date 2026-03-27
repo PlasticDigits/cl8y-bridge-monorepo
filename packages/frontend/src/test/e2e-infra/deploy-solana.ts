@@ -8,12 +8,17 @@ import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { createMint } from '@solana/spl-token'
 import { readFileSync } from 'fs'
 
+/** Wrapped SOL — canonical mint; QA uses this for `TokenMapping.local_mint` with synthetic SOL on EVM/Terra. */
+export const WSOL_MINT = 'So11111111111111111111111111111111111111112'
+
 export interface SolanaTokenMints {
   tokenA: string
   tokenB: string
   tokenC: string
   lunc: string
   kdec: string
+  /** Same as {@link WSOL_MINT} — not deployed, native wrapped SOL mint. */
+  wsol: string
 }
 
 const SPL_ABC_DECIMALS = 9
@@ -97,6 +102,7 @@ export async function deploySolanaMints(
     tokenC: tokenC.toBase58(),
     lunc: lunc.toBase58(),
     kdec: kdec.toBase58(),
+    wsol: WSOL_MINT,
   }
   console.log('[deploy-solana] SPL mints:', JSON.stringify(out, null, 2))
   return out

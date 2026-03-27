@@ -5,6 +5,11 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
+import {
+  createAssociatedTokenAccountIdempotentInstructionWithDerivation,
+  getAssociatedTokenAddressSync,
+  getMint,
+} from "@solana/spl-token";
 import { keccak256 } from "viem";
 import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
 import { hexToUint8Array } from "../terra/withdrawSubmit";
@@ -15,6 +20,84 @@ const CHAIN_SEED = Buffer.from("chain");
 const TOKEN_MAPPING_SEED = Buffer.from("token");
 const WITHDRAW_SEED = Buffer.from("withdraw");
 const EXECUTED_SEED = Buffer.from("executed");
+
+/** Wrapped SOL mint — when `TokenMapping.local_mint` is WSOL, the UI uses `deposit_native` (lamports). */
+export const WSOL_MINT = new PublicKey(
+  "So11111111111111111111111111111111111111112",
+);
+
+export function findBridgePda(programId: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+  return pda;
+}
+
+export function findTokenMappingPda(
+  programId: PublicKey,
+  destChain: Uint8Array,
+  tokenMappingDestToken: Uint8Array,
+): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [
+      TOKEN_MAPPING_SEED,
+      Buffer.from(destChain),
+      Buffer.from(tokenMappingDestToken),
+    ],
+    programId,
+  );
+  return pda;
+}
+
+/**
+ * Read `local_mint` from an on-chain TokenMapping account (Anchor layout).
+ * First account field after the 8-byte discriminator.
+ */
+export function parseTokenMappingLocalMint(accountData: Buffer): PublicKey {
+  if (accountData.length < 8 + 32) {
+    throw new Error("TokenMapping account data too short");
+  }
+  return new PublicKey(accountData.subarray(8, 40));
+}
+
+export async function fetchTokenMappingLocalMint(
+  connection: Connection,
+  programId: PublicKey,
+  destChain: Uint8Array,
+  tokenMappingDestToken: Uint8Array,
+): Promise<PublicKey | null> {
+  const pda = findTokenMappingPda(programId, destChain, tokenMappingDestToken);
+  const info = await connection.getAccountInfo(pda);
+  if (!info?.data) return null;
+  return parseTokenMappingLocalMint(Buffer.from(info.data));
+}
+
+/** V2 bytes4 hex (e.g. from BRIDGE_CHAINS) → big-endian bytes for PDAs / instructions. */
+export function bytes4HexToUint8Array(hex: string): Uint8Array {
+  const n = parseInt(hex, 16);
+  const out = new Uint8Array(4);
+  out[0] = (n >> 24) & 0xff;
+  out[1] = (n >> 16) & 0xff;
+  out[2] = (n >> 8) & 0xff;
+  out[3] = n & 0xff;
+  return out;
+}
+
+async function getMintTokenProgram(
+  connection: Connection,
+  mint: PublicKey,
+): Promise<PublicKey> {
+  const info = await connection.getAccountInfo(mint);
+  if (!info) throw new Error("SPL mint account not found");
+  return info.owner;
+}
+
+export async function fetchSplMintDecimals(
+  connection: Connection,
+  mint: PublicKey,
+): Promise<number> {
+  const programId = await getMintTokenProgram(connection, mint);
+  const m = await getMint(connection, mint, "confirmed", programId);
+  return m.decimals;
+}
 
 /**
  * Build a deposit_native instruction for the Solana bridge program.
@@ -73,6 +156,141 @@ export async function buildDepositNativeInstruction(
     ],
     data,
   });
+}
+
+/**
+ * `deposit_spl` — debits SPL from the user's ATA per TokenMapping (see on-chain `deposit_spl.rs`).
+ * Layout matches `DepositSplParams`: dest_chain (4) + dest_account (32) + amount (u64 LE).
+ */
+export function buildDepositSplInstruction(
+  programId: PublicKey,
+  depositor: PublicKey,
+  amount: bigint,
+  destChain: Uint8Array,
+  destAccount: Uint8Array,
+  tokenMappingDestToken: Uint8Array,
+  depositNonce: number,
+  mint: PublicKey,
+  depositorTokenAccount: PublicKey,
+  bridgeTokenAccount: PublicKey,
+  tokenProgram: PublicKey,
+): TransactionInstruction {
+  if (tokenMappingDestToken.length !== 32) {
+    throw new Error("tokenMappingDestToken must be 32 bytes");
+  }
+
+  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+
+  const nonceBuffer = Buffer.alloc(8);
+  nonceBuffer.writeBigUInt64LE(BigInt(depositNonce + 1));
+  const [depositPda] = PublicKey.findProgramAddressSync(
+    [DEPOSIT_SEED, nonceBuffer],
+    programId,
+  );
+
+  const [destChainPda] = PublicKey.findProgramAddressSync(
+    [CHAIN_SEED, Buffer.from(destChain)],
+    programId,
+  );
+
+  const [tokenMappingPda] = PublicKey.findProgramAddressSync(
+    [TOKEN_MAPPING_SEED, Buffer.from(destChain), Buffer.from(tokenMappingDestToken)],
+    programId,
+  );
+
+  const discriminator = anchorDiscriminator("deposit_spl");
+  const data = Buffer.alloc(8 + 4 + 32 + 8);
+  discriminator.copy(data, 0);
+  Buffer.from(destChain).copy(data, 8);
+  Buffer.from(destAccount).copy(data, 12);
+  data.writeBigUInt64LE(amount, 44);
+
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: bridgePda, isSigner: false, isWritable: true },
+      { pubkey: depositPda, isSigner: false, isWritable: true },
+      { pubkey: tokenMappingPda, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: true },
+      { pubkey: depositorTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: bridgeTokenAccount, isSigner: false, isWritable: true },
+      { pubkey: destChainPda, isSigner: false, isWritable: false },
+      { pubkey: depositor, isSigner: true, isWritable: true },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+}
+
+/**
+ * Optional ATA creation + `deposit_spl`. Fails if the bridge vault ATA for this mint is missing.
+ */
+export async function buildSolanaSplDepositInstructions(
+  connection: Connection,
+  programId: PublicKey,
+  depositor: PublicKey,
+  amount: bigint,
+  destChain: Uint8Array,
+  destAccount: Uint8Array,
+  tokenMappingDestToken: Uint8Array,
+  depositNonce: number,
+  mint: PublicKey,
+): Promise<TransactionInstruction[]> {
+  const tokenProgram = await getMintTokenProgram(connection, mint);
+  const bridgePda = findBridgePda(programId);
+  const depositorAta = getAssociatedTokenAddressSync(
+    mint,
+    depositor,
+    false,
+    tokenProgram,
+  );
+  const bridgeAta = getAssociatedTokenAddressSync(
+    mint,
+    bridgePda,
+    true,
+    tokenProgram,
+  );
+
+  const ixs: TransactionInstruction[] = [];
+
+  const userAtaInfo = await connection.getAccountInfo(depositorAta);
+  if (!userAtaInfo) {
+    ixs.push(
+      createAssociatedTokenAccountIdempotentInstructionWithDerivation(
+        depositor,
+        depositor,
+        mint,
+        false,
+        tokenProgram,
+      ),
+    );
+  }
+
+  const bridgeVaultInfo = await connection.getAccountInfo(bridgeAta);
+  if (!bridgeVaultInfo) {
+    throw new Error(
+      "Bridge SPL vault missing for this mint — token may not be registered for this route.",
+    );
+  }
+
+  ixs.push(
+    buildDepositSplInstruction(
+      programId,
+      depositor,
+      amount,
+      destChain,
+      destAccount,
+      tokenMappingDestToken,
+      depositNonce,
+      mint,
+      depositorAta,
+      bridgeAta,
+      tokenProgram,
+    ),
+  );
+
+  return ixs;
 }
 
 /**

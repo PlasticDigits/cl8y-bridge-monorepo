@@ -8,10 +8,15 @@ import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
-import { addCancelerEvm, fundLockUnlock, setCancelWindow } from './deploy-evm'
-import { addCancelerTerra } from './deploy-terra'
+import { addCancelerEvm, deployFaucet, fundLockUnlock, setCancelWindow } from './deploy-evm'
+import { addCancelerTerra, deployLocalTerraFaucet, isPlaceholderAddress, type TerraFaucetTokenRow } from './deploy-terra'
 import { deployAllTokens, KDEC_DECIMALS } from './deploy-tokens'
+import { mergeQaFaucetTokenEnv } from './merge-deploy-qa-env'
 import { registerAllTokens } from './register-tokens'
+
+/** Anchor `cl8y_faucet` program id (packages/contracts-solana/Anchor.toml) — used for Settings → Faucet on localnet. */
+const SOLANA_FAUCET_PROGRAM_ID_DEFAULT =
+  'B9zRqdnkfrMjLiW8n5Ejw6KSR9DmQscogpijoi5qyyY2'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../../../../..')
@@ -77,6 +82,29 @@ async function main(): Promise<void> {
     tokenAddresses
   )
 
+  console.log('\n[qa-full-token-setup] Deploying faucets (EVM + Terra) for Settings → Faucet...')
+  const anvilFaucet = deployFaucet(evmRpc)
+  const anvil1Faucet = deployFaucet(evm1Rpc)
+
+  const terraRows: TerraFaucetTokenRow[] = []
+  const tt = tokenAddresses.terra
+  if (!isPlaceholderAddress(tt.tokenA)) terraRows.push({ address: tt.tokenA, decimals: 6 })
+  if (!isPlaceholderAddress(tt.tokenB)) terraRows.push({ address: tt.tokenB, decimals: 6 })
+  if (!isPlaceholderAddress(tt.tokenC)) terraRows.push({ address: tt.tokenC, decimals: 6 })
+  if (!isPlaceholderAddress(tt.kdec)) terraRows.push({ address: tt.kdec, decimals: 6 })
+  if (!isPlaceholderAddress(tt.sol)) terraRows.push({ address: tt.sol, decimals: 9 })
+
+  const terraFaucet = deployLocalTerraFaucet(terraRows)
+  const solFaucetPid = process.env.SOLANA_FAUCET_PROGRAM_ID || SOLANA_FAUCET_PROGRAM_ID_DEFAULT
+
+  mergeQaFaucetTokenEnv(REPO_ROOT, {
+    anvilFaucet,
+    anvil1Faucet,
+    terraFaucet,
+    tokens: tokenAddresses,
+    solanaFaucetProgramId: solFaucetPid,
+  })
+
   console.log('\n[qa-full-token-setup] Funding LockUnlock contracts...')
   const FUND_AMOUNT = '500000000000000000000000'
   const FUND_AMOUNT_LUNC = '500000000000'
@@ -111,6 +139,12 @@ async function main(): Promise<void> {
       console.log(`[qa-full-token-setup] Funded ${chain} LockUnlock with KDEC`)
     } catch (err) {
       console.warn(`[qa-full-token-setup] fund ${chain} kdec:`, err)
+    }
+    try {
+      fundLockUnlock(rpc, lockUnlock, tokens.sol, (500_000n * 10n ** 9n).toString())
+      console.log(`[qa-full-token-setup] Funded ${chain} LockUnlock with SOL`)
+    } catch (err) {
+      console.warn(`[qa-full-token-setup] fund ${chain} sol:`, err)
     }
   }
 

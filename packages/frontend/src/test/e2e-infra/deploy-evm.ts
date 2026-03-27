@@ -148,6 +148,35 @@ export function deployKdecToken(rpcUrl: string, decimals: number): string {
 }
 
 /**
+ * Deploy the Faucet.sol contract (rate-limited mint via MockMintableToken.mint).
+ * Works with QA ERC20s — MockMintableToken allows any caller to mint.
+ */
+export function deployFaucet(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying Faucet contract to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployFaucet.s.sol:DeployFaucet --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/FAUCET[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find FAUCET in deploy output')
+  console.log(`[deploy-evm] Faucet deployed: ${match[1]!}`)
+  return match[1]!
+}
+
+/** Deploy synthetic SOL ERC20 (9 decimals) for QA cross-chain registration with WSOL. */
+export function deploySolToken(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying SOL token to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeploySolToken.s.sol:DeploySolToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/SOL_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find SOL_TOKEN_ADDRESS in deploy output')
+  console.log(`[deploy-evm] SOL token deployed: ${match[1]!}`)
+  return match[1]!
+}
+
+/**
  * Register a chain on the EVM ChainRegistry using cast.
  * NOTE: ChainRegistry.registerChain(string identifier, bytes4 chainId) - identifier first!
  */

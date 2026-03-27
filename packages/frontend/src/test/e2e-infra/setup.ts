@@ -175,6 +175,12 @@ export default async function setup(): Promise<void> {
       } catch (err) {
         console.warn(`[setup] Warning: failed to fund ${chain} LockUnlock with KDEC:`, err)
       }
+      try {
+        fundLockUnlock(rpc, lockUnlock, tokens.sol, (500_000n * 10n ** 9n).toString())
+        console.log(`[setup] Funded ${chain} LockUnlock with SOL`)
+      } catch (err) {
+        console.warn(`[setup] Warning: failed to fund ${chain} LockUnlock with SOL:`, err)
+      }
     }
 
     // 9. Set cancel window to minimum (15s) for fast test execution.
@@ -226,6 +232,7 @@ export default async function setup(): Promise<void> {
       `ANVIL_TOKEN_C=${tokenAddresses.anvil.tokenC}`,
       `ANVIL_LUNC=${tokenAddresses.anvil.lunc}`,
       `ANVIL_KDEC=${tokenAddresses.anvil.kdec}`,
+      `ANVIL_SOL=${tokenAddresses.anvil.sol}`,
       '',
       '# Tokens on Anvil1',
       `ANVIL1_TOKEN_A=${tokenAddresses.anvil1.tokenA}`,
@@ -233,12 +240,14 @@ export default async function setup(): Promise<void> {
       `ANVIL1_TOKEN_C=${tokenAddresses.anvil1.tokenC}`,
       `ANVIL1_LUNC=${tokenAddresses.anvil1.lunc}`,
       `ANVIL1_KDEC=${tokenAddresses.anvil1.kdec}`,
+      `ANVIL1_SOL=${tokenAddresses.anvil1.sol}`,
       '',
       '# Tokens on Terra (empty = CW20 not deployed, use uluna for EVM<->Terra)',
       `TERRA_TOKEN_A=${isPlaceholderAddress(tokenAddresses.terra.tokenA) ? '' : tokenAddresses.terra.tokenA}`,
       `TERRA_TOKEN_B=${isPlaceholderAddress(tokenAddresses.terra.tokenB) ? '' : tokenAddresses.terra.tokenB}`,
       `TERRA_TOKEN_C=${isPlaceholderAddress(tokenAddresses.terra.tokenC) ? '' : tokenAddresses.terra.tokenC}`,
       `TERRA_KDEC=${isPlaceholderAddress(tokenAddresses.terra.kdec) ? '' : tokenAddresses.terra.kdec}`,
+      `TERRA_SOL=${isPlaceholderAddress(tokenAddresses.terra.sol) ? '' : tokenAddresses.terra.sol}`,
       '',
       '# SPL mints (QA — same logical tokens as EVM/Terra)',
       `SOLANA_TOKEN_A=${tokenAddresses.solana.tokenA}`,
@@ -246,6 +255,7 @@ export default async function setup(): Promise<void> {
       `SOLANA_TOKEN_C=${tokenAddresses.solana.tokenC}`,
       `SOLANA_LUNC=${tokenAddresses.solana.lunc}`,
       `SOLANA_KDEC=${tokenAddresses.solana.kdec}`,
+      `SOLANA_WSOL=${tokenAddresses.solana.wsol}`,
       '',
       '# Network',
       'VITE_NETWORK=local',

@@ -17,6 +17,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
+| [Solana bridge deposits](./docs/SOLANA_BRIDGE_DEPOSITS.md) | Solana source: `deposit_native` (lamports) vs `deposit_spl` (SPL) |
 | [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
 
 ## Live Deployments

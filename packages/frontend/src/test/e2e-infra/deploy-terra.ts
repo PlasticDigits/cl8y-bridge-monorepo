@@ -296,3 +296,156 @@ export function deployCw20KdecToken(): string {
   console.log(`[deploy-terra] CW20 KDEC deployed at: ${addr}`)
   return addr
 }
+
+/**
+ * Deploy CW20 synthetic SOL (9 decimals) for QA — pairs with EVM SOL + WSOL on Solana.
+ * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
+ */
+export function deployCw20SolToken(): string {
+  const codeId = getLatestCodeId()
+  if (!codeId) {
+    console.warn('[deploy-terra] No CW20 code_id available for SOL; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}sol`
+  }
+
+  console.log(`[deploy-terra] Deploying CW20 SOL token (9 decimals, code_id=${codeId})...`)
+  const addr = instantiateCw20Token(codeId, 'Synthetic SOL', 'SOL', 9, '1000000000000000')
+  if (!addr) {
+    console.warn('[deploy-terra] Failed to deploy CW20 SOL; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}sol`
+  }
+  console.log(`[deploy-terra] CW20 SOL deployed at: ${addr}`)
+  return addr
+}
+
+export interface TerraFaucetTokenRow {
+  address: string
+  decimals: number
+}
+
+/**
+ * Build + deploy the Terra `faucet` CW20 helper on LocalTerra (docker `terrad`).
+ * Adds the faucet as minter on each listed CW20 so Settings → Faucet can claim.
+ * Returns `null` if WASM is missing / build fails / docker unavailable.
+ */
+export function deployLocalTerraFaucet(rows: TerraFaucetTokenRow[]): string | null {
+  if (rows.length === 0) {
+    console.warn('[deploy-terra] deployLocalTerraFaucet: no tokens, skipping')
+    return null
+  }
+
+  const wasmPath = resolve(ROOT_DIR, 'packages/contracts-terraclassic/target/wasm32-unknown-unknown/release/faucet.wasm')
+  if (!existsSync(wasmPath)) {
+    console.log('[deploy-terra] Building faucet.wasm (release)...')
+    try {
+      execSync('cargo build --release -p faucet --target wasm32-unknown-unknown', {
+        cwd: resolve(ROOT_DIR, 'packages/contracts-terraclassic'),
+        encoding: 'utf8',
+        stdio: 'inherit',
+      })
+    } catch (e) {
+      console.warn('[deploy-terra] cargo build faucet failed:', (e as Error).message?.slice(0, 200))
+      return null
+    }
+  }
+  if (!existsSync(wasmPath)) {
+    console.warn('[deploy-terra] faucet.wasm still missing after build:', wasmPath)
+    return null
+  }
+
+  try {
+    execSync(`docker exec ${CONTAINER_NAME} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+    execSync(`docker cp ${wasmPath} ${CONTAINER_NAME}:/tmp/wasm/faucet.wasm`, {
+      encoding: 'utf8',
+      cwd: ROOT_DIR,
+    })
+    execSync(`docker exec -u 0 ${CONTAINER_NAME} chmod 0644 /tmp/wasm/faucet.wasm`, { encoding: 'utf8', cwd: ROOT_DIR })
+  } catch (e) {
+    console.warn('[deploy-terra] docker cp faucet wasm failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  const prevCodeId = getLatestCodeId()
+  try {
+    terradTx(
+      'wasm', 'store', '/tmp/wasm/faucet.wasm',
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '150000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (e) {
+    console.warn('[deploy-terra] store faucet wasm failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  let codeId = 0
+  for (let i = 0; i < 10; i++) {
+    try { execSync('sleep 3', { encoding: 'utf8' }) } catch { /* ignore */ }
+    const current = getLatestCodeId()
+    if (current > prevCodeId) {
+      codeId = current
+      break
+    }
+  }
+  if (!codeId) {
+    console.warn('[deploy-terra] Could not read faucet code_id after store')
+    return null
+  }
+
+  const initMsg = JSON.stringify({
+    admin: TEST_ADDRESS,
+    tokens: rows.map((r) => ({ address: r.address, decimals: r.decimals })),
+  })
+
+  try {
+    terradTx(
+      'wasm', 'instantiate', String(codeId), initMsg,
+      '--label', 'cl8y-faucet-qa',
+      '--admin', TEST_ADDRESS,
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '100000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (e) {
+    console.warn('[deploy-terra] instantiate faucet failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+
+  const faucetAddr = getContractByCodeId(codeId)
+  if (!faucetAddr) {
+    console.warn('[deploy-terra] Could not resolve faucet contract address')
+    return null
+  }
+
+  console.log(`[deploy-terra] Terra faucet deployed at: ${faucetAddr}`)
+
+  for (const r of rows) {
+    if (isPlaceholderAddress(r.address)) continue
+    const msg = JSON.stringify({ add_minter: { minter: faucetAddr } })
+    try {
+      terradTx(
+        'wasm', 'execute', r.address, msg,
+        '--from', KEY_NAME,
+        '--chain-id', 'localterra',
+        '--gas', 'auto', '--gas-adjustment', '1.5',
+        '--fees', '10000000uluna',
+        '--broadcast-mode', 'sync',
+        '-y'
+      )
+      console.log(`[deploy-terra] Faucet added as minter on ${r.address.slice(0, 12)}...`)
+    } catch (e) {
+      console.warn(`[deploy-terra] add_minter for ${r.address}:`, (e as Error).message?.slice(0, 80))
+    }
+    try { execSync('sleep 3', { encoding: 'utf8' }) } catch { /* ignore */ }
+  }
+
+  return faucetAddr
+}

@@ -132,6 +132,18 @@ export function useTransferRouteValidation({
         }
       }
 
+      if (sourceChainConfig.type === 'solana') {
+        if (!sourceTokenAddress) {
+          return invalid(
+            `The source SPL mint for ${tokenName} could not be resolved on ${sourceChainConfig.name}.`,
+          )
+        }
+        const sourceExists = await solanaTokenExists(sourceChainConfig, sourceTokenAddress)
+        if (!sourceExists) {
+          return invalid(`The source SPL mint for ${tokenName} does not exist on ${sourceChainConfig.name}.`)
+        }
+      }
+
       if (destChainConfig.type === 'evm') {
         if (!destMappingAddress) {
           return invalid(`No destination token mapping is configured for ${tokenName} on ${destChainConfig.name}.`)

@@ -160,7 +160,7 @@ function registerChainsOnEvm(bridges: BridgeAddresses): void {
   )
 }
 
-type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string }
+type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
 
 /** Encode SPL mint pubkey as `0x` + 64 hex chars (32 raw bytes). */
 function splMintToBytes32Hex(mintBase58: string): string {
@@ -176,6 +176,7 @@ function splMintToSrcTokenB64(mintBase58: string): string {
 const SPL_TOKEN_ABC_DECIMALS = 9
 const SPL_LUNC_DECIMALS_SOL = 6
 const SPL_KDEC_DECIMALS_SOL = 9
+const SPL_SOL_DECIMALS = 9
 
 /**
  * Register each local ERC20 ↔ Solana SPL mint on the EVM TokenRegistry (dest + incoming).
@@ -224,6 +225,12 @@ function registerEvmSolanaMappings(
       spl: solana.kdec,
       destDecimals: SPL_KDEC_DECIMALS_SOL,
       incomingSrcDecimals: SPL_KDEC_DECIMALS_SOL,
+    },
+    {
+      erc: sourceEvm.sol,
+      spl: solana.wsol,
+      destDecimals: SPL_SOL_DECIMALS,
+      incomingSrcDecimals: SPL_SOL_DECIMALS,
     },
   ]
 
@@ -394,6 +401,36 @@ function registerEvmTokensForChain(
     )
   }
   console.log(`[register-tokens] Registered KDEC (${thisKdecDecimals}d) on ${rpcUrl} with cross-chain mappings`)
+
+  // SOL (synthetic 9d) ↔ Terra CW20 SOL / peer EVM SOL / WSOL
+  const solAddr = sourceTokens.sol
+  ensureTokenRegistered(rpcUrl, tokenRegistry, solAddr)
+  const SOL_D = 9
+  for (const dest of destinations) {
+    if (dest.chainKey === CHAIN_KEYS.terra && isPlaceholderAddress(terraTokens.sol)) {
+      console.log('[register-tokens] Skipping SOL → Terra mapping (Terra SOL CW20 not deployed)')
+      continue
+    }
+    let destTokenBytes32: string
+    if (dest.chainKey === CHAIN_KEYS.terra) {
+      destTokenBytes32 = getKeccak256(terraTokens.sol)
+    } else {
+      destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).sol)
+    }
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
+      `${solAddr} ${dest.chainKey} ${destTokenBytes32} ${SOL_D}`
+    )
+    castSend(
+      rpcUrl,
+      tokenRegistry,
+      '"setIncomingTokenMapping(bytes4,address,uint8)"',
+      `${dest.chainKey} ${solAddr} ${SOL_D}`
+    )
+  }
+  console.log(`[register-tokens] Registered SOL (9d) on ${rpcUrl} with cross-chain mappings`)
 }
 
 function isTokenRegistered(rpcUrl: string, tokenRegistry: string, token: string): boolean {
@@ -759,6 +796,88 @@ function registerTerraTokensForEvmChains(
   } else {
     console.log('[register-tokens] Skipping KDEC on Terra (placeholder, not deployed)')
   }
+
+  // SOL (CW20) — 9 decimals; pairs with EVM SOL + WSOL
+  const solAddr = tokens.terra.sol
+  if (!isPlaceholderAddress(solAddr)) {
+    const addSolMsg = JSON.stringify({
+      add_token: {
+        token: solAddr,
+        is_native: false,
+        token_type: 'lock_unlock',
+        terra_decimals: 9,
+      },
+    })
+    try {
+      execSync(
+        `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${addSolMsg}' ` +
+          `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+          `--fees 10000000uluna -y`,
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      console.log('[register-tokens] Added CW20 SOL token to Terra bridge')
+    } catch (err) {
+      console.warn('[register-tokens] Failed to add SOL:', (err as Error).message?.slice(0, 100))
+    }
+    try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+
+    const solDestChains: Array<{ chainId: number[]; label: string; evmSol: string }> = [
+      { chainId: [0x00, 0x00, 0x00, 0x01], label: 'Anvil', evmSol: tokens.anvil.sol },
+      { chainId: [0x00, 0x00, 0x00, 0x03], label: 'Anvil1', evmSol: tokens.anvil1.sol },
+    ]
+    for (const dest of solDestChains) {
+      const destChainB64 = Buffer.from(dest.chainId).toString('base64')
+      const destTokenHex = '0x' + dest.evmSol.slice(2).toLowerCase().padStart(64, '0')
+      const setDestMsg = JSON.stringify({
+        set_token_destination: {
+          token: solAddr,
+          dest_chain: destChainB64,
+          dest_token: destTokenHex,
+          dest_decimals: 9,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setDestMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set SOL token_destination -> ${dest.label}`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set SOL dest:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+
+    const solSrcTokenHex = getKeccak256(solAddr)
+    const solSrcTokenB64 = Buffer.from(solSrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+    for (const dest of solDestChains) {
+      const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
+      const setIncomingMsg = JSON.stringify({
+        set_incoming_token_mapping: {
+          src_chain: evmChainIdB64,
+          src_token: solSrcTokenB64,
+          local_token: solAddr,
+          src_decimals: 9,
+        },
+      })
+      try {
+        execSync(
+          `docker exec ${containerName} terrad tx wasm execute ${terraBridgeAddress} '${setIncomingMsg}' ` +
+            `--from ${keyName} --keyring-backend test --chain-id localterra --gas auto --gas-adjustment 1.5 ` +
+            `--fees 10000000uluna -y`,
+          { encoding: 'utf8', timeout: 30_000 }
+        )
+        console.log(`[register-tokens] Set incoming SOL mapping from ${dest.label}`)
+      } catch (err) {
+        console.warn(`[register-tokens] Failed to set SOL incoming mapping:`, (err as Error).message?.slice(0, 100))
+      }
+      try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+    }
+  } else {
+    console.log('[register-tokens] Skipping SOL on Terra (placeholder, not deployed)')
+  }
 }
 
 /**
@@ -851,6 +970,26 @@ function registerTerraSolanaMappings(terraBridgeAddress: string, tokens: TokenAd
         src_token: splMintToSrcTokenB64(solana.kdec),
         local_token: kdecAddr,
         src_decimals: SPL_KDEC_DECIMALS_SOL,
+      },
+    })
+  }
+
+  const solCw20 = tokens.terra.sol
+  if (!isPlaceholderAddress(solCw20)) {
+    run('CW20 SOL set_token_destination → Solana (WSOL)', {
+      set_token_destination: {
+        token: solCw20,
+        dest_chain: destSolChainB64,
+        dest_token: splMintToBytes32Hex(solana.wsol),
+        dest_decimals: SPL_SOL_DECIMALS,
+      },
+    })
+    run('CW20 SOL set_incoming ← Solana (WSOL)', {
+      set_incoming_token_mapping: {
+        src_chain: destSolChainB64,
+        src_token: splMintToSrcTokenB64(solana.wsol),
+        local_token: solCw20,
+        src_decimals: SPL_SOL_DECIMALS,
       },
     })
   }
