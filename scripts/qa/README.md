@@ -60,7 +60,9 @@ mkdir -p .deploy
 scp USER@QA_HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env
 # If your SSH server uses a non-default port, add the usual scp -P / ssh -p flags to match.
 ./scripts/qa/write-frontend-env-local.sh
+# No .deploy/local.env yet (only need correct LCD/RPC for SSH + Settings): ./scripts/qa/write-frontend-env-local.sh --urls-only
 # or: npm run env:local --prefix packages/frontend
+# or: npm run env:local --prefix packages/frontend -- --urls-only
 cd packages/frontend && npm ci && npm run dev
 ```
 

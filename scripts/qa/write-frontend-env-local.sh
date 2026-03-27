@@ -12,17 +12,37 @@
 # Or: npm run env:local --prefix packages/frontend
 #
 # Invoked by scripts/qa/write-qa-env-e2e.sh when run on the server after deploy.
+#
+# Optional: ./scripts/qa/write-frontend-env-local.sh --urls-only
+#   If .deploy/local.env is missing, writes only VITE_* RPC/LCD URLs from qa-host.env (bridge addresses empty).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEPLOY_ENV="${REPO_ROOT}/.deploy/local.env"
 
+URLS_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --urls-only) URLS_ONLY=1 ;;
+    -h|--help)
+      echo "Usage: ${0##*/} [--urls-only]"
+      echo "  Writes packages/frontend/.env.local from qa-host.env + (optional) .deploy/local.env"
+      echo "  --urls-only  allow missing .deploy/local.env; URLs only, bridge address vars empty"
+      exit 0
+      ;;
+  esac
+done
+
 if [ ! -f "$DEPLOY_ENV" ]; then
-  echo "[write-frontend-env-local] Missing ${DEPLOY_ENV}" >&2
-  echo "  After deploy on the QA host, copy that one file here, e.g.:" >&2
-  echo "    mkdir -p .deploy && scp USER@QA_HOST:/srv/qa/repos/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env" >&2
-  echo "  Then re-run this script." >&2
-  exit 1
+  if [ "$URLS_ONLY" != "1" ]; then
+    echo "[write-frontend-env-local] Missing ${DEPLOY_ENV}" >&2
+    echo "  Copy it from the QA host after deploy, then re-run. Example:" >&2
+    echo "    mkdir -p .deploy && scp USER@HOST:/path/to/cl8y-bridge-monorepo/.deploy/local.env .deploy/local.env" >&2
+    echo "  Or generate only RPC/LCD URLs (no bridge addresses) for tunnel / Settings checks:" >&2
+    echo "    $0 --urls-only" >&2
+    exit 1
+  fi
+  echo "[write-frontend-env-local] No ${DEPLOY_ENV} — writing VITE_* URLs only (--urls-only); bridge addresses will be empty." >&2
 fi
 
 # Match shared-host QA URLs (remapped Terra ports) so laptop + SSH -L match server loopback.
@@ -30,8 +50,10 @@ fi
 # from older tooling (e.g. localhost:1317) and would otherwise overwrite remapped ports (1318/26658).
 export QA_SHARED_HOST="${QA_SHARED_HOST:-1}"
 set -a
-# shellcheck source=/dev/null
-source "$DEPLOY_ENV"
+if [ -f "$DEPLOY_ENV" ]; then
+  # shellcheck source=/dev/null
+  source "$DEPLOY_ENV"
+fi
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/qa/qa-host.env"
 set +a
