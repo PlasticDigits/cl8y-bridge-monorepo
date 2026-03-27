@@ -4,6 +4,7 @@
  *
  * Usage (from repo root): `cd packages/frontend && npm run qa:full-token-setup`
  */
+import { execSync } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -81,6 +82,17 @@ async function main(): Promise<void> {
     },
     tokenAddresses
   )
+
+  console.log('\n[qa-full-token-setup] Solana cl8y_faucet: initialize + register_mint for QA SPL mints...')
+  execSync('npx tsx scripts/setup-qa-faucet.ts', {
+    cwd: resolve(REPO_ROOT, 'packages/contracts-solana'),
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      QA_TOKEN_JSON: resolve(REPO_ROOT, '.deploy/qa-tokens.json'),
+      SOLANA_FAUCET_PROGRAM_ID: process.env.SOLANA_FAUCET_PROGRAM_ID || SOLANA_FAUCET_PROGRAM_ID_DEFAULT,
+    },
+  })
 
   console.log('\n[qa-full-token-setup] Deploying faucets (EVM + Terra) for Settings → Faucet...')
   const anvilFaucet = deployFaucet(evmRpc)
