@@ -3,16 +3,16 @@
 #
 # Order:
 #   1. If artifact already exists → exit 0
-#   2. Clone (or reuse) CosmWasm/cw-plus–style repo under external/cw20-mintable, detect contract layout, cargo build
-#   3. On clone/build failure → scripts/download-cw20-wasm.sh (release binary)
-#
-# Default source matches scripts/download-cw20-wasm.sh / workspace cw20 crates (cw-plus v1.1.2).
+#   2. Prefer scripts/download-cw20-wasm.sh (cw-plus release wasm — older toolchain, works on wasmd without bulk-memory)
+#   3. Else clone + cargo build with MVP-oriented RUSTFLAGS, then wasm-opt --disable-bulk-memory if binaryen is installed
+#   4. Last resort: download again if build left no artifact
 #
 # Env:
+#   CW20_ENSURE_DOWNLOAD_FIRST — if 0, skip step 2 and build from git first (default: 1)
 #   CW20_MINTABLE_REPO_URL   — git URL (default: https://github.com/CosmWasm/cw-plus.git)
 #   CW20_MINTABLE_REPO_REF   — tag or branch (default: v1.1.2)
 #   CW20_MINTABLE_CLONE_DIR  — override clone path (default: packages/contracts-terraclassic/external/cw20-mintable)
-#   CW20_MINTABLE_RUSTFLAGS  — passed to cargo (default: -C target-feature=-bulk-memory for older wasmd/wasmvm)
+#   CW20_MINTABLE_RUSTFLAGS  — passed to cargo (default: MVP + no bulk-memory for older wasmd)
 
 set -euo pipefail
 
@@ -25,9 +25,9 @@ TERRA_PKG_ROOT="$PROJECT_ROOT/packages/contracts-terraclassic"
 CW20_MINTABLE_REPO_URL="${CW20_MINTABLE_REPO_URL:-https://github.com/CosmWasm/cw-plus.git}"
 CW20_MINTABLE_REPO_REF="${CW20_MINTABLE_REPO_REF:-v1.1.2}"
 CW20_MINTABLE_CLONE_DIR="${CW20_MINTABLE_CLONE_DIR:-$TERRA_PKG_ROOT/external/cw20-mintable}"
-# Modern rustc emits WebAssembly bulk-memory ops; wasmd static validation (e.g. LocalTerra) often rejects them.
+# Modern rustc emits bulk-memory / non-MVP ops; wasmd@v0.46 static validation often rejects them.
 if [[ -z "${CW20_MINTABLE_RUSTFLAGS:-}" ]]; then
-  CW20_MINTABLE_RUSTFLAGS="-C target-feature=-bulk-memory"
+  CW20_MINTABLE_RUSTFLAGS="-C target-cpu=mvp -C target-feature=-bulk-memory"
 fi
 
 log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
@@ -118,6 +118,24 @@ ensure_git_sources() {
   fi
 }
 
+# Lower bulk-memory ops for wasmvm builds that disable bulk memory (optional but helps when rustc still emits them).
+strip_wasm_bulk_memory_opt() {
+  local f=$1
+  if ! command -v wasm-opt >/dev/null 2>&1; then
+    log_warn "wasm-opt not in PATH (install binaryen) — skipping wasm bulk-memory lowering"
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp)
+  if wasm-opt -Os --disable-bulk-memory -o "$tmp" "$f" 2>/dev/null; then
+    mv -f "$tmp" "$f"
+    log_success "wasm-opt: --disable-bulk-memory applied for wasmd compatibility"
+  else
+    rm -f "$tmp"
+    log_warn "wasm-opt --disable-bulk-memory failed; wasm may still be rejected by older wasmd"
+  fi
+}
+
 build_cw20_wasm() {
   local pkg=$1
   local root=$CW20_MINTABLE_CLONE_DIR
@@ -153,6 +171,7 @@ build_cw20_wasm() {
     return 1
   fi
   log_success "Copied to $OUTPUT_FILE"
+  strip_wasm_bulk_memory_opt "$OUTPUT_FILE"
   if verify_wasm_magic "$OUTPUT_FILE"; then
     log_success "WASM magic bytes OK"
   else
@@ -161,10 +180,18 @@ build_cw20_wasm() {
   fi
 }
 
+try_download_release() {
+  chmod +x "$SCRIPT_DIR/download-cw20-wasm.sh" 2>/dev/null || true
+  log_info "Running scripts/download-cw20-wasm.sh (cw-plus release artifact)..."
+  if "$SCRIPT_DIR/download-cw20-wasm.sh" && [[ -f "$OUTPUT_FILE" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 run_download_fallback() {
   log_warn "Git build path failed — falling back to release download (scripts/download-cw20-wasm.sh)"
-  chmod +x "$SCRIPT_DIR/download-cw20-wasm.sh" 2>/dev/null || true
-  "$SCRIPT_DIR/download-cw20-wasm.sh"
+  try_download_release || true
 }
 
 mkdir -p "$ARTIFACTS_DIR"
@@ -178,9 +205,18 @@ if ! check_artifacts_writable; then
   exit 1
 fi
 
+# Release wasm first: matches older wasmd (no bulk-memory); avoids modern rustc emitting incompatible bytecode.
+if [[ "${CW20_ENSURE_DOWNLOAD_FIRST:-1}" != "0" ]]; then
+  if try_download_release; then
+    log_info "cw20_mintable.wasm from cw-plus release (download)."
+    exit 0
+  fi
+  log_warn "Release download did not produce $OUTPUT_FILE — trying git build..."
+fi
+
 if ! command -v git >/dev/null 2>&1; then
-  log_warn "git not installed — skipping clone/build; using download script"
-  run_download_fallback
+  log_warn "git not installed — cannot clone; retrying download only"
+  try_download_release || exit 1
   exit 0
 fi
 
@@ -200,3 +236,8 @@ else
 fi
 
 run_download_fallback
+if [[ -f "$OUTPUT_FILE" ]]; then
+  exit 0
+fi
+log_error "Could not obtain cw20_mintable.wasm (download + git build both failed)."
+exit 1
