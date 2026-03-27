@@ -9,9 +9,10 @@
 # Default source matches scripts/download-cw20-wasm.sh / workspace cw20 crates (cw-plus v1.1.2).
 #
 # Env:
-#   CW20_MINTABLE_REPO_URL  — git URL (default: https://github.com/CosmWasm/cw-plus.git)
-#   CW20_MINTABLE_REPO_REF  — tag or branch (default: v1.1.2)
-#   CW20_MINTABLE_CLONE_DIR — override clone path (default: packages/contracts-terraclassic/external/cw20-mintable)
+#   CW20_MINTABLE_REPO_URL   — git URL (default: https://github.com/CosmWasm/cw-plus.git)
+#   CW20_MINTABLE_REPO_REF   — tag or branch (default: v1.1.2)
+#   CW20_MINTABLE_CLONE_DIR  — override clone path (default: packages/contracts-terraclassic/external/cw20-mintable)
+#   CW20_MINTABLE_RUSTFLAGS  — passed to cargo (default: -C target-feature=-bulk-memory for older wasmd/wasmvm)
 
 set -euo pipefail
 
@@ -24,6 +25,10 @@ TERRA_PKG_ROOT="$PROJECT_ROOT/packages/contracts-terraclassic"
 CW20_MINTABLE_REPO_URL="${CW20_MINTABLE_REPO_URL:-https://github.com/CosmWasm/cw-plus.git}"
 CW20_MINTABLE_REPO_REF="${CW20_MINTABLE_REPO_REF:-v1.1.2}"
 CW20_MINTABLE_CLONE_DIR="${CW20_MINTABLE_CLONE_DIR:-$TERRA_PKG_ROOT/external/cw20-mintable}"
+# Modern rustc emits WebAssembly bulk-memory ops; wasmd static validation (e.g. LocalTerra) often rejects them.
+if [[ -z "${CW20_MINTABLE_RUSTFLAGS:-}" ]]; then
+  CW20_MINTABLE_RUSTFLAGS="-C target-feature=-bulk-memory"
+fi
 
 log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
@@ -124,6 +129,8 @@ build_cw20_wasm() {
   rustup target add wasm32-unknown-unknown 2>/dev/null || true
   if ! (
     cd "$root"
+    export RUSTFLAGS="${CW20_MINTABLE_RUSTFLAGS} ${RUSTFLAGS:-}"
+    log_info "RUSTFLAGS (cw20 wasm / wasmd compatibility): ${RUSTFLAGS}"
     # Only the contract cdylib is wasm32; workspace bins (e.g. schema generator) must not be built for wasm
     cargo build --release --target wasm32-unknown-unknown -p "$pkg" --lib
   ); then
