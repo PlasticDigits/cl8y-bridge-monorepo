@@ -267,20 +267,41 @@ store_cw20_contract() {
         --broadcast-mode sync \
         -y -o json 2>&1)
     
-    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
-    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
-    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+    # Same parsing as store_bridge_contract: terrad may emit multi-line JSON; do not use grep '^{'|head -1
+    TX_HASH=$(echo "$TX" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 || echo "")
+    TX_CODE=$(echo "$TX" | jq -r '.code // 0' 2>/dev/null || echo "0")
+    
+    if [ -z "$TX_HASH" ]; then
         log_error "Failed to store cw20-mintable: $TX"
         exit 1
     fi
     
     log_info "Store TX: $TX_HASH"
     
-    log_info "Waiting for confirmation..."
-    sleep 8
+    if [ "$TX_CODE" != "0" ]; then
+        RAW_LOG=$(echo "$TX" | jq -r '.raw_log // "Unknown error"' 2>/dev/null)
+        log_error "Transaction rejected: $RAW_LOG"
+        exit 1
+    fi
     
-    # Get code ID
-    CW20_CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+    log_info "Waiting for confirmation..."
+    
+    CW20_CODE_ID=""
+    for i in $(seq 1 30); do
+        sleep 2
+        LAST=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id' 2>/dev/null)
+        if [ -n "$LAST" ] && [ "$LAST" != "null" ] && [ "$LAST" != "$BRIDGE_CODE_ID" ]; then
+            CW20_CODE_ID=$LAST
+            break
+        fi
+        log_info "  Waiting for CW20 code store confirmation... (${i}/30)"
+    done
+    
+    if [ -z "$CW20_CODE_ID" ] || [ "$CW20_CODE_ID" = "null" ]; then
+        log_error "Failed to get CW20 code ID after 60s (bridge code id was $BRIDGE_CODE_ID)"
+        exit 1
+    fi
+    
     log_info "CW20-Mintable Code ID: $CW20_CODE_ID"
 }
 
