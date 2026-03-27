@@ -55,6 +55,23 @@ terrad_query() {
     docker exec "$CONTAINER_NAME" terrad "$@"
 }
 
+# With `set -e`, `TX=$(terrad_tx ...)` aborts the whole script if terrad exits non-zero
+# (CLI error, wasm rejected, etc.) before any log_error. Use this wrapper instead.
+terrad_tx_capture() {
+    local _out _rc
+    set +e
+    _out=$(terrad_tx "$@" 2>&1)
+    _rc=$?
+    set -e
+    printf '%s\n' "$_out"
+    return "$_rc"
+}
+
+# Extract txhash from terrad JSON (multi-line OK).
+extract_txhash() {
+    echo "$1" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 | head -1
+}
+
 # Setup test key in container (imports if not present)
 setup_key() {
     log_info "Setting up test key in container..."
@@ -130,19 +147,28 @@ copy_wasm_to_container() {
 
 # Store bridge contract
 store_bridge_contract() {
+    local _tx_rc
+    
     log_info "Storing bridge contract..."
     
     # Store contract (test1 key is already in the keyring from genesis)
-    TX=$(terrad_tx tx wasm store /tmp/wasm/bridge.wasm \
+    set +e
+    TX=$(terrad_tx_capture tx wasm store /tmp/wasm/bridge.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
         --fees 200000000uluna \
         --broadcast-mode sync \
-        -y -o json 2>&1)
+        -y -o json)
+    _tx_rc=$?
+    set -e
+    if [ "$_tx_rc" != 0 ]; then
+        log_error "terrad wasm store bridge failed (exit $_tx_rc): $TX"
+        exit 1
+    fi
     
     # Extract txhash - handle both sync response and error formats
-    TX_HASH=$(echo "$TX" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 || echo "")
+    TX_HASH=$(extract_txhash "$TX")
     TX_CODE=$(echo "$TX" | jq -r '.code // 0' 2>/dev/null || echo "0")
     
     if [ -z "$TX_HASH" ]; then
@@ -253,22 +279,32 @@ EOF
 
 # Store cw20-mintable contract
 store_cw20_contract() {
+    local _tx_rc CODE_LEN_BEFORE CODE_LEN
+    
     if [ "$DEPLOY_CW20" != true ]; then
         return
     fi
     
     log_info "Storing cw20-mintable contract..."
     
-    TX=$(terrad_tx tx wasm store /tmp/wasm/cw20_mintable.wasm \
+    CODE_LEN_BEFORE=$(terrad_query query wasm list-code -o json | jq '.code_infos | length' 2>/dev/null || echo "0")
+    
+    set +e
+    TX=$(terrad_tx_capture tx wasm store /tmp/wasm/cw20_mintable.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
         --fees 200000000uluna \
         --broadcast-mode sync \
-        -y -o json 2>&1)
+        -y -o json)
+    _tx_rc=$?
+    set -e
+    if [ "$_tx_rc" != 0 ]; then
+        log_error "terrad wasm store cw20 failed (exit $_tx_rc): $TX"
+        exit 1
+    fi
     
-    # Same parsing as store_bridge_contract: terrad may emit multi-line JSON; do not use grep '^{'|head -1
-    TX_HASH=$(echo "$TX" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 || echo "")
+    TX_HASH=$(extract_txhash "$TX")
     TX_CODE=$(echo "$TX" | jq -r '.code // 0' 2>/dev/null || echo "0")
     
     if [ -z "$TX_HASH" ]; then
@@ -289,16 +325,18 @@ store_cw20_contract() {
     CW20_CODE_ID=""
     for i in $(seq 1 30); do
         sleep 2
-        LAST=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id' 2>/dev/null)
-        if [ -n "$LAST" ] && [ "$LAST" != "null" ] && [ "$LAST" != "$BRIDGE_CODE_ID" ]; then
-            CW20_CODE_ID=$LAST
-            break
+        CODE_LEN=$(terrad_query query wasm list-code -o json | jq '.code_infos | length' 2>/dev/null || echo "0")
+        if [ "$CODE_LEN" -gt "$CODE_LEN_BEFORE" ] 2>/dev/null; then
+            CW20_CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id' 2>/dev/null)
+            if [ -n "$CW20_CODE_ID" ] && [ "$CW20_CODE_ID" != "null" ]; then
+                break
+            fi
         fi
-        log_info "  Waiting for CW20 code store confirmation... (${i}/30)"
+        log_info "  Waiting for CW20 code store confirmation... (${i}/30) (codes: $CODE_LEN_BEFORE → $CODE_LEN)"
     done
     
     if [ -z "$CW20_CODE_ID" ] || [ "$CW20_CODE_ID" = "null" ]; then
-        log_error "Failed to get CW20 code ID after 60s (bridge code id was $BRIDGE_CODE_ID)"
+        log_error "Failed to get CW20 code ID after 60s (codes before store: $CODE_LEN_BEFORE; bridge code id: $BRIDGE_CODE_ID). Last terrad output was: $TX"
         exit 1
     fi
     
