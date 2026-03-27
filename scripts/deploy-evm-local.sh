@@ -30,6 +30,8 @@ extract_log_addr() {
 
 EVM_BRIDGE=$(extract_log_addr DEPLOYED_BRIDGE)
 EVM_CR=$(extract_log_addr DEPLOYED_CHAIN_REGISTRY)
+EVM_TR=$(extract_log_addr DEPLOYED_TOKEN_REGISTRY)
+EVM_LU=$(extract_log_addr DEPLOYED_LOCK_UNLOCK)
 
 if [ -z "$EVM_BRIDGE" ]; then
     echo "[ERROR] Could not parse DEPLOYED_BRIDGE from forge output." >&2
@@ -37,11 +39,13 @@ if [ -z "$EVM_BRIDGE" ]; then
     exit 1
 fi
 
-write_deploy_env_evm "$EVM_BRIDGE" "${EVM_CR:-}"
+write_deploy_env_evm "$EVM_BRIDGE" "${EVM_CR:-}" "${EVM_TR:-}" "${EVM_LU:-}"
 echo ""
 echo "[INFO] Recorded EVM addresses in $DEPLOY_ENV_FILE"
 echo "  EVM_BRIDGE_ADDRESS=$EVM_BRIDGE"
 echo "  EVM_CHAIN_REGISTRY=${EVM_CR:-}"
+echo "  TOKEN_REGISTRY_ADDRESS=${EVM_TR:-}"
+echo "  LOCK_UNLOCK_ADDRESS=${EVM_LU:-}"
 
 if [ -f "$SCRIPT_DIR/merge-env-var.sh" ]; then
   chmod +x "$SCRIPT_DIR/merge-env-var.sh" 2>/dev/null || true

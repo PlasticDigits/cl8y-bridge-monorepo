@@ -64,6 +64,10 @@ export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL SOLANA_RPC_URL
 make deploy
 
+echo "==> Test ERC20 + register tokens on bridges (needed for transfer UI token list + Terra registry queries)..."
+make deploy-tokens
+make register-tokens
+
 echo "==> Merging deploy outputs into repo-root .env for operator..."
 if [ -f "$REPO_ROOT/.deploy/local.env" ]; then
   chmod +x "$REPO_ROOT/scripts/merge-env-var.sh" 2>/dev/null || true

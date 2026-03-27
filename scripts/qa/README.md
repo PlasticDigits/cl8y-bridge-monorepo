@@ -32,7 +32,9 @@ make start-qa
 
 **Before** starting, this stops canceler/operator and runs **`docker compose down`** for a clean stack.
 
-It then: starts Docker (Anvil, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (writes bridge addresses into **`.deploy/local.env`**, merges into operator **`.env`**) → writes **`.env.e2e.local`** and **`packages/frontend/.env.local` on the server** → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)** (SSH, **`scp`**, **`write-frontend-env-local.sh`**, **`npm run dev`**).
+It then: starts Docker (Anvil, LocalTerra, Solana, Postgres) → migrations → **`make deploy`** (EVM + Terra with **CW20** test token + Solana + **`setup-bridge`**) → **`make deploy-tokens`** (test ERC20 on Anvil, recorded in **`.deploy/local.env`**) → **`make register-tokens`** (registers tokens on the bridges so the **transfer UI** and **`useTokenRegistry`** see them) → merges deploy outputs into operator **`.env`** → writes **`.env.e2e.local`** and **`packages/frontend/.env.local` on the server** → starts operator + canceler → health checks → **prints [laptop workflow steps](#on-your-laptop)**.
+
+**Settings → Faucet** rows for dedicated faucet **contracts** (EVM/Terra faucet dApps) are separate from bridge test tokens; they need extra deploy + **`VITE_*_FAUCET_ADDRESS`** if you use that UI. Bridge **token selectors** use the Terra bridge registry populated by **`register-tokens`**.
 
 **Optional — bake SSH host/port into that printed block** (set on the server when you run **`make start-qa`**). The printed destination is **`whoami@host`**: **`host`** comes from **`QA_SSH_HOST`** (or this machine’s hostname), and **`whoami`** is whoever runs **`make start-qa`** on the server.
 
@@ -99,7 +101,9 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 
 | Symptom | What to do |
 |--------|------------|
-| **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_EVM_BRIDGE_ADDRESS`**, **`VITE_TERRA_BRIDGE_ADDRESS`**, **`VITE_SOLANA_PROGRAM_ID`** are set. Restart Vite. |
+| **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_*` bridge addresses** are set. Restart Vite. |
+| **Bridge page: no tokens in the selector** | On the **server**, tokens must be **deployed and registered** ( **`make start-qa`** now runs **`deploy-tokens`** + **`register-tokens`** after **`deploy`**). Or run **`make deploy-tokens && make register-tokens`** manually after **`make deploy`**. |
+| **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered via **`register-tokens`**. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
 | **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
 | **`scp` fails (other)** | Set **`QA_SSH_HOST`** / **`QA_SSH_PORT`** (e.g. in repo-root **`.env`**) and re-run **`make start-qa`** so the printed **`scp`** matches how you SSH. |

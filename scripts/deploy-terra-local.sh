@@ -100,6 +100,12 @@ check_prereqs() {
         log_info "Build with: make build-terra-optimized  (or make build-terra for dev)"
         exit 1
     fi
+
+    if [ "$DEPLOY_CW20" = true ] && [ ! -f "$CW20_WASM_PATH" ]; then
+        log_error "CW20 wasm not found at $CW20_WASM_PATH (required for --cw20 / make deploy-terra)"
+        log_info "Build Terraclassic artifacts (cw20-mintable) before deploy."
+        exit 1
+    fi
     
     log_info "Prerequisites OK"
 }
@@ -412,8 +418,8 @@ main() {
     if [ -f "$SCRIPT_DIR/lib-local-deploy-env.sh" ]; then
         # shellcheck source=lib-local-deploy-env.sh
         source "$SCRIPT_DIR/lib-local-deploy-env.sh"
-        write_deploy_env_terra "$BRIDGE_CONTRACT"
-        log_info "Recorded TERRA_BRIDGE_ADDRESS in ${DEPLOY_ENV_FILE}"
+        write_deploy_env_terra "$BRIDGE_CONTRACT" "${CW20_CONTRACT:-}"
+        log_info "Recorded TERRA_BRIDGE_ADDRESS (and CW20 if deployed) in ${DEPLOY_ENV_FILE}"
     fi
 
     echo ""

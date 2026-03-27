@@ -81,7 +81,7 @@ help:
 	@echo "Deployment:"
 	@echo "  make deploy             - Deploy all contracts locally + setup-bridge (Solana program id auto-detected)"
 	@echo "  make deploy-evm         - Deploy EVM contracts to Anvil"
-	@echo "  make deploy-terra       - Deploy Terra contracts to LocalTerra"
+	@echo "  make deploy-terra       - Deploy Terra bridge + CW20 test token to LocalTerra"
 	@echo "  make deploy-solana      - Deploy Solana program to local validator"
 	@echo "  make deploy-test-token  - Deploy test ERC20 for integration tests"
 	@echo "  make deploy-terra-cw20  - Deploy Terra bridge and CW20 token"
@@ -298,18 +298,13 @@ deploy-evm:
 	./scripts/deploy-evm-local.sh
 
 deploy-test-token:
-	@echo "Deploying test ERC20 token to Anvil..."
-	cd packages/contracts-evm && forge script script/DeployTestToken.s.sol:DeployTestToken \
-		--broadcast \
-		--rpc-url http://localhost:8545
-	@echo ""
-	@echo "Set these in packages/frontend/.env.local:"
-	@echo "  VITE_BRIDGE_TOKEN_ADDRESS=<address from output>"
-	@echo "  VITE_LOCK_UNLOCK_ADDRESS=<LockUnlock from deploy-evm>"
+	@chmod +x "$(CURDIR)/scripts/record-test-token-deploy.sh" 2>/dev/null || true
+	@echo "Deploying test ERC20 token to Anvil and recording TEST_TOKEN_ADDRESS in .deploy/local.env..."
+	./scripts/record-test-token-deploy.sh
 
 deploy-terra:
-	@echo "Deploying Terra contracts to LocalTerra..."
-	./scripts/deploy-terra-local.sh
+	@echo "Deploying Terra contracts to LocalTerra (bridge + optional CW20 test token)..."
+	./scripts/deploy-terra-local.sh --cw20
 
 deploy-terra-local: deploy-terra
 	@echo "Terra local deployment complete"
@@ -327,8 +322,8 @@ deploy-terra-cw20:
 	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."
 	./scripts/deploy-terra-local.sh --cw20
 
-deploy-tokens: deploy-test-token deploy-terra-cw20
-	@echo "Test tokens deployed on both chains"
+deploy-tokens: deploy-test-token
+	@echo "Test ERC20 recorded; Terra CW20 comes from deploy-terra (--cw20 in make deploy)."
 
 register-tokens:
 	@echo "Registering test tokens on bridges..."
