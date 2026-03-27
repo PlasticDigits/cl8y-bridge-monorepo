@@ -33,10 +33,29 @@ set +a
 EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"
 
 echo "==> Starting Docker Compose (anvil + anvil1 + localterra + postgres + solana)..."
+_qa_compose_up_failed() {
+  echo "" >&2
+  echo "[start-qa] ERROR: docker compose did not start all services (LocalTerra often exits on bad volume or port conflict)." >&2
+  echo "[start-qa] --- docker compose ps -a --format 'table {{.Name}}\t{{.Status}}\t{{.State}}' ---" >&2
+  docker compose ps -a --format 'table {{.Name}}\t{{.Status}}\t{{.State}}' 2>&1 || true
+  echo "[start-qa] --- localterra logs (last 100 lines) ---" >&2
+  docker compose logs localterra --tail 100 2>&1 || true
+  echo "" >&2
+  echo "[start-qa] Try: check host ports (E2E_TERRA_RPC_PORT / E2E_TERRA_LCD_PORT vs defaults 26657/1317);" >&2
+  echo "  reset chain data:  docker compose down -v   # or: docker volume ls | grep localterra  then docker volume rm <name>" >&2
+  echo "  ARM host + linux/amd64 image: install QEMU/binfmt or use an amd64 runner." >&2
+}
+
 if docker compose up --help 2>&1 | grep -q -- '--wait'; then
-  docker compose up -d --wait anvil anvil1 localterra postgres solana
+  if ! docker compose up -d --wait anvil anvil1 localterra postgres solana; then
+    _qa_compose_up_failed
+    exit 1
+  fi
 else
-  docker compose up -d anvil anvil1 localterra postgres solana
+  if ! docker compose up -d anvil anvil1 localterra postgres solana; then
+    _qa_compose_up_failed
+    exit 1
+  fi
 fi
 
 echo "==> Waiting for chain RPCs: EVM + EVM1 + Terra + Solana (up to ~90s)..."
