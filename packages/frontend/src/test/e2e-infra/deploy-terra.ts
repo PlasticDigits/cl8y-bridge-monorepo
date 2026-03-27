@@ -219,6 +219,11 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
     encoding: 'utf8',
     cwd: ROOT_DIR,
   })
+  // docker cp preserves host mode (often 0600); terrad may run as another UID — chmod as root (see deploy-terra-local.sh).
+  execSync(`docker exec -u 0 ${CONTAINER_NAME} chmod 0644 /tmp/wasm/cw20_mintable.wasm`, {
+    encoding: 'utf8',
+    cwd: ROOT_DIR,
+  })
 
   const prevCodeId = getLatestCodeId()
 
