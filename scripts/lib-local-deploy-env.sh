@@ -68,10 +68,18 @@ load_local_deploy_env() {
         key="${key%%=*}"
         val="${line#*=}"
         case "$key" in
-        EVM_BRIDGE_ADDRESS) [ -z "${EVM_BRIDGE_ADDRESS:-}" ] && export EVM_BRIDGE_ADDRESS="$val" ;;
-        EVM_CHAIN_REGISTRY) [ -z "${EVM_CHAIN_REGISTRY:-}" ] && export EVM_CHAIN_REGISTRY="$val" ;;
-        TERRA_BRIDGE_ADDRESS) [ -z "${TERRA_BRIDGE_ADDRESS:-}" ] && export TERRA_BRIDGE_ADDRESS="$val" ;;
-        SOLANA_PROGRAM_ID) [ -z "${SOLANA_PROGRAM_ID:-}" ] && export SOLANA_PROGRAM_ID="$val" ;;
+        EVM_BRIDGE_ADDRESS)
+            if [ -z "${EVM_BRIDGE_ADDRESS:-}" ]; then export EVM_BRIDGE_ADDRESS="$val"; fi
+            ;;
+        EVM_CHAIN_REGISTRY)
+            if [ -z "${EVM_CHAIN_REGISTRY:-}" ]; then export EVM_CHAIN_REGISTRY="$val"; fi
+            ;;
+        TERRA_BRIDGE_ADDRESS)
+            if [ -z "${TERRA_BRIDGE_ADDRESS:-}" ]; then export TERRA_BRIDGE_ADDRESS="$val"; fi
+            ;;
+        SOLANA_PROGRAM_ID)
+            if [ -z "${SOLANA_PROGRAM_ID:-}" ]; then export SOLANA_PROGRAM_ID="$val"; fi
+            ;;
         esac
     done
 }
