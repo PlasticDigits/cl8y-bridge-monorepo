@@ -160,18 +160,16 @@ if ! curl -sf "${CANCELER_HEALTH_URL}/health" >/dev/null; then
 fi
 echo "==> Operator and canceler responded OK."
 
-# Ports for SSH -L local:remote — remote is always 127.0.0.1 on this machine
+# Ports for SSH -L local:remote — remote is always 127.0.0.1 on this machine.
+# Only chain endpoints the Vite app uses (see write-frontend-env-local.sh / VITE_*).
+# Operator + canceler HTTP are not called by the frontend; omit from -L unless debugging.
 TERRA_RPC_PORT="${E2E_TERRA_RPC_PORT}"
 TERRA_LCD_PORT="${E2E_TERRA_LCD_PORT}"
-OP_PORT="${OPERATOR_API_PORT}"
 # shellcheck disable=SC2001
 SOL_PORT=$(echo "${SOLANA_RPC_URL}" | sed -n 's/.*:\([0-9][0-9]*\).*/\1/p')
 WS_PORT=$(echo "${SOLANA_WS_URL}" | sed -n 's/.*:\([0-9][0-9]*\).*/\1/p')
-# shellcheck disable=SC2001
-CAN_PORT=$(echo "${CANCELER_HEALTH_URL}" | sed -n 's/.*:\([0-9][0-9]*\).*/\1/p')
 SOL_PORT="${SOL_PORT:-8899}"
 WS_PORT="${WS_PORT:-8900}"
-CAN_PORT="${CAN_PORT:-9099}"
 
 # Printed ssh/scp use whoami@(QA_SSH_HOST or this machine's hostname) so the account matches whoever runs make start-qa.
 if [ -n "${QA_SSH_HOST:-}" ]; then
@@ -194,6 +192,8 @@ echo "  start-qa finished successfully on this host."
 echo "========================================================================"
 echo ""
 echo "  --- Laptop workflow (do these on your laptop, in order) ---"
+echo "  For local frontend manual QA only. Run Playwright/Vitest/e2e automated tests on this server"
+echo "  (they need operator/canceler/DB ports and are not covered by the SSH -L list below)."
 echo "  Full doc: scripts/qa/README.md  (section: On your laptop)"
 echo ""
 echo "  Optional next time you run make start-qa here — bake SSH host/port into the lines below:"
@@ -211,8 +211,6 @@ echo "  -L 127.0.0.1:8545:127.0.0.1:8545 \\"
 echo "  -L 127.0.0.1:8546:127.0.0.1:8546 \\"
 echo "  -L 127.0.0.1:${TERRA_RPC_PORT}:127.0.0.1:${TERRA_RPC_PORT} \\"
 echo "  -L 127.0.0.1:${TERRA_LCD_PORT}:127.0.0.1:${TERRA_LCD_PORT} \\"
-echo "  -L 127.0.0.1:${OP_PORT}:127.0.0.1:${OP_PORT} \\"
-echo "  -L 127.0.0.1:${CAN_PORT}:127.0.0.1:${CAN_PORT} \\"
 echo "  ${SSH_DEST}"
 echo ""
 echo "  Step 2 — Copy .deploy/local.env from this host into your laptop repo clone:"

@@ -62,11 +62,13 @@ make stop-qa
 
 Do these **in order** after the QA server has finished **`make start-qa`** successfully. The same steps are printed at the end of **`make start-qa`** so you can copy-paste.
 
+This laptop workflow is for **manual frontend QA** (Vite in the browser). **Automated tests** (Playwright, Vitest bridge/integration, e2e-infra, etc.) should be run **on the QA server** directly—they need services beyond the reduced SSH tunnel (operator, canceler, Postgres, etc.).
+
 ### Step 1 — SSH port forwards
 
 On the **laptop**, run the **`ssh -4 -N`** block from the **`make start-qa`** output. Leave that terminal open. Using **`127.0.0.1`** on both sides avoids some IPv6 **`[::1]`** bind issues.
 
-This forwards the bridge RPC/LCD/wallet ports from the QA host’s loopback to yours.
+This forwards only the **chain** endpoints the frontend uses (Anvil ×2, LocalTerra RPC/LCD, Solana RPC + WebSocket + faucet). It does **not** include the operator HTTP API or canceler health port—the app talks to contracts via RPC/LCD only. To curl operator/canceler on the laptop, add `-L 127.0.0.1:<port>:127.0.0.1:<port>` manually (see `OPERATOR_API_PORT` / `CANCELER_HEALTH_URL` on the server, often `9094` / `9099`).
 
 ### Step 2 — Copy **`.deploy/local.env`** from the QA host
 
