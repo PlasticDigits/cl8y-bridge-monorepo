@@ -6,7 +6,7 @@ help:
 	@echo ""
 	@echo "Infrastructure:"
 	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
-	@echo "  make start-qa       - QA server: tear down if running, then Docker + migrate + deploy + operator + canceler + SSH hint (see scripts/qa/README.md)"
+	@echo "  make start-qa       - QA server: Docker + migrate + deploy + operator + canceler; prints step-by-step laptop workflow (SSH, scp, env, dev — see scripts/qa/README.md)"
 	@echo "  make stop           - Stop Docker services"
 	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
 	@echo "  make reset          - Stop and remove all volumes"
