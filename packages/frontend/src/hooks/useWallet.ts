@@ -148,7 +148,6 @@ export function useWallet() {
 
     try {
       const lunc = await fetchNativeBalance(address, 'uluna');
-      console.log('Balance fetched:', { lunc });
       setBalances({ lunc });
     } catch (error) {
       console.error('Failed to refresh balances:', error);
