@@ -5,6 +5,7 @@ import { EvmWalletModal, TerraWalletModal, SolanaWalletModal } from './wallet'
 import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
+import { SolanaWalletBalanceSync } from './SolanaWalletBalanceSync'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -49,6 +50,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen overflow-x-hidden">
+      <SolanaWalletBalanceSync />
       <header className="sticky top-0 z-30 border-b-2 border-white/40 bg-black/90 overflow-x-clip">
         <NavBar />
       </header>
