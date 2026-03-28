@@ -63,6 +63,7 @@ vi.mock('../../hooks/useTokenList', () => ({
 
 vi.mock('../../hooks/useTokenDestMapping', () => ({
   useTokenDestMapping: () => ({ data: null }),
+  useTokenDestMappingRaw: () => ({ data: null }),
 }))
 
 vi.mock('../../hooks/useSourceChainTokenMappings', () => ({
