@@ -92,6 +92,9 @@ export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL EVM1_RPC_URL SOLANA_RPC_URL
 make deploy
 
+echo "==> Optional: fund extra Solana QA wallets (SOLANA_QA_AIRDROP_WALLETS from .env)..."
+"$REPO_ROOT/scripts/solana/airdrop-qa-wallets.sh"
+
 FE_DIR="$REPO_ROOT/packages/frontend"
 if [ "${START_QA_SKIP_NPM_CI:-}" != "1" ] && command -v npm >/dev/null 2>&1; then
   _need_npm_ci=0
