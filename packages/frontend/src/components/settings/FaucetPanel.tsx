@@ -99,7 +99,7 @@ const SOLANA_CHAIN: ChainConfig = {
   explorerTxUrl: 'https://explorer.solana.com/tx/',
 }
 
-/** Show Solana faucet row when SPL faucet is deployed *or* RPC is set (local validator / devnet) so balances + SOL airdrop work. */
+/** Show Solana faucet row when SPL faucet is deployed *or* RPC is set (local validator / devnet) so balances and SPL claims work. */
 const SOLANA_RPC_OR_FAUCET =
   !!import.meta.env.VITE_SOLANA_FAUCET_ADDRESS ||
   !!import.meta.env.VITE_SOLANA_RPC_URL ||
@@ -508,52 +508,6 @@ function SolanaClaimButton({
   )
 }
 
-function SolAirdropButton() {
-  const { address } = useSolanaWalletStore()
-  const [requesting, setRequesting] = useState(false)
-  const [done, setDone] = useState(false)
-  const [airdropError, setAirdropError] = useState<string | null>(null)
-
-  const handleAirdrop = async () => {
-    if (!address) return
-    setRequesting(true)
-    setAirdropError(null)
-    try {
-      const { Connection, PublicKey, LAMPORTS_PER_SOL } = await import('@solana/web3.js')
-      const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
-      const connection = new Connection(rpcUrl, 'confirmed')
-      const sig = await connection.requestAirdrop(new PublicKey(address), 2 * LAMPORTS_PER_SOL)
-      await connection.confirmTransaction(sig, 'confirmed')
-      setDone(true)
-      setTimeout(() => setDone(false), 5000)
-    } catch (e) {
-      setAirdropError(e instanceof Error ? e.message : 'Airdrop failed')
-    } finally {
-      setRequesting(false)
-    }
-  }
-
-  if (!address) return null
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      <button
-        type="button"
-        onClick={handleAirdrop}
-        disabled={requesting}
-        className="rounded bg-emerald-600 px-2 py-0.5 text-xs text-white hover:bg-emerald-500 disabled:opacity-50"
-      >
-        {done ? 'Airdropped ✓' : requesting ? '...' : 'Airdrop 2 SOL'}
-      </button>
-      {airdropError && (
-        <span className="text-[10px] text-red-400 max-w-[220px]" title={airdropError}>
-          {airdropError.length > 80 ? `${airdropError.slice(0, 80)}…` : airdropError}
-        </span>
-      )}
-    </div>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Per-claim button component (EVM)
 // ---------------------------------------------------------------------------
@@ -921,14 +875,6 @@ export function FaucetPanel() {
             <code className="text-xs">packages/frontend/.env.local</code> (e.g. <code className="text-xs">./scripts/qa/write-frontend-env-local.sh</code> or your <code className="text-xs">make start-qa</code> step).
           </p>
         </div>
-        {LOCAL_SOLANA_RPC_OR_FAUCET && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <SolAirdropButton />
-            <span className="text-[10px] text-gray-500">
-              (Connect a Solana wallet — airdrop only works on local validator / devnet.)
-            </span>
-          </div>
-        )}
       </div>
     )
   }
@@ -956,12 +902,6 @@ export function FaucetPanel() {
         <p className="mt-1 text-xs text-gray-400">
           Claim 10 test tokens per wallet per token per chain, once every 24 hours.
         </p>
-        <div className="flex items-center gap-2 mt-2 flex-wrap">
-          <SolAirdropButton />
-          <span className="text-[10px] text-gray-500">
-            (Connect a Solana wallet — airdrop only works on local validator / devnet.)
-          </span>
-        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
