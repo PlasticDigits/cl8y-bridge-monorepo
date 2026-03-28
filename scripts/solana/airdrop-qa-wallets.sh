@@ -38,7 +38,8 @@ trim() {
 # Dedupe while preserving order (bash 4+)
 declare -A _seen=()
 uniq_addrs=()
-while IFS= read -r part; do
+# Use `|| [ -n "$part" ]` so the last CSV segment is kept when it has no trailing newline (common in .env).
+while IFS= read -r part || [ -n "$part" ]; do
   t="$(trim "$part")"
   [ -z "$t" ] && continue
   if [[ -n "${_seen[$t]+x}" ]]; then
