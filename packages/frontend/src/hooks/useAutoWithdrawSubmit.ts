@@ -32,7 +32,7 @@ import {
   evmAddressToBytes32Array,
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
-import { isTerraContractError, TERRA_TX_ERROR } from '../services/terra/transaction'
+import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/terra/transaction'
 import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
 import { solanaAddressToBytes32 } from '../services/solana/address'
 import { bytes32HexToPublicKey } from '../services/solana/transaction'
@@ -43,6 +43,44 @@ import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
 
 const LOG = '[autoWithdraw]'
+
+/** Avoid false "submission lost" when React state lags localStorage after a successful submit (#87). */
+function hasPersistedSuccessfulHashSubmit(transferId: string, xchainHashId: string | undefined): boolean {
+  const { getTransferByXchainHashId, getAllTransfers } = useTransferStore.getState()
+  const fromList = getAllTransfers().find((t) => t.id === transferId)
+  if (
+    fromList?.withdrawSubmitTxHash &&
+    (fromList.lifecycle === 'hash-submitted' ||
+      fromList.lifecycle === 'approved' ||
+      fromList.lifecycle === 'executed')
+  ) {
+    return true
+  }
+  if (xchainHashId) {
+    const byHash = getTransferByXchainHashId(xchainHashId)
+    if (
+      byHash &&
+      byHash.id === transferId &&
+      byHash.withdrawSubmitTxHash &&
+      (byHash.lifecycle === 'hash-submitted' ||
+        byHash.lifecycle === 'approved' ||
+        byHash.lifecycle === 'executed')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function terraErrIndicatesDuplicateWithdrawSubmit(err: unknown): boolean {
+  if (!(err instanceof TerraTxError) || err.code !== TERRA_TX_ERROR.CONTRACT_ERROR) return false
+  const combined = `${err.message}\n${err.rawMessage}`.toLowerCase()
+  return (
+    combined.includes('withdrawal already submitted') ||
+    combined.includes('withdraw already submitted') ||
+    combined.includes('withdrawalreadysubmitted')
+  )
+}
 
 export type AutoSubmitPhase =
   | 'idle'
@@ -598,7 +636,8 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       // updating lifecycle and resuming polling instead of showing an error.
       if (
         isTerraContractError(err, TERRA_TX_ERROR.NONCE_ALREADY_APPROVED) ||
-        isTerraContractError(err, TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED)
+        isTerraContractError(err, TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED) ||
+        terraErrIndicatesDuplicateWithdrawSubmit(err)
       ) {
         console.info(
           `${LOG} Withdrawal already on-chain (${err instanceof Error ? err.message : err}), recovering...`
@@ -662,6 +701,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               setPhase('waiting-execution')
             }
           } else if (result.submittedAt === 0n) {
+            if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+              notConfirmedCountRef.current = 0
+              return
+            }
             notConfirmedCountRef.current++
             if (notConfirmedCountRef.current >= 3) {
               console.warn(
@@ -711,6 +754,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               setPhase('waiting-execution')
             }
           } else if (!result) {
+            if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+              notConfirmedCountRef.current = 0
+              return
+            }
             notConfirmedCountRef.current++
             if (notConfirmedCountRef.current >= 3) {
               console.warn(
@@ -768,6 +815,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
                 }
               }
             } else if (!account) {
+              if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+                notConfirmedCountRef.current = 0
+                return
+              }
               notConfirmedCountRef.current++
               if (notConfirmedCountRef.current >= 3) {
                 setPhase('error')
