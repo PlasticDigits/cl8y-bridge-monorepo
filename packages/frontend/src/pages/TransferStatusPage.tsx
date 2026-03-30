@@ -702,15 +702,15 @@ export default function TransferStatusPage() {
     }
 
     resetForRetry()
-    updateTransferRecord(transfer.id, { lifecycle: 'deposited' })
-    setTransfer((prev) => prev ? { ...prev, lifecycle: 'deposited' } : null)
+    // Keep lifecycle (e.g. hash-submitted): deposit is already confirmed; re-run submit without regressing the stepper (#86).
+    void triggerSubmit()
     setTimeout(() => {
       setRetryingHash(false)
       if (xchainHashId && isValidXchainHashId(xchainHashId)) {
         lookup(normalizeXchainHashId(xchainHashId) as `0x${string}`)
       }
     }, 3000)
-  }, [transfer, resetForRetry, updateTransferRecord, xchainHashId, lookup])
+  }, [transfer, resetForRetry, updateTransferRecord, xchainHashId, lookup, triggerSubmit])
 
   // --- Broken transfer detection (dest exists, source null → wrong chain submitted) ---
   const normalizedHash = xchainHashId && isValidXchainHashId(xchainHashId)
@@ -821,8 +821,20 @@ export default function TransferStatusPage() {
     const baseIdx = getStepIndex(transfer?.lifecycle)
     // If deposit succeeded but hash submission failed, show step 1 (hash-submitted) not step 0 (deposit)
     if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
+    // Stay on Submit Hash during explicit retry or in-flight submit (#86)
+    if (retryingHash) return 1
+    if (autoPhase === 'submitting-hash' && source != null) return 1
+    // Lookup-only / synthetic: source deposit confirmed, no dest withdraw yet — not still "confirming deposit"
+    if (
+      transfer?.lifecycle === 'deposited' &&
+      source != null &&
+      dest == null &&
+      !lookupLoading
+    ) {
+      return 1
+    }
     return baseIdx
-  }, [transfer?.lifecycle, autoPhase])
+  }, [transfer?.lifecycle, autoPhase, retryingHash, source, dest, lookupLoading])
 
   const submitDiagnostics = useMemo(() => {
     if (!transfer) return null
