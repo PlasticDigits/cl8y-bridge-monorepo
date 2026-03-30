@@ -10,6 +10,8 @@
 #   SOLANA_RPC_PORT     RPC port (default: 8899)
 #   SOLANA_FAUCET_PORT  Faucet port (default: 9900)
 #   SOLANA_BIND_ADDRESS Bind address — MUST stay loopback on internet-facing servers; default 127.0.0.1.
+#   SOLANA_TEST_VALIDATOR_CLONE_URL  RPC used to clone wSOL mint into genesis (default: mainnet-beta API)
+#   SOLANA_SKIP_WSOL_GENESIS_CLONE   Set to 1 to skip --clone (air-gapped; breaks register-qa-tokens for SOL)
 #                       If unset, we force 127.0.0.1. To bind to all interfaces (not recommended),
 #                       set SOLANA_BIND_ADDRESS=0.0.0.0 and CL8Y_ALLOW_SOLANA_PUBLIC_BIND=1.
 
@@ -49,6 +51,16 @@ fi
 
 mkdir -p "$SOLANA_LEDGER_DIR"
 
+# Canonical wrapped SOL mint — must exist for Anchor register_token + register-qa-tokens (GitLab #84).
+WSOL_MINT="So11111111111111111111111111111111111111112"
+CLONE_URL="${SOLANA_TEST_VALIDATOR_CLONE_URL:-https://api.mainnet-beta.solana.com}"
+CLONE_ARGS=()
+if [[ "${SOLANA_SKIP_WSOL_GENESIS_CLONE:-}" != "1" ]]; then
+  CLONE_ARGS+=(--url "$CLONE_URL" --clone "$WSOL_MINT")
+else
+  echo "[run-test-validator] SOLANA_SKIP_WSOL_GENESIS_CLONE=1 — wSOL mint may be missing; QA token registration can fail." >&2
+fi
+
 echo "Starting solana-test-validator (bind=${BIND}, RPC=${SOLANA_RPC_PORT}, faucet=${SOLANA_FAUCET_PORT}, ledger=${SOLANA_LEDGER_DIR})"
 echo "  Repo: $REPO_ROOT"
 echo "  Stop with Ctrl+C or: kill -TERM <pid>"
@@ -59,4 +71,5 @@ exec solana-test-validator \
   --bind-address "$BIND" \
   --rpc-port "$SOLANA_RPC_PORT" \
   --faucet-port "$SOLANA_FAUCET_PORT" \
+  "${CLONE_ARGS[@]}" \
   --log

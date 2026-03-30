@@ -19,6 +19,14 @@ import {
 } from "@solana/spl-token";
 import { Cl8yBridge } from "../../target/types/cl8y_bridge";
 
+// Node cannot connect to http://0.0.0.0:* (ECONNREFUSED); Solana CLI often uses that bind address.
+(() => {
+  const ep = process.env.ANCHOR_PROVIDER_URL;
+  if (ep?.includes("0.0.0.0")) {
+    process.env.ANCHOR_PROVIDER_URL = ep.replace(/0\.0\.0\.0/g, "127.0.0.1");
+  }
+})();
+
 /** Canonical token identifier for native SOL — all-zeros, matching Rust NATIVE_SOL_TOKEN. */
 export const NATIVE_SOL_TOKEN = new PublicKey(Buffer.alloc(32));
 
@@ -48,7 +56,12 @@ const DEVNET_KEYS_DIR = path.resolve(__dirname, "../../.devnet-keys");
 function isLocalhost(rpcUrl: string): boolean {
   try {
     const host = new URL(rpcUrl).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "0.0.0.0"
+    );
   } catch {
     return true;
   }

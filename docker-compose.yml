@@ -64,15 +64,27 @@ services:
   # Bind to 0.0.0.0 inside the container so Docker port-forwarding can reach
   # both the RPC *and* the faucet (airdrop).  Host-side security is enforced by
   # publishing to 127.0.0.1 only (see `ports:` below).
+  #
+  # Use solana-test-validator directly: the image entrypoint (solana-run.sh) ignores
+  # CMD and always ran solana-validator before, so `solana-test-validator` in command
+  # never executed. Clone wSOL mint into genesis (GitLab #84) — same mint as
+  # scripts/solana/run-test-validator.sh and packages/contracts-solana/Anchor.toml.
   solana:
     image: solanalabs/solana:v1.18.26
-    command: >
-      solana-test-validator
-      --reset
-      --bind-address 0.0.0.0
-      --rpc-port 8899
-      --faucet-port 9900
-      --log
+    entrypoint: ["solana-test-validator"]
+    command:
+      - --reset
+      - --bind-address
+      - "0.0.0.0"
+      - --rpc-port
+      - "8899"
+      - --faucet-port
+      - "9900"
+      - --url
+      - https://api.mainnet-beta.solana.com
+      - --clone
+      - So11111111111111111111111111111111111111112
+      - --log
     ports:
       - "127.0.0.1:8899:8899"
       - "127.0.0.1:8900:8900"

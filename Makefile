@@ -189,7 +189,9 @@ solana-test: ## Run Solana program tests (stops Docker validator so Anchor manag
 
 .PHONY: solana-test-docker
 solana-test-docker: solana-reset ## Run Solana tests against Docker validator (fresh ledger)
-	cd packages/contracts-solana && anchor test --skip-local-validator
+	@echo "Airdropping deploy key for anchor deploy (fresh ledger has no SOL)..."
+	@solana airdrop 100 "$$(solana address)" --url http://127.0.0.1:8899 2>/dev/null || true
+	cd packages/contracts-solana && ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 anchor test --skip-local-validator
 
 .PHONY: solana-deploy-local
 solana-deploy-local: ## Deploy Solana program to local validator (keys sync + build + deploy)
