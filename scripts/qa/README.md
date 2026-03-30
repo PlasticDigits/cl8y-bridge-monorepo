@@ -51,6 +51,7 @@ It then: starts Docker (**anvil**, **anvil1** on 8546, LocalTerra, Solana, Postg
 | **`QA_SSH_HOST`** | Hostname or IP as seen from the laptop (default: this machine’s **`hostname -f`** or **`hostname`**) |
 | **`QA_SSH_PORT`** | If SSH is not on port 22; the printed **`ssh`** / **`scp`** lines include **`-p`** / **`-P`** |
 | **`START_QA_SKIP_NPM_CI`** | Set to **`1`** to skip the automatic **`npm ci`** in **`packages/frontend`** when **`make start-qa`** would otherwise run it (missing **`node_modules`** or **`package-lock.json`** newer than **`node_modules`**) |
+| **`LOCALTERRA_DOCKER_CONTAINER`** | Optional override for **`docker exec`** target used by **`qa:full-token-setup`** Terra txs. Default: **`docker compose ps -q localterra`** from repo root, else legacy name **`cl8y-bridge-monorepo-localterra-1`**. |
 | **`SOLANA_QA_AIRDROP_WALLETS`** | Comma-separated Solana **pubkeys** (base58) to fund with SOL after **`make deploy`** (empty = skip). Uses **`SOLANA_RPC_URL`** from **`qa-host.env`**. |
 | **`SOLANA_QA_AIRDROP_SOL`** | Target SOL per listed wallet (default **`100`**) |
 | **`SOLANA_QA_AIRDROP_CHUNK_SOL`** | Max SOL per **`solana airdrop`** call (default **`2`**) |

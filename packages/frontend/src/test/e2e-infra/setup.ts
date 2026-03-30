@@ -169,7 +169,11 @@ export default async function setup(): Promise<void> {
         },
         terra: terraBridgeAddress,
       },
-      tokenAddresses
+      tokenAddresses,
+      {
+        evmRpcUrl: process.env.EVM_RPC_URL || 'http://localhost:8545',
+        evm1RpcUrl: process.env.EVM1_RPC_URL || 'http://localhost:8546',
+      }
     )
 
     // 8. Fund LockUnlock contracts with test tokens for cross-chain withdrawals.

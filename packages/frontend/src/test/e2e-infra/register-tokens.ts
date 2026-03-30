@@ -48,21 +48,71 @@ const CHAIN_KEYS = {
   solana: '0x00000005',
 } as const
 
+const DEFAULT_EVM_RPC_URL = 'http://127.0.0.1:8545'
+const DEFAULT_EVM1_RPC_URL = 'http://127.0.0.1:8546'
+const LEGACY_LOCALTERRA_CONTAINER = 'cl8y-bridge-monorepo-localterra-1'
+
+export interface RegisterAllTokensOptions {
+  evmRpcUrl?: string
+  evm1RpcUrl?: string
+  /** `docker exec` target (container id or name). Overrides `LOCALTERRA_DOCKER_CONTAINER`. */
+  localterraDockerContainer?: string
+}
+
+/**
+ * Resolve LocalTerra container for `docker exec` (Compose project name may differ from legacy default).
+ */
+function resolveLocalterraDockerExecTarget(): string {
+  const explicit = process.env.LOCALTERRA_DOCKER_CONTAINER?.trim()
+  if (explicit) return explicit
+  try {
+    const out = execSync('docker compose ps -q localterra', {
+      cwd: REPO_ROOT_REGISTER_TOKENS,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' },
+    }).trim()
+    const first = out.split(/\r?\n/).find((line) => line.length > 0)
+    if (first) return first
+  } catch {
+    /* fall through to legacy */
+  }
+  console.warn(
+    `[register-tokens] Could not resolve localterra via "docker compose ps -q localterra"; using "${LEGACY_LOCALTERRA_CONTAINER}". Set LOCALTERRA_DOCKER_CONTAINER if exec fails.`
+  )
+  return LEGACY_LOCALTERRA_CONTAINER
+}
+
 /**
  * Register all tokens across all chains for cross-chain transfers.
+ *
+ * RPC URLs default to `EVM_RPC_URL` / `EVM1_RPC_URL`, then Anvil defaults on 127.0.0.1 (same as `qa-full-token-setup`).
  */
 export function registerAllTokens(
   bridges: BridgeAddresses,
-  tokens: TokenAddresses
+  tokens: TokenAddresses,
+  options?: RegisterAllTokensOptions
 ): void {
+  const evmRpcUrl =
+    options?.evmRpcUrl?.trim() ||
+    process.env.EVM_RPC_URL?.trim() ||
+    DEFAULT_EVM_RPC_URL
+  const evm1RpcUrl =
+    options?.evm1RpcUrl?.trim() ||
+    process.env.EVM1_RPC_URL?.trim() ||
+    DEFAULT_EVM1_RPC_URL
+  const localterraDocker =
+    options?.localterraDockerContainer?.trim() || resolveLocalterraDockerExecTarget()
+
   console.log('[register-tokens] Registering tokens across all chains...')
+  console.log(`[register-tokens] EVM RPC ${evmRpcUrl}, EVM1 RPC ${evm1RpcUrl}, localterra docker target ${localterraDocker.slice(0, 12)}…`)
 
   // Register chains on each EVM bridge (including Solana)
-  registerChainsOnEvm(bridges)
+  registerChainsOnEvm(bridges, evmRpcUrl, evm1RpcUrl)
 
   // Register tokens on Anvil for Terra (0x00000002) and Anvil1 (0x00000003) destinations
   registerEvmTokensForChain(
-    'http://localhost:8545',
+    evmRpcUrl,
     bridges.anvil.tokenRegistry,
     bridges.anvil.lockUnlock,
     tokens.anvil,
@@ -76,7 +126,7 @@ export function registerAllTokens(
 
   // Register tokens on Anvil1 for Terra (0x00000002) and Anvil (0x00000001) destinations
   registerEvmTokensForChain(
-    'http://localhost:8546',
+    evm1RpcUrl,
     bridges.anvil1.tokenRegistry,
     bridges.anvil1.lockUnlock,
     tokens.anvil1,
@@ -89,27 +139,27 @@ export function registerAllTokens(
   )
 
   // Register chains on Terra bridge first
-  registerChainsOnTerra(bridges.terra)
+  registerChainsOnTerra(bridges.terra, localterraDocker)
 
   // Register tokens on Terra bridge for EVM destinations
-  registerTerraTokensForEvmChains(bridges.terra, tokens)
+  registerTerraTokensForEvmChains(bridges.terra, tokens, localterraDocker)
 
   // EVM ↔ Solana (TokenRegistry): same SPL mints as destinations / incoming sources
   registerEvmSolanaMappings(
-    'http://localhost:8545',
+    evmRpcUrl,
     bridges.anvil.tokenRegistry,
     tokens.anvil,
     tokens
   )
   registerEvmSolanaMappings(
-    'http://localhost:8546',
+    evm1RpcUrl,
     bridges.anvil1.tokenRegistry,
     tokens.anvil1,
     tokens
   )
 
   // Terra ↔ Solana (CW20 / uluna mappings)
-  registerTerraSolanaMappings(bridges.terra, tokens)
+  registerTerraSolanaMappings(bridges.terra, tokens, localterraDocker)
 
   // Solana program: register_token for each mint × (Anvil, Terra, Anvil1)
   runSolanaRegisterQaTokens(tokens)
@@ -117,47 +167,54 @@ export function registerAllTokens(
   console.log('[register-tokens] All tokens registered successfully')
 }
 
-function registerChainsOnEvm(bridges: BridgeAddresses): void {
+function registerChainsOnEvm(bridges: BridgeAddresses, evmRpcUrl: string, evm1RpcUrl: string): void {
+  const dup = { allowDuplicateChainRegister: true as const }
   // On Anvil (V2 ID 1): register Solana (V2 ID 5) for TokenRegistry mappings
   castSend(
-    'http://localhost:8545',
+    evmRpcUrl,
     bridges.anvil.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"solana_localnet" ${CHAIN_KEYS.solana}`
+    `"solana_localnet" ${CHAIN_KEYS.solana}`,
+    dup
   )
   castSend(
-    'http://localhost:8546',
+    evm1RpcUrl,
     bridges.anvil1.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"solana_localnet" ${CHAIN_KEYS.solana}`
+    `"solana_localnet" ${CHAIN_KEYS.solana}`,
+    dup
   )
 
   // On Anvil (V2 ID 1): register Terra (V2 ID 2) and Anvil1 (V2 ID 3)
   castSend(
-    'http://localhost:8545',
+    evmRpcUrl,
     bridges.anvil.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"terra_localterra" ${CHAIN_KEYS.terra}`
+    `"terra_localterra" ${CHAIN_KEYS.terra}`,
+    dup
   )
   castSend(
-    'http://localhost:8545',
+    evmRpcUrl,
     bridges.anvil.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"evm_31338" ${CHAIN_KEYS.anvil1}`
+    `"evm_31338" ${CHAIN_KEYS.anvil1}`,
+    dup
   )
 
   // On Anvil1 (V2 ID 3): register Terra (V2 ID 2) and Anvil (V2 ID 1)
   castSend(
-    'http://localhost:8546',
+    evm1RpcUrl,
     bridges.anvil1.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"terra_localterra" ${CHAIN_KEYS.terra}`
+    `"terra_localterra" ${CHAIN_KEYS.terra}`,
+    dup
   )
   castSend(
-    'http://localhost:8546',
+    evm1RpcUrl,
     bridges.anvil1.chainRegistry,
     '"registerChain(string,bytes4)"',
-    `"evm_31337" ${CHAIN_KEYS.anvil}`
+    `"evm_31337" ${CHAIN_KEYS.anvil}`,
+    dup
   )
 }
 
@@ -476,8 +533,7 @@ function isTerraChainAlreadyRegisteredError(err: unknown): boolean {
   return /already registered/i.test(execSyncErrorText(err))
 }
 
-function registerChainsOnTerra(terraBridgeAddress: string): void {
-  const containerName = 'cl8y-bridge-monorepo-localterra-1'
+function registerChainsOnTerra(terraBridgeAddress: string, containerName: string): void {
   const keyName = 'test1'
 
   const chainsToRegister: Array<{ identifier: string; chainIdBytes: number[] }> = [
@@ -519,9 +575,9 @@ function registerChainsOnTerra(terraBridgeAddress: string): void {
 
 function registerTerraTokensForEvmChains(
   terraBridgeAddress: string,
-  tokens: TokenAddresses
+  tokens: TokenAddresses,
+  containerName: string
 ): void {
-  const containerName = 'cl8y-bridge-monorepo-localterra-1'
   const keyName = 'test1'
 
   // Step 1: Add uluna (native) token with EVM representation = LUNC on Anvil
@@ -880,8 +936,11 @@ function registerTerraTokensForEvmChains(
 /**
  * Terra bridge: map each local asset to its SPL mint on Solana (0x05) and incoming from Solana.
  */
-function registerTerraSolanaMappings(terraBridgeAddress: string, tokens: TokenAddresses): void {
-  const containerName = 'cl8y-bridge-monorepo-localterra-1'
+function registerTerraSolanaMappings(
+  terraBridgeAddress: string,
+  tokens: TokenAddresses,
+  containerName: string
+): void {
   const keyName = 'test1'
   const destSolChainB64 = Buffer.from([0x00, 0x00, 0x00, 0x05]).toString('base64')
   const { solana } = tokens
@@ -1013,13 +1072,34 @@ function runSolanaRegisterQaTokens(tokens: TokenAddresses): void {
   }
 }
 
-function castSend(rpcUrl: string, to: string, sig: string, args: string): void {
+type CastSendOptions = { allowDuplicateChainRegister?: boolean }
+
+const CAST_EXEC_ENV = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
+
+function isIgnorableChainRegistryDuplicate(err: unknown): boolean {
+  return /ChainAlreadyRegistered|already registered/i.test(execSyncErrorText(err))
+}
+
+function castSend(
+  rpcUrl: string,
+  to: string,
+  sig: string,
+  args: string,
+  options?: CastSendOptions
+): void {
   try {
     execSync(
       `cast send ${to} ${sig} ${args} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: CAST_EXEC_ENV }
     )
-  } catch (error) {
-    console.warn(`[register-tokens] cast send failed (may already be registered):`, (error as Error).message?.slice(0, 200))
+  } catch (err) {
+    if (options?.allowDuplicateChainRegister && isIgnorableChainRegistryDuplicate(err)) {
+      console.log('[register-tokens] registerChain skipped (identifier already on ChainRegistry)')
+      return
+    }
+    const detail = execSyncErrorText(err)
+    throw new Error(
+      `[register-tokens] cast send failed (${sig.trim()} @ ${rpcUrl}): ${detail.slice(0, 2000)}`
+    )
   }
 }

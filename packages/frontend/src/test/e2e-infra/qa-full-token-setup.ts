@@ -80,7 +80,8 @@ async function main(): Promise<void> {
       anvil1,
       terra: terraBridge,
     },
-    tokenAddresses
+    tokenAddresses,
+    { evmRpcUrl: evmRpc, evm1RpcUrl: evm1Rpc }
   )
 
   console.log('\n[qa-full-token-setup] Solana cl8y_faucet: initialize + register_mint for QA SPL mints...')
