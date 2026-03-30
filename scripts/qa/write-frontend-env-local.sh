@@ -52,8 +52,9 @@ fi
 export QA_SHARED_HOST="${QA_SHARED_HOST:-1}"
 set -a
 if [ -f "$DEPLOY_ENV" ]; then
+  # Strip CRLF so sourcing works if the file was copied from Windows or via tee/SSH.
   # shellcheck source=/dev/null
-  source "$DEPLOY_ENV"
+  source <(sed 's/\r$//' "$DEPLOY_ENV")
 fi
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/qa/qa-host.env"
