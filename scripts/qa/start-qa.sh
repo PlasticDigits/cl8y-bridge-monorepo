@@ -92,6 +92,10 @@ export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL EVM1_RPC_URL SOLANA_RPC_URL
 make deploy
 
+echo "==> Sync .deploy/local.env EVM + EVM1 addresses from forge broadcast (repair stale/parsed drift)..."
+chmod +x "$REPO_ROOT/scripts/qa/sync-local-env-from-forge-broadcast.sh" 2>/dev/null || true
+"$REPO_ROOT/scripts/qa/sync-local-env-from-forge-broadcast.sh"
+
 echo "==> Optional: fund extra Solana QA wallets (SOLANA_QA_AIRDROP_WALLETS from .env)..."
 "$REPO_ROOT/scripts/solana/airdrop-qa-wallets.sh"
 

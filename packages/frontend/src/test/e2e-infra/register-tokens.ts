@@ -11,6 +11,7 @@ import { PublicKey } from '@solana/web3.js'
 import type { TokenAddresses } from './deploy-tokens'
 import { KDEC_DECIMALS } from './deploy-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
+import { terraIncomingSrcTokenB64 } from '../../services/terraTokenEncoding'
 
 const __registerTokensDir = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT_REGISTER_TOKENS = resolve(__registerTokensDir, '../../../../..')
@@ -579,8 +580,7 @@ function registerTerraTokensForEvmChains(
   }
 
   // Step 3: Set incoming token mapping (EVM → Terra) for both Anvil and Anvil1
-  const srcTokenHex = getKeccak256Uluna()
-  const srcTokenB64 = Buffer.from(srcTokenHex.replace('0x', ''), 'hex').toString('base64')
+  const srcTokenB64 = terraIncomingSrcTokenB64('uluna')
 
   for (const chainIdBytes of [[0x00, 0x00, 0x00, 0x01], [0x00, 0x00, 0x00, 0x03]]) {
     const evmChainIdB64 = Buffer.from(chainIdBytes).toString('base64')
@@ -683,10 +683,9 @@ function registerTerraTokensForEvmChains(
     }
 
     // Set incoming token mapping (EVM → Terra) for this CW20 from each EVM chain.
-    // The src_token is keccak256(cw20_address) — matching what EVM stores as destToken.
+    // src_token matches encode_token_address(local CW20) — canonical bech32 bytes32 (see bridge hash.rs).
     // src_decimals=18 because the source ERC20 tokens on EVM have 18 decimals.
-    const cw20SrcTokenHex = getKeccak256(tokenAddr)
-    const cw20SrcTokenB64 = Buffer.from(cw20SrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+    const cw20SrcTokenB64 = terraIncomingSrcTokenB64(tokenAddr)
 
     for (const dest of cw20DestChains) {
       const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
@@ -768,8 +767,7 @@ function registerTerraTokensForEvmChains(
     }
 
     // Set incoming token mapping for KDEC from each EVM chain
-    const kdecSrcTokenHex = getKeccak256(kdecAddr)
-    const kdecSrcTokenB64 = Buffer.from(kdecSrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+    const kdecSrcTokenB64 = terraIncomingSrcTokenB64(kdecAddr)
     for (const dest of kdecDestChains) {
       const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
       const setIncomingMsg = JSON.stringify({
@@ -850,8 +848,7 @@ function registerTerraTokensForEvmChains(
       try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
     }
 
-    const solSrcTokenHex = getKeccak256(solAddr)
-    const solSrcTokenB64 = Buffer.from(solSrcTokenHex.replace('0x', ''), 'hex').toString('base64')
+    const solSrcTokenB64 = terraIncomingSrcTokenB64(solAddr)
     for (const dest of solDestChains) {
       const evmChainIdB64 = Buffer.from(dest.chainId).toString('base64')
       const setIncomingMsg = JSON.stringify({
