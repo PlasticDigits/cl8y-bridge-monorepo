@@ -20,6 +20,13 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 
 export default async function teardown(): Promise<void> {
+  if (process.env.E2E_PRESERVE_INFRA === '1' || process.env.E2E_SKIP_TEARDOWN === '1') {
+    console.log(
+      '[teardown] E2E_PRESERVE_INFRA/E2E_SKIP_TEARDOWN set — skipping docker/env teardown (operator left running).'
+    )
+    return
+  }
+
   console.log('=== E2E Test Infrastructure Teardown ===\n')
 
   // 0. Stop operator and canceler first (before docker compose down)
