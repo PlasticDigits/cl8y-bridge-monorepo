@@ -50,9 +50,9 @@ services:
       - "127.0.0.1:${E2E_TERRA_LCD_PORT:-1317}:1317"    # LCD/REST
       - "127.0.0.1:${E2E_TERRA_GRPC_PORT:-9090}:9090"    # gRPC
       - "127.0.0.1:${E2E_TERRA_GRPC_WEB_PORT:-9091}:9091"    # gRPC-web
-    volumes:
-      # Persist chain data (optional - remove for fresh state each run)
-      - localterra-data:/home/terra/.terra
+    # No named volume: persisting /home/terra/.terra caused replay failures after image
+    # upgrades or long-lived state ("validator set ... empty set"). Chain data lives in
+    # the container; recreate the container for a clean genesis (see scripts/qa/README.md).
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:26657/status"]
       interval: 5s
@@ -176,7 +176,6 @@ services:
       - monitoring
 
 volumes:
-  localterra-data:
   postgres-data:
   terrad-keys:
   prometheus-data:

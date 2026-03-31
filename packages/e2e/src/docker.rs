@@ -70,7 +70,7 @@ impl DockerCompose {
     /// Stop and remove Docker Compose services
     ///
     /// When `remove_volumes` is true, passes `-v` to remove named volumes
-    /// (postgres-data, localterra-data, terrad-keys, etc.) for a fully clean state.
+    /// (postgres-data, terrad-keys, legacy localterra-data if present, etc.) for a fully clean state.
     /// Always passes `--remove-orphans` to clean up stale containers.
     pub async fn down(&self, remove_volumes: bool, docker_config: &DockerConfig) -> Result<()> {
         info!(
