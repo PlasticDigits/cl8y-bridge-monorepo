@@ -114,6 +114,12 @@ start_operator() {
         set +a
     fi
 
+    # deploy-evm-local.sh / deploy-evm1-local.sh forge --private-key: bridge operator = Anvil account #0.
+    # A different EVM_PRIVATE_KEY in repo-root .env makes withdrawApprove revert Unauthorized().
+    if [ "${QA_SHARED_HOST:-}" = "1" ] && [ "${QA_USE_ENV_EVM_PRIVATE_KEY:-}" != "1" ]; then
+        export EVM_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    fi
+
     # Check required env vars
     if [ -z "$DATABASE_URL" ]; then
         export DATABASE_URL="postgres://operator:operator@localhost:5433/operator"

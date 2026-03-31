@@ -76,7 +76,7 @@ This laptop workflow is for **manual frontend QA** (Vite in the browser). **Auto
 
 On the **laptop**, run the **`ssh -4 -N`** block from the **`make start-qa`** output. Leave that terminal open. Using **`127.0.0.1`** on both sides avoids some IPv6 **`[::1]`** bind issues.
 
-This forwards only the **chain** endpoints the frontend uses (Anvil ×2, LocalTerra RPC/LCD, Solana RPC + WebSocket + faucet). It does **not** include the operator HTTP API or canceler health port—the app talks to contracts via RPC/LCD only. To curl operator/canceler on the laptop, add `-L 127.0.0.1:<port>:127.0.0.1:<port>` manually (see `OPERATOR_API_PORT` / `CANCELER_HEALTH_URL` on the server, often `9094` / `9099`).
+This forwards only the **chain** endpoints the frontend uses (Anvil ×2, LocalTerra RPC/LCD, Solana RPC + WebSocket + faucet). It does **not** include the operator HTTP API or canceler health port—the app talks to contracts via RPC/LCD only. To curl operator/canceler on the laptop, add `-L 127.0.0.1:<port>:127.0.0.1:<port>` manually (see `OPERATOR_API_PORT` / `CANCELER_HEALTH_URL` on the server, often `9194` / `9099`).
 
 ### Step 2 — Copy **`.deploy/local.env`** from the QA host
 
@@ -156,4 +156,4 @@ EOF
 
 ## Appendix: operator API port
 
-On a shared host, Terra gRPC may use host port **9092**. The operator API defaults to **9092** in code; **`qa-host.env`** sets **`OPERATOR_API_PORT=9094`** so they do not collide.
+On a shared host, Terra gRPC may use host port **9092**. The operator API defaults to **9092** in code; **`qa-host.env`** sets **`OPERATOR_API_PORT=9194`** so it does not collide with Terra gRPC or with **9094** (often used by IPFS cluster on the same machine).
