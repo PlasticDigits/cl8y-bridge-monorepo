@@ -16,8 +16,11 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   _W=$'\033[97m'
   _N=$'\033[0m'
   _ALERT=$'\033[1;93;41m' # bold bright yellow on red
+  # Server vs laptop: distinct label colors (body text stays neutral _W where needed)
+  _SRV=$'\033[1;96m' # bright cyan — SERVER ONLY
+  _LAP=$'\033[1;95m' # bright magenta — LAPTOP ONLY
 else
-  _B='' _R='' _Y='' _G='' _C='' _M='' _W='' _N='' _ALERT=''
+  _B='' _R='' _Y='' _G='' _C='' _M='' _W='' _N='' _ALERT='' _SRV='' _LAP=''
 fi
 
 set -a
@@ -50,27 +53,32 @@ if [ "${QA_SSH_PORT}" != "22" ]; then
   SCP_P_ARGS="-P ${QA_SSH_PORT} "
 fi
 
-# --- visual block (ASCII + color) ---
-printf '%b\n' "${_C}${_B}"
+# --- visual block (ASCII + color): cyan = server, magenta = laptop ---
+printf '%b\n' "${_SRV}"
 cat <<'EOF'
-    _________________________________________
-   /                                         \
-  |    QA → laptop: SSH tunnels + env steps   |
-   \___  ___________________________________/
-       \/
+   __SERVER (QA host)__          ssh -L tunnels          __LAPTOP (your machine)__
+          | )=============================================( |
+          |'   copy-paste blocks below are NOT all on one host — read the tags   `|
 EOF
 printf '%b\n' "${_N}"
 
-printf '%b\n' "${_M}${_B}  --- Laptop workflow (do these on your laptop, in order) ---${_N}"
-printf '%b\n' "${_Y}  For local frontend manual QA only. Run Playwright/Vitest/e2e automated tests on this server${_N}"
-printf '%b\n' "${_Y}  (they need operator/canceler/DB ports and are not covered by the SSH -L list below).${_N}"
-printf '%b\n' "  Full doc: ${_G}scripts/qa/README.md${_N}  (section: On your laptop)"
+printf '%b\n' "${_SRV}  SERVER${_N} = this QA machine (where ${_G}make start-qa${_N} ran).  ${_LAP}LAPTOP${_N} = your local dev machine."
+printf '%b\n' "${_Y}  Manual frontend QA only. Run Playwright/Vitest/e2e on the ${_SRV}SERVER${_N} (needs operator/DB);${_N}"
+printf '%b\n' "${_Y}  the SSH -L list is for ${_LAP}LAPTOP${_N} → reach chain RPCs on loopback.${_N}"
+printf '%b\n' "  Full doc: ${_G}scripts/qa/README.md${_N}"
 echo ""
-printf '%b\n' "${_C}  Optional — bake SSH host/port into the lines below (e.g. in repo-root .env):${_N}"
-printf '%b\n' "    ${_G}QA_SSH_HOST${_N}   hostname or IP as seen from the laptop (user is $(whoami) from this shell)"
-printf '%b\n' "    ${_G}QA_SSH_PORT${_N}   if SSH is not on port 22 (adds -p / -P to ssh and scp)"
+printf '%b\n' "${_W}  Optional in repo-root ${_G}.env${_N}: ${_G}QA_SSH_HOST${_N} (hostname from laptop), ${_G}QA_SSH_PORT${_N} (if not 22)."
+printf '%b\n' "  SSH/scp user in the commands below is ${_G}$(whoami)${_N} (who ran start-qa on the server)."
 echo ""
-printf '%b\n' "${_R}${_B}  Step 1${_N} ${_W}— SSH port forwards (run on laptop; keep this terminal open).${_N}"
+
+printf '%b\n' "${_SRV}${_B}  Step 1 — SERVER ONLY${_N}"
+printf '%b\n' "${_SRV}         On the QA server only:${_N} confirm stacks after start-qa."
+printf '%b\n' "           ${_G}make status${_N}  — expect operator + canceler (and Docker chains) healthy."
+printf '%b\n' "${_SRV}         Do not run Vite or the SSH tunnel ${_W}on the server${_N} for this laptop QA flow.${_N}"
+echo ""
+
+printf '%b\n' "${_LAP}${_B}  Step 2 — LAPTOP ONLY${_N}"
+printf '%b\n' "${_LAP}         On your laptop only:${_N} SSH port forwards (keep this terminal open)."
 printf '%b\n' "           Use 127.0.0.1 on both sides to avoid IPv6 [::1] bind issues on some desktops."
 echo ""
 printf '%b\n' "${_G}${_B}ssh -4 -N ${SSH_P_ARGS}\\${_N}"
@@ -83,18 +91,21 @@ printf '%b\n' "${_G}  -L 127.0.0.1:${TERRA_RPC_PORT}:127.0.0.1:${TERRA_RPC_PORT}
 printf '%b\n' "${_G}  -L 127.0.0.1:${TERRA_LCD_PORT}:127.0.0.1:${TERRA_LCD_PORT} \\${_N}"
 printf '%b\n' "${_G}  ${SSH_DEST}${_N}"
 echo ""
-printf '%b\n' "${_R}${_B}  Step 2${_N} ${_W}— Copy .deploy/local.env from this host into your laptop repo clone:${_N}"
+
+printf '%b\n' "${_LAP}${_B}  Step 3 — LAPTOP ONLY${_N}"
+printf '%b\n' "${_LAP}         On your laptop only:${_N} copy ${_G}.deploy/local.env${_N} from the server into your laptop repo clone."
 printf '%b\n' "    ${_G}scp ${SCP_P_ARGS}${SSH_DEST}:${REPO_ROOT}/.deploy/local.env .deploy/local.env${_N}"
 echo ""
-printf '%b\n' "${_R}${_B}  Step 3${_N} ${_W}— Generate packages/frontend/.env.local (URLs + bridge addresses):${_N}"
+
+printf '%b\n' "${_LAP}${_B}  Step 4 — LAPTOP ONLY${_N}"
+printf '%b\n' "${_LAP}         On your laptop only:${_N} generate ${_G}packages/frontend/.env.local${_N} (URLs + bridge addresses)."
 printf '%b\n' "    ${_G}./scripts/qa/write-frontend-env-local.sh${_N}"
 echo ""
-printf '%b\n' "${_R}${_B}  Step 4${_N} ${_W}— Install deps and run Vite (on laptop —${_Y} not${_N} ${_W}tunneled):${_N}"
+
+printf '%b\n' "${_LAP}${_B}  Step 5 — LAPTOP ONLY${_N}"
+printf '%b\n' "${_LAP}         On your laptop only:${_N} install deps, run Vite locally (${_Y}not${_N} tunneled / no SSH -L for the dev server), then open the app URL."
 printf '%b\n' "    ${_G}cd packages/frontend && npm ci && npm run dev${_N}"
-echo ""
-printf '%b\n' "${_R}${_B}  Step 5${_N} ${_W}— Open the URL Vite prints (e.g. http://localhost:3000).${_N}"
-echo ""
-printf '%b\n' "  On this server: ${_G}make status${_N}  (expect operator + canceler running)"
+printf '%b\n' "           Then open the URL Vite prints (e.g. ${_G}http://localhost:3000${_N})."
 echo ""
 
 # Final banner: impossible to miss (exact closing line requested for start-qa)
