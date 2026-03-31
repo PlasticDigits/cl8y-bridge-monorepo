@@ -1,3 +1,4 @@
+/** INV-H1: V2 xchain hash vectors — see docs/SOLANA_BRIDGE_INVARIANTS.md */
 import { expect } from "chai";
 
 import pkg from "js-sha3";

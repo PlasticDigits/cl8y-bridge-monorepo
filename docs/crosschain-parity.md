@@ -2,6 +2,8 @@
 
 This document defines how CL8Y Bridge maintains hash parity across chains so that deposits on one chain can be cryptographically verified against withdrawals on another. It covers the V2 unified transfer hash, token encoding rules, address encoding, and the test coverage that validates parity across all four codebases.
 
+**Solana invariants and test matrix:** see [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) (numbered INV-* with links to `packages/contracts-solana/tests/*` and Rust tests).
+
 ## Overview
 
 Every cross-chain transfer produces a single canonical **transfer hash** that is identical whether computed on the source chain (as a "deposit hash") or the destination chain (as a "withdraw hash"). This hash is the primary key for cross-chain verification: cancelers compare the hash stored at the deposit source against the hash stored at the withdrawal destination.

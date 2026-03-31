@@ -1,3 +1,4 @@
+/** INV-W3 / canceler allowlist — see docs/SOLANA_BRIDGE_INVARIANTS.md */
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";

@@ -10,8 +10,8 @@ import {
   getAssociatedTokenAddressSync,
   getMint,
 } from "@solana/spl-token";
-import { keccak256 } from "viem";
 import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
+import { computeXchainHashIdBytes } from "../hashVerification";
 import { hexToUint8Array } from "../terra/withdrawSubmit";
 
 const BRIDGE_SEED = Buffer.from("bridge");
@@ -357,8 +357,8 @@ export async function fetchDepositNonce(
 }
 
 /**
- * Compute the transfer hash matching the Solana bridge program's compute_transfer_hash.
- * Layout: 7 x 32-byte slots = 224 bytes, then keccak256.
+ * Transfer hash matching `cl8y_bridge::hash::compute_transfer_hash` / `HashLib.computeXchainHashId`.
+ * Delegates to {@link computeXchainHashIdBytes} in `hashVerification.ts` (INV-HFE1).
  */
 export function computeTransferHash(
   srcChain: Uint8Array,
@@ -369,36 +369,15 @@ export function computeTransferHash(
   amount: bigint,
   nonce: bigint,
 ): Uint8Array {
-  const buf = new Uint8Array(224);
-
-  buf.set(srcChain.slice(0, 4), 0);
-  buf.set(destChain.slice(0, 4), 32);
-  buf.set(srcAccount.slice(0, 32), 64);
-  buf.set(destAccount.slice(0, 32), 96);
-  buf.set(token.slice(0, 32), 128);
-
-  const amountBytes = new Uint8Array(16);
-  let temp = amount;
-  for (let i = 15; i >= 0; i--) {
-    amountBytes[i] = Number(temp & 0xffn);
-    temp >>= 8n;
-  }
-  buf.set(amountBytes, 176);
-
-  const nonceBytes = new Uint8Array(8);
-  temp = nonce;
-  for (let i = 7; i >= 0; i--) {
-    nonceBytes[i] = Number(temp & 0xffn);
-    temp >>= 8n;
-  }
-  buf.set(nonceBytes, 216);
-
-  const hexHash = keccak256(buf);
-  const hash = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    hash[i] = parseInt(hexHash.slice(2 + i * 2, 4 + i * 2), 16);
-  }
-  return hash;
+  return computeXchainHashIdBytes(
+    srcChain.slice(0, 4),
+    destChain.slice(0, 4),
+    srcAccount.slice(0, 32),
+    destAccount.slice(0, 32),
+    token.slice(0, 32),
+    amount,
+    nonce,
+  );
 }
 
 /**

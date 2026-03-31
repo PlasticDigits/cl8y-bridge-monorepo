@@ -7,6 +7,8 @@
 
 See **[docs/SOLANA_BRIDGE_DEPOSITS.md](../../docs/SOLANA_BRIDGE_DEPOSITS.md)** for the full matrix and frontend behavior.
 
+**Security invariants and test matrix:** [docs/SOLANA_BRIDGE_INVARIANTS.md](../../docs/SOLANA_BRIDGE_INVARIANTS.md). **Fuzzing:** [docs/SOLANA_FUZZING.md](../../docs/SOLANA_FUZZING.md).
+
 ## Build
 
 ```bash

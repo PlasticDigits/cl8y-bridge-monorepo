@@ -1,3 +1,4 @@
+/** INV-W1/W2 — full deposit → withdraw flow; see docs/SOLANA_BRIDGE_INVARIANTS.md */
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {

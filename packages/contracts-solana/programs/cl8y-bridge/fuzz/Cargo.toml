@@ -1,0 +1,25 @@
+[package]
+name = "cl8y-bridge-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cl8y-bridge = { path = "..", default-features = false }
+
+[[bin]]
+name = "transfer_hash"
+path = "fuzz_targets/transfer_hash.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = true
+
+[workspace]
+members = ["."]

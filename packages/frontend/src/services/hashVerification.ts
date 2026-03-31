@@ -10,7 +10,15 @@
  * Chain IDs are bytes4 (4 bytes) left-padded to bytes32.
  */
 
-import { keccak256, encodeAbiParameters, parseAbiParameters, toBytes, type Address, type Hex } from 'viem'
+import {
+  keccak256,
+  encodeAbiParameters,
+  parseAbiParameters,
+  toBytes,
+  hexToBytes,
+  type Address,
+  type Hex,
+} from 'viem'
 
 // Native uluna token: keccak256("uluna") - matches Solidity keccak256(abi.encodePacked("uluna"))
 const ULUNA_TOKEN_BYTES32 = '0x56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da' as Hex
@@ -26,6 +34,69 @@ export function chainIdToBytes32(chainId: number): Hex {
   // bytes4 left-aligned in bytes32 (Solidity bytes32(bytes4))
   const hex = chainId.toString(16).padStart(8, '0')
   return `0x${hex}${'0'.repeat(56)}` as Hex
+}
+
+/**
+ * Big-endian bytes4 (e.g. Solana instruction / PDA) → left-padded bytes32 hex.
+ * Must match `chainIdToBytes32` when the four bytes encode the same uint32 BE.
+ */
+export function chainBytes4ToBytes32(chain4: Uint8Array): Hex {
+  if (chain4.length < 4) {
+    throw new Error('chainBytes4ToBytes32: expected at least 4 bytes')
+  }
+  const hex = Array.from(chain4.slice(0, 4))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+  return `0x${hex}${'0'.repeat(56)}` as Hex
+}
+
+/** Exactly 32 bytes → lowercase 0x-prefixed hex (canonical for V2 fields). */
+export function bytes32ToHex(bytes: Uint8Array): Hex {
+  if (bytes.length < 32) {
+    throw new Error('bytes32ToHex: expected at least 32 bytes')
+  }
+  const hex = Array.from(bytes.slice(0, 32))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+  return `0x${hex}` as Hex
+}
+
+/**
+ * V2 xchain hash from raw byte slices (matches `cl8y_bridge::hash::compute_transfer_hash` / Solana client).
+ * Single canonical path: delegates to {@link computeXchainHashId} (viem ABI encode + keccak256).
+ * **INV-HFE1** — see `docs/SOLANA_BRIDGE_INVARIANTS.md`.
+ */
+export function computeXchainHashIdFromBytes(
+  srcChain: Uint8Array,
+  destChain: Uint8Array,
+  srcAccount: Uint8Array,
+  destAccount: Uint8Array,
+  token: Uint8Array,
+  amount: bigint,
+  nonce: bigint
+): Hex {
+  return computeXchainHashId(
+    chainBytes4ToBytes32(srcChain),
+    chainBytes4ToBytes32(destChain),
+    bytes32ToHex(srcAccount),
+    bytes32ToHex(destAccount),
+    bytes32ToHex(token),
+    amount,
+    nonce
+  )
+}
+
+/** Same as {@link computeXchainHashIdFromBytes} but returns 32 raw bytes (e.g. Solana PDA seeds). */
+export function computeXchainHashIdBytes(
+  srcChain: Uint8Array,
+  destChain: Uint8Array,
+  srcAccount: Uint8Array,
+  destAccount: Uint8Array,
+  token: Uint8Array,
+  amount: bigint,
+  nonce: bigint
+): Uint8Array {
+  return hexToBytes(computeXchainHashIdFromBytes(srcChain, destChain, srcAccount, destAccount, token, amount, nonce))
 }
 
 /**

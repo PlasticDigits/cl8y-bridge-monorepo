@@ -1,4 +1,5 @@
 //! Solana bridge **offline** checks (no RPC, no `#[ignore]`).
+//! **INV-H1** — see `docs/SOLANA_BRIDGE_INVARIANTS.md`.
 //!
 //! Full on-chain flows (deposit → withdraw_submit → withdraw_approve with `NonceUsed` → execute)
 //! live in [`packages/contracts-solana/tests/deposit_withdraw.test.ts`](../../contracts-solana/tests/deposit_withdraw.test.ts)

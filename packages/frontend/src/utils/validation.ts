@@ -1,5 +1,9 @@
 /**
- * Validation utilities for addresses and hashes
+ * Validation utilities for addresses and hashes.
+ *
+ * `isValidXchainHashId` / `normalizeXchainHashId` are permissive for URL and form input.
+ * For strict comparisons to on-chain values, use `normalizeHash` in `services/hashVerification.ts`.
+ * See `docs/SOLANA_BRIDGE_INVARIANTS.md` (INV-HFE1).
  */
 
 const EVM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/
