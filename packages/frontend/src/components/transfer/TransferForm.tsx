@@ -239,7 +239,7 @@ export function TransferForm() {
     step: solanaStep,
     txSignature: solanaTxSig,
     confirmedDepositNonce,
-    error: _solanaError,
+    error: solanaError,
     deposit: solanaDeposit,
     reset: resetSolana,
   } = useSolanaDeposit()
@@ -668,7 +668,10 @@ export function TransferForm() {
     evmStatus === 'waiting-approval' ||
     evmStatus === 'depositing' ||
     evmStatus === 'waiting-deposit' ||
-    terraStatus === 'locking'
+    terraStatus === 'locking' ||
+    solanaStep === 'building' ||
+    solanaStep === 'signing' ||
+    solanaStep === 'confirming'
 
   const registryDecimalsFallback = useMemo(
     () => getTerraTokenDecimals(selectedTokenId, registryTokens),
@@ -1207,6 +1210,15 @@ export function TransferForm() {
     navigate,
   ])
 
+  // Solana deposit errors live only in useSolanaDeposit — mirror EVM/Terra by surfacing them in the form.
+  useEffect(() => {
+    if (solanaStep === 'error' && solanaError) {
+      setError(solanaError)
+      frozenChainsRef.current = null
+      resetSolana()
+    }
+  }, [solanaStep, solanaError, resetSolana])
+
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
     const prevDest = destChain
@@ -1237,7 +1249,14 @@ export function TransferForm() {
     setError(null)
     setTxHash(null)
 
-    if (!isWalletConnected || !amount || !isValidAmount(amount)) return
+    if (!isWalletConnected) {
+      setError(`Connect your ${walletLabel} wallet to continue`)
+      return
+    }
+    if (!amount || !isValidAmount(amount)) {
+      setError('Enter a valid amount greater than zero')
+      return
+    }
     if (isBelowMin) {
       setError(`Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel})` : ''}`)
       return

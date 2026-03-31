@@ -470,6 +470,7 @@ function SolanaClaimButton({
 
       const sig = await sendSolanaTransaction(connection, tx, walletType)
       setClaimTx(sig)
+      sounds.playSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Claim failed')
     } finally {
@@ -477,34 +478,68 @@ function SolanaClaimButton({
     }
   }
 
-  if (!address) return <span className="text-gray-500 text-xs">Connect wallet</span>
-  if (claimTx) {
-    const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
-    const isLocal = /localhost|127\.0\.0\.1/.test(rpcUrl)
-    const explorerHref = isLocal
-      ? `${chain.explorerTxUrl}${claimTx}?cluster=custom&customUrl=${encodeURIComponent(rpcUrl)}`
-      : `${chain.explorerTxUrl}${claimTx}?cluster=devnet`
-    return (
-      <a
-        href={explorerHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-xs text-green-400 hover:underline"
-      >
-        Claimed ✓
-      </a>
-    )
+  if (!chain.faucetAddress) {
+    return <span className="text-xs text-gray-500">Not deployed</span>
   }
-  if (error) return <span className="text-xs text-red-400" title={error}>Failed</span>
+
+  if (!address) {
+    return <span className="text-xs text-gray-500">Connect Solana</span>
+  }
+
+  const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+  const isLocalRpc = /localhost|127\.0\.0\.1/.test(rpcUrl)
+  const explorerHref =
+    claimTx &&
+    (isLocalRpc
+      ? `${chain.explorerTxUrl}${claimTx}?cluster=custom&customUrl=${encodeURIComponent(rpcUrl)}`
+      : `${chain.explorerTxUrl}${claimTx}?cluster=devnet`)
+
+  const isBusy = claiming
+  const title = isBusy ? 'Signing...' : claimTx ? 'Claimed!' : 'Claim tokens'
 
   return (
-    <button
-      onClick={handleClaim}
-      disabled={claiming || !chain.faucetAddress}
-      className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-500 disabled:opacity-50"
-    >
-      {claiming ? '...' : 'Claim'}
-    </button>
+    <div className="flex flex-col items-end gap-0.5">
+      <button
+        type="button"
+        disabled={isBusy}
+        onClick={() => {
+          sounds.playButtonPress()
+          void handleClaim()
+        }}
+        title={title}
+        aria-label={title}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded border transition-colors ${
+          isBusy
+            ? 'border-yellow-500/40 bg-yellow-900/20 text-yellow-300 cursor-wait'
+            : claimTx
+              ? 'border-green-500/40 bg-green-900/20 text-green-300'
+              : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
+        }`}
+      >
+        {isBusy ? (
+          <Spinner className="h-4 w-4" />
+        ) : claimTx ? (
+          <span className="text-base font-bold" aria-hidden title="Already claimed">
+            ✓
+          </span>
+        ) : (
+          <span className="text-base" aria-hidden>
+            💧
+          </span>
+        )}
+      </button>
+      {explorerHref && (
+        <a
+          href={explorerHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+        >
+          tx ↗
+        </a>
+      )}
+      {error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+    </div>
   )
 }
 

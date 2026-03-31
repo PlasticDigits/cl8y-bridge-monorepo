@@ -12,6 +12,7 @@
 
 import { useState, useCallback } from 'react'
 import { Connection, PublicKey } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import type { Address, Hex } from 'viem'
 import { hexToBytes, pad } from 'viem'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
@@ -27,6 +28,8 @@ import { bytes32ToSolanaAddress } from '../services/solana/address'
 import {
   bytes4HexToUint8Array,
   fetchTokenMappingLocalMint,
+  findBridgePda,
+  WSOL_MINT,
 } from '../services/solana/transaction'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
@@ -444,6 +447,42 @@ export function useTokenVerification() {
           } catch (err) {
             checks.push({
               label: `TokenMapping PDA (→ ${remoteName})`,
+              status: 'error',
+              detail: String(err),
+            })
+          }
+        }
+
+        // SPL lock/unlock deposits credit a bridge-owned ATA; TokenMapping alone is not enough.
+        if (!expectedMint.equals(WSOL_MINT)) {
+          try {
+            const mintInfo = await connection.getAccountInfo(expectedMint)
+            if (!mintInfo) {
+              checks.push({
+                label: 'Bridge SPL vault (for deposit_spl)',
+                status: 'fail',
+                detail: 'SPL mint account not found on Solana RPC',
+              })
+            } else {
+              const bridgePda = findBridgePda(programId)
+              const vault = getAssociatedTokenAddressSync(
+                expectedMint,
+                bridgePda,
+                true,
+                mintInfo.owner,
+              )
+              const vaultInfo = await connection.getAccountInfo(vault)
+              checks.push({
+                label: 'Bridge SPL vault (for deposit_spl)',
+                status: vaultInfo ? 'pass' : 'fail',
+                detail: vaultInfo
+                  ? `Bridge custodian ATA exists (${vault.toBase58()})`
+                  : `No ATA at ${vault.toBase58()} — create the bridge vault for this mint (admin: spl-token / getOrCreateAssociatedTokenAccount for bridge PDA, or re-run register-qa-tokens)`,
+              })
+            }
+          } catch (err) {
+            checks.push({
+              label: 'Bridge SPL vault (for deposit_spl)',
               status: 'error',
               detail: String(err),
             })

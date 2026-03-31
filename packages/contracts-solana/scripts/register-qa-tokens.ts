@@ -11,8 +11,51 @@ import { execSync } from 'child_process'
 import * as anchor from '@coral-xyz/anchor'
 import { Program, AnchorProvider, Wallet } from '@coral-xyz/anchor'
 import { Connection, Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
+import {
+  getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
+} from '@solana/spl-token'
 import type { Cl8yBridge } from '../target/types/cl8y_bridge'
 import { findBridgePda, findChainPda, findTokenPda } from '../tests/helpers/setup'
+
+/** Wrapped SOL — UI uses `deposit_native`; no bridge SPL vault required. */
+const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112')
+
+async function mintTokenProgramId(connection: Connection, mint: PublicKey): Promise<PublicKey> {
+  const info = await connection.getAccountInfo(mint)
+  if (!info) throw new Error(`Mint account not found: ${mint.toBase58()}`)
+  return info.owner
+}
+
+/**
+ * Lock/unlock SPL deposits need a bridge-owned ATA (vault). `register_token` only creates TokenMapping.
+ */
+async function ensureBridgeSplVault(
+  connection: Connection,
+  payer: Keypair,
+  programId: PublicKey,
+  mint: PublicKey,
+): Promise<void> {
+  if (mint.equals(WSOL_MINT)) return
+
+  const [bridgePda] = findBridgePda(programId)
+  const tokenProgram = await mintTokenProgramId(connection, mint)
+  const ata = getAssociatedTokenAddressSync(mint, bridgePda, true, tokenProgram)
+  const info = await connection.getAccountInfo(ata)
+  if (info) return
+
+  await getOrCreateAssociatedTokenAccount(
+    connection,
+    payer,
+    mint,
+    bridgePda,
+    true,
+    'confirmed',
+    undefined,
+    tokenProgram,
+  )
+  console.log(`[register-qa-tokens] Created bridge SPL vault for mint ${mint.toBase58()} → ${ata.toBase58()}`)
+}
 
 const CHAIN_ANVIL = [0x00, 0x00, 0x00, 0x01] as const
 const CHAIN_TERRA = [0x00, 0x00, 0x00, 0x02] as const
@@ -225,7 +268,20 @@ async function main(): Promise<void> {
     await registerTokenIfNeeded(program, bridgePda, admin, r.mint, destAnvil1, r.anvil1Tok, r.dec, r.srcAnvil1)
   }
 
-  console.log('[register-qa-tokens] Done (register_token matrix for QA tokens).')
+  const uniqueMints: PublicKey[] = []
+  const seenMint = new Set<string>()
+  for (const r of rows) {
+    const k = r.mint.toBase58()
+    if (!seenMint.has(k)) {
+      seenMint.add(k)
+      uniqueMints.push(r.mint)
+    }
+  }
+  for (const mint of uniqueMints) {
+    await ensureBridgeSplVault(connection, kp, program.programId, mint)
+  }
+
+  console.log('[register-qa-tokens] Done (register_token matrix + bridge SPL vault ATAs for lock/unlock mints).')
 }
 
 main().catch((e) => {
