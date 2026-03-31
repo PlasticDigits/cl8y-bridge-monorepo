@@ -61,7 +61,7 @@
 | Proptest | `hash.rs`, `decimal.rs`, `rate_limit.rs`; multichain-rs `proptest_xchain_hash` | Same |
 | Anchor integration | `anchor test` in `packages/contracts-solana` | [.github/workflows/test.yml](../.github/workflows/test.yml) `contracts-solana` job |
 | cargo-fuzz | `programs/cl8y-bridge/fuzz/` | Optional / manual |
-| E2E offline | `cargo test --test test_solana_flows` in `packages/e2e` | Not isolated in `test.yml`; runs with full `packages/e2e` when executed |
+| E2E offline | `cargo test --test test_solana_flows` in `packages/e2e` | [.github/workflows/test.yml](../.github/workflows/test.yml) job `e2e-offline-solana` |
 | Frontend unit | `vitest run hashVerification.test.ts` | Frontend job (if present in repo) |
 
 ### 4.2 INV ↔ test mapping (spot-checked)
@@ -71,15 +71,15 @@
 | INV-H1 | `hash.rs` unit tests, `hash_parity.test.ts`, `hashVerification.test.ts`, `test_solana_flows.rs` |
 | INV-H2 | `deposit_*`, `withdraw_submit`, registry tests (`bridge.test.ts`, docs narrative) |
 | INV-W1–W3 | `deposit_withdraw.test.ts`, `cancel_flow.test.ts`, `cancel_blocks_theft.test.ts`, `rate_limit_integration.test.ts`, `full_security_audit.test.ts` |
-| INV-D1–D2 | `spl_security.test.ts`, `deposit_withdraw.test.ts`, `security_audit.test.ts`, `hardening.test.ts` |
+| INV-D1–D3 | `spl_security.test.ts`, `token_2022_flow.test.ts`, `deposit_withdraw.test.ts`, `security_audit.test.ts`, `hardening.test.ts` |
 | INV-F1 | `faucet.test.ts` |
 
 ### 4.3 Gaps (residual)
 
-- **Token-2022:** Matrix row in [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) marks explicit coverage gap.
-- **Instruction fuzzing:** Not implemented; hash-only fuzz per [SOLANA_FUZZING.md](./SOLANA_FUZZING.md).
-- **Live Solana E2E:** `canceler_solana_destination.rs` and related tests gated on `SOLANA_ENABLED`; confirm release checklist runs them when Solana is in scope.
-- **Rust integration tests inside the program crate:** Behavior exercised primarily via Anchor TS + validator.
+- **Token-2022:** Plain-mint path covered by `token_2022_flow.test.ts`; rebasing / transfer-fee tokens explicitly unsupported per INV-D3 in [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md).
+- **Instruction fuzzing:** Hash-only today; future instruction/CPI scope documented in [SOLANA_FUZZING.md](./SOLANA_FUZZING.md) (“Future work”).
+- **Live Solana E2E:** `canceler_solana_destination.rs` and related tests gated on `SOLANA_ENABLED`; default `e2e.yml` does not set it — see [testing.md](./testing.md) pre-release notes and [packages/e2e/README.md](../packages/e2e/README.md).
+- **Rust integration tests inside the program crate:** Optional `solana-program-test` path noted in [testing.md](./testing.md); primary evidence remains Anchor TS + offline goldens.
 
 ---
 
@@ -103,11 +103,11 @@
 
 ## 7. Recommendations (non-blocking)
 
-1. Optionally **merge** `useTokenVerification` Terra keccak helpers with `terraTokenEncoding.ts` to reduce drift risk.
-2. Optionally **extract** shared `computeTransferHashTs` (viem or js-sha3) into `contracts-solana/tests/helpers/hash.ts` and import from multiple test files.
-3. Replace **cast keccak** in Playwright/e2e helpers with viem where feasible so one toolchain owns V2 encoding in TS.
-4. Add **explicit Token-2022** deposit/withdraw integration cases if production uses Token-2022 mints.
-5. Consider **CI job** that runs `cargo test -p cl8y-e2e --test test_solana_flows` (fast, no RPC) if not already covered by a monolithic e2e test run.
+1. **Done:** `useTokenVerification` routes Terra encoding through `terraTokenEncoding.ts` (`terraIncomingSrcTokenB64WithKeccakFallback`, `terraDestTokenKeccakUtf8Bytes`).
+2. **Done:** Shared Anchor test helper `packages/contracts-solana/tests/helpers/hash.ts` (`computeTransferHash`, js-sha3).
+3. **Done:** `computeXchainHashIdViaCast` delegates to `hashVerification.computeXchainHashId` (viem).
+4. **Done:** Plain Token-2022 flow in `token_2022_flow.test.ts` + INV-D3 unsupported-token policy.
+5. **Done:** `test.yml` job `e2e-offline-solana` runs `cargo test --test test_solana_flows` from `packages/e2e` (no monorepo-root `-p`; use `cd packages/e2e`).
 
 ---
 

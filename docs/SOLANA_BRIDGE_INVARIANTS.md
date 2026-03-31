@@ -72,6 +72,15 @@ While `bridge.paused`, user-facing deposit and withdraw paths reject.
 
 | Evidence | `security_audit.test.ts`, `hardening.test.ts` |
 
+### INV-D3 — Token-2022 support scope (plain mint only)
+
+SPL paths use `anchor_spl::token_interface` (`transfer_checked`, etc.), so **plain** Token-2022 mints (same 1:1 transfer semantics as classic SPL) are supported. The following are **explicitly not supported**; operators must not register such mints for bridge custody:
+
+- **Rebasing tokens** — balances or total supply that change outside normal user-initiated transfers (e.g. interest-bearing / rebase-style mechanics). The bridge assumes instructed amounts match `transfer_checked` and bookkeeping.
+- **Transfer tax / transfer-fee / hook-style tokens** — where the amount received by the recipient or debited from the sender does not equal the instructed transfer amount (Token-2022 transfer-fee extensions and similar). Bridge accounting assumes the declared amount equals tokens moved in/out of bridge ATAs.
+
+| Evidence | `packages/contracts-solana/tests/token_2022_flow.test.ts` (plain Token-2022 lock/unlock deposit → withdraw); narrative above |
+
 ---
 
 ## Faucet (separate program)
@@ -97,7 +106,7 @@ Rows are review categories; cells name primary test files that exercise them (no
 | Operator / admin gates | `bridge.test.ts`, `security_audit.test.ts` | ✓ | — | `rate_limit_integration.test.ts` | — |
 | Paused bridge | `security_audit.test.ts`, `hardening.test.ts` | ✓ | — | — | — |
 | Hash / PDA confusion | `hash_parity.test.ts`, `test_solana_flows.rs` | `cancel_blocks_theft.test.ts` | — | — | — |
-| **Token-2022-only edge cases** | Partial via `anchor-spl` | — | **Gap:** add explicit Token-2022 mint path if not already in `spl_security.test.ts` | — | — |
+| **Token-2022 (plain mint; INV-D3)** | `token_2022_flow.test.ts` (`token_interface` + `TOKEN_2022_PROGRAM_ID`) | — | ✓ unsupported: rebasing, transfer-fee/tax — see INV-D3 | — | — |
 
 ---
 
@@ -111,4 +120,4 @@ User-visible and client-built transfer ids must use the same V2 digest as on-cha
 
 ## Fuzzing
 
-See `docs/SOLANA_FUZZING.md` for `cargo-fuzz` layout and scope (hash packing + future instruction parsing). Property tests today: `hash.rs` (proptest vs `tiny-keccak`), `decimal.rs` (proptest), `packages/multichain-rs/src/hash.rs` (proptest).
+See `docs/SOLANA_FUZZING.md` for `cargo-fuzz` layout and scope (hash packing; **Future work** section for instruction/CPI fuzzing). Property tests today: `hash.rs` (proptest vs `tiny-keccak`), `decimal.rs` (proptest), `packages/multichain-rs/src/hash.rs` (proptest).

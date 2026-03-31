@@ -6,6 +6,12 @@
  */
 
 import { execSync } from 'child_process'
+import type { Address, Hex } from 'viem'
+
+import {
+  computeXchainHashId,
+  evmAddressToBytes32,
+} from '../../src/services/hashVerification'
 
 // Event topic hashes (keccak256 of event signatures)
 export const EVENT_TOPICS = {
@@ -73,44 +79,43 @@ export function withdrawSubmitViaCast(params: {
   return hashMatch?.[1] ?? ''
 }
 
+/** Solidity `bytes32(bytes4)` — four high bytes, rest zero. */
+function bytes4HexToChainBytes32(chain4: string): Hex {
+  const raw = chain4.replace(/^0x/i, '').toLowerCase()
+  const eight = raw.slice(0, 8).padEnd(8, '0')
+  return `0x${eight}${'0'.repeat(56)}` as Hex
+}
+
+function tokenToBytes32Hex(token: string): Hex {
+  const t = token.trim()
+  if (t.length <= 42) {
+    return evmAddressToBytes32(t as Address)
+  }
+  return (t.startsWith('0x') ? t : `0x${t}`) as Hex
+}
+
 /**
- * Compute the keccak256 transfer hash via `cast keccak`.
- * Matches Bridge.sol _computeXchainHashId logic.
+ * V2 xchain transfer id — same as `HashLib.computeXchainHashId` / `hashVerification.computeXchainHashId`.
+ * (Name kept for existing e2e / integration imports.)
  */
 export function computeXchainHashIdViaCast(params: {
   srcChain: string       // bytes4
   destChain: string      // bytes4
   srcAccount: string     // bytes32
   destAccount: string    // bytes32
-  token: string          // address (will be padded to bytes32)
-  amount: string         // uint256
-  nonce: string          // uint64
+  token: string          // address or full bytes32 hex
+  amount: string         // uint256 decimal string
+  nonce: string          // uint64 decimal string
 }): string {
-  // The contract uses: keccak256(abi.encode(bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)))
-  // bytes4 → bytes32 is RIGHT-padded (e.g. 0x00000001 → 0x0000000100...00)
-  // uint64 nonce → uint256
-  const castEnv = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
-  const encoded = execSync(
-    [
-      'cast abi-encode',
-      '"foo(bytes32,bytes32,bytes32,bytes32,bytes32,uint256,uint256)"',
-      // bytes4 → bytes32: right-padded (Solidity: bytes32(bytes4_val))
-      params.srcChain.slice(2).padEnd(64, '0').replace(/^/, '0x'),
-      params.destChain.slice(2).padEnd(64, '0').replace(/^/, '0x'),
-      params.srcAccount,
-      params.destAccount,
-      // Token: if it's an address, left-pad to bytes32
-      params.token.length <= 42
-        ? '0x' + params.token.slice(2).toLowerCase().padStart(64, '0')
-        : params.token,
-      params.amount,
-      params.nonce,
-    ].join(' '),
-    { encoding: 'utf8', timeout: 5_000, env: castEnv }
-  ).trim()
-
-  const result = execSync(`cast keccak ${encoded}`, { encoding: 'utf8', timeout: 5_000, env: castEnv })
-  return result.trim()
+  return computeXchainHashId(
+    bytes4HexToChainBytes32(params.srcChain),
+    bytes4HexToChainBytes32(params.destChain),
+    params.srcAccount as Hex,
+    params.destAccount as Hex,
+    tokenToBytes32Hex(params.token),
+    BigInt(params.amount),
+    BigInt(params.nonce)
+  )
 }
 
 /**

@@ -425,25 +425,32 @@ Options:
 | `scripts/deploy-evm-local.sh` | Deploy EVM to Anvil + write `.deploy/local.env` | Used by `make deploy-evm` |
 | `scripts/lib-local-deploy-env.sh` | Helpers for `.deploy/local.env` | Sourced by deploy + `setup-bridge` |
 
-### Solana Rust E2E (`make solana-test-e2e`)
+### Solana — offline hash / PDA goldens (`test_solana_flows`)
 
-`packages/e2e/tests/test_solana_flows.rs` exercises the deployed Anchor program against a **local** validator (`http://localhost:8899`). Tests are `#[ignore]`; the Makefile runs them with `cargo test -- --ignored`.
+`packages/e2e/tests/test_solana_flows.rs` is an **offline** integration test target: V2 hash parity and PDA derivations against `multichain-rs`, **no** Solana RPC and **no** `#[ignore]`. It does not replace `anchor test`; it complements it for INV-H1-style goldens.
 
-**Prerequisites**
+```bash
+cd packages/e2e && cargo test --test test_solana_flows -- --nocapture
+# or from repo root (sets default program id from deploy keypair when present):
+make solana-test-e2e
+```
 
-1. `make start` (or otherwise run `solana-test-validator` / Docker Solana service).
-2. `make deploy-solana` (or `anchor deploy` to localnet). Localnet **program** keypairs are committed under `packages/contracts-solana/keys/localnet/`; `scripts/solana/anchor-deploy-localnet.sh` copies them to `target/deploy/` before build so `declare_id!` matches without `anchor keys sync`.
-3. `./scripts/setup-bridge.sh` after deploy (included in `make deploy`) so the bridge PDA exists and chains are registered — `setup-bridge.sh` picks up `SOLANA_PROGRAM_ID` from `.deploy/local.env` or the deploy keypair if the env var is unset.
-4. Optional: export `SOLANA_PROGRAM_ID` only if you deploy a different program id than the repo’s committed localnet keypair.
+**CI:** `.github/workflows/test.yml` job `e2e-offline-solana` runs the same command on pushes/PRs that touch `packages/e2e/**` (and other paths in that workflow).
 
-**Program id resolution**
+### Solana — live canceler / operator E2E (`SOLANA_ENABLED`)
 
-- **Makefile / CI:** `make solana-test-e2e` sets `SOLANA_PROGRAM_ID` from the deploy keypair when the env var is empty (same path as `setup-bridge.sh`).
-- **Cargo only:** `cd packages/e2e && SOLANA_PROGRAM_ID=... cargo test --test test_solana_flows -- --ignored` — or rely on the default in `test_solana_flows.rs` (matches the committed localnet bridge program id).
+Rust scenarios that exercise the canceler or operator against a **real** Solana JSON-RPC (e.g. `packages/e2e/src/tests/canceler_solana_destination.rs`) require `SOLANA_ENABLED=true` and related env (`SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, keypair paths, etc.). The default **`.github/workflows/e2e.yml`** full suite does **not** set `SOLANA_ENABLED`; those flows are not covered by routine GitHub E2E alone.
 
-**Airdrop failures**
+**Pre-release:** Before production cuts that include Solana, run `cl8y-e2e` with a reachable Solana RPC and `SOLANA_ENABLED=true` (and documented env) so canceler/operator Solana paths are exercised — for example from `packages/e2e` after `cargo run -p cl8y-e2e -- setup` and configuring Solana in `.env`, then running the relevant tests or the full `run` with Solana enabled.
 
-The validator must expose RPC (and faucet) on the same URL the tests use (`localhost:8899` with the default Docker compose mapping). If airdrop returns zero balance, confirm you are not pointing at devnet/mainnet and that the Solana container is healthy (`make status`).
+### Optional: in-program Rust tests
+
+Today, Solana program behavior is validated primarily by **Anchor TypeScript** tests (`anchor test`) and the offline goldens above. A further optional hardening step is **`solana-program-test`** (or similar) in the program crate for decode-only or lightweight CPI scenarios; that harness is not wired in this repo yet.
+
+**Program id for offline goldens**
+
+- Override with `SOLANA_PROGRAM_ID` if needed; otherwise `test_solana_flows.rs` defaults to the Anchor workspace id (committed localnet bridge program id).
+- `make solana-test-e2e` sets `SOLANA_PROGRAM_ID` from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` when the env var is empty.
 
 ---
 

@@ -11,6 +11,11 @@ cargo run -p cl8y-e2e -- run      # Run all tests
 cargo run -p cl8y-e2e -- teardown # Clean up
 ```
 
+## Solana coverage notes
+
+- **Offline goldens (no RPC):** `cd packages/e2e && cargo test --test test_solana_flows` — V2 hash / PDA checks; runs in CI (`test.yml` job `e2e-offline-solana`).
+- **Live Solana (canceler / operator):** Some tests need `SOLANA_ENABLED=true` and a real RPC. The default GitHub `e2e.yml` workflow does not enable this. For production releases, run the suite locally or in internal CI with Solana env configured (see `docs/testing.md`).
+
 ## Commands
 
 | Command | Description |

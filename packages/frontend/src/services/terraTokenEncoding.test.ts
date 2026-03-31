@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { hexToBytes, keccak256, toBytes } from 'viem'
 
 import { tokenUlunaBytes32 } from './hashVerification'
-import { terraIncomingSrcTokenB64 } from './terraTokenEncoding'
+import {
+  terraDestTokenKeccakUtf8Bytes,
+  terraIncomingSrcTokenB64,
+  terraIncomingSrcTokenB64WithKeccakFallback,
+} from './terraTokenEncoding'
 
 describe('terraIncomingSrcTokenB64', () => {
   it('matches keccak256(utf8 uluna)) for native denom', () => {
@@ -26,5 +30,34 @@ describe('terraIncomingSrcTokenB64', () => {
     const expectedHex = keccak256(toBytes('uusd'))
     const expectedB64 = Buffer.from(hexToBytes(expectedHex)).toString('base64')
     expect(b64).toBe(expectedB64)
+  })
+})
+
+describe('terraIncomingSrcTokenB64WithKeccakFallback', () => {
+  it('falls back to keccak when strict CW20 decode fails (matches on-chain addr_validate fail)', () => {
+    // 44-char terra1 shape but invalid bech32 charset → terraAddressToBytes32 / strict path throws
+    const bad = `terra1${'?'.repeat(38)}`
+    expect(() => terraIncomingSrcTokenB64(bad)).toThrow()
+    const b64 = terraIncomingSrcTokenB64WithKeccakFallback(bad)
+    const expectedHex = keccak256(toBytes(bad))
+    const expectedB64 = Buffer.from(hexToBytes(expectedHex)).toString('base64')
+    expect(b64).toBe(expectedB64)
+  })
+
+  it('matches strict helper for valid CW20', () => {
+    const cw20 =
+      'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh'
+    expect(terraIncomingSrcTokenB64WithKeccakFallback(cw20)).toBe(
+      terraIncomingSrcTokenB64(cw20)
+    )
+  })
+})
+
+describe('terraDestTokenKeccakUtf8Bytes', () => {
+  it('matches keccak utf8 bytes32 for a denom string', () => {
+    const bytes = terraDestTokenKeccakUtf8Bytes('uluna')
+    expect(Buffer.from(bytes).toString('hex')).toBe(
+      tokenUlunaBytes32().replace(/^0x/, '')
+    )
   })
 })

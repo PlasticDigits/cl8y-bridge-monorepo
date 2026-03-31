@@ -9,6 +9,7 @@ on:
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
       - 'packages/multichain-rs/**'
+      - 'packages/e2e/**'
       - '.github/workflows/test.yml'
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - 'packages/canceler/**'
       - 'packages/contracts-terraclassic/**'
       - 'packages/multichain-rs/**'
+      - 'packages/e2e/**'
       - '.github/workflows/test.yml'
   workflow_dispatch:
 
@@ -225,6 +227,32 @@ jobs:
       - name: Run cargo audit
         working-directory: packages/multichain-rs
         run: cargo audit
+
+  # ==========================================================================
+  # E2E offline Solana hash / PDA goldens (no validator, no Anchor)
+  # ==========================================================================
+  e2e-offline-solana:
+    name: E2E offline Solana goldens
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/e2e -> target
+
+      - name: Run test_solana_flows
+        working-directory: packages/e2e
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --test test_solana_flows -- --nocapture
 
   # ==========================================================================
   # Terra Contracts Tests (CosmWasm)

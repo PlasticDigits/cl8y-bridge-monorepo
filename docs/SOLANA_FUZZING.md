@@ -23,3 +23,11 @@ cargo fuzz run transfer_hash -- -runs=10000
 **Limits:** This does **not** fuzz full Anchor instruction dispatch (account metas, CPI, Sysvar). Extending fuzzing to instruction decoding would require extracting pure parse helpers or using a custom harness with structured inputs. Full SBF deployment paths are not exercised by `cargo-fuzz`.
 
 **Why a separate fuzz workspace:** The fuzz crate must be its own workspace root (`[workspace]` in `fuzz/Cargo.toml`) per `cargo-fuzz` requirements.
+
+## Future work (instruction / CPI scope)
+
+Not implemented today; tracked for security review completeness:
+
+- **Instruction surface:** Fuzz or property-test instruction discriminators plus decoded args after splitting an input buffer into `(discriminator, payload)`, or a structured harness that builds valid `AccountMeta` lists and checks `try_accounts` / constraint failures without panics.
+- **Pure parse helpers:** Refactor hot paths into `no_std`-friendly functions that take `&[u8]` and return `Result`, then call them from both handlers and fuzz targets.
+- **CPI and Sysvar:** `cargo-fuzz` runs the program crate on the host; it does not execute real CPIs against a Sysvar or token program. Heavy coverage of CPI edges remains the job of Anchor integration tests and (optionally) `solana-program-test` style harnesses.

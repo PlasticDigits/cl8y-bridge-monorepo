@@ -33,6 +33,7 @@ import {
   NATIVE_SOL_TOKEN,
   findNonceUsedPda,
 } from "./helpers/setup";
+import { computeTransferHash } from "./helpers/hash";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
@@ -42,36 +43,6 @@ const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
 EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
 const DEPOSIT_DEST_TOKEN = Buffer.alloc(32);
 DEPOSIT_DEST_TOKEN[31] = 0xcc;
-
-function keccak256(data: Buffer): Buffer {
-  const { keccak_256 } = require("js-sha3");
-  return Buffer.from(keccak_256.arrayBuffer(data));
-}
-
-function computeTransferHash(
-  srcChain: number[],
-  destChain: number[],
-  srcAccount: Buffer,
-  destAccount: Buffer,
-  token: Buffer,
-  amount: bigint,
-  nonce: bigint
-): Buffer {
-  const buf = Buffer.alloc(224);
-  Buffer.from(srcChain).copy(buf, 0);
-  Buffer.from(destChain).copy(buf, 32);
-  srcAccount.copy(buf, 64);
-  destAccount.copy(buf, 96);
-  token.copy(buf, 128);
-  const amountBuf = Buffer.alloc(16);
-  amountBuf.writeBigUInt64BE(amount >> 64n, 0);
-  amountBuf.writeBigUInt64BE(amount & 0xffffffffffffffffn, 8);
-  amountBuf.copy(buf, 176);
-  const nonceBuf = Buffer.alloc(8);
-  nonceBuf.writeBigUInt64BE(nonce);
-  nonceBuf.copy(buf, 216);
-  return keccak256(buf);
-}
 
 function toBn(value: bigint | number): anchor.BN {
   return new anchor.BN(value.toString());

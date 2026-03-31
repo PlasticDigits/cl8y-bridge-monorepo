@@ -26,6 +26,7 @@ import {
   getNextDepositNonce,
   NATIVE_SOL_TOKEN,
 } from "./helpers/setup";
+import { computeTransferHash } from "./helpers/hash";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
 const EVM_CHAIN_ID = [0x00, 0x00, 0x00, 0x01];
@@ -39,36 +40,6 @@ const DEPOSIT_DEST_TOKEN = Buffer.alloc(32, 0xcc);
 /** Remote token id for incoming native SOL withdrawals (EVM side representation). */
 const EVM_REMOTE_NATIVE_TOKEN = Buffer.alloc(32);
 EVM_REMOTE_NATIVE_TOKEN[31] = 0x37;
-
-function keccak256(data: Buffer): Buffer {
-  const { keccak_256 } = require("js-sha3");
-  return Buffer.from(keccak_256.arrayBuffer(data));
-}
-
-function computeTransferHash(
-  srcChain: number[],
-  destChain: number[],
-  srcAccount: Buffer,
-  destAccount: Buffer,
-  token: Buffer,
-  amount: bigint,
-  nonce: bigint
-): Buffer {
-  const buf = Buffer.alloc(224);
-  Buffer.from(srcChain).copy(buf, 0);
-  Buffer.from(destChain).copy(buf, 32);
-  srcAccount.copy(buf, 64);
-  destAccount.copy(buf, 96);
-  token.copy(buf, 128);
-  const amountBuf = Buffer.alloc(16);
-  amountBuf.writeBigUInt64BE(amount >> 64n, 0);
-  amountBuf.writeBigUInt64BE(amount & 0xffffffffffffffffn, 8);
-  amountBuf.copy(buf, 176);
-  const nonceBuf = Buffer.alloc(8);
-  nonceBuf.writeBigUInt64BE(nonce);
-  nonceBuf.copy(buf, 216);
-  return keccak256(buf);
-}
 
 describe("deposit and withdraw flow", () => {
   let ctx: TestContext;
