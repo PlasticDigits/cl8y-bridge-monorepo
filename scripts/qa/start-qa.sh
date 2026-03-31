@@ -158,6 +158,32 @@ echo "==> Writing .env.e2e.local + packages/frontend/.env.local..."
 "$REPO_ROOT/scripts/qa/write-qa-env-e2e.sh"
 echo "[start-qa] If Vite is already running for manual QA, restart it so new VITE_* (bridge, LockUnlock, tokens) load."
 
+# Operator requires SOLANA_PRIVATE_KEY (base58) when SOLANA_RPC_URL is set; deploy scripts use SOLANA_KEYPAIR JSON only.
+if [ -z "${SOLANA_PRIVATE_KEY:-}" ] && [ -n "${SOLANA_RPC_URL:-}" ] && [ -f "$REPO_ROOT/.env" ]; then
+  _sol_kp="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}"
+  _sol_node_cd="$REPO_ROOT/packages/contracts-solana"
+  if [ ! -f "$_sol_node_cd/node_modules/@solana/web3.js/package.json" ]; then
+    _sol_node_cd="$REPO_ROOT/packages/frontend"
+  fi
+  if [ -f "$_sol_kp" ] && command -v node >/dev/null 2>&1 && [ -f "$_sol_node_cd/node_modules/@solana/web3.js/package.json" ]; then
+    SOLANA_PRIVATE_KEY="$(
+      cd "$_sol_node_cd" && KP="$_sol_kp" node -e "
+        const fs = require('fs');
+        const bs58 = require('bs58');
+        const { Keypair } = require('@solana/web3.js');
+        const raw = JSON.parse(fs.readFileSync(process.env.KP, 'utf8'));
+        process.stdout.write(bs58.encode(Keypair.fromSecretKey(Uint8Array.from(raw)).secretKey));
+      "
+    )" || true
+    if [ -n "${SOLANA_PRIVATE_KEY:-}" ]; then
+      export SOLANA_PRIVATE_KEY
+      chmod +x "$REPO_ROOT/scripts/merge-env-var.sh" 2>/dev/null || true
+      "$REPO_ROOT/scripts/merge-env-var.sh" "$REPO_ROOT/.env" SOLANA_PRIVATE_KEY "$SOLANA_PRIVATE_KEY"
+      echo "[start-qa] Set SOLANA_PRIVATE_KEY from ${_sol_kp} for operator (merged into .env)."
+    fi
+  fi
+fi
+
 echo "==> Starting operator (API $OPERATOR_API_URL)..."
 "$REPO_ROOT/scripts/operator-ctl.sh" start
 
