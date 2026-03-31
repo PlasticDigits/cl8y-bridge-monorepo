@@ -56,13 +56,18 @@ const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; a
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
 
+/**
+ * Index of the step that should show as ACTIVE in the stepper (not the STEPS row
+ * whose `key` equals the lifecycle). E.g. lifecycle `hash-submitted` means
+ * withdrawSubmit finished — steps 0–1 are done and step 2 (Approval) is active.
+ */
 function getStepIndex(lifecycle?: TransferLifecycle): number {
   if (!lifecycle || lifecycle === 'failed') return 0
-  const idx = LIFECYCLE_ORDER.indexOf(lifecycle)
-  if (idx < 0) return 0
-  // When executed (complete), use STEPS.length so the final step shows as DONE
   if (lifecycle === 'executed') return STEPS.length
-  return idx
+  if (lifecycle === 'deposited') return 0
+  if (lifecycle === 'hash-submitted') return 2
+  if (lifecycle === 'approved') return 3
+  return 0
 }
 
 function StepIndicator({
@@ -70,16 +75,27 @@ function StepIndicator({
   currentIdx,
   idx,
   isFailed,
+  transferLifecycle,
 }: {
   step: typeof STEPS[number]
   currentIdx: number
   idx: number
   isFailed: boolean
+  transferLifecycle?: TransferLifecycle
 }) {
   const isDone = idx < currentIdx
   const isActive = idx === currentIdx
   const isError = isFailed && isActive
-  const progress = useStepProgress(step.key, isDone, isActive && !isError)
+  const progressKey =
+    step.key === 'approved' && isActive && transferLifecycle === 'hash-submitted'
+      ? 'hash-submitted'
+      : step.key
+  const progress = useStepProgress(progressKey, isDone, isActive && !isError)
+
+  const activeDescription =
+    step.key === 'approved' && transferLifecycle === 'hash-submitted'
+      ? 'Operator verifying deposit on the source chain'
+      : step.activeDescription
 
   const stateLabel = isDone ? 'DONE' : isError ? 'FAILED' : isActive ? 'ACTIVE' : 'UP NEXT'
   const squareTone = isDone
@@ -147,7 +163,7 @@ function StepIndicator({
           {step.label}
         </p>
         <p className={`text-xs ${descriptionTone}`}>
-          {isDone ? step.doneDescription : isActive ? step.activeDescription : step.doneDescription}
+          {isDone ? step.doneDescription : isActive ? activeDescription : step.doneDescription}
         </p>
         {isActive && !isError && step.estimatedTime && (
           <p className="mt-0.5 text-[11px] text-yellow-400/60 italic">
@@ -492,9 +508,8 @@ export default function TransferStatusPage() {
 
     if (!onChainLifecycle) return
 
-    const ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
-    const storedIdx = ORDER.indexOf(stored.lifecycle || 'deposited')
-    const chainIdx = ORDER.indexOf(onChainLifecycle)
+    const storedIdx = LIFECYCLE_ORDER.indexOf(stored.lifecycle || 'deposited')
+    const chainIdx = LIFECYCLE_ORDER.indexOf(onChainLifecycle)
 
     if (chainIdx > storedIdx) {
       updateTransferRecord(stored.id, { lifecycle: onChainLifecycle })
@@ -823,7 +838,8 @@ export default function TransferStatusPage() {
     if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
     // Stay on Submit Hash during explicit retry or in-flight submit (#86)
     if (retryingHash) return 1
-    if (autoPhase === 'submitting-hash' && source != null) return 1
+    // Only while still `deposited`; once lifecycle advances, show Approval (#hash-submitted UX)
+    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
     // Lookup-only / synthetic: source deposit confirmed, no dest withdraw yet — not still "confirming deposit"
     if (
       transfer?.lifecycle === 'deposited' &&
@@ -1003,6 +1019,7 @@ export default function TransferStatusPage() {
                 currentIdx={currentStepIdx}
                 idx={idx}
                 isFailed={isFailed}
+                transferLifecycle={transfer.lifecycle}
               />
             ))}
           </div>
