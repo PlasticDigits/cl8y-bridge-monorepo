@@ -297,6 +297,55 @@ function formatCountdown(seconds: number): string {
   return `${s}s`
 }
 
+/** Readable faucet / wallet error (Solana RPC often nests simulation + log lines). */
+function formatFaucetError(err: unknown, depth = 0): string {
+  if (depth > 4) return '…'
+  if (err == null) return 'Unknown error'
+  if (typeof err === 'string') return err
+  if (err instanceof Error) {
+    const parts: string[] = [err.message]
+    const anyErr = err as Error & {
+      cause?: unknown
+      logs?: string[]
+      getLogs?: () => string[]
+    }
+    if (typeof anyErr.getLogs === 'function') {
+      try {
+        const logs = anyErr.getLogs()
+        if (logs?.length) parts.push(...logs.filter(Boolean).slice(-8))
+      } catch {
+        /* ignore */
+      }
+    } else if (Array.isArray(anyErr.logs) && anyErr.logs.length) {
+      parts.push(...anyErr.logs.filter(Boolean).slice(-8))
+    }
+    if (anyErr.cause) {
+      const c = formatFaucetError(anyErr.cause, depth + 1)
+      if (c && !parts.some((p) => p.includes(c) || c.includes(p))) parts.push(c)
+    }
+    return parts.join('\n').trim() || err.message
+  }
+  if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
+function ClaimErrorNote({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mt-1 w-full min-w-0 rounded border border-red-800/60 bg-red-950/50 px-2 py-1.5 text-left text-[10px] leading-snug text-red-200 whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-h-40 overflow-y-auto"
+    >
+      {message}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Balance cell components
 // ---------------------------------------------------------------------------
@@ -472,7 +521,7 @@ function SolanaClaimButton({
       setClaimTx(sig)
       sounds.playSuccess()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Claim failed')
+      setError(formatFaucetError(err))
     } finally {
       setClaiming(false)
     }
@@ -498,7 +547,8 @@ function SolanaClaimButton({
   const title = isBusy ? 'Signing...' : claimTx ? 'Claimed!' : 'Claim tokens'
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
       <button
         type="button"
         disabled={isBusy}
@@ -528,17 +578,18 @@ function SolanaClaimButton({
           </span>
         )}
       </button>
+      </div>
       {explorerHref && (
         <a
           href={explorerHref}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
         >
           tx ↗
         </a>
       )}
-      {error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+      {error && <ClaimErrorNote message={error} />}
     </div>
   )
 }
@@ -656,13 +707,13 @@ function EvmClaimButton({
       setTxHash(hash)
       setStatus('waiting')
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Claim failed'
+      const msg = formatFaucetError(e)
       if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
         setStatus('idle')
         return
       }
       setStatus('error')
-      setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
+      setError(msg)
     }
   }, [isConnected, userAddress, chain.chainId, chainId, faucetAddr, tokenAddr, switchChainAsync, writeContractAsync])
 
@@ -689,7 +740,8 @@ function EvmClaimButton({
         : 'Claim tokens'
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -717,17 +769,18 @@ function EvmClaimButton({
           <span className="text-base" aria-hidden>💧</span>
         )}
       </button>
+      </div>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
         >
           tx ↗
         </a>
       )}
-      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+      {status === 'error' && error && <ClaimErrorNote message={error} />}
     </div>
   )
 }
@@ -800,13 +853,13 @@ function TerraClaimButton({
       sounds.playSuccess()
       void queryClient.invalidateQueries({ queryKey: ['faucetBalance', chain.key, tokenAddress] })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Claim failed'
+      const msg = formatFaucetError(e)
       if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
         setStatus('idle')
         return
       }
       setStatus('error')
-      setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
+      setError(msg)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terraConnected, terraAddress, chain.faucetAddress, tokenAddress])
@@ -842,7 +895,8 @@ function TerraClaimButton({
         : 'Claim tokens'
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -870,17 +924,18 @@ function TerraClaimButton({
           <span className="text-base" aria-hidden>💧</span>
         )}
       </button>
+      </div>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
         >
           tx ↗
         </a>
       )}
-      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+      {status === 'error' && error && <ClaimErrorNote message={error} />}
     </div>
   )
 }
@@ -939,17 +994,17 @@ export function FaucetPanel() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
+      <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-3">
         {tokens.map((token) => (
-          <Card key={token.symbol} className="p-4 overflow-hidden">
+          <Card key={token.symbol} className="min-w-0 overflow-hidden p-4">
             <h4 className="mb-3 font-medium text-white">{token.label}</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[200px] text-left text-xs">
+            <div className="min-w-0 max-w-full overflow-x-auto">
+              <table className="w-full min-w-0 table-fixed text-left text-xs">
                 <thead>
                   <tr className="border-b border-white/10 text-gray-400">
-                    <th className="py-1.5 pr-3 font-medium">Chain</th>
-                    <th className="py-1.5 pr-3 font-medium text-right">Balance</th>
-                    <th className="py-1.5 pl-3 font-medium text-right">Claim</th>
+                    <th className="w-[30%] py-1.5 pr-2 font-medium">Chain</th>
+                    <th className="w-[28%] py-1.5 pr-2 font-medium text-right">Balance</th>
+                    <th className="min-w-0 w-[42%] py-1.5 pl-2 font-medium text-right">Claim</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -959,8 +1014,8 @@ export function FaucetPanel() {
                     if (!addr) return null
                     return (
                       <tr key={chain.key} className="border-b border-white/5 last:border-0">
-                        <td className="py-2 pr-3 text-gray-300">{chain.name}</td>
-                        <td className="py-2 pr-3 text-right">
+                        <td className="py-2 pr-2 align-top text-gray-300 break-words">{chain.name}</td>
+                        <td className="py-2 pr-2 text-right align-top">
                           {chain.type === 'evm' ? (
                             <EvmBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           ) : chain.type === 'solana' ? (
@@ -969,7 +1024,7 @@ export function FaucetPanel() {
                             <TerraBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           )}
                         </td>
-                        <td className="py-2 pl-3 text-right">
+                        <td className="min-w-0 py-2 pl-2 text-right align-top">
                           {chain.type === 'evm' ? (
                             <EvmClaimButton chain={chain} tokenAddress={addr} />
                           ) : chain.type === 'solana' ? (

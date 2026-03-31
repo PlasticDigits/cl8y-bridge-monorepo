@@ -81,9 +81,13 @@ export const useTransferStore = create<TransferState>((set) => ({
     window.dispatchEvent(new CustomEvent('cl8y-transfer-updated', { detail: { id } }))
   },
 
-  getTransferByXchainHashId: (xchainHashId) => {
+  getTransferByXchainHashId: (id) => {
     const list = readTransfers()
-    return list.find((t) => t.xchainHashId === xchainHashId) || null
+    return (
+      list.find((t) => t.xchainHashId === id) ||
+      list.find((t) => t.txHash === id) ||
+      null
+    )
   },
 
   getAllTransfers: () => {

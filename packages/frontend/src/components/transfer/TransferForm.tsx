@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { Address, getAddress, type Hex } from 'viem'
+import { Address, getAddress, type Hex, hexToBytes } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
 import { useTokenRegistry } from '../../hooks/useTokenRegistry'
 import { useTokenList } from '../../hooks/useTokenList'
@@ -45,7 +45,13 @@ import { parseTerraLockReceipt } from '../../services/terra/depositReceipt'
 import { getDestToken } from '../../services/evm/tokenRegistry'
 import { bytes32ToSolanaAddress } from '../../services/solana/address'
 import { getEvmClient } from '../../services/evmClient'
-import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../../services/hashVerification'
+import {
+  computeXchainHashId,
+  chainIdToBytes32,
+  computeXchainHashIdFromBytes,
+  evmAddressToBytes32,
+  terraAddressToBytes32,
+} from '../../services/hashVerification'
 import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
 import type { TokenOption } from './TokenSelect'
@@ -1153,47 +1159,118 @@ export function TransferForm() {
     }
   }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, sourceChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens, destTokenAddr])
 
-  // Solana deposit success: record transfer and navigate to status page
+  // Solana deposit errors live only in useSolanaDeposit — mirror EVM/Terra by surfacing them in the form.
   useEffect(() => {
-    if (solanaStep === 'confirmed' && solanaTxSig && confirmedDepositNonce != null) {
-      const frozen = frozenChainsRef.current
-      if (!frozen) return
-
-      const destTokHex =
-        solanaTokenDestMappingRaw?.hex ||
-        (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : undefined)
-
-      let destAccStored = recipientAddr
-      if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
-        destAccStored = evmAddressToBytes32(recipientAddr as `0x${string}`)
-      } else if (recipientAddr && !recipientAddr.startsWith('0x')) {
-        try {
-          destAccStored = solanaAddressToBytes32(recipientAddr)
-        } catch {
-          /* keep raw */
-        }
-      }
-
-      recordTransfer({
-        sourceChain: frozen.sourceChain,
-        destChain: frozen.destChain,
-        direction: frozen.direction,
-        type: 'deposit',
-        token: 'SOL',
-        amount: parseAmount(amount, amountDecimals),
-        status: 'confirmed',
-        srcAccount: solanaAddress ? solanaAddressToBytes32(solanaAddress) : '',
-        txHash: solanaTxSig,
-        lifecycle: 'deposited',
-        sourceChainIdBytes4: sourceChainConfig?.bytes4ChainId,
-        depositNonce: confirmedDepositNonce,
-        destAccount: destAccStored,
-        destToken: destTokHex,
-      })
+    if (solanaStep === 'error' && solanaError) {
+      setError(solanaError)
       frozenChainsRef.current = null
       resetSolana()
-      navigate(`/transfer/${solanaTxSig}`)
     }
+  }, [solanaStep, solanaError, resetSolana])
+
+  // Solana deposit success: V2 xchain hash in URL + store (status page expects 0x…, not Solana tx sig)
+  useEffect(() => {
+    if (solanaStep !== 'confirmed' || !solanaTxSig || confirmedDepositNonce == null) return
+
+    const frozen = frozenChainsRef.current
+    if (!frozen) return
+
+    const destTokHex =
+      solanaTokenDestMappingRaw?.hex ||
+      (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : undefined)
+
+    let destAccStored = recipientAddr
+    if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+      destAccStored = evmAddressToBytes32(recipientAddr as `0x${string}`)
+    } else if (recipientAddr && !recipientAddr.startsWith('0x')) {
+      try {
+        destAccStored = solanaAddressToBytes32(recipientAddr)
+      } catch {
+        /* keep raw */
+      }
+    }
+
+    const gross = BigInt(parseAmount(amount, amountDecimals))
+    const feeBps = BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100))
+    const fee = (gross * feeBps) / 10000n
+    const netAmount = gross - fee
+    const netAmountStr = netAmount.toString()
+
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const srcCfg = BRIDGE_CHAINS[tier][frozen.sourceChain]
+    const destCfg = BRIDGE_CHAINS[tier][frozen.destChain]
+    const srcBytes4 = frozen.sourceChainIdBytes4 ?? srcCfg?.bytes4ChainId
+    const destBytes4 = destCfg?.bytes4ChainId
+
+    const tokenSymbolRecorded =
+      isSourceSolana || isSourceTerra
+        ? terraDisplay.displayLabel ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          getTokenDisplaySymbol(selectedTokenId || 'uluna')
+        : evmSourceDisplay.displayLabel ||
+          tokenConfig?.symbol ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          '—'
+
+    let xchainHashId: `0x${string}` | undefined
+    try {
+      if (
+        srcBytes4 &&
+        destBytes4 &&
+        destTokHex &&
+        destTokHex.length === 66 &&
+        solanaAddress
+      ) {
+        const srcChainBytes = bytes4HexToUint8Array(srcBytes4)
+        const destChainBytes = bytes4HexToUint8Array(destBytes4)
+        const tokenBytes = hexToBytes(destTokHex as Hex)
+        const srcAccBytes = hexToBytes(solanaAddressToBytes32(solanaAddress) as Hex)
+        let destAccHex: `0x${string}`
+        if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+          destAccHex = evmAddressToBytes32(recipientAddr as `0x${string}`)
+        } else if (recipientAddr.startsWith('terra1')) {
+          destAccHex = terraAddressToBytes32(recipientAddr)
+        } else {
+          destAccHex = solanaAddressToBytes32(recipientAddr)
+        }
+        const destAccBytes = hexToBytes(destAccHex)
+
+        xchainHashId = computeXchainHashIdFromBytes(
+          srcChainBytes,
+          destChainBytes,
+          srcAccBytes,
+          destAccBytes,
+          tokenBytes,
+          netAmount,
+          BigInt(confirmedDepositNonce),
+        )
+      }
+    } catch (e) {
+      console.warn('[TransferForm:solana] Failed to compute xchainHashId:', e)
+    }
+
+    recordTransfer({
+      sourceChain: frozen.sourceChain,
+      destChain: frozen.destChain,
+      direction: frozen.direction,
+      type: 'deposit',
+      token: selectedTokenId || tokenSymbolRecorded || 'SOL',
+      amount: netAmountStr,
+      status: 'confirmed',
+      srcAccount: solanaAddress ? solanaAddressToBytes32(solanaAddress) : '',
+      txHash: solanaTxSig,
+      lifecycle: 'deposited',
+      sourceChainIdBytes4: sourceChainConfig?.bytes4ChainId,
+      depositNonce: confirmedDepositNonce,
+      destAccount: destAccStored,
+      destToken: destTokHex,
+      ...(xchainHashId ? { xchainHashId } : {}),
+      srcDecimals: amountDecimals,
+      tokenSymbol: tokenSymbolRecorded,
+    })
+    frozenChainsRef.current = null
+    resetSolana()
+    navigate(xchainHashId ? `/transfer/${xchainHashId}` : `/transfer/${solanaTxSig}`)
   }, [
     solanaStep,
     solanaTxSig,
@@ -1208,16 +1285,14 @@ export function TransferForm() {
     recordTransfer,
     resetSolana,
     navigate,
+    selectedTokenId,
+    isSourceSolana,
+    isSourceTerra,
+    terraDisplay.displayLabel,
+    evmSourceDisplay.displayLabel,
+    tokenConfig?.symbol,
+    transferTokens,
   ])
-
-  // Solana deposit errors live only in useSolanaDeposit — mirror EVM/Terra by surfacing them in the form.
-  useEffect(() => {
-    if (solanaStep === 'error' && solanaError) {
-      setError(solanaError)
-      frozenChainsRef.current = null
-      resetSolana()
-    }
-  }, [solanaStep, solanaError, resetSolana])
 
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain

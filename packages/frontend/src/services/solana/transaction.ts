@@ -311,7 +311,25 @@ export async function sendSolanaTransaction(
   transaction.feePayer = provider.publicKey;
 
   const signed = await provider.signTransaction(transaction);
-  const signature = await connection.sendRawTransaction(signed.serialize());
+  let signature: string;
+  try {
+    signature = await connection.sendRawTransaction(signed.serialize());
+  } catch (err: unknown) {
+    const e = err as { getLogs?: () => string[] };
+    if (typeof e.getLogs === "function") {
+      try {
+        const logs = e.getLogs();
+        if (logs?.length) {
+          const tail = logs.filter(Boolean).slice(-12).join("\n");
+          const base = err instanceof Error ? err.message : "Solana transaction failed";
+          throw new Error(`${base}\n${tail}`);
+        }
+      } catch (wrapped) {
+        if (wrapped !== err) throw wrapped;
+      }
+    }
+    throw err;
+  }
 
   await connection.confirmTransaction(signature, "confirmed");
 

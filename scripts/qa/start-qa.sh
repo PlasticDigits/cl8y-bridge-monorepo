@@ -112,6 +112,9 @@ chmod +x "$REPO_ROOT/scripts/qa/sync-local-env-from-forge-broadcast.sh" 2>/dev/n
 echo "==> Optional: fund extra Solana QA wallets (SOLANA_QA_AIRDROP_WALLETS from .env)..."
 "$REPO_ROOT/scripts/solana/airdrop-qa-wallets.sh"
 
+echo "==> Optional: fund Anvil / Anvil1 / LocalTerra gas (EVM_QA_FUND_WALLETS / TERRA_QA_FUND_WALLETS from .env)..."
+"$REPO_ROOT/scripts/qa/fund-qa-gas-wallets.sh"
+
 FE_DIR="$REPO_ROOT/packages/frontend"
 if [ "${START_QA_SKIP_NPM_CI:-}" != "1" ] && command -v npm >/dev/null 2>&1; then
   _need_npm_ci=0
