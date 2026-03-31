@@ -190,8 +190,9 @@ echo "==> Starting operator (API $OPERATOR_API_URL)..."
 echo "==> Starting canceler..."
 "$REPO_ROOT/scripts/canceler-ctl.sh" start
 
-# Defaults match scripts/status.sh and canceler-ctl (instance 1)
-CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://127.0.0.1:9099}"
+# Instance 1: HEALTH_PORT = HEALTH_PORT_BASE + id - 1 (see scripts/canceler-ctl.sh)
+_default_canceler_health_port="${HEALTH_PORT_BASE:-9099}"
+CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://127.0.0.1:${_default_canceler_health_port}}"
 
 echo ""
 echo "==> Verifying operator and canceler health..."
