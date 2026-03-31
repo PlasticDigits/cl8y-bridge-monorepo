@@ -11,6 +11,7 @@ import { PublicKey } from '@solana/web3.js'
 import type { TokenAddresses } from './deploy-tokens'
 import { KDEC_DECIMALS } from './deploy-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
+import { resolveLocalterraDockerExecTarget } from './localterra-docker'
 import { terraIncomingSrcTokenB64 } from '../../services/terraTokenEncoding'
 
 const __registerTokensDir = dirname(fileURLToPath(import.meta.url))
@@ -50,37 +51,12 @@ const CHAIN_KEYS = {
 
 const DEFAULT_EVM_RPC_URL = 'http://127.0.0.1:8545'
 const DEFAULT_EVM1_RPC_URL = 'http://127.0.0.1:8546'
-const LEGACY_LOCALTERRA_CONTAINER = 'cl8y-bridge-monorepo-localterra-1'
 
 export interface RegisterAllTokensOptions {
   evmRpcUrl?: string
   evm1RpcUrl?: string
   /** `docker exec` target (container id or name). Overrides `LOCALTERRA_DOCKER_CONTAINER`. */
   localterraDockerContainer?: string
-}
-
-/**
- * Resolve LocalTerra container for `docker exec` (Compose project name may differ from legacy default).
- */
-function resolveLocalterraDockerExecTarget(): string {
-  const explicit = process.env.LOCALTERRA_DOCKER_CONTAINER?.trim()
-  if (explicit) return explicit
-  try {
-    const out = execSync('docker compose ps -q localterra', {
-      cwd: REPO_ROOT_REGISTER_TOKENS,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' },
-    }).trim()
-    const first = out.split(/\r?\n/).find((line) => line.length > 0)
-    if (first) return first
-  } catch {
-    /* fall through to legacy */
-  }
-  console.warn(
-    `[register-tokens] Could not resolve localterra via "docker compose ps -q localterra"; using "${LEGACY_LOCALTERRA_CONTAINER}". Set LOCALTERRA_DOCKER_CONTAINER if exec fails.`
-  )
-  return LEGACY_LOCALTERRA_CONTAINER
 }
 
 /**
@@ -102,7 +78,8 @@ export function registerAllTokens(
     process.env.EVM1_RPC_URL?.trim() ||
     DEFAULT_EVM1_RPC_URL
   const localterraDocker =
-    options?.localterraDockerContainer?.trim() || resolveLocalterraDockerExecTarget()
+    options?.localterraDockerContainer?.trim() ||
+    resolveLocalterraDockerExecTarget(REPO_ROOT_REGISTER_TOKENS)
 
   console.log('[register-tokens] Registering tokens across all chains...')
   console.log(`[register-tokens] EVM RPC ${evmRpcUrl}, EVM1 RPC ${evm1RpcUrl}, localterra docker target ${localterraDocker.slice(0, 12)}…`)

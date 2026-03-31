@@ -264,6 +264,12 @@ ensure-terra-artifacts:
 		echo "[ensure-terra-artifacts] Missing cw20_mintable.wasm — running scripts/ensure-cw20-mintable-wasm.sh..."; \
 		"$(CURDIR)/scripts/ensure-cw20-mintable-wasm.sh"; \
 	fi
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/faucet.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing faucet.wasm — building (qa Settings → Faucet / LocalTerra)..."; \
+		cd "$(CURDIR)/packages/contracts-terraclassic" && \
+		cargo build --release -p faucet --target wasm32-unknown-unknown && \
+		cp target/wasm32-unknown-unknown/release/faucet.wasm artifacts/; \
+	fi
 
 build-terra-optimized:
 	@echo "Building optimized Terra WASM via Docker (cosmwasm_1_2 + BankQuery::Supply)..."

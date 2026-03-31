@@ -13,13 +13,21 @@ import { existsSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
+import { resolveLocalterraDockerExecTarget } from './localterra-docker'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const SCRIPTS_DIR = resolve(ROOT_DIR, 'scripts')
 const CW20_WASM_PATH = resolve(ROOT_DIR, 'packages/contracts-terraclassic/artifacts/cw20_mintable.wasm')
 const TERRA_LCD = 'http://localhost:1317'
 
-const CONTAINER_NAME = 'cl8y-bridge-monorepo-localterra-1'
+let _localterraDockerTarget: string | null = null
+function localterraDockerTarget(): string {
+  if (!_localterraDockerTarget) {
+    _localterraDockerTarget = resolveLocalterraDockerExecTarget(ROOT_DIR)
+  }
+  return _localterraDockerTarget
+}
 const TEST_ADDRESS = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
 const KEY_NAME = 'test1'
 
@@ -95,7 +103,7 @@ interface Cw20DeployResult {
 }
 
 function dockerExec(args: string[]): string {
-  const out = execFileSync('docker', ['exec', CONTAINER_NAME, ...args], {
+  const out = execFileSync('docker', ['exec', localterraDockerTarget(), ...args], {
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -214,13 +222,13 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
   console.log('[deploy-terra] Deploying 3 CW20 tokens...')
 
   // Copy WASM to container (mirrors Rust cw20_deploy)
-  execSync(`docker exec ${CONTAINER_NAME} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
-  execSync(`docker cp ${CW20_WASM_PATH} ${CONTAINER_NAME}:/tmp/wasm/cw20_mintable.wasm`, {
+  execSync(`docker exec ${localterraDockerTarget()} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+  execSync(`docker cp ${CW20_WASM_PATH} ${localterraDockerTarget()}:/tmp/wasm/cw20_mintable.wasm`, {
     encoding: 'utf8',
     cwd: ROOT_DIR,
   })
   // docker cp preserves host mode (often 0600); terrad may run as another UID — chmod as root (see deploy-terra-local.sh).
-  execSync(`docker exec -u 0 ${CONTAINER_NAME} chmod 0644 /tmp/wasm/cw20_mintable.wasm`, {
+  execSync(`docker exec -u 0 ${localterraDockerTarget()} chmod 0644 /tmp/wasm/cw20_mintable.wasm`, {
     encoding: 'utf8',
     cwd: ROOT_DIR,
   })
@@ -334,8 +342,16 @@ export function deployLocalTerraFaucet(rows: TerraFaucetTokenRow[]): string | nu
     return null
   }
 
-  const wasmPath = resolve(ROOT_DIR, 'packages/contracts-terraclassic/target/wasm32-unknown-unknown/release/faucet.wasm')
-  if (!existsSync(wasmPath)) {
+  const FAUCET_ARTIFACTS = resolve(ROOT_DIR, 'packages/contracts-terraclassic/artifacts/faucet.wasm')
+  const FAUCET_TARGET = resolve(ROOT_DIR, 'packages/contracts-terraclassic/target/wasm32-unknown-unknown/release/faucet.wasm')
+  const resolveFaucetWasm = (): string | null => {
+    if (existsSync(FAUCET_ARTIFACTS)) return FAUCET_ARTIFACTS
+    if (existsSync(FAUCET_TARGET)) return FAUCET_TARGET
+    return null
+  }
+
+  let wasmPath = resolveFaucetWasm()
+  if (!wasmPath) {
     console.log('[deploy-terra] Building faucet.wasm (release)...')
     try {
       execSync('cargo build --release -p faucet --target wasm32-unknown-unknown', {
@@ -347,19 +363,21 @@ export function deployLocalTerraFaucet(rows: TerraFaucetTokenRow[]): string | nu
       console.warn('[deploy-terra] cargo build faucet failed:', (e as Error).message?.slice(0, 200))
       return null
     }
+    wasmPath = resolveFaucetWasm()
   }
-  if (!existsSync(wasmPath)) {
-    console.warn('[deploy-terra] faucet.wasm still missing after build:', wasmPath)
+  if (!wasmPath) {
+    console.warn('[deploy-terra] faucet.wasm missing (expected artifacts/faucet.wasm or target/.../faucet.wasm)')
     return null
   }
 
+  const container = localterraDockerTarget()
   try {
-    execSync(`docker exec ${CONTAINER_NAME} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
-    execSync(`docker cp ${wasmPath} ${CONTAINER_NAME}:/tmp/wasm/faucet.wasm`, {
+    execSync(`docker exec ${container} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+    execSync(`docker cp ${wasmPath} ${container}:/tmp/wasm/faucet.wasm`, {
       encoding: 'utf8',
       cwd: ROOT_DIR,
     })
-    execSync(`docker exec -u 0 ${CONTAINER_NAME} chmod 0644 /tmp/wasm/faucet.wasm`, { encoding: 'utf8', cwd: ROOT_DIR })
+    execSync(`docker exec -u 0 ${container} chmod 0644 /tmp/wasm/faucet.wasm`, { encoding: 'utf8', cwd: ROOT_DIR })
   } catch (e) {
     console.warn('[deploy-terra] docker cp faucet wasm failed:', (e as Error).message?.slice(0, 120))
     return null
