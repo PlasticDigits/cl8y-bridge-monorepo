@@ -108,6 +108,94 @@ fn test_hash_parity_offchain() {
     assert_ne!(hash, hash5, "Swapped chains must produce different hashes");
 }
 
+/// Same 32-byte digests as `HashLib.t.sol` `test_DepositWithdraw_*` and
+/// `cl8y_bridge::hash::tests::evm_vector_*` (INV-H1).
+#[test]
+fn test_hash_goldens_match_hashlib_t_sol() {
+    use multichain_rs::hash::compute_xchain_hash_id;
+
+    fn hex_b32(s: &str) -> [u8; 32] {
+        let s = s.trim_start_matches("0x");
+        assert_eq!(s.len(), 64, "expected 32-byte hex");
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex");
+        }
+        out
+    }
+
+    let evm_to_evm = compute_xchain_hash_id(
+        &1u32.to_be_bytes(),
+        &56u32.to_be_bytes(),
+        &hex_b32("000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+        &hex_b32("00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8"),
+        &hex_b32("0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3"),
+        1_000_000_000_000_000_000u128,
+        42,
+    );
+    assert_eq!(
+        evm_to_evm,
+        hex_b32("11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54")
+    );
+
+    let evm_to_terra_uluna = compute_xchain_hash_id(
+        &1u32.to_be_bytes(),
+        &2u32.to_be_bytes(),
+        &hex_b32("000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+        &hex_b32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d"),
+        &hex_b32("56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da"),
+        995_000,
+        1,
+    );
+    assert_eq!(
+        evm_to_terra_uluna,
+        hex_b32("92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453")
+    );
+
+    let cw20 = hex_b32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d");
+    let evm_to_terra_cw20 = compute_xchain_hash_id(
+        &1u32.to_be_bytes(),
+        &2u32.to_be_bytes(),
+        &hex_b32("000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+        &cw20,
+        &cw20,
+        1_000_000,
+        5,
+    );
+    assert_eq!(
+        evm_to_terra_cw20,
+        hex_b32("1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b")
+    );
+
+    let terra_to_evm_native = compute_xchain_hash_id(
+        &2u32.to_be_bytes(),
+        &1u32.to_be_bytes(),
+        &hex_b32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d"),
+        &hex_b32("000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+        &hex_b32("0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3"),
+        500_000,
+        3,
+    );
+    assert_eq!(
+        terra_to_evm_native,
+        hex_b32("076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438")
+    );
+
+    let terra_to_evm_cw20 = compute_xchain_hash_id(
+        &2u32.to_be_bytes(),
+        &1u32.to_be_bytes(),
+        &hex_b32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d"),
+        &hex_b32("00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8"),
+        &hex_b32("000000000000000000000000e7f1725e7734ce288f8367e1bb143e90bb3f0512"),
+        2_500_000,
+        7,
+    );
+    assert_eq!(
+        terra_to_evm_cw20,
+        hex_b32("f1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab")
+    );
+}
+
 #[test]
 fn test_pda_derivation_consistency() {
     let program_id = get_program_id();

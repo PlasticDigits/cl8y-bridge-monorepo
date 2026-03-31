@@ -23,7 +23,7 @@ The 32-byte transfer id is `keccak256` over 224 bytes: seven 32-byte ABI words (
 | Solidity goldens | `packages/contracts-evm/test/HashLib.t.sol` (`test_DepositWithdraw_*` expected digests) |
 | TypeScript | `packages/contracts-solana/tests/hash_parity.test.ts` |
 | Frontend (canonical) | `packages/frontend/src/services/hashVerification.ts` (`computeXchainHashId` via viem `encodeAbiParameters`) |
-| E2E offline | `packages/e2e/tests/test_solana_flows.rs` (`test_hash_parity_offchain` via `multichain_rs::hash`) |
+| E2E offline | `packages/e2e/tests/test_solana_flows.rs` (`test_hash_parity_offchain`, `test_hash_goldens_match_hashlib_t_sol` via `multichain_rs::hash`) |
 | Narrative | `docs/crosschain-parity.md` |
 
 **Amount range:** Solana instructions use `u128` for amounts; EVM uses `uint256`. Hashes agree only while the amount fits in u128 and the high 16 bytes of the ABI amount word are zero (normal bridge amounts).

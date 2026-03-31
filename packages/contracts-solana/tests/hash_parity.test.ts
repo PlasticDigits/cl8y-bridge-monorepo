@@ -254,6 +254,149 @@ describe("hash parity", () => {
     );
   });
 
+  // Golden digests from packages/contracts-evm/test/HashLib.t.sol (test_DepositWithdraw_*)
+  // and programs/cl8y-bridge/src/hash.rs evm_vector_* — keep in sync (INV-H1).
+  it("matches HashLib.t.sol test_DepositWithdraw_EvmToEvm_ERC20", () => {
+    const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+    const destChain = Buffer.from([0x00, 0x00, 0x00, 0x38]); // 56
+    const srcAccount = Buffer.from(
+      "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "hex"
+    );
+    const destAccount = Buffer.from(
+      "00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8",
+      "hex"
+    );
+    const token = Buffer.from(
+      "0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3",
+      "hex"
+    );
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      1_000_000_000_000_000_000n,
+      42n
+    );
+    expect(hash.toString("hex")).to.equal(
+      "11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54"
+    );
+  });
+
+  it("matches HashLib.t.sol test_DepositWithdraw_EvmToTerra_NativeUluna", () => {
+    const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+    const destChain = Buffer.from([0x00, 0x00, 0x00, 0x02]);
+    const srcAccount = Buffer.from(
+      "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "hex"
+    );
+    const destAccount = Buffer.from(
+      "00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d",
+      "hex"
+    );
+    const token = Buffer.from(
+      "56fa6c6fbc36d8c245b0a852a43eb5d644e8b4c477b27bfab9537c10945939da",
+      "hex"
+    );
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      995_000n,
+      1n
+    );
+    expect(hash.toString("hex")).to.equal(
+      "92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453"
+    );
+  });
+
+  it("matches HashLib.t.sol test_DepositWithdraw_EvmToTerra_CW20", () => {
+    const cw20 = Buffer.from(
+      "00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d",
+      "hex"
+    );
+    const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+    const destChain = Buffer.from([0x00, 0x00, 0x00, 0x02]);
+    const srcAccount = Buffer.from(
+      "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "hex"
+    );
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      cw20,
+      cw20,
+      1_000_000n,
+      5n
+    );
+    expect(hash.toString("hex")).to.equal(
+      "1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b"
+    );
+  });
+
+  it("matches HashLib.t.sol test_DepositWithdraw_TerraToEvm_NativeToERC20", () => {
+    const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x02]);
+    const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+    const srcAccount = Buffer.from(
+      "00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d",
+      "hex"
+    );
+    const destAccount = Buffer.from(
+      "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      "hex"
+    );
+    const token = Buffer.from(
+      "0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3",
+      "hex"
+    );
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      500_000n,
+      3n
+    );
+    expect(hash.toString("hex")).to.equal(
+      "076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438"
+    );
+  });
+
+  it("matches HashLib.t.sol test_DepositWithdraw_TerraToEvm_CW20ToERC20", () => {
+    const srcChain = Buffer.from([0x00, 0x00, 0x00, 0x02]);
+    const destChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+    const srcAccount = Buffer.from(
+      "00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d",
+      "hex"
+    );
+    const destAccount = Buffer.from(
+      "00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8",
+      "hex"
+    );
+    const token = Buffer.from(
+      "000000000000000000000000e7f1725e7734ce288f8367e1bb143e90bb3f0512",
+      "hex"
+    );
+    const hash = computeTransferHash(
+      srcChain,
+      destChain,
+      srcAccount,
+      destAccount,
+      token,
+      2_500_000n,
+      7n
+    );
+    expect(hash.toString("hex")).to.equal(
+      "f1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab"
+    );
+  });
+
   it("Solana 32-byte pubkey as srcAccount produces valid hash", () => {
     const solanaChain = Buffer.from([0x00, 0x00, 0x00, 0x05]);
     const evmChain = Buffer.from([0x00, 0x00, 0x00, 0x01]);
