@@ -1,4 +1,4 @@
-.PHONY: start stop start-qa qa-start stop-qa ensure-terra-artifacts qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
+.PHONY: start stop start-qa qa-start qa-tunnel-help stop-qa ensure-terra-artifacts qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
 	@echo "  make start-qa       - QA server: Docker (2x Anvil) + migrate + deploy + full e2e token setup + operator + canceler; see scripts/qa/README.md"
 	@echo "  make qa-start       - Same as make start-qa (alias)"
+	@echo "  make qa-tunnel-help - Reprint SSH tunnel + laptop steps (same as end of start-qa; run on server or laptop)"
 	@echo "  make qa-full-token-setup - After make deploy: full e2e-infra tokens + registerAllTokens + Solana (same as start-qa token phase)"
 	@echo "  make stop           - Stop Docker services"
 	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
@@ -108,10 +109,14 @@ start:
 
 # Full QA server bootstrap (shared host with remapped Terra ports — scripts/qa/qa-host.env)
 start-qa:
-	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh scripts/solana/airdrop-qa-wallets.sh
+	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh scripts/qa/print-qa-tunnel-instructions.sh scripts/solana/airdrop-qa-wallets.sh
 	./scripts/qa/start-qa.sh
 
 qa-start: start-qa
+
+qa-tunnel-help:
+	@chmod +x scripts/qa/print-qa-tunnel-instructions.sh
+	./scripts/qa/print-qa-tunnel-instructions.sh
 
 # After `make deploy`, runs full e2e-infra token matrix + registerAllTokens + Solana register_token (same as start-qa token step)
 qa-full-token-setup:
