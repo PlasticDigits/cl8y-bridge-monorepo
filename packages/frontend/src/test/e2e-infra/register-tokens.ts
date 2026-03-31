@@ -1076,8 +1076,19 @@ type CastSendOptions = { allowDuplicateChainRegister?: boolean }
 
 const CAST_EXEC_ENV = { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' }
 
+/**
+ * setup-bridge.sh registers the same ChainRegistry rows before qa:full-token-setup runs.
+ * cast may surface IChainRegistry custom errors as hex only (no "ChainAlreadyRegistered" text).
+ * Keep patterns aligned with packages/e2e/src/chain_config.rs register_chain helpers.
+ */
 function isIgnorableChainRegistryDuplicate(err: unknown): boolean {
-  return /ChainAlreadyRegistered|already registered/i.test(execSyncErrorText(err))
+  const t = execSyncErrorText(err)
+  return (
+    /ChainAlreadyRegistered|ChainIdAlreadyInUse|already registered/i.test(t) ||
+    /\b0xc4a32e49\b/i.test(t) || // ChainAlreadyRegistered(string)
+    /\b0x0ada9303\b/i.test(t) || // ChainIdAlreadyInUse(bytes4)
+    /already/i.test(t)
+  )
 }
 
 function castSend(
