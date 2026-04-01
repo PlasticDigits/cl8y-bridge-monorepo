@@ -1,5 +1,5 @@
 import { TokenLogo } from '../ui'
-import type { TokenOption } from './TokenSelect'
+import type { TokenOption } from '../../types/tokenOption'
 import { sounds } from '../../lib/sounds'
 import type { BridgeChainConfig } from '../../types/chain'
 import { TokenSelect } from './TokenSelect'

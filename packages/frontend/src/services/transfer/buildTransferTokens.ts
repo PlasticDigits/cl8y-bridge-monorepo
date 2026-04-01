@@ -7,7 +7,7 @@
  */
 
 import { getAddress, type Address } from 'viem'
-import type { TokenOption } from '../../components/transfer/TokenSelect'
+import type { TokenOption } from '../../types/tokenOption'
 import { getTokenFromList, type TokenlistData } from '../tokenlist'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 
