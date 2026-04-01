@@ -80,6 +80,14 @@ describe('formatAmount', () => {
     expect(formatAmount('1', 6)).toBe('0.000001')
     expect(formatAmount('100', 6)).toBe('0.0001')
   })
+
+  it('formats fractional micro (base-unit) strings without float scaling', () => {
+    expect(formatAmount('1000000.5', 6, 2)).toBe('1.00')
+    expect(formatAmount('1000000.5', 6)).toBe('1.000001')
+    expect(formatAmount('.5', 6, 9)).toBe('0.0000005')
+    expect(formatAmount('-1000000', 6)).toBe('-1.00')
+    expect(formatAmount('1e+6', 6)).toBe('1.00')
+  })
 })
 
 describe('formatAmountForNumberInput', () => {
@@ -131,6 +139,11 @@ describe('formatCompact', () => {
   it('handles bigint', () => {
     expect(formatCompact(BigInt('500000000000000000000'), 18)).toBe('500')
     expect(formatCompact(BigInt('500000000000000000000000'), 18)).toBe('500k')
+  })
+
+  it('handles fractional micro strings on compact path', () => {
+    expect(formatCompact('12', 6)).toBe('0.000012')
+    expect(formatCompact('12.5', 6)).toBe('0.0000125')
   })
 
   it('supports custom significant figures', () => {

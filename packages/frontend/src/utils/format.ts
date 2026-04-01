@@ -4,20 +4,16 @@
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 import { pow10BigInt } from './pow10';
+import { expandScientificNotationToDecimalString } from './scientificDecimal';
+export { expandScientificNotationToDecimalString };
 import {
-  formatBaseUnitsEnUs,
-  formatCompactBigInt,
-  tryParseIntegerMicroString,
+  formatCompactHumanRational,
+  formatRationalHumanEnUs,
+  microRationalToHumanDenominator,
+  tryParseMicroRational,
 } from './bigintAmount';
 
-function microToHumanNumber(microAmount: string | number | bigint, decimals: number): number {
-  if (typeof microAmount === 'bigint') {
-    const divisor = pow10BigInt(decimals);
-    const wholePart = microAmount / divisor;
-    const fractionalPart = microAmount % divisor;
-    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
-    return parseFloat(`${wholePart}.${fractionalStr}`);
-  }
+function microAmountToHumanNumberFloat(microAmount: string | number, decimals: number): number {
   if (typeof microAmount === 'string') {
     return parseFloat(microAmount) / Math.pow(10, decimals);
   }
@@ -38,12 +34,14 @@ export function formatAmount(
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
 
-  const bi = tryParseIntegerMicroString(microAmount);
-  if (bi !== null) {
-    return formatBaseUnitsEnUs(bi, decimals, maxDecimals, minDecimals, true);
+  const rat = tryParseMicroRational(microAmount);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, true);
   }
 
-  const amount = microToHumanNumber(microAmount, decimals);
+  const amount = microAmountToHumanNumberFloat(microAmount as string | number, decimals);
   return amount.toLocaleString('en-US', {
     minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
@@ -59,12 +57,14 @@ export function formatAmountForNumberInput(
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
 
-  const bi = tryParseIntegerMicroString(microAmount);
-  if (bi !== null) {
-    return formatBaseUnitsEnUs(bi, decimals, maxDecimals, minDecimals, false);
+  const rat = tryParseMicroRational(microAmount);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, false);
   }
 
-  const amount = microToHumanNumber(microAmount, decimals);
+  const amount = microAmountToHumanNumberFloat(microAmount as string | number, decimals);
   return amount.toLocaleString('en-US', {
     minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
@@ -81,19 +81,20 @@ export function formatCompact(
   decimals: number = 6,
   sigfigs: number = 4
 ): string {
-  if (typeof value === 'bigint') {
-    return formatCompactBigInt(value, decimals, sigfigs);
-  }
-  const bi = tryParseIntegerMicroString(value);
-  if (bi !== null) {
-    return formatCompactBigInt(bi, decimals, sigfigs);
+  const rat = tryParseMicroRational(value);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatCompactHumanRational(hn, hd, sigfigs);
   }
 
   let num: number
   if (typeof value === 'string') {
     num = parseFloat(value) / Math.pow(10, decimals)
-  } else {
+  } else if (typeof value === 'number') {
     num = value / Math.pow(10, decimals)
+  } else {
+    return '0'
   }
   if (!Number.isFinite(num) || num === 0) return '0'
   const abs = Math.abs(num)
@@ -124,52 +125,6 @@ function numToSigFig(n: number, sigfigs: number): string {
   if (n === 0) return '0'
   const s = n.toPrecision(sigfigs)
   return parseFloat(s).toString()
-}
-
-/**
- * Expands scientific notation (e.g. "1e+21", "1.5e-3") to a plain decimal string.
- * Used so downstream BigInt() never sees exponential form.
- */
-export function expandScientificNotationToDecimalString(sci: string): string {
-  const trimmed = sci.trim()
-  const m = trimmed.match(/^(-?)(\d+(?:\.\d*)?)[eE]([-+]?\d+)$/)
-  if (!m) return trimmed
-
-  const neg = m[1] === '-'
-  const coefficient = m[2]!
-  const exp = parseInt(m[3]!, 10)
-  if (!Number.isFinite(exp)) return '0'
-
-  const coeffParts = coefficient.split('.')
-  const intPartRaw = coeffParts[0] ?? ''
-  const fracPartRaw = coeffParts[1] ?? ''
-  const dotIndex = intPartRaw.length
-  const allDigits = intPartRaw + fracPartRaw
-  if (allDigits === '' || /^0+$/.test(allDigits)) return '0'
-
-  const sign = neg ? '-' : ''
-
-  if (exp === 0) {
-    const t: string = fracPartRaw ? `${intPartRaw}.${fracPartRaw}` : intPartRaw
-    return sign + (t.startsWith('.') ? `0${t}` : t)
-  }
-
-  if (exp > 0) {
-    const newDot = dotIndex + exp
-    if (newDot >= allDigits.length) {
-      return sign + allDigits + '0'.repeat(newDot - allDigits.length)
-    }
-    if (newDot <= 0) {
-      return sign + `0.${'0'.repeat(-newDot)}${allDigits}`
-    }
-    return sign + allDigits.slice(0, newDot) + '.' + allDigits.slice(newDot)
-  }
-
-  const newDot = dotIndex + exp
-  if (newDot <= 0) {
-    return sign + `0.${'0'.repeat(-newDot)}${allDigits}`
-  }
-  return sign + allDigits.slice(0, newDot) + '.' + allDigits.slice(newDot)
 }
 
 function floorHumanDecimalToBaseUnitsString(unsignedDecimal: string, decimals: number): string {
