@@ -51,6 +51,7 @@ pub struct DepositSpl<'info> {
         mut,
         associated_token::mint = mint,
         associated_token::authority = depositor,
+        associated_token::token_program = token_program,
     )]
     pub depositor_token_account: InterfaceAccount<'info, TokenAccount>,
 
@@ -59,6 +60,7 @@ pub struct DepositSpl<'info> {
         mut,
         associated_token::mint = mint,
         associated_token::authority = bridge,
+        associated_token::token_program = token_program,
     )]
     pub bridge_token_account: InterfaceAccount<'info, TokenAccount>,
 

@@ -45,6 +45,7 @@ pub struct WithdrawExecute<'info> {
         mut,
         associated_token::mint = mint,
         associated_token::authority = recipient,
+        associated_token::token_program = token_program,
     )]
     pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
 
@@ -53,6 +54,7 @@ pub struct WithdrawExecute<'info> {
         mut,
         associated_token::mint = mint,
         associated_token::authority = bridge,
+        associated_token::token_program = token_program,
     )]
     pub bridge_token_account: InterfaceAccount<'info, TokenAccount>,
 

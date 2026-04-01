@@ -7,7 +7,7 @@
 
 See **[docs/SOLANA_BRIDGE_DEPOSITS.md](../../docs/SOLANA_BRIDGE_DEPOSITS.md)** for the full matrix and frontend behavior.
 
-**Security invariants and test matrix:** [docs/SOLANA_BRIDGE_INVARIANTS.md](../../docs/SOLANA_BRIDGE_INVARIANTS.md). **Fuzzing:** [docs/SOLANA_FUZZING.md](../../docs/SOLANA_FUZZING.md).
+**Security invariants and test matrix:** [docs/SOLANA_BRIDGE_INVARIANTS.md](../../docs/SOLANA_BRIDGE_INVARIANTS.md). **SPL audit (evidence + 20-class matrix):** [docs/SPL_BRIDGE_SECURITY_AUDIT.md](../../docs/SPL_BRIDGE_SECURITY_AUDIT.md). **Fuzzing:** [docs/SOLANA_FUZZING.md](../../docs/SOLANA_FUZZING.md).
 
 ## Build
 

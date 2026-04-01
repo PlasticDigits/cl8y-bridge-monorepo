@@ -6,7 +6,8 @@
 |-----------|--------|
 | `cl8y_bridge::hash::tests::proptest_matches_tiny_keccak_reference` | All `u128` / `u64` inputs; `solana_program::keccak` vs `tiny-keccak` same layout as `multichain-rs` |
 | `packages/multichain-rs/src/hash.rs` `proptest_xchain_hash` | Same V2 layout on the shared library |
-| `decimal.rs` proptest | Fee / amount scaling invariants |
+| `decimal.rs` proptest | `normalize_decimals` vs EVM reference (withdraw execute scaling) |
+| `fee.rs` proptest (`deposit_fee_and_net`) | `fee + net == gross`, floor division vs `fee_bps` (incl. on-chain cap 0..=100) |
 | Anchor TS suites | Integration behavior (no libFuzzer) |
 
 ## cargo-fuzz (optional)
@@ -17,8 +18,10 @@ A libFuzzer harness lives under `packages/contracts-solana/programs/cl8y-bridge/
 
 ```bash
 cd packages/contracts-solana/programs/cl8y-bridge/fuzz
-cargo fuzz run transfer_hash -- -runs=10000
+cargo +nightly fuzz run transfer_hash -- -runs=10000
 ```
+
+**Toolchain:** `cargo-fuzz` uses `-Z sanitizer=address`; use **nightly** Rust (`cargo +nightly fuzz run …`), not stable.
 
 **Limits:** This does **not** fuzz full Anchor instruction dispatch (account metas, CPI, Sysvar). Extending fuzzing to instruction decoding would require extracting pure parse helpers or using a custom harness with structured inputs. Full SBF deployment paths are not exercised by `cargo-fuzz`.
 

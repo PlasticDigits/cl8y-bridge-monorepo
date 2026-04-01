@@ -133,4 +133,4 @@ User-visible and client-built transfer ids must use the same V2 digest as on-cha
 
 ## Fuzzing
 
-See `docs/SOLANA_FUZZING.md` for `cargo-fuzz` layout and scope (hash packing; **Future work** section for instruction/CPI fuzzing). Property tests today: `hash.rs` (proptest vs `tiny-keccak`), `decimal.rs` (proptest), `packages/multichain-rs/src/hash.rs` (proptest).
+See `docs/SOLANA_FUZZING.md` for `cargo-fuzz` layout and scope (hash packing; **Future work** section for instruction/CPI fuzzing). Property tests today: `hash.rs` (proptest vs `tiny-keccak`), `decimal.rs` (proptest), `fee.rs` (`deposit_fee_and_net` proptest), `packages/multichain-rs/src/hash.rs` (proptest). SPL audit checklist and command evidence: `docs/SPL_BRIDGE_SECURITY_AUDIT.md`.

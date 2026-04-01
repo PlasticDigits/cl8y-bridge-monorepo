@@ -4,12 +4,19 @@
  * docs/SOLANA_BRIDGE_INVARIANTS.md.
  */
 import * as anchor from "@coral-xyz/anchor";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import {
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
+} from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
   createMint,
   getAccount,
-  getOrCreateAssociatedTokenAccount,
+  getAssociatedTokenAddressSync,
   mintTo,
 } from "@solana/spl-token";
 import { expect } from "chai";
@@ -28,6 +35,7 @@ import {
   registerChainIfNeeded,
   setExplicitUnlimitedWithdrawRateLimit,
   setupTest,
+  airdrop,
 } from "./helpers/setup";
 
 const SOLANA_CHAIN_ID = [0x00, 0x00, 0x00, 0x05];
@@ -58,6 +66,12 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
 
   before(async () => {
     ctx = await setupTest();
+    // Late in the full `anchor test` run the admin can be low on SOL for new ATAs.
+    await airdrop(
+      ctx.provider.connection,
+      ctx.admin.publicKey,
+      100 * LAMPORTS_PER_SOL
+    );
     await initializeBridgeIfNeeded(ctx, {
       operator: ctx.operator.publicKey,
       feeBps: 50,
@@ -91,26 +105,41 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
       TP2022
     );
 
-    userToken = await getOrCreateAssociatedTokenAccount(
-      ctx.provider.connection,
-      ctx.admin,
+    // Idempotent ATA creation surfaces CPI errors; getOrCreate swallows create failures and
+    // then throws TokenAccountNotFoundError (misleading when Token-2022 / rent is the root cause).
+    const userAta = getAssociatedTokenAddressSync(
       mint,
       ctx.user.publicKey,
       false,
-      "confirmed",
-      undefined,
       TP2022
     );
-    bridgeToken = await getOrCreateAssociatedTokenAccount(
-      ctx.provider.connection,
-      ctx.admin,
+    const bridgeAta = getAssociatedTokenAddressSync(
       mint,
       ctx.bridgePda,
       true,
-      "confirmed",
-      undefined,
       TP2022
     );
+    const ataTx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        ctx.admin.publicKey,
+        userAta,
+        ctx.user.publicKey,
+        mint,
+        TP2022
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        ctx.admin.publicKey,
+        bridgeAta,
+        ctx.bridgePda,
+        mint,
+        TP2022
+      )
+    );
+    await sendAndConfirmTransaction(ctx.provider.connection, ataTx, [ctx.admin], {
+      commitment: "confirmed",
+    });
+    userToken = { address: userAta };
+    bridgeToken = { address: bridgeAta };
 
     await mintTo(
       ctx.provider.connection,
@@ -290,6 +319,7 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
       undefined,
       TP2022
     );
-    expect(Number(bridgeAfter.amount)).to.equal(0);
+    // Lock/unlock: full gross sat in bridge; execute unlocks net; fee remains until admin withdraw_fees.
+    expect(Number(bridgeAfter.amount)).to.equal(Number(expectedFee));
   });
 });

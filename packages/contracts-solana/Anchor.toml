@@ -29,5 +29,9 @@ url = "https://api.mainnet-beta.solana.com"
 [[test.validator.clone]]
 address = "So11111111111111111111111111111111111111112"
 
+# Token-2022 program (plain mints); required for `tests/token_2022_flow.test.ts`.
+[[test.validator.clone]]
+address = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
 [scripts]
 test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.test.ts"
