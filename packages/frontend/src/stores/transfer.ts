@@ -1,11 +1,11 @@
 import { create } from 'zustand'
-import type { TransferRecord, TransferStatus } from '../types/transfer'
+import type { TransferDirection, TransferRecord, TransferStatus } from '../types/transfer'
 
 const STORAGE_KEY = 'cl8y-bridge-transactions'
 
 export interface ActiveTransfer {
   id: string
-  direction: 'evm-to-terra' | 'terra-to-evm' | 'evm-to-evm'
+  direction: TransferDirection
   sourceChain: string
   destChain: string
   amount: string

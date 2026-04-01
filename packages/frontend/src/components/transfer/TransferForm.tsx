@@ -28,7 +28,7 @@ import {
   fetchSplMintDecimals,
   fetchTokenMappingLocalMint,
 } from '../../services/solana/transaction'
-import { solanaAddressToBytes32 } from '../../services/solana/address'
+import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
@@ -43,7 +43,6 @@ import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
 import { parseTerraLockReceipt } from '../../services/terra/depositReceipt'
 import { getDestToken } from '../../services/evm/tokenRegistry'
-import { bytes32ToSolanaAddress } from '../../services/solana/address'
 import { getEvmClient } from '../../services/evmClient'
 import {
   computeXchainHashId,
@@ -1003,11 +1002,10 @@ export function TransferForm() {
     if (terraStatus === 'success' && terraTxHash) {
       setTxHash(terraTxHash)
 
-      // Read frozen chains — for Terra deposits, direction is always terra-to-evm
-      // but destChain could have been swapped.
       const frozen = frozenChainsRef.current
       const frozenDest = frozen?.destChain ?? destChain
       const frozenSource = frozen?.sourceChain ?? sourceChain
+      const recordDirection = frozen?.direction ?? direction
 
       const run = async () => {
         console.info(`[TransferForm:terra] Deposit success, txHash=${terraTxHash}`)
@@ -1025,9 +1023,18 @@ export function TransferForm() {
           }
         }
 
-        const destAccountHex = recipientAddr.startsWith('0x')
-          ? evmAddressToBytes32(recipientAddr as `0x${string}`)
-          : recipientAddr
+        let destAccountHex: string
+        if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+          destAccountHex = evmAddressToBytes32(recipientAddr as `0x${string}`)
+        } else if (recordDirection === 'terra-to-solana') {
+          try {
+            destAccountHex = solanaAddressToBytes32(recipientAddr)
+          } catch {
+            destAccountHex = recipientAddr
+          }
+        } else {
+          destAccountHex = recipientAddr
+        }
 
         // Parse Terra receipt -- extract nonce, amount, and critically the canonical
         // dest_token_address and xchain_hash_id that the Terra contract computed.
@@ -1058,8 +1065,14 @@ export function TransferForm() {
         let destTokenB32: string | undefined = parsed?.destTokenAddress
         if (!destTokenB32) {
           // Fallback for older contracts that don't emit dest_token_address:
-          // try destTokenAddr from useTokenDestMapping, then registry
-          if (destTokenAddr) {
+          // try destTokenAddr / mapping from useTokenDestMapping, then registry
+          if (recordDirection === 'terra-to-solana' && tokenDestMappingAddr) {
+            try {
+              destTokenB32 = solanaAddressToBytes32(tokenDestMappingAddr)
+            } catch {
+              /* keep undefined */
+            }
+          } else if (destTokenAddr) {
             destTokenB32 =
               destTokenAddr.length === 66
                 ? destTokenAddr
@@ -1086,12 +1099,20 @@ export function TransferForm() {
             const srcAccB32 = (srcAccountHex?.startsWith('0x') && srcAccountHex.length === 66)
               ? srcAccountHex
               : (terraAddress ? terraAddressToBytes32(terraAddress) : '0x' + '0'.repeat(64))
-            const destAccB32 = destAccountHex.startsWith('0x') && destAccountHex.length === 66
-              ? destAccountHex
-              : evmAddressToBytes32(recipientAddr as `0x${string}`)
-            const tokenB32 = destTokenB32 && destTokenB32.length === 66
-              ? destTokenB32
-              : (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : '0x' + '0'.repeat(64))
+            const destAccB32 =
+              destAccountHex.startsWith('0x') && destAccountHex.length === 66
+                ? destAccountHex
+                : recordDirection === 'terra-to-solana'
+                  ? solanaAddressToBytes32(recipientAddr)
+                  : evmAddressToBytes32(recipientAddr as `0x${string}`)
+            const tokenB32 =
+              destTokenB32 && destTokenB32.length === 66
+                ? destTokenB32
+                : recordDirection === 'terra-to-solana' && tokenDestMappingAddr
+                  ? solanaAddressToBytes32(tokenDestMappingAddr)
+                  : destTokenAddr
+                    ? evmAddressToBytes32(destTokenAddr as `0x${string}`)
+                    : '0x' + '0'.repeat(64)
             xchainHashId = computeXchainHashId(
               srcChainB32 as `0x${string}`,
               destChainB32 as `0x${string}`,
@@ -1123,7 +1144,7 @@ export function TransferForm() {
 
         recordTransfer({
           type: 'withdrawal',
-          direction: 'terra-to-evm',
+          direction: recordDirection === 'terra-to-solana' ? 'terra-to-solana' : 'terra-to-evm',
           sourceChain: frozenSource.includes('terra') || frozenSource.includes('local') ? frozenSource : 'localterra',
           destChain: frozenDest,
           amount: netAmount,
@@ -1157,7 +1178,25 @@ export function TransferForm() {
       frozenChainsRef.current = null
       resetTerra()
     }
-  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, sourceChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens, destTokenAddr])
+  }, [
+    terraStatus,
+    terraTxHash,
+    terraError,
+    resetTerra,
+    navigate,
+    destChain,
+    sourceChain,
+    amount,
+    terraDecimals,
+    recordTransfer,
+    terraAddress,
+    recipientAddr,
+    selectedTokenId,
+    registryTokens,
+    destTokenAddr,
+    direction,
+    tokenDestMappingAddr,
+  ])
 
   // Solana deposit errors live only in useSolanaDeposit — mirror EVM/Terra by surfacing them in the form.
   useEffect(() => {
@@ -1452,15 +1491,57 @@ export function TransferForm() {
       return
     }
 
+    if (direction === 'terra-to-solana') {
+      if (!recipientAddr?.trim()) {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      try {
+        new PublicKey(recipientAddr)
+      } catch {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      const v2Bytes4Sol = destConfig?.bytes4ChainId
+      if (!v2Bytes4Sol) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destChainIdSol = parseInt(v2Bytes4Sol, 16)
+      const amountMicroSol = parseAmount(amount, terraDecimals)
+      const selectedRegSol = registryTokens?.find((t) => t.token === selectedTokenId)
+      const isNativeSol = selectedRegSol?.is_native ?? (selectedTokenId === 'uluna')
+      await terraLock({
+        amountMicro: amountMicroSol,
+        destChainId: destChainIdSol,
+        recipientSolana: recipientAddr,
+        tokenId: selectedTokenId || 'uluna',
+        isNative: isNativeSol,
+        srcDecimals: terraDecimals,
+        transferDirection: 'terra-to-solana',
+        destChainKey: destChain,
+        tokenSymbol:
+          terraDisplay.displayLabel ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          getTokenDisplaySymbol(selectedTokenId || 'uluna'),
+      })
+      return
+    }
+
     if (direction === 'terra-to-evm') {
       // Terra → EVM: deposit on Terra bridge (V2)
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
+        frozenChainsRef.current = null
         return
       }
       const v2Bytes4 = destConfig?.bytes4ChainId
       if (!v2Bytes4) {
         setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
         return
       }
       const destChainId = parseInt(v2Bytes4, 16)
@@ -1474,6 +1555,7 @@ export function TransferForm() {
         tokenId: selectedTokenId || 'uluna',
         isNative,
         srcDecimals: terraDecimals,
+        destChainKey: destChain,
         tokenSymbol:
           terraDisplay.displayLabel ||
           transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
