@@ -1,6 +1,12 @@
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
-import { bytes4HexToUint8Array, parseTokenMappingLocalMint, WSOL_MINT } from './transaction'
+import {
+  bytes4HexToUint8Array,
+  formatSolanaWalletError,
+  looksLikeSolanaLocalnetRpc,
+  parseTokenMappingLocalMint,
+  WSOL_MINT,
+} from './transaction'
 
 describe('solana/transaction helpers', () => {
   it('bytes4HexToUint8Array decodes V2 chain id hex', () => {
@@ -13,5 +19,17 @@ describe('solana/transaction helpers', () => {
     const mint = new PublicKey(WSOL_MINT)
     const buf = Buffer.concat([disc, mint.toBuffer()])
     expect(parseTokenMappingLocalMint(buf).equals(mint)).toBe(true)
+  })
+
+  it('looksLikeSolanaLocalnetRpc detects loopback hosts', () => {
+    expect(looksLikeSolanaLocalnetRpc('http://localhost:8899')).toBe(true)
+    expect(looksLikeSolanaLocalnetRpc('http://127.0.0.1:8899')).toBe(true)
+    expect(looksLikeSolanaLocalnetRpc('https://api.devnet.solana.com')).toBe(false)
+  })
+
+  it('formatSolanaWalletError maps rejection codes and objects', () => {
+    expect(formatSolanaWalletError(new Error('User rejected'))).toBe('User rejected')
+    expect(formatSolanaWalletError({ code: 4001 })).toContain('rejected')
+    expect(formatSolanaWalletError({ message: 'not supported on localnet' })).toContain('Phantom often')
   })
 })

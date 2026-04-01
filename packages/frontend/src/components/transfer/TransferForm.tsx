@@ -27,6 +27,7 @@ import {
   fetchDepositNonce,
   fetchSplMintDecimals,
   fetchTokenMappingLocalMint,
+  formatSolanaWalletError,
 } from '../../services/solana/transaction'
 import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
@@ -239,12 +240,16 @@ function getTerraTokenDecimals(
 export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
-  const { connected: isSolanaConnected, address: solanaAddress, setShowWalletModal: setShowSolanaModal } = useSolanaWallet()
+  const {
+    connected: isSolanaConnected,
+    address: solanaAddress,
+    walletType: solanaWalletType,
+    setShowWalletModal: setShowSolanaModal,
+  } = useSolanaWallet()
   const {
     step: solanaStep,
     txSignature: solanaTxSig,
     confirmedDepositNonce,
-    error: solanaError,
     deposit: solanaDeposit,
     reset: resetSolana,
   } = useSolanaDeposit()
@@ -1198,15 +1203,6 @@ export function TransferForm() {
     tokenDestMappingAddr,
   ])
 
-  // Solana deposit errors live only in useSolanaDeposit — mirror EVM/Terra by surfacing them in the form.
-  useEffect(() => {
-    if (solanaStep === 'error' && solanaError) {
-      setError(solanaError)
-      frozenChainsRef.current = null
-      resetSolana()
-    }
-  }, [solanaStep, solanaError, resetSolana])
-
   // Solana deposit success: V2 xchain hash in URL + store (status page expects 0x…, not Solana tx sig)
   useEffect(() => {
     if (solanaStep !== 'confirmed' || !solanaTxSig || confirmedDepositNonce == null) return
@@ -1485,8 +1481,9 @@ export function TransferForm() {
             solanaDepositSpl && solanaLocalMint ? solanaLocalMint.toBase58() : undefined,
         })
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to build Solana deposit')
+        setError(err instanceof Error ? err.message : formatSolanaWalletError(err))
         frozenChainsRef.current = null
+        resetSolana()
       }
       return
     }
@@ -1747,6 +1744,20 @@ export function TransferForm() {
           </p>
         </div>
       )}
+      {!error &&
+        !submitGuardError &&
+        isSourceSolana &&
+        sourceChain === 'solana-localnet' &&
+        solanaWalletType?.toLowerCase() === 'phantom' && (
+          <div className="bg-amber-900/30 border-2 border-amber-700 p-3">
+            <p className="text-amber-200 text-sm font-semibold">Phantom and Solana Localnet</p>
+            <p className="text-amber-100/90 text-sm mt-1">
+              Phantom often cannot open a sign popup for a local validator; the extension may report that signing is not
+              supported on local networks. Use Solflare or Backpack for manual UI testing, or rely on automated E2E for
+              Solana Localnet.
+            </p>
+          </div>
+        )}
 
       <SourceChainSelector
         chains={allChains}

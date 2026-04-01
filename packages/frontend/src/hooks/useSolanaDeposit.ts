@@ -5,6 +5,7 @@ import {
   buildDepositNativeInstruction,
   buildSolanaSplDepositInstructions,
   fetchDepositNonce,
+  formatSolanaWalletError,
   sendSolanaTransaction,
 } from "../services/solana/transaction";
 
@@ -46,9 +47,10 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
   const deposit = useCallback(
     async (params: SolanaDepositParams) => {
       if (!address || !walletType) {
-        setError("Solana wallet not connected");
+        const msg = "Solana wallet not connected";
+        setError(msg);
         setStep("error");
-        return;
+        throw new Error(msg);
       }
 
       try {
@@ -102,8 +104,10 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
 
         setStep("confirmed");
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Deposit failed");
+        const message = formatSolanaWalletError(err);
+        setError(message);
         setStep("error");
+        throw new Error(message);
       }
     },
     [address, walletType]

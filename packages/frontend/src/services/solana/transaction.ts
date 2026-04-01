@@ -26,6 +26,92 @@ export const WSOL_MINT = new PublicKey(
   "So11111111111111111111111111111111111111112",
 );
 
+/** Browser wallets may never resolve/reject on unsupported RPCs (e.g. Phantom + local validator). */
+export const SOLANA_WALLET_SIGN_TIMEOUT_MS = 90_000;
+
+export function looksLikeSolanaLocalnetRpc(rpcUrl: string): boolean {
+  const trimmed = rpcUrl.trim();
+  try {
+    const u = new URL(trimmed);
+    const h = u.hostname.toLowerCase();
+    return (
+      h === "localhost" ||
+      h === "127.0.0.1" ||
+      h === "::1" ||
+      h === "0.0.0.0"
+    );
+  } catch {
+    return /localhost|127\.0\.0\.1/i.test(trimmed);
+  }
+}
+
+function appendPhantomLocalnetHint(message: string): string {
+  if (message.includes("Phantom often cannot sign on Solana Localnet")) {
+    return message;
+  }
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("localnet") ||
+    lower.includes("not supported") ||
+    lower.includes("feature is not supported")
+  ) {
+    return (
+      `${message} — Phantom often cannot sign on Solana Localnet; try Solflare or Backpack, or use server-side E2E for local Solana.`
+    );
+  }
+  return message;
+}
+
+/** Normalize wallet / RPC failures (wallets often reject with plain objects, not `Error`). */
+export function formatSolanaWalletError(err: unknown): string {
+  if (typeof err === "string" && err.trim()) {
+    return appendPhantomLocalnetHint(err);
+  }
+  if (err instanceof Error && err.message.trim()) {
+    return appendPhantomLocalnetHint(err.message);
+  }
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    const code = o.code;
+    if (code === 4001 || code === "4001") {
+      return appendPhantomLocalnetHint("Wallet rejected the request.");
+    }
+    const nested =
+      o.error && typeof o.error === "object"
+        ? (o.error as { message?: string }).message
+        : undefined;
+    const msg =
+      (typeof o.message === "string" && o.message) ||
+      (typeof o.msg === "string" && o.msg) ||
+      (typeof nested === "string" && nested) ||
+      "";
+    if (msg.trim()) {
+      return appendPhantomLocalnetHint(msg);
+    }
+  }
+  return appendPhantomLocalnetHint("Solana wallet request failed.");
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const id = setTimeout(() => reject(onTimeout()), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(id);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(id);
+        reject(e);
+      },
+    );
+  });
+}
+
 export function findBridgePda(programId: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
   return pda;
@@ -306,11 +392,31 @@ export async function sendSolanaTransaction(
     throw new Error(`${walletName} wallet not found`);
   }
 
+  if (!provider.publicKey) {
+    throw new Error(
+      "Solana wallet has no active account. Unlock the extension or reconnect.",
+    );
+  }
+
   const { blockhash } = await connection.getLatestBlockhash();
   transaction.recentBlockhash = blockhash;
   transaction.feePayer = provider.publicKey;
 
-  const signed = await provider.signTransaction(transaction);
+  const signed = (await withTimeout(
+    provider.signTransaction(transaction),
+    SOLANA_WALLET_SIGN_TIMEOUT_MS,
+    () =>
+      new Error(
+        `Wallet did not complete signing within ${Math.round(SOLANA_WALLET_SIGN_TIMEOUT_MS / 1000)}s. ` +
+          "If no popup appeared, this wallet may not support signing for this RPC (common with Phantom on a local validator).",
+      ),
+  )) as Transaction;
+
+  if (!signed || typeof signed.serialize !== "function") {
+    throw new Error(
+      "Wallet did not return a signed transaction. Try another Solana wallet or check the extension for blocked popups.",
+    );
+  }
   let signature: string;
   try {
     signature = await connection.sendRawTransaction(signed.serialize());
