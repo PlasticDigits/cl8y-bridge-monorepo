@@ -8,6 +8,8 @@ import {
   formatAmountForNumberInput,
   formatCompact,
   parseAmount,
+  parseAmountAsBigInt,
+  expandScientificNotationToDecimalString,
   formatRate,
   formatDuration,
   formatCountdownMmSs,
@@ -161,6 +163,30 @@ describe('parseAmount', () => {
 
   it('handles large amounts', () => {
     expect(parseAmount('1000000', 6)).toBe('1000000000000')
+  })
+
+  // Regression (GitLab #95): Number scaling used scientific notation; BigInt() threw.
+  it('parses large human × decimals without scientific notation (Solana 18-dec SPL)', () => {
+    const s = parseAmount('1000', 18)
+    expect(s).toBe('1000000000000000000000')
+    expect(s).not.toMatch(/e/i)
+    expect(() => BigInt(s)).not.toThrow()
+    expect(parseAmountAsBigInt('1000', 18)).toBe(BigInt('1000000000000000000000'))
+  })
+
+  it('parseAmountAsBigInt matches expected bigint for typical inputs', () => {
+    expect(parseAmountAsBigInt('1.5', 6)).toBe(1_500_000n)
+    expect(parseAmountAsBigInt(0, 6)).toBe(0n)
+  })
+})
+
+describe('expandScientificNotationToDecimalString', () => {
+  it('expands large exponents to plain digits', () => {
+    expect(expandScientificNotationToDecimalString('1e+21')).toBe('1000000000000000000000')
+  })
+
+  it('expands small negative exponents', () => {
+    expect(expandScientificNotationToDecimalString('1.5e-3')).toBe('0.0015')
   })
 })
 

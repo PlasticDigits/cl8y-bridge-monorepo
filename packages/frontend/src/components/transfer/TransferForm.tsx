@@ -56,7 +56,13 @@ import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
 import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
-import { parseAmount, formatAmount, formatAmountForNumberInput, formatCompact } from '../../utils/format'
+import {
+  parseAmount,
+  parseAmountAsBigInt,
+  formatAmount,
+  formatAmountForNumberInput,
+  formatCompact,
+} from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -778,7 +784,7 @@ export function TransferForm() {
 
   const isBelowMin = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
-    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    const parsed = parseAmountAsBigInt(amount, amountDecimals)
     if (effectiveMinInSrc != null && effectiveMinInSrc > 0n) {
       return parsed < effectiveMinInSrc
     }
@@ -795,7 +801,7 @@ export function TransferForm() {
         (tokenBalance !== undefined && !!tokenConfig)
       )
     }
-    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    const parsed = parseAmountAsBigInt(amount, amountDecimals)
     return parsed > effectiveMaxInSrc
   }, [
     amount,
@@ -1225,7 +1231,7 @@ export function TransferForm() {
       }
     }
 
-    const gross = BigInt(parseAmount(amount, amountDecimals))
+    const gross = parseAmountAsBigInt(amount, amountDecimals)
     const feeBps = BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100))
     const fee = (gross * feeBps) / 10000n
     const netAmount = gross - fee
@@ -1467,7 +1473,7 @@ export function TransferForm() {
           return
         }
 
-        const amountBaseUnits = BigInt(parseAmount(amount, amountDecimals))
+        const amountBaseUnits = parseAmountAsBigInt(amount, amountDecimals)
 
         await solanaDeposit({
           rpcUrl: sourceConfig.rpcUrl,
