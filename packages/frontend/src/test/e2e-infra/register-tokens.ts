@@ -195,7 +195,15 @@ function registerChainsOnEvm(bridges: BridgeAddresses, evmRpcUrl: string, evm1Rp
   )
 }
 
-type EvmChainTokens = { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
+type EvmChainTokens = {
+  tokenA: string
+  tokenB: string
+  tokenC: string
+  lunc: string
+  kdec: string
+  sol: string
+  t2022: string
+}
 
 /** Encode SPL mint pubkey as `0x` + 64 hex chars (32 raw bytes). */
 function splMintToBytes32Hex(mintBase58: string): string {
@@ -212,6 +220,8 @@ const SPL_TOKEN_ABC_DECIMALS = 9
 const SPL_LUNC_DECIMALS_SOL = 6
 const SPL_KDEC_DECIMALS_SOL = 9
 const SPL_SOL_DECIMALS = 9
+/** SPL side for T2022 cross-chain row (matches deploy-solana.ts). */
+const SPL_T2022_DECIMALS = 9
 
 /**
  * Register each local ERC20 ↔ Solana SPL mint on the EVM TokenRegistry (dest + incoming).
@@ -266,6 +276,12 @@ function registerEvmSolanaMappings(
       spl: solana.wsol,
       destDecimals: SPL_SOL_DECIMALS,
       incomingSrcDecimals: SPL_SOL_DECIMALS,
+    },
+    {
+      erc: sourceEvm.t2022,
+      spl: solana.t2022,
+      destDecimals: SPL_T2022_DECIMALS,
+      incomingSrcDecimals: SPL_T2022_DECIMALS,
     },
   ]
 
@@ -349,10 +365,11 @@ function registerEvmTokensForChain(
   }>,
   terraTokens: TokenAddresses['terra']
 ): void {
-  const tokenPairs: Array<[string, 'tokenA' | 'tokenB' | 'tokenC']> = [
+  const tokenPairs: Array<[string, 'tokenA' | 'tokenB' | 'tokenC' | 't2022']> = [
     [sourceTokens.tokenA, 'tokenA'],
     [sourceTokens.tokenB, 'tokenB'],
     [sourceTokens.tokenC, 'tokenC'],
+    [sourceTokens.t2022, 't2022'],
   ]
 
   for (const [tokenAddr, tokenKey] of tokenPairs) {
@@ -363,10 +380,11 @@ function registerEvmTokensForChain(
       let decimals: number
       if (dest.chainKey === CHAIN_KEYS.terra) {
         const terraAddr = terraTokens[tokenKey]
+        if (isPlaceholderAddress(terraAddr)) continue
         destTokenBytes32 = getKeccak256(terraAddr)
         decimals = 6
       } else {
-        destTokenBytes32 = addressToBytes32(dest.tokens[tokenKey])
+        destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens)[tokenKey])
         decimals = dest.decimals
       }
       castSend(
@@ -640,17 +658,18 @@ function registerTerraTokensForEvmChains(
   }
 
   // Step 3: For CW20 tokens, add them and set per-chain destinations
-  const terraTokenPairs: Array<['tokenA' | 'tokenB' | 'tokenC', string]> = [
+  const terraTokenPairs: Array<['tokenA' | 'tokenB' | 'tokenC' | 't2022', string]> = [
     ['tokenA', tokens.terra.tokenA],
     ['tokenB', tokens.terra.tokenB],
     ['tokenC', tokens.terra.tokenC],
+    ['t2022', tokens.terra.t2022],
   ]
 
   // CW20 destination chains: Anvil and Anvil1
   const cw20DestChains: Array<{
     chainId: number[]
     chainLabel: string
-    getEvmAddr: (key: 'tokenA' | 'tokenB' | 'tokenC') => string
+    getEvmAddr: (key: 'tokenA' | 'tokenB' | 'tokenC' | 't2022') => string
   }> = [
     { chainId: [0x00, 0x00, 0x00, 0x01], chainLabel: 'Anvil', getEvmAddr: (k) => tokens.anvil[k] },
     { chainId: [0x00, 0x00, 0x00, 0x03], chainLabel: 'Anvil1', getEvmAddr: (k) => tokens.anvil1[k] },
@@ -960,15 +979,22 @@ function registerTerraSolanaMappings(
     },
   })
 
-  const cw20Pairs: Array<['tokenA' | 'tokenB' | 'tokenC', string]> = [
+  const cw20Pairs: Array<['tokenA' | 'tokenB' | 'tokenC' | 't2022', string]> = [
     ['tokenA', tokens.terra.tokenA],
     ['tokenB', tokens.terra.tokenB],
     ['tokenC', tokens.terra.tokenC],
+    ['t2022', tokens.terra.t2022],
   ]
   for (const [tkey, addr] of cw20Pairs) {
     if (addr === 'uluna' || isPlaceholderAddress(addr)) continue
     const spl =
-      tkey === 'tokenA' ? solana.tokenA : tkey === 'tokenB' ? solana.tokenB : solana.tokenC
+      tkey === 'tokenA'
+        ? solana.tokenA
+        : tkey === 'tokenB'
+          ? solana.tokenB
+          : tkey === 'tokenC'
+            ? solana.tokenC
+            : solana.t2022
     run(`CW20 ${tkey} set_token_destination → Solana`, {
       set_token_destination: {
         token: addr,

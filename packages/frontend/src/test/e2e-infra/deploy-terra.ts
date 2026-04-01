@@ -306,6 +306,26 @@ export function deployCw20KdecToken(): string {
 }
 
 /**
+ * Deploy CW20 "T2022" (6 decimals) — pairs with EVM T2022 + Token-2022 SPL on Solana.
+ * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
+ */
+export function deployCw20T2022Token(): string {
+  const codeId = getLatestCodeId()
+  if (!codeId) {
+    console.warn('[deploy-terra] No CW20 code_id available for T2022; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}t2022`
+  }
+  console.log(`[deploy-terra] Deploying CW20 T2022 (6 decimals, code_id=${codeId})...`)
+  const addr = instantiateCw20Token(codeId, 'Token-2022 QA', 'T2022', 6, '1000000000000')
+  if (!addr) {
+    console.warn('[deploy-terra] Failed to deploy CW20 T2022; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}t2022`
+  }
+  console.log(`[deploy-terra] CW20 T2022 deployed at: ${addr}`)
+  return addr
+}
+
+/**
  * Deploy CW20 synthetic SOL (9 decimals) for QA — pairs with EVM SOL + WSOL on Solana.
  * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
  */

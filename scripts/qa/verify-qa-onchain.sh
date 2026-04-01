@@ -101,9 +101,13 @@ check_solana_prog "${SOLANA_PROGRAM_ID:-}"
 
 echo "Token matrix (sample)"
 check_evm_code "ANVIL_TOKEN_A" "${ANVIL_TOKEN_A:-}" "$EVM_RPC_URL"
+check_evm_code "ANVIL_T2022" "${ANVIL_T2022:-}" "$EVM_RPC_URL"
 check_evm_code "ANVIL1_TOKEN_A" "${ANVIL1_TOKEN_A:-}" "$EVM1_RPC_URL"
+check_evm_code "ANVIL1_T2022" "${ANVIL1_T2022:-}" "$EVM1_RPC_URL"
 check_terra_cw "TERRA_TOKEN_A" "${TERRA_TOKEN_A:-}"
+check_terra_cw "TERRA_T2022" "${TERRA_T2022:-}"
 check_solana_mint "SOLANA_LUNC" "${SOLANA_LUNC:-}"
+check_solana_mint "SOLANA_T2022" "${SOLANA_T2022:-}"
 
 if [ "$fail" -ne 0 ]; then
   echo "[verify-qa-onchain] One or more checks failed." >&2

@@ -69,6 +69,7 @@ services:
   # CMD and always ran solana-validator before, so `solana-test-validator` in command
   # never executed. Clone wSOL mint into genesis (GitLab #84) — same mint as
   # scripts/solana/run-test-validator.sh and packages/contracts-solana/Anchor.toml.
+  # Token-2022 program clone: QA T2022 mint + `qa:full-token-setup` / register-qa-tokens.
   solana:
     image: solanalabs/solana:v1.18.26
     entrypoint: ["solana-test-validator"]
@@ -84,6 +85,8 @@ services:
       - https://api.mainnet-beta.solana.com
       - --clone
       - So11111111111111111111111111111111111111112
+      - --clone
+      - TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb
       - --log
     ports:
       - "127.0.0.1:8899:8899"

@@ -79,6 +79,7 @@ const SPL_ABC = 9;
 const SPL_LUNC = 6;
 const SPL_KDEC = 9;
 const SPL_SOL = 9;
+const SPL_T2022 = 9;
 
 interface QaTokens {
   anvil: {
@@ -88,6 +89,7 @@ interface QaTokens {
     lunc: string;
     kdec: string;
     sol: string;
+    t2022: string;
   };
   anvil1: {
     tokenA: string;
@@ -96,6 +98,7 @@ interface QaTokens {
     lunc: string;
     kdec: string;
     sol: string;
+    t2022: string;
   };
   terra: {
     tokenA: string;
@@ -103,6 +106,7 @@ interface QaTokens {
     tokenC: string;
     kdec: string;
     sol: string;
+    t2022: string;
   };
   solana: {
     tokenA: string;
@@ -110,6 +114,7 @@ interface QaTokens {
     tokenC: string;
     lunc: string;
     kdec: string;
+    t2022: string;
     wsol: string;
   };
 }
@@ -370,6 +375,48 @@ async function main(): Promise<void> {
     );
   }
 
+  // Token-2022 SPL mint: register Anvil + Anvil1 always; Terra only if CW20 deployed (not placeholder).
+  const t2022Mint = new PublicKey(t.solana.t2022);
+  const t2022AnvilTok = evmAddrToDestTokenBytes(t.anvil.t2022);
+  const t2022Anvil1Tok = evmAddrToDestTokenBytes(t.anvil1.t2022);
+  const terraT2022Placeholder = t.terra.t2022.startsWith("terra1placeholder_");
+  await registerTokenIfNeeded(
+    program,
+    bridgePda,
+    admin,
+    t2022Mint,
+    destAnvil,
+    t2022AnvilTok,
+    SPL_T2022,
+    18
+  );
+  if (!terraT2022Placeholder) {
+    await registerTokenIfNeeded(
+      program,
+      bridgePda,
+      admin,
+      t2022Mint,
+      destTerra,
+      keccakHexToBytes32(keccak256Utf8(t.terra.t2022)),
+      SPL_T2022,
+      6
+    );
+  } else {
+    console.log(
+      "[register-qa-tokens] Skipping Solana T2022 ↔ Terra mapping (Terra CW20 placeholder)"
+    );
+  }
+  await registerTokenIfNeeded(
+    program,
+    bridgePda,
+    admin,
+    t2022Mint,
+    destAnvil1,
+    t2022Anvil1Tok,
+    SPL_T2022,
+    18
+  );
+
   const uniqueMints: PublicKey[] = [];
   const seenMint = new Set<string>();
   for (const r of rows) {
@@ -377,6 +424,13 @@ async function main(): Promise<void> {
     if (!seenMint.has(k)) {
       seenMint.add(k);
       uniqueMints.push(r.mint);
+    }
+  }
+  {
+    const k = t2022Mint.toBase58();
+    if (!seenMint.has(k)) {
+      seenMint.add(k);
+      uniqueMints.push(t2022Mint);
     }
   }
   for (const mint of uniqueMints) {

@@ -106,6 +106,7 @@ async function main(): Promise<void> {
   if (!isPlaceholderAddress(tt.tokenC)) terraRows.push({ address: tt.tokenC, decimals: 6 })
   if (!isPlaceholderAddress(tt.kdec)) terraRows.push({ address: tt.kdec, decimals: 6 })
   if (!isPlaceholderAddress(tt.sol)) terraRows.push({ address: tt.sol, decimals: 9 })
+  if (!isPlaceholderAddress(tt.t2022)) terraRows.push({ address: tt.t2022, decimals: 6 })
 
   const terraFaucet = deployLocalTerraFaucet(terraRows)
   const solFaucetPid = process.env.SOLANA_FAUCET_PROGRAM_ID || SOLANA_FAUCET_PROGRAM_ID_DEFAULT
@@ -133,6 +134,7 @@ async function main(): Promise<void> {
       ['tokenA', tokens.tokenA],
       ['tokenB', tokens.tokenB],
       ['tokenC', tokens.tokenC],
+      ['t2022', tokens.t2022],
     ] as const) {
       try {
         fundLockUnlock(rpc, lockUnlock, addr, FUND_AMOUNT)

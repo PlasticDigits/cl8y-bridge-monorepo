@@ -4,14 +4,14 @@
  * + KDEC (decimal normalization test token) across all 3 chains.
  */
 
-import { deployThreeTokens, deployLuncToken, deployKdecToken, deploySolToken } from './deploy-evm'
-import { deployThreeCw20Tokens, deployCw20KdecToken, deployCw20SolToken } from './deploy-terra'
+import { deployThreeTokens, deployLuncToken, deployKdecToken, deploySolToken, deployT2022TestToken } from './deploy-evm'
+import { deployThreeCw20Tokens, deployCw20KdecToken, deployCw20SolToken, deployCw20T2022Token } from './deploy-terra'
 import { deploySolanaMints, type SolanaTokenMints } from './deploy-solana'
 
 export interface TokenAddresses {
-  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
-  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string }
-  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string; sol: string }
+  anvil: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string; t2022: string }
+  anvil1: { tokenA: string; tokenB: string; tokenC: string; lunc: string; kdec: string; sol: string; t2022: string }
+  terra: { tokenA: string; tokenB: string; tokenC: string; kdec: string; sol: string; t2022: string }
   solana: SolanaTokenMints
 }
 
@@ -45,10 +45,14 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
   const anvilSol = deploySolToken('http://localhost:8545')
   const anvil1Sol = deploySolToken('http://localhost:8546')
 
+  const anvilT2022 = deployT2022TestToken('http://localhost:8545')
+  const anvil1T2022 = deployT2022TestToken('http://localhost:8546')
+
   // Deploy CW20 tokens to LocalTerra (TokenA/B/C + KDEC)
   const terraTokens = deployThreeCw20Tokens(terraBridgeAddress)
   const terraKdec = deployCw20KdecToken()
   const terraSol = deployCw20SolToken()
+  const terraT2022 = deployCw20T2022Token()
 
   const solRpc = process.env.SOLANA_RPC_URL || 'http://127.0.0.1:8899'
   const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
@@ -63,6 +67,7 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
       lunc: anvilLunc,
       kdec: anvilKdec,
       sol: anvilSol,
+      t2022: anvilT2022,
     },
     anvil1: {
       tokenA: anvil1Tokens.tokenAAddress,
@@ -71,6 +76,7 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
       lunc: anvil1Lunc,
       kdec: anvil1Kdec,
       sol: anvil1Sol,
+      t2022: anvil1T2022,
     },
     terra: {
       tokenA: terraTokens.tokenA.tokenAddress,
@@ -78,6 +84,7 @@ export async function deployAllTokens(terraBridgeAddress: string): Promise<Token
       tokenC: terraTokens.tokenC.tokenAddress,
       kdec: terraKdec,
       sol: terraSol,
+      t2022: terraT2022,
     },
     solana,
   }

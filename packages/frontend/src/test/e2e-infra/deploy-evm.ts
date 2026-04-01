@@ -113,6 +113,23 @@ export function deployThreeTokens(rpcUrl: string): TokenDeployResult {
 }
 
 /**
+ * Deploy T2022 ERC20 (18 decimals) — paired with Token-2022 SPL mint on Solana for QA.
+ */
+export function deployT2022TestToken(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying T2022 test token to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployT2022TestToken.s.sol:DeployT2022TestToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/TOKEN_T2022_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) {
+    throw new Error(`Could not find TOKEN_T2022_ADDRESS in deploy output:\n${output.slice(0, 600)}`)
+  }
+  console.log(`[deploy-evm] T2022 deployed: ${match[1]}`)
+  return match[1]!
+}
+
+/**
  * Deploy LUNC/tLUNC token (uluna representation) on a chain.
  * Symbol "tLUNC" so UI shows LUNC on Anvil/Anvil1, not TKNA.
  */

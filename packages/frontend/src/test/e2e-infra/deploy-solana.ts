@@ -5,7 +5,7 @@
  */
 
 import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { createMint } from '@solana/spl-token'
+import { TOKEN_2022_PROGRAM_ID, createMint } from '@solana/spl-token'
 import { readFileSync } from 'fs'
 
 /** Wrapped SOL — canonical mint; QA uses this for `TokenMapping.local_mint` with synthetic SOL on EVM/Terra. */
@@ -17,6 +17,8 @@ export interface SolanaTokenMints {
   tokenC: string
   lunc: string
   kdec: string
+  /** Plain Token-2022 mint (no extensions) — pairs with EVM/Terra T2022 in QA. */
+  t2022: string
   /** Same as {@link WSOL_MINT} — not deployed, native wrapped SOL mint. */
   wsol: string
 }
@@ -24,6 +26,8 @@ export interface SolanaTokenMints {
 const SPL_ABC_DECIMALS = 9
 const SPL_LUNC_DECIMALS = 6
 const SPL_KDEC_DECIMALS = 9
+/** Match ABC-style SPL mapping; EVM uses 18d, Terra CW20 6d (same as TKNA path). */
+const SPL_T2022_DECIMALS = 9
 
 function isLocalRpc(url: string): boolean {
   try {
@@ -58,7 +62,7 @@ export async function deploySolanaMints(
   const mintAuthority = payer.publicKey
   const freezeAuthority = null
 
-  const [tokenA, tokenB, tokenC, lunc, kdec] = await Promise.all([
+  const [tokenA, tokenB, tokenC, lunc, kdec, t2022] = await Promise.all([
     createMint(
       connection,
       payer,
@@ -94,6 +98,16 @@ export async function deploySolanaMints(
       freezeAuthority,
       SPL_KDEC_DECIMALS
     ),
+    createMint(
+      connection,
+      payer,
+      mintAuthority,
+      freezeAuthority,
+      SPL_T2022_DECIMALS,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    ),
   ])
 
   const out: SolanaTokenMints = {
@@ -102,6 +116,7 @@ export async function deploySolanaMints(
     tokenC: tokenC.toBase58(),
     lunc: lunc.toBase58(),
     kdec: kdec.toBase58(),
+    t2022: t2022.toBase58(),
     wsol: WSOL_MINT,
   }
   console.log('[deploy-solana] SPL mints:', JSON.stringify(out, null, 2))
