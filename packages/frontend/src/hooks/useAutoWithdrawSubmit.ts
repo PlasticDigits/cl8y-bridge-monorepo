@@ -33,7 +33,8 @@ import {
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
 import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/terra/transaction'
-import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
+import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
+import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
 import { bytes32HexToPublicKey } from '../services/solana/transaction'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
@@ -422,21 +423,21 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
         }
 
-        // Resolve the Terra denom for the token parameter.
-        // The Terra contract expects a native denom (e.g. "uluna") or CW20 address (terra1...),
-        // NOT the EVM source token address. Use destTokenId if stored, otherwise resolve
-        // from the deposit's dest token bytes32 via tokenlist native denom hashes.
-        let terraToken = transfer.destTokenId || ''
-        if (!terraToken && transfer.destToken) {
-          try {
-            terraToken = resolveTokenFromBytes32(transfer.destToken, tokenlist)
-          } catch {
-            console.warn(`${LOG} Could not resolve Terra token from destToken bytes32`)
-          }
-        }
-        if (!terraToken) {
-          terraToken = 'uluna'
-          console.warn(`${LOG} No destTokenId or destToken — falling back to uluna`)
+        // Terra `withdraw_submit` must use denom / CW20 bech32 matching EVM `getDestToken` bytes32.
+        // Never pass an 0x EVM address as `token` (keccak of ASCII breaks cross-chain hash; glab #89).
+        let terraToken: string
+        try {
+          terraToken = resolveTerraWithdrawToken(transfer.destTokenId, transfer.destToken, tokenlist)
+        } catch (e) {
+          const msg =
+            e instanceof Error
+              ? e.message
+              : 'Cannot resolve Terra token for withdraw_submit (check destToken / token list)'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
         }
 
         // Resolve the recipient as a terra1... bech32 address.

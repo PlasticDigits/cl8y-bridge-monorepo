@@ -11,12 +11,7 @@ import { useSourceChainTokenMappings } from '../../hooks/useSourceChainTokenMapp
 import { useBridgeConfig, useTokenDetails } from '../../hooks/useBridgeConfig'
 import { useCw20Balance } from '../../hooks/useContract'
 import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from '../../hooks/useTokenDisplayInfo'
-import {
-  useBridgeDeposit,
-  computeTerraChainBytes4,
-  encodeTerraAddress,
-  encodeEvmAddress,
-} from '../../hooks/useBridgeDeposit'
+import { useBridgeDeposit, encodeTerraAddress, encodeEvmAddress } from '../../hooks/useBridgeDeposit'
 import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidation'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
 import { useSolanaWallet } from '../../hooks/useSolanaWallet'
@@ -31,6 +26,7 @@ import {
 } from '../../services/solana/transaction'
 import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
+import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
@@ -979,10 +975,13 @@ export function TransferForm() {
           tokenSymbol: tokenConfig?.symbol || getTokenDisplaySymbol(selectedTokenId),
           srcDecimals: amountDecimals,
           destToken: destTokenBytes32 || tokenAddr,
-          // For EVM->Terra: store the raw Terra denom so auto-submit can pass it to the Terra contract.
+          // For EVM->Terra: store Terra denom/CW20 bech32 — never an 0x EVM address (fallback row
+          // while mappings load), or withdraw_submit hashes keccak(ascii "0x...") and mismatches EVM.
           // For other directions: store the dest token address as-is.
           destTokenId: frozenDirection === 'evm-to-terra'
-            ? (selectedTokenId || 'uluna')
+            ? (resolveTerraDestTokenIdForRecord(selectedTokenId, destTokenBytes32, tokenlist ?? null) ||
+              (selectedTokenId && !selectedTokenId.startsWith('0x') ? selectedTokenId : '') ||
+              'uluna')
             : (destTokenBytes32 ? undefined : tokenAddr),
           destBridgeAddress: destChainConfig?.bridgeAddress,
           sourceChainIdBytes4: frozenSrcBytes4 ?? srcChainConfig?.bytes4ChainId,
@@ -1004,7 +1003,25 @@ export function TransferForm() {
       frozenChainsRef.current = null
       resetEvm()
     }
-  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction, navigate, publicClient, evmAddress, tokenConfig, recipientAddr, selectedTokenId])
+  }, [
+    evmStatus,
+    depositTxHash,
+    evmError,
+    resetEvm,
+    sourceChain,
+    destChain,
+    amount,
+    amountDecimals,
+    recordTransfer,
+    direction,
+    navigate,
+    publicClient,
+    evmAddress,
+    tokenConfig,
+    recipientAddr,
+    selectedTokenId,
+    tokenlist,
+  ])
 
   // Terra deposit success: parse receipt for nonce, use canonical xchain_hash_id + dest_token_address
   // from the Terra contract's own event attributes (not recomputed by the frontend).
@@ -1574,7 +1591,12 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      const destChainBytes4 = computeTerraChainBytes4()
+      const destChainBytes4 = destConfig?.bytes4ChainId as Hex | undefined
+      if (!destChainBytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
       const destAccount = encodeTerraAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     } else {
