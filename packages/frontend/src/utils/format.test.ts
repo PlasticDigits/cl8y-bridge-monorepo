@@ -7,6 +7,8 @@ import {
   formatAmount,
   formatAmountForNumberInput,
   formatCompact,
+  UNPARSEABLE_AMOUNT_DISPLAY,
+  UNPARSEABLE_AMOUNT_NUMBER_INPUT,
   parseAmount,
   parseAmountAsBigInt,
   expandScientificNotationToDecimalString,
@@ -88,6 +90,14 @@ describe('formatAmount', () => {
     expect(formatAmount('-1000000', 6)).toBe('-1.00')
     expect(formatAmount('1e+6', 6)).toBe('1.00')
   })
+
+  it('returns display sentinel and logs when micro amount is unparseable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatAmount('not-a-number', 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(formatAmount(Number.NaN, 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
 })
 
 describe('formatAmountForNumberInput', () => {
@@ -100,6 +110,13 @@ describe('formatAmountForNumberInput', () => {
 
   it('respects displayDecimals', () => {
     expect(formatAmountForNumberInput('1234567', 6, 2)).toBe('1.23')
+  })
+
+  it('returns empty sentinel for unparseable micro amount', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatAmountForNumberInput('bogus', 6)).toBe(UNPARSEABLE_AMOUNT_NUMBER_INPUT)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
 
@@ -144,6 +161,13 @@ describe('formatCompact', () => {
   it('handles fractional micro strings on compact path', () => {
     expect(formatCompact('12', 6)).toBe('0.000012')
     expect(formatCompact('12.5', 6)).toBe('0.0000125')
+  })
+
+  it('returns compact sentinel when unparseable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatCompact('nope', 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('supports custom significant figures', () => {

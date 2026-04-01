@@ -16,7 +16,7 @@ All tests involving blockchain interactions run against real infrastructure:
 
 | Test Type | Example | Infrastructure |
 |-----------|---------|----------------|
-| Pure functions | `formatAmount()`, `parseAmount()` | None |
+| Pure functions | `formatAmount()`, `parseAmount()` (see [frontend.md](frontend.md#token-amounts-and-formatting) for rational micro parsing and unparseable sentinels) | None |
 | Configuration | Validate constants structure | None |
 | Hash computation | `keccak256` tests | None |
 | Component rendering | React UI elements | jsdom only |

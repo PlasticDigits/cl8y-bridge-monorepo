@@ -156,7 +156,10 @@ packages/frontend/
 │   │
 │   ├── utils/
 │   │   ├── constants.ts      # Network/contract config
-│   │   ├── format.ts         # Formatting utilities
+│   │   ├── format.ts         # Human-readable amounts, rates, addresses (see below)
+│   │   ├── bigintAmount.ts   # Rational base-unit → human (bigint-safe)
+│   │   ├── pow10.ts          # pow10BigInt (no unsafe Number 10**n for BigInt)
+│   │   ├── scientificDecimal.ts # Expand e-notation strings for exact parsing
 │   │   ├── validation.ts     # Address validation
 │   │   ├── bridgeChains.ts   # Bridge chain configuration
 │   │   └── chainLabel.ts     # Chain label utilities
@@ -173,6 +176,16 @@ packages/frontend/
 ├── tailwind.config.js
 └── tsconfig.json
 ```
+
+## Token amounts and formatting
+
+On-chain amounts are expressed in **base units** (smallest denomination). The UI converts them using the token’s **decimals** (e.g. 6 for many Cosmos assets, 9 for SOL, 18 for ERC-20).
+
+- **`parseAmount` / `parseAmountAsBigInt`** turn a **human** decimal string (what the user types) into base units, using **bigint-only** math so large values never hit JavaScript double scientific notation (`1e+21`) that `BigInt()` cannot parse.
+- **`formatAmount`**, **`formatAmountForNumberInput`**, and **`formatCompact`** take a **micro/base-unit** value (`string`, safe integer `number`, or `bigint`). They first parse the value as a **rational** (integer or decimal string, including forms like `1e+6` after expansion) in `bigintAmount.ts`, then format with exact arithmetic.
+- If a value **cannot** be interpreted as a rational micro amount (garbage string, `NaN`, etc.), the helpers **`console.warn`** with a `[cl8y-bridge/format]` prefix and return a **sentinel**: an em dash (`—`) for display and **`formatCompact`**, and an **empty string** for **`formatAmountForNumberInput`** (valid for `type="number"` inputs). That avoids silent `NaN` or misleading float rounding.
+
+Supporting modules: **`pow10.ts`** for \(10^n\) as `bigint`, **`scientificDecimal.ts`** for normalizing scientific notation strings before parsing.
 
 ## Routes
 

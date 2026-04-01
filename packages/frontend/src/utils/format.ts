@@ -13,11 +13,25 @@ import {
   tryParseMicroRational,
 } from './bigintAmount';
 
-function microAmountToHumanNumberFloat(microAmount: string | number, decimals: number): number {
-  if (typeof microAmount === 'string') {
-    return parseFloat(microAmount) / Math.pow(10, decimals);
-  }
-  return microAmount / Math.pow(10, decimals);
+/** Em dash: display when a micro amount cannot be parsed as a rational base-unit value. */
+export const UNPARSEABLE_AMOUNT_DISPLAY = '\u2014'
+
+/** Empty string: safe for `type="number"` when max/amount cannot be formatted. */
+export const UNPARSEABLE_AMOUNT_NUMBER_INPUT = ''
+
+/** Same as {@link UNPARSEABLE_AMOUNT_DISPLAY} for compact labels. */
+export const UNPARSEABLE_AMOUNT_COMPACT = UNPARSEABLE_AMOUNT_DISPLAY
+
+function warnUnparseableMicroAmount(
+  fn: string,
+  microAmount: unknown,
+  decimals: number,
+  extra?: Record<string, unknown>
+): void {
+  console.warn(
+    `[cl8y-bridge/format] ${fn}: cannot parse micro amount as rational; returning sentinel.`,
+    { microAmount, decimals, ...extra }
+  )
 }
 
 /**
@@ -41,11 +55,8 @@ export function formatAmount(
     return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, true);
   }
 
-  const amount = microAmountToHumanNumberFloat(microAmount as string | number, decimals);
-  return amount.toLocaleString('en-US', {
-    minimumFractionDigits: minDecimals,
-    maximumFractionDigits: maxDecimals,
-  });
+  warnUnparseableMicroAmount('formatAmount', microAmount, decimals, { displayDecimals });
+  return UNPARSEABLE_AMOUNT_DISPLAY;
 }
 
 /** Same rules as formatAmount but no thousands separators (for HTML type="number" inputs). */
@@ -64,12 +75,8 @@ export function formatAmountForNumberInput(
     return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, false);
   }
 
-  const amount = microAmountToHumanNumberFloat(microAmount as string | number, decimals);
-  return amount.toLocaleString('en-US', {
-    minimumFractionDigits: minDecimals,
-    maximumFractionDigits: maxDecimals,
-    useGrouping: false,
-  });
+  warnUnparseableMicroAmount('formatAmountForNumberInput', microAmount, decimals, { displayDecimals });
+  return UNPARSEABLE_AMOUNT_NUMBER_INPUT;
 }
 
 /**
@@ -88,43 +95,8 @@ export function formatCompact(
     return formatCompactHumanRational(hn, hd, sigfigs);
   }
 
-  let num: number
-  if (typeof value === 'string') {
-    num = parseFloat(value) / Math.pow(10, decimals)
-  } else if (typeof value === 'number') {
-    num = value / Math.pow(10, decimals)
-  } else {
-    return '0'
-  }
-  if (!Number.isFinite(num) || num === 0) return '0'
-  const abs = Math.abs(num)
-  if (abs >= 1e9) {
-    const scaled = num / 1e9
-    return numToSigFig(scaled, sigfigs) + 'b'
-  }
-  if (abs >= 1e6) {
-    const scaled = num / 1e6
-    return numToSigFig(scaled, sigfigs) + 'm'
-  }
-  if (abs >= 1e3) {
-    const scaled = num / 1e3
-    return numToSigFig(scaled, sigfigs) + 'k'
-  }
-  if (abs < 0.0001) {
-    // Show plain decimal instead of scientific notation (e.g. "0.000001" not "1e-6")
-    const exp = Math.floor(Math.log10(abs))
-    const decimalPlaces = Math.max(-exp + (sigfigs - 1), 1)
-    const formatted = num.toFixed(decimalPlaces)
-    // Strip trailing zeros but keep at least one decimal place
-    return formatted.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
-  }
-  return numToSigFig(num, sigfigs)
-}
-
-function numToSigFig(n: number, sigfigs: number): string {
-  if (n === 0) return '0'
-  const s = n.toPrecision(sigfigs)
-  return parseFloat(s).toString()
+  warnUnparseableMicroAmount('formatCompact', value, decimals, { sigfigs });
+  return UNPARSEABLE_AMOUNT_COMPACT;
 }
 
 function floorHumanDecimalToBaseUnitsString(unsignedDecimal: string, decimals: number): string {
