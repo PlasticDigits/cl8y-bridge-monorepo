@@ -34,7 +34,8 @@ import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
 import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
-import { getTokenFromList, getTerraAddressFromList, type TokenlistData } from '../../services/tokenlist'
+import { getTokenFromList, getTerraAddressFromList } from '../../services/tokenlist'
+import { buildTransferTokens } from '../../services/transfer/buildTransferTokens'
 import { shortenAddress } from '../../utils/shortenAddress'
 import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
@@ -50,7 +51,6 @@ import {
 } from '../../services/hashVerification'
 import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
-import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
 import {
   parseAmount,
@@ -122,67 +122,6 @@ function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): Chai
 }
 
 const ZERO_LOCK = '0x0000000000000000000000000000000000000000' as Address
-
-/** Build selectable token options from registry for the given direction */
-function buildTransferTokens(
-  registryTokens: { token: string; is_native: boolean; evm_token_address?: string; terra_decimals: number; evm_decimals?: number; enabled: boolean }[] | undefined,
-  isSourceTerra: boolean,
-  isSourceSolana: boolean,
-  fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined,
-  tokenlist: TokenlistData | null,
-  /** When source is EVM: per-chain token address from Terra token_dest_mapping */
-  sourceChainMappings?: Record<string, string>,
-  /** When source is Terra or Solana: only show tokens with a dest mapping on the selected chain */
-  destChainMappings?: Record<string, string>
-): TokenOption[] {
-  const symbolFromList = (token: string) =>
-    tokenlist ? getTokenFromList(tokenlist, token)?.symbol : null
-  if (isSourceTerra || isSourceSolana) {
-    // Wait for tokenlist to load so we never flash raw addresses as symbols
-    if (!tokenlist) return []
-    let enabledTokens = (registryTokens ?? []).filter((t) => t.enabled)
-    // Filter to tokens that have a destination mapping on the selected chain (EVM, Solana, or Terra)
-    if (destChainMappings && Object.keys(destChainMappings).length > 0) {
-      enabledTokens = enabledTokens.filter((t) => t.token in destChainMappings)
-    }
-    const fromRegistry = enabledTokens.map((t) => ({
-      id: t.token,
-      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-      tokenId: t.token,
-    }))
-    if (fromRegistry.length > 0) return fromRegistry
-    return []
-  }
-  // Wait for tokenlist so we never flash raw addresses as symbols
-  if (!tokenlist) return []
-  // EVM source: use per-chain token_dest_mapping to determine which tokens
-  // exist on the selected source chain. Only show tokens with a mapping.
-  if (sourceChainMappings && Object.keys(sourceChainMappings).length > 0) {
-    return Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
-      const reg = registryTokens?.find((t) => t.token === terraToken)
-      return {
-        id: terraToken,
-        symbol: symbolFromList(terraToken) ?? getTokenDisplaySymbol(reg?.token ?? terraToken),
-        tokenId: terraToken,
-        evmTokenAddress: evmAddr,
-      }
-    })
-  }
-  // Fallback: try legacy evm_token_address from registry (for older contracts)
-  const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
-  if (baseRegistry.length > 0) {
-    return baseRegistry.map((t) => ({
-      id: t.token,
-      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-      tokenId: t.token,
-      evmTokenAddress: bytes32ToAddress(t.evm_token_address!),
-    }))
-  }
-  if (fallbackConfig && !sourceChainMappings) {
-    return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
-  }
-  return []
-}
 
 /**
  * Convert a bytes32 hex string (64 chars) or 20-byte address to a checksummed EVM address.
@@ -384,7 +323,8 @@ export function TransferForm() {
         mergedFallbackTokenConfig,
         tokenlist ?? null,
         readySourceMappings,
-        readyDestMappings
+        readyDestMappings,
+        isSourceEvm && isSourceMappingsLoading,
       ),
     [
       registryTokens,
@@ -394,6 +334,8 @@ export function TransferForm() {
       tokenlist,
       readySourceMappings,
       readyDestMappings,
+      isSourceEvm,
+      isSourceMappingsLoading,
     ]
   )
 

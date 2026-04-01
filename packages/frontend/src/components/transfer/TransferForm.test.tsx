@@ -67,7 +67,7 @@ vi.mock('../../hooks/useTokenDestMapping', () => ({
 }))
 
 vi.mock('../../hooks/useSourceChainTokenMappings', () => ({
-  useSourceChainTokenMappings: () => ({ mappings: {} }),
+  useSourceChainTokenMappings: () => ({ mappings: {}, decimalsMap: {}, isLoading: false }),
 }))
 
 vi.mock('../../hooks/useBridgeConfig', () => ({

@@ -11,7 +11,9 @@
  */
 
 import type { Hex } from 'viem'
-import { computeXchainHashId } from './hashVerification'
+import { bytes32ToTerraAddress, computeXchainHashId } from './hashVerification'
+import { resolveTerraTokenForBrokenTransferFix } from './terra/withdrawTokenResolve'
+import type { TokenlistData } from './tokenlist'
 import { getEvmClient } from './evmClient'
 import { queryEvmDeposit } from './evmBridgeQueries'
 import { queryTerraDeposit } from './terraBridgeQueries'
@@ -59,7 +61,8 @@ export async function detectAndGetFix(
   _hash: Hex,
   dest: PendingWithdrawData,
   destChain: BridgeChainConfig,
-  destChainKey: string
+  destChainKey: string,
+  tokenlist?: TokenlistData | null,
 ): Promise<BrokenTransferFix | null> {
   if (dest.executed) return null
 
@@ -124,15 +127,16 @@ export async function detectAndGetFix(
   }
 
   if (correctDestChainConfig.type === 'cosmos') {
-    // Terra recipient: destAccount is bytes32 (EVM format). For Terra dest, recipient is Terra address.
-    const { bytes32ToTerraAddress } = await import('./hashVerification')
     try {
       fixParams.terraRecipient = bytes32ToTerraAddress(dest.destAccount)
     } catch {
       fixParams.terraRecipient = undefined
     }
-    // Token for Terra: default uluna for native LUNC
-    fixParams.token = 'uluna'
+    // Canonical dest token bytes32 from the matched deposit (not the wrong-chain pending row).
+    fixParams.token = resolveTerraTokenForBrokenTransferFix(depositFound.token, {
+      denomHint: dest.destTokenDenom,
+      tokenlist: tokenlist ?? null,
+    })
   }
 
   return {

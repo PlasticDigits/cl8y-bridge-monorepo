@@ -9,6 +9,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { Hex } from 'viem'
 import { detectAndGetFix, isLikelyBroken, type BrokenTransferFix } from '../services/brokenTransferFix'
+import { useTokenList } from './useTokenList'
 import { getChainKeyByConfig } from '../utils/bridgeChains'
 import type { DepositData, PendingWithdrawData } from './useTransferLookup'
 import type { BridgeChainConfig } from '../types/chain'
@@ -27,6 +28,7 @@ export function useBrokenTransferFix(
   dest: PendingWithdrawData | null,
   destChain: BridgeChainConfig | null
 ): UseBrokenTransferFixResult {
+  const { data: tokenlist } = useTokenList()
   const destChainKey = destChain ? getChainKeyByConfig(destChain) ?? null : null
   const [fix, setFix] = useState<BrokenTransferFix | null>(null)
   const [loading, setLoading] = useState(false)
@@ -48,7 +50,7 @@ export function useBrokenTransferFix(
     setError(null)
 
     try {
-      const result = await detectAndGetFix(hash, dest, destChain, destChainKey)
+      const result = await detectAndGetFix(hash, dest, destChain, destChainKey, tokenlist ?? null)
       setFix(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Detection failed')
@@ -56,7 +58,7 @@ export function useBrokenTransferFix(
     } finally {
       setLoading(false)
     }
-  }, [hash, source, dest, destChain, destChainKey])
+  }, [hash, source, dest, destChain, destChainKey, tokenlist])
 
   useEffect(() => {
     runDetection()

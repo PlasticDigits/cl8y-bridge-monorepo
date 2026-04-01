@@ -9,6 +9,7 @@
  * matching the registry bytes32 → operator sees "EVM deposit not found".
  */
 
+import type { Hex } from 'viem'
 import { resolveTokenFromBytes32 } from '../hashVerification'
 import type { TokenlistData } from '../tokenlist'
 
@@ -66,4 +67,31 @@ export function resolveTerraDestTokenIdForRecord(
   }
 
   return isEvmStyleTokenId(id) ? '' : id
+}
+
+/**
+ * Terra `withdraw_submit` token for the broken-transfer repair flow.
+ *
+ * Prefer `denomHint` from Terra LCD (`destTokenDenom`) when the bad withdraw
+ * was on Terra; otherwise decode the canonical **destination** token bytes32
+ * from the matched source deposit (EVM or Terra query — see `queryEvmDeposit`).
+ */
+export function resolveTerraTokenForBrokenTransferFix(
+  canonicalDestTokenBytes32: Hex | string,
+  options?: { denomHint?: string | undefined; tokenlist?: TokenlistData | null },
+): string {
+  const hint = options?.denomHint?.trim()
+  if (hint && !isEvmStyleTokenId(hint)) return hint
+
+  const dt = String(canonicalDestTokenBytes32).trim()
+  if (dt && dt.toLowerCase() !== ZERO_B32) {
+    try {
+      const resolved = resolveTokenFromBytes32(dt, options?.tokenlist ?? null)
+      if (resolved) return resolved
+    } catch {
+      /* fall through to uluna */
+    }
+  }
+
+  return 'uluna'
 }

@@ -5,6 +5,7 @@ import type { TokenlistData } from '../tokenlist'
 import {
   resolveTerraWithdrawToken,
   resolveTerraDestTokenIdForRecord,
+  resolveTerraTokenForBrokenTransferFix,
 } from './withdrawTokenResolve'
 
 const miniTokenlist: TokenlistData = {
@@ -44,5 +45,19 @@ describe('withdrawTokenResolve (glab #89)', () => {
   it('resolveTerraDestTokenIdForRecord strips EVM id when bytes32 maps to CW20', () => {
     const evmFallbackId = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
     expect(resolveTerraDestTokenIdForRecord(evmFallbackId, cw20Bytes32, null)).toBe(cw20Terra)
+  })
+
+  it('resolveTerraTokenForBrokenTransferFix prefers Terra denom hint', () => {
+    expect(
+      resolveTerraTokenForBrokenTransferFix(cw20Bytes32, { denomHint: cw20Terra }),
+    ).toBe(cw20Terra)
+  })
+
+  it('resolveTerraTokenForBrokenTransferFix decodes canonical deposit token bytes32', () => {
+    expect(resolveTerraTokenForBrokenTransferFix(cw20Bytes32, undefined)).toBe(cw20Terra)
+  })
+
+  it('resolveTerraTokenForBrokenTransferFix falls back to uluna for zero bytes32', () => {
+    expect(resolveTerraTokenForBrokenTransferFix('0x' + '0'.repeat(64), undefined)).toBe('uluna')
   })
 })
