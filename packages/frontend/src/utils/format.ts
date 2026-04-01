@@ -3,10 +3,11 @@
  */
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
+import { pow10BigInt } from './pow10';
 
 function microToHumanNumber(microAmount: string | number | bigint, decimals: number): number {
   if (typeof microAmount === 'bigint') {
-    const divisor = BigInt(10 ** decimals);
+    const divisor = pow10BigInt(decimals);
     const wholePart = microAmount / divisor;
     const fractionalPart = microAmount % divisor;
     const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
@@ -169,7 +170,7 @@ function floorHumanDecimalToBaseUnitsString(unsignedDecimal: string, decimals: n
   intPart = intPart.replace(/^0+/, '') || '0'
 
   const fracFloored = (fracPart + '0'.repeat(decimals)).slice(0, decimals).padEnd(decimals, '0')
-  return (BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(fracFloored || '0')).toString()
+  return (BigInt(intPart) * pow10BigInt(decimals) + BigInt(fracFloored || '0')).toString()
 }
 
 /**

@@ -6,6 +6,7 @@
  */
 
 import { queryContract } from './lcdClient'
+import { pow10BigInt } from '../utils/pow10'
 import {
   base64ToHex,
   hexToBase64,
@@ -236,11 +237,9 @@ function normalizeDecimals(
 ): bigint {
   if (srcDecimals === destDecimals) return amount
   if (srcDecimals > destDecimals) {
-    const divisor = 10 ** (srcDecimals - destDecimals)
-    return amount / BigInt(divisor)
+    return amount / pow10BigInt(srcDecimals - destDecimals)
   }
-  const multiplier = 10 ** (destDecimals - srcDecimals)
-  return amount * BigInt(multiplier)
+  return amount * pow10BigInt(destDecimals - srcDecimals)
 }
 
 export type TerraRateLimitStatus =

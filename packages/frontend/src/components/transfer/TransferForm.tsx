@@ -59,6 +59,7 @@ import {
   formatAmountForNumberInput,
   formatCompact,
 } from '../../utils/format'
+import { pow10BigInt } from '../../utils/pow10'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -706,10 +707,10 @@ export function TransferForm() {
     (destBaseUnits: bigint) => {
       if (amountDecimals >= destDecimals) {
         const exp = amountDecimals - destDecimals
-        return destBaseUnits * BigInt(10 ** exp)
+        return destBaseUnits * pow10BigInt(exp)
       }
       const exp = destDecimals - amountDecimals
-      const result = destBaseUnits / BigInt(10 ** exp)
+      const result = destBaseUnits / pow10BigInt(exp)
       if (result === 0n && destBaseUnits > 0n) return 1n
       return result
     },
