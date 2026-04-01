@@ -273,7 +273,10 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
         recipientTokenAccount: userToken.address,
         bridgeTokenAccount: bridgeToken.address,
         tokenMapping: tokenPda,
-        withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, mint)[0],
+        withdrawRateLimit: findWithdrawRateLimitPda(
+          ctx.program.programId,
+          mint
+        )[0],
         recipient: ctx.user.publicKey,
         tokenProgram: TP2022,
         systemProgram: SystemProgram.programId,

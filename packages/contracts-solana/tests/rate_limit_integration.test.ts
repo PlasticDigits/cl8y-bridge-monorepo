@@ -27,7 +27,10 @@ describe("rate limit admin + account layout", () => {
   });
 
   it("admin can set explicit rate limits for native SOL key", async () => {
-    const [pda] = findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN);
+    const [pda] = findWithdrawRateLimitPda(
+      ctx.program.programId,
+      NATIVE_SOL_TOKEN
+    );
     await ctx.program.methods
       .setRateLimit({
         localMint: NATIVE_SOL_TOKEN,

@@ -82,7 +82,11 @@ describe("bridge SPL security and multi-user coverage", () => {
       })
       .rpc();
 
-    evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_security");
+    evmChainPda = await registerChainIfNeeded(
+      ctx,
+      EVM_CHAIN_ID,
+      "evm_security"
+    );
 
     await setExplicitUnlimitedWithdrawRateLimit(ctx, NATIVE_SOL_TOKEN);
   });
@@ -280,7 +284,9 @@ describe("bridge SPL security and multi-user coverage", () => {
         .rpc();
 
       const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-      const mapping = await ctx.program.account.tokenMapping.fetch(fixture.tokenPda);
+      const mapping = await ctx.program.account.tokenMapping.fetch(
+        fixture.tokenPda
+      );
       const bridgeTokenBalance = await getAccount(
         ctx.provider.connection,
         fixture.bridgeToken.address
@@ -354,18 +360,23 @@ describe("bridge SPL security and multi-user coverage", () => {
       );
 
       expect(Number(mappingAfterFeeWithdraw.accruedFees)).to.equal(0);
-      expect(Number(bridgeAfterFeeWithdraw.amount)).to.equal(Number(expectedNet));
-      expect(Number(adminAfterFeeWithdraw.amount)).to.equal(Number(expectedFee));
-
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        expectedNet,
-        5001n,
-        0xcd,
-        fixture.destToken,
-        fixture.tokenPda
+      expect(Number(bridgeAfterFeeWithdraw.amount)).to.equal(
+        Number(expectedNet)
       );
+      expect(Number(adminAfterFeeWithdraw.amount)).to.equal(
+        Number(expectedFee)
+      );
+
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          expectedNet,
+          5001n,
+          0xcd,
+          fixture.destToken,
+          fixture.tokenPda
+        );
 
       const [nonceUsedPda] = findNonceUsedPda(
         ctx.program.programId,
@@ -397,7 +408,10 @@ describe("bridge SPL security and multi-user coverage", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            fixture.mint
+          )[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -446,21 +460,25 @@ describe("bridge SPL security and multi-user coverage", () => {
         ctx.provider.connection,
         fixture.bridgeToken.address
       );
-      const mintAfterDeposit = await getMint(ctx.provider.connection, fixture.mint);
+      const mintAfterDeposit = await getMint(
+        ctx.provider.connection,
+        fixture.mint
+      );
       expect(Number(bridgeTokenBalance.amount)).to.equal(Number(expectedFee));
       expect(Number(mintAfterDeposit.supply)).to.equal(
         Number(fixture.initialSupply - expectedNet)
       );
 
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        expectedNet,
-        6001n,
-        0xef,
-        fixture.destToken,
-        fixture.tokenPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          expectedNet,
+          6001n,
+          0xef,
+          fixture.destToken,
+          fixture.tokenPda
+        );
 
       const [nonceUsedMb] = findNonceUsedPda(
         ctx.program.programId,
@@ -492,7 +510,10 @@ describe("bridge SPL security and multi-user coverage", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            fixture.mint
+          )[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -500,7 +521,10 @@ describe("bridge SPL security and multi-user coverage", () => {
         .signers([ctx.user])
         .rpc();
 
-      const mintAfterExecute = await getMint(ctx.provider.connection, fixture.mint);
+      const mintAfterExecute = await getMint(
+        ctx.provider.connection,
+        fixture.mint
+      );
       expect(Number(mintAfterExecute.supply)).to.equal(
         Number(fixture.initialSupply)
       );
@@ -535,7 +559,11 @@ describe("bridge SPL security and multi-user coverage", () => {
       const fixture = await createSplFixture({ mintBurn: {} }, 0x41);
       const wrongMintFixture = await createSplFixture({ mintBurn: {} }, 0x42);
       const rogueRecipient = Keypair.generate();
-      await airdrop(ctx.provider.connection, rogueRecipient.publicKey, LAMPORTS_PER_SOL);
+      await airdrop(
+        ctx.provider.connection,
+        rogueRecipient.publicKey,
+        LAMPORTS_PER_SOL
+      );
       const rogueToken = await getOrCreateAssociatedTokenAccount(
         ctx.provider.connection,
         ctx.admin,
@@ -544,15 +572,16 @@ describe("bridge SPL security and multi-user coverage", () => {
       );
 
       const amount = 750_000_000n;
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        amount,
-        7001n,
-        0x91,
-        fixture.destToken,
-        fixture.tokenPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          amount,
+          7001n,
+          0x91,
+          fixture.destToken,
+          fixture.tokenPda
+        );
 
       try {
         await ctx.program.methods
@@ -565,7 +594,10 @@ describe("bridge SPL security and multi-user coverage", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -606,7 +638,10 @@ describe("bridge SPL security and multi-user coverage", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -629,7 +664,10 @@ describe("bridge SPL security and multi-user coverage", () => {
             recipientTokenAccount: rogueToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: rogueRecipient.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -662,7 +700,8 @@ describe("bridge SPL security and multi-user coverage", () => {
       } catch (err) {
         const msg = err.toString();
         expect(
-          msg.includes("TokenMintMismatch") || msg.includes("TokenNotRegistered")
+          msg.includes("TokenMintMismatch") ||
+            msg.includes("TokenNotRegistered")
         ).to.be.true;
       }
 
@@ -670,7 +709,9 @@ describe("bridge SPL security and multi-user coverage", () => {
         [Buffer.from("canceler"), ctx.canceler.publicKey.toBuffer()],
         ctx.program.programId
       );
-      const cancelerInfo = await ctx.provider.connection.getAccountInfo(cancelerPda);
+      const cancelerInfo = await ctx.provider.connection.getAccountInfo(
+        cancelerPda
+      );
       if (!cancelerInfo) {
         await ctx.program.methods
           .addCanceler({ canceler: ctx.canceler.publicKey, active: true })
@@ -705,7 +746,10 @@ describe("bridge SPL security and multi-user coverage", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -722,7 +766,11 @@ describe("bridge SPL security and multi-user coverage", () => {
   describe("native fee safety and multi-user isolation", () => {
     it("tracks native fees across multiple users without letting admin drain principal", async () => {
       const secondUser = Keypair.generate();
-      await airdrop(ctx.provider.connection, secondUser.publicKey, 3 * LAMPORTS_PER_SOL);
+      await airdrop(
+        ctx.provider.connection,
+        secondUser.publicKey,
+        3 * LAMPORTS_PER_SOL
+      );
 
       const destTokB1 = Buffer.alloc(32);
       destTokB1[31] = 0xb1;
@@ -812,9 +860,15 @@ describe("bridge SPL security and multi-user coverage", () => {
         .signers([secondUser])
         .rpc();
 
-      const depositA = await ctx.program.account.depositRecord.fetch(depositPdaA);
-      const depositB = await ctx.program.account.depositRecord.fetch(depositPdaB);
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const depositA = await ctx.program.account.depositRecord.fetch(
+        depositPdaA
+      );
+      const depositB = await ctx.program.account.depositRecord.fetch(
+        depositPdaB
+      );
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
 
       expect(depositA.nonce.toNumber()).to.equal(nonceA);
       expect(depositB.nonce.toNumber()).to.equal(nonceB);
@@ -891,7 +945,10 @@ describe("bridge SPL security and multi-user coverage", () => {
         amount,
         nonce
       );
-      const [withdrawPda] = findWithdrawPda(ctx.program.programId, transferHash);
+      const [withdrawPda] = findWithdrawPda(
+        ctx.program.programId,
+        transferHash
+      );
       const [executedHashPda] = findExecutedHashPda(
         ctx.program.programId,
         transferHash

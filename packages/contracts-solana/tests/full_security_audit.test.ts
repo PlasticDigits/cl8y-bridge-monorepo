@@ -110,9 +110,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       })
       .rpc();
 
-    evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_full_audit");
+    evmChainPda = await registerChainIfNeeded(
+      ctx,
+      EVM_CHAIN_ID,
+      "evm_full_audit"
+    );
 
-    const [cPda] = findCancelerPda(ctx.program.programId, ctx.canceler.publicKey);
+    const [cPda] = findCancelerPda(
+      ctx.program.programId,
+      ctx.canceler.publicKey
+    );
     cancelerPda = cPda;
     await ctx.program.methods
       .addCanceler({ canceler: ctx.canceler.publicKey, active: true })
@@ -138,7 +145,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       Buffer.from(EVM_CHAIN_ID),
       DEPOSIT_DEST_TOKEN
     );
-    if (!(await ctx.provider.connection.getAccountInfo(depositTokenMappingPda))) {
+    if (
+      !(await ctx.provider.connection.getAccountInfo(depositTokenMappingPda))
+    ) {
       await ctx.program.methods
         .registerToken({
           localMint: PublicKey.default,
@@ -164,7 +173,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       EVM_REMOTE_NATIVE_TOKEN
     );
     if (
-      !(await ctx.provider.connection.getAccountInfo(withdrawNativeTokenMappingPda))
+      !(await ctx.provider.connection.getAccountInfo(
+        withdrawNativeTokenMappingPda
+      ))
     ) {
       await ctx.program.methods
         .registerToken({
@@ -278,7 +289,15 @@ describe("FULL E2E SECURITY AUDIT", () => {
       mode
     );
     await setExplicitUnlimitedWithdrawRateLimit(ctx, mint);
-    return { mint, tokenPda, destToken, userToken, bridgeToken, adminToken, initialSupply };
+    return {
+      mint,
+      tokenPda,
+      destToken,
+      userToken,
+      bridgeToken,
+      adminToken,
+      initialSupply,
+    };
   }
 
   async function submitWithdraw(
@@ -301,7 +320,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
       nonce
     );
     const [withdrawPda] = findWithdrawPda(ctx.program.programId, transferHash);
-    const [executedHashPda] = findExecutedHashPda(ctx.program.programId, transferHash);
+    const [executedHashPda] = findExecutedHashPda(
+      ctx.program.programId,
+      transferHash
+    );
     await ctx.program.methods
       .withdrawSubmit({
         srcChain: EVM_CHAIN_ID,
@@ -358,7 +380,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("fee + net_amount == gross_amount for all random amounts", async () => {
       const feeBps = 50n;
       for (let i = 0; i < FUZZ_ITERATIONS; i++) {
-        const amount = (randomU64() % (10n ** 18n)) + 1n;
+        const amount = (randomU64() % 10n ** 18n) + 1n;
         const fee = (amount * feeBps) / 10000n;
         const net = amount - fee;
         expect(fee + net).to.equal(
@@ -396,7 +418,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
     it("fee at max feeBps (100) is 1% of amount", () => {
       for (let i = 0; i < 20; i++) {
-        const amount = (randomU64() % (10n ** 15n)) + 1n;
+        const amount = (randomU64() % 10n ** 15n) + 1n;
         const fee = (amount * 100n) / 10000n;
         expect(fee).to.equal((amount * 100n) / 10000n);
       }
@@ -404,24 +426,31 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
     it("fee at zero feeBps is always zero", () => {
       for (let i = 0; i < 20; i++) {
-        const amount = (randomU64() % (10n ** 15n)) + 1n;
+        const amount = (randomU64() % 10n ** 15n) + 1n;
         const fee = (amount * 0n) / 10000n;
         expect(fee).to.equal(0n);
       }
     });
 
     it("on-chain native deposit fee matches off-chain calculation for 10 random amounts", async () => {
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       const feeBps = BigInt(bridge.feeBps);
 
       for (let i = 0; i < 10; i++) {
-        const amount = BigInt(LAMPORTS_PER_SOL / 100 + Math.floor(Math.random() * LAMPORTS_PER_SOL * 5));
+        const amount = BigInt(
+          LAMPORTS_PER_SOL / 100 +
+            Math.floor(Math.random() * LAMPORTS_PER_SOL * 5)
+        );
         const expectedFee = (amount * feeBps) / 10000n;
         const expectedNet = amount - expectedFee;
 
         const nextNonce = await getNextDepositNonce(ctx);
         const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
-        const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+        const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(
+          ctx.bridgePda
+        );
         const feesBefore = BigInt(bridgeBefore.accruedNativeFees.toString());
 
         await ctx.program.methods
@@ -441,8 +470,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .signers([ctx.user])
           .rpc();
 
-        const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-        const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+        const deposit = await ctx.program.account.depositRecord.fetch(
+          depositPda
+        );
+        const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(
+          ctx.bridgePda
+        );
         const feesAfter = BigInt(bridgeAfter.accruedNativeFees.toString());
 
         expect(BigInt(deposit.amount.toString())).to.equal(
@@ -558,8 +591,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
         const amount = randomU64();
         const nonce = randomU64();
 
-        const hash1 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
-        const hash2 = computeTransferHash(srcChain, destChain, srcAccount, destAccount, token, amount, nonce);
+        const hash1 = computeTransferHash(
+          srcChain,
+          destChain,
+          srcAccount,
+          destAccount,
+          token,
+          amount,
+          nonce
+        );
+        const hash2 = computeTransferHash(
+          srcChain,
+          destChain,
+          srcAccount,
+          destAccount,
+          token,
+          amount,
+          nonce
+        );
         expect(hash1.toString("hex")).to.equal(hash2.toString("hex"));
       }
     });
@@ -568,8 +617,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const src = randomBytes(32);
       const dest = randomBytes(32);
       const tok = randomBytes(32);
-      const h0 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, src, dest, tok, 0n, 1n);
-      const h1 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, src, dest, tok, 1n, 1n);
+      const h0 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        0n,
+        1n
+      );
+      const h1 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        1n,
+        1n
+      );
       expect(h0.toString("hex")).to.not.equal(h1.toString("hex"));
     });
 
@@ -577,8 +642,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const src = randomBytes(32);
       const dest = randomBytes(32);
       const tok = randomBytes(32);
-      const h0 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, src, dest, tok, 1000n, 0n);
-      const h1 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, src, dest, tok, 1000n, 1n);
+      const h0 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        1000n,
+        0n
+      );
+      const h1 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        1000n,
+        1n
+      );
       expect(h0.toString("hex")).to.not.equal(h1.toString("hex"));
     });
 
@@ -586,8 +667,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const src = randomBytes(32);
       const dest = randomBytes(32);
       const tok = randomBytes(32);
-      const h1 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, src, dest, tok, 1000n, 1n);
-      const h2 = computeTransferHash(SOLANA_CHAIN_ID, EVM_CHAIN_ID, src, dest, tok, 1000n, 1n);
+      const h1 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        1000n,
+        1n
+      );
+      const h2 = computeTransferHash(
+        SOLANA_CHAIN_ID,
+        EVM_CHAIN_ID,
+        src,
+        dest,
+        tok,
+        1000n,
+        1n
+      );
       expect(h1.toString("hex")).to.not.equal(h2.toString("hex"));
     });
 
@@ -595,8 +692,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const a = randomBytes(32);
       const b = randomBytes(32);
       const tok = randomBytes(32);
-      const h1 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, a, b, tok, 1000n, 1n);
-      const h2 = computeTransferHash(EVM_CHAIN_ID, SOLANA_CHAIN_ID, b, a, tok, 1000n, 1n);
+      const h1 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        a,
+        b,
+        tok,
+        1000n,
+        1n
+      );
+      const h2 = computeTransferHash(
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        b,
+        a,
+        tok,
+        1000n,
+        1n
+      );
       expect(h1.toString("hex")).to.not.equal(h2.toString("hex"));
     });
   });
@@ -608,9 +721,14 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("deposit_nonce increases by exactly 1 for each deposit", async () => {
       const nonces: number[] = [];
       for (let i = 0; i < 20; i++) {
-        const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+        const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(
+          ctx.bridgePda
+        );
         const expectedNonce = bridgeBefore.depositNonce.toNumber() + 1;
-        const [depositPda] = findDepositPda(ctx.program.programId, expectedNonce);
+        const [depositPda] = findDepositPda(
+          ctx.program.programId,
+          expectedNonce
+        );
 
         await ctx.program.methods
           .depositNative({
@@ -629,7 +747,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .signers([ctx.user])
           .rpc();
 
-        const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
+        const deposit = await ctx.program.account.depositRecord.fetch(
+          depositPda
+        );
         nonces.push(deposit.nonce.toNumber());
         expect(deposit.nonce.toNumber()).to.equal(expectedNonce);
       }
@@ -650,7 +770,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       let totalFees = 0n;
 
       for (let i = 0; i < 5; i++) {
-        const amount = BigInt(100_000_000 + Math.floor(Math.random() * 900_000_000));
+        const amount = BigInt(
+          100_000_000 + Math.floor(Math.random() * 900_000_000)
+        );
         const fee = feeFor(amount);
         totalDeposited += amount;
         totalFees += fee;
@@ -680,13 +802,22 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .rpc();
       }
 
-      const bridgeTokenInfo = await getAccount(ctx.provider.connection, fixture.bridgeToken.address);
-      const mapping = await ctx.program.account.tokenMapping.fetch(fixture.tokenPda);
+      const bridgeTokenInfo = await getAccount(
+        ctx.provider.connection,
+        fixture.bridgeToken.address
+      );
+      const mapping = await ctx.program.account.tokenMapping.fetch(
+        fixture.tokenPda
+      );
 
-      expect(BigInt(bridgeTokenInfo.amount.toString())).to.equal(totalDeposited);
+      expect(BigInt(bridgeTokenInfo.amount.toString())).to.equal(
+        totalDeposited
+      );
       expect(BigInt(mapping.accruedFees.toString())).to.equal(totalFees);
 
-      const escrow = BigInt(bridgeTokenInfo.amount.toString()) - BigInt(mapping.accruedFees.toString());
+      const escrow =
+        BigInt(bridgeTokenInfo.amount.toString()) -
+        BigInt(mapping.accruedFees.toString());
       expect(escrow).to.equal(totalDeposited - totalFees);
     });
 
@@ -723,19 +854,25 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .signers([ctx.user])
         .rpc();
 
-      const mintAfterDeposit = await getMint(ctx.provider.connection, fixture.mint);
-      expect(BigInt(mintAfterDeposit.supply.toString())).to.equal(supplyBefore - net);
+      const mintAfterDeposit = await getMint(
+        ctx.provider.connection,
+        fixture.mint
+      );
+      expect(BigInt(mintAfterDeposit.supply.toString())).to.equal(
+        supplyBefore - net
+      );
 
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        net,
-        nonce,
-        0x02,
-        fixture.destToken,
-        fixture.tokenPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          nonce,
+          0x02,
+          fixture.destToken,
+          fixture.tokenPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -749,7 +886,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            fixture.mint
+          )[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -757,7 +897,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .signers([ctx.user])
         .rpc();
 
-      const mintAfterExecute = await getMint(ctx.provider.connection, fixture.mint);
+      const mintAfterExecute = await getMint(
+        ctx.provider.connection,
+        fixture.mint
+      );
       expect(BigInt(mintAfterExecute.supply.toString())).to.equal(supplyBefore);
     });
   });
@@ -842,7 +985,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const fakeCanceler = Keypair.generate();
       await airdrop(ctx.provider.connection, fakeCanceler.publicKey);
 
-      const [fakeCancelerPda] = findCancelerPda(ctx.program.programId, fakeCanceler.publicKey);
+      const [fakeCancelerPda] = findCancelerPda(
+        ctx.program.programId,
+        fakeCanceler.publicKey
+      );
       await ctx.program.methods
         .addCanceler({ canceler: fakeCanceler.publicKey, active: true })
         .accounts({
@@ -951,19 +1097,35 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const srcAccount = randomBytes(32);
 
       const victimHash = computeTransferHash(
-        EVM_CHAIN_ID, SOLANA_CHAIN_ID, srcAccount,
-        victim.publicKey.toBuffer(), NATIVE_SOL_TOKEN.toBuffer(),
-        amount, nonce
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        srcAccount,
+        victim.publicKey.toBuffer(),
+        NATIVE_SOL_TOKEN.toBuffer(),
+        amount,
+        nonce
       );
       const attackerHash = computeTransferHash(
-        EVM_CHAIN_ID, SOLANA_CHAIN_ID, srcAccount,
-        attacker.publicKey.toBuffer(), NATIVE_SOL_TOKEN.toBuffer(),
-        amount, nonce
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        srcAccount,
+        attacker.publicKey.toBuffer(),
+        NATIVE_SOL_TOKEN.toBuffer(),
+        amount,
+        nonce
       );
-      expect(victimHash.toString("hex")).to.not.equal(attackerHash.toString("hex"));
+      expect(victimHash.toString("hex")).to.not.equal(
+        attackerHash.toString("hex")
+      );
 
-      const [victimWithdrawPda] = findWithdrawPda(ctx.program.programId, victimHash);
-      const [victimExecutedPda] = findExecutedHashPda(ctx.program.programId, victimHash);
+      const [victimWithdrawPda] = findWithdrawPda(
+        ctx.program.programId,
+        victimHash
+      );
+      const [victimExecutedPda] = findExecutedHashPda(
+        ctx.program.programId,
+        victimHash
+      );
 
       try {
         await ctx.program.methods
@@ -991,23 +1153,25 @@ describe("FULL E2E SECURITY AUDIT", () => {
       } catch (err) {
         const msg = err.toString();
         expect(
-          msg.includes("ConstraintSeeds") || msg.includes("seeds constraint") ||
-          msg.includes("Error processing Instruction")
+          msg.includes("ConstraintSeeds") ||
+            msg.includes("seeds constraint") ||
+            msg.includes("Error processing Instruction")
         ).to.be.true;
       }
     });
 
     it("attacker cannot execute another user's withdrawal with their own recipient", async () => {
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        200_000n,
-        nonce,
-        0x20,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          200_000n,
+          nonce,
+          0x20,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -1021,7 +1185,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1041,7 +1208,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1079,22 +1249,26 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .rpc();
 
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        net,
-        nonce,
-        0x30,
-        fixture.destToken,
-        fixture.tokenPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          nonce,
+          0x30,
+          fixture.destToken,
+          fixture.tokenPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const attacker = Keypair.generate();
       await airdrop(ctx.provider.connection, attacker.publicKey);
       const attackerToken = await getOrCreateAssociatedTokenAccount(
-        ctx.provider.connection, ctx.admin, fixture.mint, attacker.publicKey
+        ctx.provider.connection,
+        ctx.admin,
+        fixture.mint,
+        attacker.publicKey
       );
 
       try {
@@ -1108,7 +1282,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             recipientTokenAccount: attackerToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: attacker.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -1127,7 +1304,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
   // =====================================================================
   describe("ATTACK: fee draining and manipulation", () => {
     it("admin cannot drain bridge beyond accrued_native_fees", async () => {
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       const accrued = BigInt(bridge.accruedNativeFees.toString());
 
       if (accrued > 0n) {
@@ -1179,7 +1358,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .signers([ctx.user])
         .rpc();
 
-      const mapping = await ctx.program.account.tokenMapping.fetch(fixture.tokenPda);
+      const mapping = await ctx.program.account.tokenMapping.fetch(
+        fixture.tokenPda
+      );
       const accrued = BigInt(mapping.accruedFees.toString());
 
       try {
@@ -1203,13 +1384,17 @@ describe("FULL E2E SECURITY AUDIT", () => {
     });
 
     it("native fee withdrawal reduces accrued_native_fees by exact amount", async () => {
-      const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       const feesBefore = BigInt(bridgeBefore.accruedNativeFees.toString());
 
       if (feesBefore > 0n) {
         const withdrawAmt = feesBefore > 1n ? feesBefore / 2n : feesBefore;
         const adminBalBefore = BigInt(
-          (await ctx.provider.connection.getBalance(ctx.admin.publicKey)).toString()
+          (
+            await ctx.provider.connection.getBalance(ctx.admin.publicKey)
+          ).toString()
         );
 
         await ctx.program.methods
@@ -1226,7 +1411,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
           })
           .rpc();
 
-        const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+        const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(
+          ctx.bridgePda
+        );
         const feesAfter = BigInt(bridgeAfter.accruedNativeFees.toString());
         expect(feesAfter).to.equal(feesBefore - withdrawAmt);
       }
@@ -1242,15 +1429,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const amount = 100_000n;
       const srcAccountByte = 0x40;
 
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        amount,
-        nonce,
-        srcAccountByte,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          amount,
+          nonce,
+          srcAccountByte,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -1260,24 +1448,39 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])
         .rpc();
 
-      const executed = await ctx.program.account.executedHash.fetch(executedHashPda);
+      const executed = await ctx.program.account.executedHash.fetch(
+        executedHashPda
+      );
       expect(executed).to.not.be.null;
 
       const srcAccount = Buffer.alloc(32, srcAccountByte);
       const replayHash = computeTransferHash(
-        EVM_CHAIN_ID, SOLANA_CHAIN_ID, srcAccount,
-        ctx.user.publicKey.toBuffer(), NATIVE_SOL_TOKEN.toBuffer(),
-        amount, nonce
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        srcAccount,
+        ctx.user.publicKey.toBuffer(),
+        NATIVE_SOL_TOKEN.toBuffer(),
+        amount,
+        nonce
       );
-      const [replayWithdrawPda] = findWithdrawPda(ctx.program.programId, replayHash);
-      const [replayExecutedPda] = findExecutedHashPda(ctx.program.programId, replayHash);
+      const [replayWithdrawPda] = findWithdrawPda(
+        ctx.program.programId,
+        replayHash
+      );
+      const [replayExecutedPda] = findExecutedHashPda(
+        ctx.program.programId,
+        replayHash
+      );
 
       try {
         await ctx.program.methods
@@ -1304,22 +1507,24 @@ describe("FULL E2E SECURITY AUDIT", () => {
         expect.fail("Replay should be blocked");
       } catch (err) {
         expect(err.toString()).to.satisfy(
-          (s: string) => s.includes("AlreadyExecutedHash") || s.includes("already in use")
+          (s: string) =>
+            s.includes("AlreadyExecutedHash") || s.includes("already in use")
         );
       }
     });
 
     it("cannot double-execute: second execute fails because PDA is closed", async () => {
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        50_000n,
-        nonce,
-        0x41,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          50_000n,
+          nonce,
+          0x41,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -1329,7 +1534,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1343,7 +1551,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1353,8 +1564,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       } catch (err) {
         const msg = err.toString();
         expect(
-          msg.includes("AccountNotInitialized") || msg.includes("already in use") ||
-          msg.includes("Error processing")
+          msg.includes("AccountNotInitialized") ||
+            msg.includes("already in use") ||
+            msg.includes("Error processing")
         ).to.be.true;
       }
     });
@@ -1384,7 +1596,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1398,15 +1613,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
     it("execute immediately after approval fails (delay not elapsed)", async () => {
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        100_000n,
-        nonce,
-        0x51,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          nonce,
+          0x51,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
 
       try {
@@ -1416,7 +1632,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1430,15 +1649,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
     it("cancel -> reenable resets delay timer (must wait full delay again)", async () => {
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        100_000n,
-        nonce,
-        0x52,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          nonce,
+          0x52,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
 
       await ctx.program.methods
@@ -1469,7 +1689,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1488,14 +1711,19 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])
         .rpc();
 
-      const executedHash = await ctx.program.account.executedHash.fetch(executedHashPda);
+      const executedHash = await ctx.program.account.executedHash.fetch(
+        executedHashPda
+      );
       expect(executedHash).to.not.be.null;
     });
 
@@ -1584,8 +1812,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
       try {
         await ctx.program.methods
           .setConfig({
-            newAdmin: null, operator: null,
-            feeBps: 10001, withdrawDelay: null, paused: null,
+            newAdmin: null,
+            operator: null,
+            feeBps: 10001,
+            withdrawDelay: null,
+            paused: null,
           })
           .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
           .rpc();
@@ -1598,38 +1829,57 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("fee_bps = 100 is accepted (max 1% fee)", async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null,
-          feeBps: 100, withdrawDelay: null, paused: null,
+          newAdmin: null,
+          operator: null,
+          feeBps: 100,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       expect(bridge.feeBps).to.equal(100);
     });
 
     it("fee_bps = 0 is accepted (zero fee)", async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null,
-          feeBps: 0, withdrawDelay: null, paused: null,
+          newAdmin: null,
+          operator: null,
+          feeBps: 0,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       expect(bridge.feeBps).to.equal(0);
     });
 
     it("withdraw_delay = 14 rejected, 15 accepted, 86400 accepted, 86401 rejected", async () => {
-      for (const [delay, shouldFail] of [[14, true], [15, false], [86400, false], [86401, true]] as [number, boolean][]) {
+      for (const [delay, shouldFail] of [
+        [14, true],
+        [15, false],
+        [86400, false],
+        [86401, true],
+      ] as [number, boolean][]) {
         try {
           await ctx.program.methods
             .setConfig({
-              newAdmin: null, operator: null, feeBps: null,
-              withdrawDelay: new anchor.BN(delay), paused: null,
+              newAdmin: null,
+              operator: null,
+              feeBps: null,
+              withdrawDelay: new anchor.BN(delay),
+              paused: null,
             })
             .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
             .rpc();
-          if (shouldFail) expect.fail(`delay=${delay} should have been rejected`);
+          if (shouldFail)
+            expect.fail(`delay=${delay} should have been rejected`);
         } catch (err) {
           if (!shouldFail) throw err;
           expect(err.toString()).to.contain("InvalidWithdrawDelay");
@@ -1640,8 +1890,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("deposit with fee_bps=0 transfers full amount as net", async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null,
-          feeBps: 0, withdrawDelay: null, paused: null,
+          newAdmin: null,
+          operator: null,
+          feeBps: 0,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
@@ -1650,7 +1903,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const nextNonce = await getNextDepositNonce(ctx);
       const [depositPda] = findDepositPda(ctx.program.programId, nextNonce);
 
-      const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridgeBefore = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       const feesBefore = BigInt(bridgeBefore.accruedNativeFees.toString());
 
       await ctx.program.methods
@@ -1671,7 +1926,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .rpc();
 
       const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-      const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       const feesAfter = BigInt(bridgeAfter.accruedNativeFees.toString());
 
       expect(BigInt(deposit.amount.toString())).to.equal(amount);
@@ -1735,8 +1992,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
       try {
         await ctx.program.methods
           .setConfig({
-            newAdmin: null, operator: null, feeBps: 100,
-            withdrawDelay: null, paused: null,
+            newAdmin: null,
+            operator: null,
+            feeBps: 100,
+            withdrawDelay: null,
+            paused: null,
           })
           .accounts({
             bridge: fakeConfig.publicKey,
@@ -1747,8 +2007,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
       } catch (err) {
         const msg = err.toString();
         expect(
-          msg.includes("ConstraintSeeds") || msg.includes("seeds constraint") ||
-          msg.includes("AccountNotInitialized") || msg.includes("Error processing")
+          msg.includes("ConstraintSeeds") ||
+            msg.includes("seeds constraint") ||
+            msg.includes("AccountNotInitialized") ||
+            msg.includes("Error processing")
         ).to.be.true;
       }
     });
@@ -1762,7 +2024,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const users: Keypair[] = [];
       for (let i = 0; i < 5; i++) {
         const u = Keypair.generate();
-        await airdrop(ctx.provider.connection, u.publicKey, 5 * LAMPORTS_PER_SOL);
+        await airdrop(
+          ctx.provider.connection,
+          u.publicKey,
+          5 * LAMPORTS_PER_SOL
+        );
         users.push(u);
       }
 
@@ -1779,15 +2045,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
         const amount = BigInt(100_000 + Math.floor(Math.random() * 900_000));
         const nonce = nextNonceVal();
         const srcByte = 0x60 + i;
-        const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-          users[i],
-          NATIVE_SOL_TOKEN,
-          amount,
-          nonce,
-          srcByte,
-          EVM_REMOTE_NATIVE_TOKEN,
-          withdrawNativeTokenMappingPda
-        );
+        const { transferHash, withdrawPda, executedHashPda } =
+          await submitWithdraw(
+            users[i],
+            NATIVE_SOL_TOKEN,
+            amount,
+            nonce,
+            srcByte,
+            EVM_REMOTE_NATIVE_TOKEN,
+            withdrawNativeTokenMappingPda
+          );
         withdrawPdas.push({
           user: users[i],
           transferHash,
@@ -1798,7 +2065,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
         });
       }
 
-      const hashes = new Set(withdrawPdas.map((w) => w.transferHash.toString("hex")));
+      const hashes = new Set(
+        withdrawPdas.map((w) => w.transferHash.toString("hex"))
+      );
       expect(hashes.size).to.equal(5, "All hashes should be unique");
 
       for (const w of withdrawPdas) {
@@ -1808,7 +2077,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
       const balancesBefore = await Promise.all(
-        users.map(u => ctx.provider.connection.getBalance(u.publicKey))
+        users.map((u) => ctx.provider.connection.getBalance(u.publicKey))
       );
 
       for (const w of withdrawPdas) {
@@ -1818,7 +2087,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: w.withdrawPda,
             executedHash: w.executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: w.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1827,7 +2099,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
       }
 
       const balancesAfter = await Promise.all(
-        users.map(u => ctx.provider.connection.getBalance(u.publicKey))
+        users.map((u) => ctx.provider.connection.getBalance(u.publicKey))
       );
 
       for (let i = 0; i < 5; i++) {
@@ -1835,7 +2107,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
       }
 
       for (const w of withdrawPdas) {
-        const executed = await ctx.program.account.executedHash.fetch(w.executedHashPda);
+        const executed = await ctx.program.account.executedHash.fetch(
+          w.executedHashPda
+        );
         expect(executed).to.not.be.null;
       }
     });
@@ -1846,7 +2120,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
   // =====================================================================
   describe("INVARIANT: native SOL bridge balance integrity", () => {
     it("bridge balance after deposit = previous_balance + deposit_amount", async () => {
-      const bridgeInfoBefore = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
+      const bridgeInfoBefore = await ctx.provider.connection.getAccountInfo(
+        ctx.bridgePda
+      );
       const balanceBefore = BigInt(bridgeInfoBefore!.lamports.toString());
 
       const amount = BigInt(2 * LAMPORTS_PER_SOL);
@@ -1870,7 +2146,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .signers([ctx.user])
         .rpc();
 
-      const bridgeInfoAfter = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
+      const bridgeInfoAfter = await ctx.provider.connection.getAccountInfo(
+        ctx.bridgePda
+      );
       const balanceAfter = BigInt(bridgeInfoAfter!.lamports.toString());
       expect(balanceAfter).to.equal(balanceBefore + amount);
     });
@@ -1880,19 +2158,22 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const payoutLamports = 100_000n;
       // Token mapping uses srcDecimals=18; pending amount is scaled like EVM wei (÷1e9 → lamports).
       const rawAmount = payoutLamports * 1_000_000_000n;
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        rawAmount,
-        nonce,
-        0x70,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          rawAmount,
+          nonce,
+          0x70,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
-      const bridgeInfoBefore = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
+      const bridgeInfoBefore = await ctx.provider.connection.getAccountInfo(
+        ctx.bridgePda
+      );
       const balanceBefore = BigInt(bridgeInfoBefore!.lamports.toString());
 
       await ctx.program.methods
@@ -1901,14 +2182,19 @@ describe("FULL E2E SECURITY AUDIT", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])
         .rpc();
 
-      const bridgeInfoAfter = await ctx.provider.connection.getAccountInfo(ctx.bridgePda);
+      const bridgeInfoAfter = await ctx.provider.connection.getAccountInfo(
+        ctx.bridgePda
+      );
       const balanceAfter = BigInt(bridgeInfoAfter!.lamports.toString());
       expect(balanceAfter < balanceBefore).to.be.true;
       const delta = balanceBefore - balanceAfter;
@@ -1950,15 +2236,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
 
       const net = depositAmount - feeFor(depositAmount);
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        fixture.mint,
-        net,
-        nonce,
-        0x80,
-        fixture.destToken,
-        fixture.tokenPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          fixture.mint,
+          net,
+          nonce,
+          0x80,
+          fixture.destToken,
+          fixture.tokenPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -1969,7 +2256,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1984,15 +2274,16 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("native SOL withdrawal cannot be executed via SPL path", async () => {
       const fixture = await createSplFixture({ lockUnlock: {} }, 0x06);
       const nonce = nextNonceVal();
-      const { transferHash, withdrawPda, executedHashPda } = await submitWithdraw(
-        ctx.user,
-        NATIVE_SOL_TOKEN,
-        100_000n,
-        nonce,
-        0x81,
-        EVM_REMOTE_NATIVE_TOKEN,
-        withdrawNativeTokenMappingPda
-      );
+      const { transferHash, withdrawPda, executedHashPda } =
+        await submitWithdraw(
+          ctx.user,
+          NATIVE_SOL_TOKEN,
+          100_000n,
+          nonce,
+          0x81,
+          EVM_REMOTE_NATIVE_TOKEN,
+          withdrawNativeTokenMappingPda
+        );
       await approveWithdraw(transferHash, withdrawPda, nonce);
       await sleep((WITHDRAW_DELAY_SECONDS + 3) * 1000);
 
@@ -2007,7 +2298,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -2028,7 +2322,9 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("each deposit stores correct dest_chain, dest_account, token, and amount", async () => {
       for (let i = 0; i < 10; i++) {
         const destAccount = randomBytes(32);
-        const amount = BigInt(LAMPORTS_PER_SOL / 100 + Math.floor(Math.random() * LAMPORTS_PER_SOL));
+        const amount = BigInt(
+          LAMPORTS_PER_SOL / 100 + Math.floor(Math.random() * LAMPORTS_PER_SOL)
+        );
         const fee = feeFor(amount);
         const net = amount - fee;
 
@@ -2052,12 +2348,18 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .signers([ctx.user])
           .rpc();
 
-        const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
-        expect(Buffer.from(deposit.destChain)).to.deep.equal(Buffer.from(EVM_CHAIN_ID));
+        const deposit = await ctx.program.account.depositRecord.fetch(
+          depositPda
+        );
+        expect(Buffer.from(deposit.destChain)).to.deep.equal(
+          Buffer.from(EVM_CHAIN_ID)
+        );
         expect(Buffer.from(deposit.destAccount)).to.deep.equal(destAccount);
         expect(Buffer.from(deposit.token)).to.deep.equal(DEPOSIT_DEST_TOKEN);
         expect(BigInt(deposit.amount.toString())).to.equal(net);
-        expect(deposit.srcAccount.toBuffer()).to.deep.equal(ctx.user.publicKey.toBuffer());
+        expect(deposit.srcAccount.toBuffer()).to.deep.equal(
+          ctx.user.publicKey.toBuffer()
+        );
         expect(deposit.nonce.toNumber()).to.equal(nextNonce);
         expect(deposit.timestamp.toNumber()).to.be.greaterThan(0);
 
@@ -2088,7 +2390,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
       await ctx.program.methods
         .setConfig({
           newAdmin: newAdmin.publicKey,
-          operator: null, feeBps: null, withdrawDelay: null, paused: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
@@ -2099,8 +2404,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
       try {
         await ctx.program.methods
           .setConfig({
-            newAdmin: null, operator: null, feeBps: 100,
-            withdrawDelay: null, paused: null,
+            newAdmin: null,
+            operator: null,
+            feeBps: 100,
+            withdrawDelay: null,
+            paused: null,
           })
           .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
           .rpc();
@@ -2112,7 +2420,10 @@ describe("FULL E2E SECURITY AUDIT", () => {
       await ctx.program.methods
         .setConfig({
           newAdmin: ctx.admin.publicKey,
-          operator: null, feeBps: null, withdrawDelay: null, paused: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: newAdmin.publicKey })
         .signers([newAdmin])
@@ -2130,30 +2441,42 @@ describe("FULL E2E SECURITY AUDIT", () => {
       await airdrop(ctx.provider.connection, cancelerA.publicKey);
       await airdrop(ctx.provider.connection, cancelerB.publicKey);
 
-      const [pdaA] = findCancelerPda(ctx.program.programId, cancelerA.publicKey);
-      const [pdaB] = findCancelerPda(ctx.program.programId, cancelerB.publicKey);
+      const [pdaA] = findCancelerPda(
+        ctx.program.programId,
+        cancelerA.publicKey
+      );
+      const [pdaB] = findCancelerPda(
+        ctx.program.programId,
+        cancelerB.publicKey
+      );
 
       await ctx.program.methods
         .addCanceler({ canceler: cancelerA.publicKey, active: true })
         .accounts({
-          bridge: ctx.bridgePda, cancelerEntry: pdaA,
-          admin: ctx.admin.publicKey, systemProgram: SystemProgram.programId,
+          bridge: ctx.bridgePda,
+          cancelerEntry: pdaA,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .rpc();
 
       await ctx.program.methods
         .addCanceler({ canceler: cancelerB.publicKey, active: true })
         .accounts({
-          bridge: ctx.bridgePda, cancelerEntry: pdaB,
-          admin: ctx.admin.publicKey, systemProgram: SystemProgram.programId,
+          bridge: ctx.bridgePda,
+          cancelerEntry: pdaB,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .rpc();
 
       await ctx.program.methods
         .addCanceler({ canceler: cancelerA.publicKey, active: false })
         .accounts({
-          bridge: ctx.bridgePda, cancelerEntry: pdaA,
-          admin: ctx.admin.publicKey, systemProgram: SystemProgram.programId,
+          bridge: ctx.bridgePda,
+          cancelerEntry: pdaA,
+          admin: ctx.admin.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .rpc();
 
@@ -2271,8 +2594,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .signers([ctx.user])
         .rpc();
 
-      const mappingA = await ctx.program.account.tokenMapping.fetch(fixtureA.tokenPda);
-      const mappingB = await ctx.program.account.tokenMapping.fetch(fixtureB.tokenPda);
+      const mappingA = await ctx.program.account.tokenMapping.fetch(
+        fixtureA.tokenPda
+      );
+      const mappingB = await ctx.program.account.tokenMapping.fetch(
+        fixtureB.tokenPda
+      );
 
       expect(BigInt(mappingA.accruedFees.toString())).to.equal(feeA);
       expect(BigInt(mappingB.accruedFees.toString())).to.equal(feeB);
@@ -2291,8 +2618,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
         })
         .rpc();
 
-      const mappingAAfter = await ctx.program.account.tokenMapping.fetch(fixtureA.tokenPda);
-      const mappingBAfter = await ctx.program.account.tokenMapping.fetch(fixtureB.tokenPda);
+      const mappingAAfter = await ctx.program.account.tokenMapping.fetch(
+        fixtureA.tokenPda
+      );
+      const mappingBAfter = await ctx.program.account.tokenMapping.fetch(
+        fixtureB.tokenPda
+      );
 
       expect(BigInt(mappingAAfter.accruedFees.toString())).to.equal(0n);
       expect(BigInt(mappingBAfter.accruedFees.toString())).to.equal(feeB);
@@ -2387,9 +2718,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const srcAccount = randomBytes(32);
       const nonce = nextNonceVal();
       const hash = computeTransferHash(
-        EVM_CHAIN_ID, SOLANA_CHAIN_ID, srcAccount,
-        ctx.user.publicKey.toBuffer(), NATIVE_SOL_TOKEN.toBuffer(),
-        0n, nonce
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        srcAccount,
+        ctx.user.publicKey.toBuffer(),
+        NATIVE_SOL_TOKEN.toBuffer(),
+        0n,
+        nonce
       );
       const [withdrawPda] = findWithdrawPda(ctx.program.programId, hash);
       const [executedPda] = findExecutedHashPda(ctx.program.programId, hash);
@@ -2430,8 +2765,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
     before(async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null, feeBps: null,
-          withdrawDelay: null, paused: true,
+          newAdmin: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: true,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
@@ -2440,8 +2778,11 @@ describe("FULL E2E SECURITY AUDIT", () => {
     after(async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null, feeBps: null,
-          withdrawDelay: null, paused: false,
+          newAdmin: null,
+          operator: null,
+          feeBps: null,
+          withdrawDelay: null,
+          paused: false,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
@@ -2477,9 +2818,13 @@ describe("FULL E2E SECURITY AUDIT", () => {
       const nonce = nextNonceVal();
       const srcAccount = randomBytes(32);
       const hash = computeTransferHash(
-        EVM_CHAIN_ID, SOLANA_CHAIN_ID, srcAccount,
-        ctx.user.publicKey.toBuffer(), NATIVE_SOL_TOKEN.toBuffer(),
-        100_000n, nonce
+        EVM_CHAIN_ID,
+        SOLANA_CHAIN_ID,
+        srcAccount,
+        ctx.user.publicKey.toBuffer(),
+        NATIVE_SOL_TOKEN.toBuffer(),
+        100_000n,
+        nonce
       );
       const [wp] = findWithdrawPda(ctx.program.programId, hash);
       const [ep] = findExecutedHashPda(ctx.program.programId, hash);
@@ -2514,19 +2859,27 @@ describe("FULL E2E SECURITY AUDIT", () => {
     it("admin can still set_config while paused (to unpause)", async () => {
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null, feeBps: 60,
-          withdrawDelay: null, paused: null,
+          newAdmin: null,
+          operator: null,
+          feeBps: 60,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();
 
-      const bridge = await ctx.program.account.bridgeConfig.fetch(ctx.bridgePda);
+      const bridge = await ctx.program.account.bridgeConfig.fetch(
+        ctx.bridgePda
+      );
       expect(bridge.feeBps).to.equal(60);
 
       await ctx.program.methods
         .setConfig({
-          newAdmin: null, operator: null, feeBps: 50,
-          withdrawDelay: null, paused: null,
+          newAdmin: null,
+          operator: null,
+          feeBps: 50,
+          withdrawDelay: null,
+          paused: null,
         })
         .accounts({ bridge: ctx.bridgePda, admin: ctx.admin.publicKey })
         .rpc();

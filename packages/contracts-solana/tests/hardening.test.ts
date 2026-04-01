@@ -87,7 +87,9 @@ describe("hardening tests", () => {
       Buffer.from(EVM_CHAIN_ID),
       DEPOSIT_DEST_TOKEN
     );
-    if (!(await ctx.provider.connection.getAccountInfo(depositTokenMappingPda))) {
+    if (
+      !(await ctx.provider.connection.getAccountInfo(depositTokenMappingPda))
+    ) {
       await ctx.program.methods
         .registerToken({
           localMint: PublicKey.default,
@@ -113,7 +115,9 @@ describe("hardening tests", () => {
       EVM_REMOTE_NATIVE_TOKEN
     );
     if (
-      !(await ctx.provider.connection.getAccountInfo(withdrawNativeTokenMappingPda))
+      !(await ctx.provider.connection.getAccountInfo(
+        withdrawNativeTokenMappingPda
+      ))
     ) {
       await ctx.program.methods
         .registerToken({
@@ -717,7 +721,10 @@ describe("hardening tests", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -732,7 +739,10 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -786,7 +796,10 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: wrongExecutedPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -827,9 +840,7 @@ describe("hardening tests", () => {
         ctx.program.programId
       );
 
-      const destAccount = Array.from(
-        Buffer.alloc(32, 0x60 + (nonce & 0xff))
-      );
+      const destAccount = Array.from(Buffer.alloc(32, 0x60 + (nonce & 0xff)));
 
       await ctx.program.methods
         .depositNative({
@@ -848,9 +859,7 @@ describe("hardening tests", () => {
         .signers([ctx.user])
         .rpc();
 
-      const deposit = await ctx.program.account.depositRecord.fetch(
-        depositPda
-      );
+      const deposit = await ctx.program.account.depositRecord.fetch(depositPda);
       expect(Number(deposit.amount)).to.equal(expectedNet);
 
       const bridgeAfter = await ctx.program.account.bridgeConfig.fetch(
@@ -939,7 +948,10 @@ describe("hardening tests", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })

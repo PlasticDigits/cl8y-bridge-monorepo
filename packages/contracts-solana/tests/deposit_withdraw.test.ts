@@ -576,7 +576,10 @@ describe("deposit and withdraw flow", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })

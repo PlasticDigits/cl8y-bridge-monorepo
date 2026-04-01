@@ -116,11 +116,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
       })
       .rpc();
 
-    evmChainPda = await registerChainIfNeeded(
-      ctx,
-      EVM_CHAIN_ID,
-      "evm_audit"
-    );
+    evmChainPda = await registerChainIfNeeded(ctx, EVM_CHAIN_ID, "evm_audit");
 
     [depositTokenMappingPda] = findTokenPda(
       ctx.program.programId,
@@ -687,7 +683,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -874,7 +873,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -916,10 +918,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         "Hashes must differ because dest_account differs"
       );
 
-      const [withdrawPda] = findWithdrawPda(
-        ctx.program.programId,
-        victimHash
-      );
+      const [withdrawPda] = findWithdrawPda(ctx.program.programId, victimHash);
       const [executedHashPda] = findExecutedHashPda(
         ctx.program.programId,
         victimHash
@@ -1145,7 +1144,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1221,7 +1223,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -1367,7 +1372,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1427,7 +1435,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
@@ -1478,7 +1489,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1863,7 +1877,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: resultA.withdrawPda,
           executedHash: resultA.executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: userA.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1876,7 +1893,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: resultB.withdrawPda,
           executedHash: resultB.executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: userB.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1889,7 +1909,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: resultC.withdrawPda,
           executedHash: resultC.executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: userC.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -2065,7 +2088,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            fixture.mint
+          )[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -2401,7 +2427,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           recipientTokenAccount: fixture.userToken.address,
           bridgeTokenAccount: fixture.bridgeToken.address,
           tokenMapping: fixture.tokenPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            fixture.mint
+          )[0],
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -2472,13 +2501,18 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
           .rpc();
-        expect.fail("Should have thrown - SPL token cannot use native execution path");
+        expect.fail(
+          "Should have thrown - SPL token cannot use native execution path"
+        );
       } catch (err) {
         expect(err.toString()).to.contain("NotNativeToken");
       }
@@ -2511,14 +2545,19 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             recipientTokenAccount: fixture.userToken.address,
             bridgeTokenAccount: fixture.bridgeToken.address,
             tokenMapping: fixture.tokenPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, fixture.mint)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              fixture.mint
+            )[0],
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
           .rpc();
-        expect.fail("Should have thrown - native SOL cannot use SPL execution path");
+        expect.fail(
+          "Should have thrown - native SOL cannot use SPL execution path"
+        );
       } catch (err) {
         expect(err.toString()).to.contain("TokenMintMismatch");
       }
@@ -2679,7 +2718,10 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             bridge: ctx.bridgePda,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
-            withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              NATIVE_SOL_TOKEN
+            )[0],
             recipient: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })

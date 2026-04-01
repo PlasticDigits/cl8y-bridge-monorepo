@@ -14,12 +14,6 @@ test.describe('Bridge DApp Manual Inspection', () => {
     // Take a screenshot
     await page.screenshot({ path: 'test-results/01-initial-load.png', fullPage: true })
 
-    // Check for FROM chain selector
-    const fromChainSelector = page.locator('[data-testid="from-chain-selector"], .from-chain, [class*="FromChain"]').first()
-    
-    // Check for TO chain selector
-    const toChainSelector = page.locator('[data-testid="to-chain-selector"], .to-chain, [class*="ToChain"]').first()
-
     // Check for MAX button near amount input
     const maxButton = page.locator('button:has-text("MAX"), button:has-text("Max")').first()
 

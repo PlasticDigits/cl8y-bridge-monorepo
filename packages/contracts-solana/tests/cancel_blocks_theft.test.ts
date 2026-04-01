@@ -165,9 +165,9 @@ describe("cancel blocks theft (full guarantee)", () => {
   });
 
   it("operator approve → cancel → past delay → execute blocked; reenable keeps approval; second cancel still blocks", async () => {
-    const bridgeBefore = (
-      await ctx.provider.connection.getAccountInfo(ctx.bridgePda)
-    )!.lamports;
+    const bridgeBefore = (await ctx.provider.connection.getAccountInfo(
+      ctx.bridgePda
+    ))!.lamports;
 
     await ctx.program.methods
       .withdrawCancel()
@@ -189,7 +189,10 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -200,9 +203,9 @@ describe("cancel blocks theft (full guarantee)", () => {
       expect(err.toString()).to.match(/WithdrawalCancelled|6007|cancel/i);
     }
 
-    const bridgeMid = (
-      await ctx.provider.connection.getAccountInfo(ctx.bridgePda)
-    )!.lamports;
+    const bridgeMid = (await ctx.provider.connection.getAccountInfo(
+      ctx.bridgePda
+    ))!.lamports;
     expect(bridgeMid).to.equal(bridgeBefore);
 
     await ctx.program.methods
@@ -227,7 +230,10 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -258,7 +264,10 @@ describe("cancel blocks theft (full guarantee)", () => {
           bridge: ctx.bridgePda,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
-          withdrawRateLimit: findWithdrawRateLimitPda(ctx.program.programId, NATIVE_SOL_TOKEN)[0],
+          withdrawRateLimit: findWithdrawRateLimitPda(
+            ctx.program.programId,
+            NATIVE_SOL_TOKEN
+          )[0],
           recipient: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })

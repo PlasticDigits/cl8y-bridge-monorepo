@@ -240,7 +240,6 @@ export async function initializeBridgeIfNeeded(
   await ctx.program.methods
     .initialize(params)
     .accounts({
-
       admin: ctx.admin.publicKey,
     })
     .rpc();
@@ -257,7 +256,6 @@ export async function registerChainIfNeeded(
   await ctx.program.methods
     .registerChain({ chainId, identifier })
     .accounts({
-
       admin: ctx.admin.publicKey,
     })
     .rpc();
@@ -311,8 +309,7 @@ function loadOrPersistKeypair(role: string, envVar: string): Keypair {
     return Keypair.fromSecretKey(Uint8Array.from(raw));
   }
 
-  const rpcUrl =
-    process.env.ANCHOR_PROVIDER_URL || "http://localhost:8899";
+  const rpcUrl = process.env.ANCHOR_PROVIDER_URL || "http://localhost:8899";
 
   if (isLocalhost(rpcUrl)) {
     return Keypair.generate();
