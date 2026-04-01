@@ -48,6 +48,12 @@ describe('formatAmount', () => {
     expect(formatAmount(BigInt('1000000000000'), 6)).toBe('1,000,000.00')
   })
 
+  it('formats huge base-unit bigint without Number precision loss (18 decimals)', () => {
+    const base = BigInt('1000000000000000000000000')
+    expect(formatAmount(base, 18)).toBe('1,000,000.00')
+    expect(formatAmountForNumberInput(base, 18)).toBe('1000000.00')
+  })
+
   it('handles zero', () => {
     expect(formatAmount('0', 6)).toBe('0.00')
     expect(formatAmount(0, 6)).toBe('0.00')

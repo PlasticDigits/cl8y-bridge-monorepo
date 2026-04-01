@@ -4,6 +4,11 @@
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 import { pow10BigInt } from './pow10';
+import {
+  formatBaseUnitsEnUs,
+  formatCompactBigInt,
+  tryParseIntegerMicroString,
+} from './bigintAmount';
 
 function microToHumanNumber(microAmount: string | number | bigint, decimals: number): number {
   if (typeof microAmount === 'bigint') {
@@ -30,11 +35,15 @@ export function formatAmount(
   decimals: number = DECIMALS.LUNC,
   displayDecimals?: number
 ): string {
-  const amount = microToHumanNumber(microAmount, decimals);
-
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
 
+  const bi = tryParseIntegerMicroString(microAmount);
+  if (bi !== null) {
+    return formatBaseUnitsEnUs(bi, decimals, maxDecimals, minDecimals, true);
+  }
+
+  const amount = microToHumanNumber(microAmount, decimals);
   return amount.toLocaleString('en-US', {
     minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
@@ -47,11 +56,15 @@ export function formatAmountForNumberInput(
   decimals: number = DECIMALS.LUNC,
   displayDecimals?: number
 ): string {
-  const amount = microToHumanNumber(microAmount, decimals);
-
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
 
+  const bi = tryParseIntegerMicroString(microAmount);
+  if (bi !== null) {
+    return formatBaseUnitsEnUs(bi, decimals, maxDecimals, minDecimals, false);
+  }
+
+  const amount = microToHumanNumber(microAmount, decimals);
   return amount.toLocaleString('en-US', {
     minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
@@ -68,10 +81,16 @@ export function formatCompact(
   decimals: number = 6,
   sigfigs: number = 4
 ): string {
-  let num: number
   if (typeof value === 'bigint') {
-    num = Number(value) / Math.pow(10, decimals)
-  } else if (typeof value === 'string') {
+    return formatCompactBigInt(value, decimals, sigfigs);
+  }
+  const bi = tryParseIntegerMicroString(value);
+  if (bi !== null) {
+    return formatCompactBigInt(bi, decimals, sigfigs);
+  }
+
+  let num: number
+  if (typeof value === 'string') {
     num = parseFloat(value) / Math.pow(10, decimals)
   } else {
     num = value / Math.pow(10, decimals)
