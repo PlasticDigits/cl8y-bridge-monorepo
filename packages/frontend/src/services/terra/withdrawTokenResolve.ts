@@ -75,6 +75,8 @@ export function resolveTerraDestTokenIdForRecord(
  * Prefer `denomHint` from Terra LCD (`destTokenDenom`) when the bad withdraw
  * was on Terra; otherwise decode the canonical **destination** token bytes32
  * from the matched source deposit (EVM or Terra query — see `queryEvmDeposit`).
+ *
+ * @throws Error with an end-user-oriented message — never silently defaults to uluna.
  */
 export function resolveTerraTokenForBrokenTransferFix(
   canonicalDestTokenBytes32: Hex | string,
@@ -84,14 +86,23 @@ export function resolveTerraTokenForBrokenTransferFix(
   if (hint && !isEvmStyleTokenId(hint)) return hint
 
   const dt = String(canonicalDestTokenBytes32).trim()
-  if (dt && dt.toLowerCase() !== ZERO_B32) {
-    try {
-      const resolved = resolveTokenFromBytes32(dt, options?.tokenlist ?? null)
-      if (resolved) return resolved
-    } catch {
-      /* fall through to uluna */
-    }
+  if (!dt || dt.toLowerCase() === ZERO_B32) {
+    throw new Error(
+      'Repair could not determine which Terra token to use: the matched deposit has no destination token id. Reload the page or contact support with your transfer hash.',
+    )
   }
 
-  return 'uluna'
+  try {
+    const resolved = resolveTokenFromBytes32(dt, options?.tokenlist ?? null)
+    if (resolved?.trim()) return resolved
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e)
+    throw new Error(
+      `Repair could not map the bridge token to a Terra denom or CW20 contract (${detail}). Load the token list (refresh the app) or register the token, then try again.`,
+    )
+  }
+
+  throw new Error(
+    'Repair could not map the on-chain token to a Terra denom or CW20 address. Load the token list and retry, or contact support with your transfer hash.',
+  )
 }

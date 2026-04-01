@@ -57,7 +57,15 @@ describe('withdrawTokenResolve (glab #89)', () => {
     expect(resolveTerraTokenForBrokenTransferFix(cw20Bytes32, undefined)).toBe(cw20Terra)
   })
 
-  it('resolveTerraTokenForBrokenTransferFix falls back to uluna for zero bytes32', () => {
-    expect(resolveTerraTokenForBrokenTransferFix('0x' + '0'.repeat(64), undefined)).toBe('uluna')
+  it('resolveTerraTokenForBrokenTransferFix throws for zero bytes32 (no silent uluna)', () => {
+    expect(() => resolveTerraTokenForBrokenTransferFix('0x' + '0'.repeat(64), undefined)).toThrow(
+      /Repair could not determine which Terra token/,
+    )
+  })
+
+  it('resolveTerraTokenForBrokenTransferFix wraps decode failures for the user', () => {
+    expect(() => resolveTerraTokenForBrokenTransferFix('0x1234', undefined)).toThrow(
+      /Repair could not map/,
+    )
   })
 })

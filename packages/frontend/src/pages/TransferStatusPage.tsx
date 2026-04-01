@@ -1238,7 +1238,7 @@ export default function TransferStatusPage() {
                     <p className="text-amber-400/70 text-xs mt-1">Checking for fix option…</p>
                   )}
                   {isBroken && fixError && (
-                    <p className="text-amber-400/70 text-xs mt-1">Could not find a fix: {fixError}</p>
+                    <p className="text-amber-400/70 text-xs mt-1">{fixError}</p>
                   )}
                 </div>
               )}

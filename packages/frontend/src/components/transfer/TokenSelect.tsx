@@ -8,8 +8,6 @@ import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 import type { BridgeChainConfig } from '../../types/chain'
 import type { TokenOption } from '../../types/tokenOption'
 
-export type { TokenOption } from '../../types/tokenOption'
-
 export interface TokenSelectProps {
   tokens: TokenOption[]
   value: string
