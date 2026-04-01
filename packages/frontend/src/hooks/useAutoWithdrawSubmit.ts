@@ -36,6 +36,7 @@ import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/
 import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
 import { solanaAddressToBytes32 } from '../services/solana/address'
 import { bytes32HexToPublicKey } from '../services/solana/transaction'
+import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
@@ -575,18 +576,11 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
-        let srcTokenBytes = new Uint8Array(32)
-        const tok = transfer.token || ''
-        if (tok.startsWith('0x') && tok.length === 42) {
-          srcTokenBytes = new Uint8Array(evmAddressToBytes32Array(tok))
-        } else if (tok.startsWith('0x') && tok.length === 66) {
-          srcTokenBytes = new Uint8Array(hexToUint8Array(tok))
-        } else if (tok.startsWith('0x')) {
-          srcTokenBytes = new Uint8Array(evmAddressToBytes32Array(tok as Address))
-        } else {
+        const srcTokenBytes = resolveWithdrawSrcTokenBytesForSolana(transfer.token || '')
+        if (!srcTokenBytes || srcTokenBytes.length !== 32) {
           const msg =
-            'Solana withdrawSubmit requires a 32-byte or 20-byte hex token in the transfer record (EVM source)'
-          console.error(`${LOG} ${msg}`)
+            'Could not resolve source token for Solana withdrawSubmit (expected EVM 0x address/bytes32, or Terra denom/CW20)'
+          console.error(`${LOG} ${msg}`, { token: transfer.token })
           setPhase('error')
           setError(msg)
           submittedRef.current = false

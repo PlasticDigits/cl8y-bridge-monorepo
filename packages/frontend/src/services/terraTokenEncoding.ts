@@ -10,6 +10,41 @@ import { hexToBytes, keccak256, toBytes, type Hex } from 'viem'
 
 import { terraAddressToBytes32 } from './hashVerification'
 
+function isCw20ShapedTerraToken(terraTokenId: string): boolean {
+  return (
+    terraTokenId.startsWith('terra1') &&
+    (terraTokenId.length === 44 || terraTokenId.length === 64)
+  )
+}
+
+/**
+ * Raw 32-byte `src_token` matching Terra `encode_token_address` (hash.rs): CW20 → canonical
+ * address bytes32; native denom → keccak256(UTF-8). Throws if a CW20-shaped string is not valid bech32.
+ */
+export function terraTokenIdToSrcTokenBytesStrict(terraTokenId: string): Uint8Array {
+  if (isCw20ShapedTerraToken(terraTokenId)) {
+    const hex = terraAddressToBytes32(terraTokenId)
+    return new Uint8Array(hexToBytes(hex))
+  }
+  return new Uint8Array(hexToBytes(keccak256(toBytes(terraTokenId)) as Hex))
+}
+
+/**
+ * Same as {@link terraTokenIdToSrcTokenBytesStrict}, but invalid CW20 bech32 falls back to
+ * keccak256(UTF-8) — matches on-chain `encode_token_address` when `addr_validate` fails.
+ * Used for Solana withdrawSubmit seeds and relaxed registration paths.
+ */
+export function terraTokenIdToSrcTokenBytes(terraTokenId: string): Uint8Array {
+  if (isCw20ShapedTerraToken(terraTokenId)) {
+    try {
+      return terraTokenIdToSrcTokenBytesStrict(terraTokenId)
+    } catch {
+      return new Uint8Array(hexToBytes(keccak256(toBytes(terraTokenId)) as Hex))
+    }
+  }
+  return terraTokenIdToSrcTokenBytesStrict(terraTokenId)
+}
+
 /** 32-byte `dest_token` for Solana↔Terra mappings: keccak256(UTF-8 `terraTokenId`). */
 export function terraDestTokenKeccakUtf8Bytes(terraTokenId: string): Uint8Array {
   return hexToBytes(keccak256(toBytes(terraTokenId)) as Hex)
@@ -17,15 +52,7 @@ export function terraDestTokenKeccakUtf8Bytes(terraTokenId: string): Uint8Array 
 
 /** Base64-encoded 32-byte `src_token` for Terra `set_incoming_token_mapping`. */
 export function terraIncomingSrcTokenB64(terraTokenId: string): string {
-  const isCw20Shape =
-    terraTokenId.startsWith('terra1') &&
-    (terraTokenId.length === 44 || terraTokenId.length === 64)
-  if (isCw20Shape) {
-    const hex = terraAddressToBytes32(terraTokenId)
-    return Buffer.from(hexToBytes(hex)).toString('base64')
-  }
-  const hash = keccak256(toBytes(terraTokenId)) as Hex
-  return Buffer.from(hexToBytes(hash)).toString('base64')
+  return Buffer.from(terraTokenIdToSrcTokenBytesStrict(terraTokenId)).toString('base64')
 }
 
 /**
@@ -36,18 +63,7 @@ export function terraIncomingSrcTokenB64WithKeccakFallback(
   terraTokenId: string
 ): string | null {
   try {
-    const isCw20Shape =
-      terraTokenId.startsWith('terra1') &&
-      (terraTokenId.length === 44 || terraTokenId.length === 64)
-    if (isCw20Shape) {
-      try {
-        return terraIncomingSrcTokenB64(terraTokenId)
-      } catch {
-        // fall through to keccak path
-      }
-    }
-    const hash = keccak256(toBytes(terraTokenId)) as Hex
-    return Buffer.from(hexToBytes(hash)).toString('base64')
+    return Buffer.from(terraTokenIdToSrcTokenBytes(terraTokenId)).toString('base64')
   } catch {
     return null
   }

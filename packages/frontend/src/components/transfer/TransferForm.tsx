@@ -1160,7 +1160,7 @@ export function TransferForm() {
           depositNonce,
           srcAccount: srcAccountHex,
           destAccount: destAccountHex,
-          token: selectedTokenId || 'uluna',
+          token: (parsed?.token ?? selectedTokenId) || 'uluna',
           tokenSymbol: getTokenDisplaySymbol(selectedTokenId || 'uluna'),
           destToken: destTokenB32,
           srcDecimals: terraDecimals,
