@@ -20,26 +20,36 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Source .env.e2e.local if it exists (provides contract addresses, bridge vars, etc.)
+# Repo .env first (DATABASE_URL, secrets); .env.e2e.local overrides URLs + deploy addresses for QA.
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 if [ -f "$PROJECT_ROOT/.env.e2e.local" ]; then
     set -a
+    # shellcheck source=/dev/null
     source "$PROJECT_ROOT/.env.e2e.local"
     set +a
 fi
 
 # Map VITE_ vars to the names used by scripts/operator/canceler
 [ -n "${VITE_EVM_BRIDGE_ADDRESS:-}" ] && EVM_BRIDGE_ADDRESS="${EVM_BRIDGE_ADDRESS:-$VITE_EVM_BRIDGE_ADDRESS}"
+[ -n "${VITE_EVM1_BRIDGE_ADDRESS:-}" ] && EVM1_BRIDGE_ADDRESS="${EVM1_BRIDGE_ADDRESS:-$VITE_EVM1_BRIDGE_ADDRESS}"
 [ -n "${VITE_TERRA_BRIDGE_ADDRESS:-}" ] && TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-$VITE_TERRA_BRIDGE_ADDRESS}"
+[ -n "${VITE_SOLANA_PROGRAM_ID:-}" ] && SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:-$VITE_SOLANA_PROGRAM_ID}"
 
-# Configuration
-EVM_RPC_URL="${EVM_RPC_URL:-http://localhost:8545}"
-TERRA_RPC_URL="${TERRA_RPC_URL:-http://localhost:26657}"
-TERRA_LCD_URL="${TERRA_LCD_URL:-http://localhost:1317}"
-SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://localhost:8899}"
-DATABASE_URL="${DATABASE_URL:-postgres://operator:operator@localhost:5433/operator}"
-OPERATOR_API_URL="${OPERATOR_API_URL:-http://localhost:9092}"
-CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://localhost:9099}"
-FRONTEND_URL="${FRONTEND_URL:-http://localhost:5173}"
+# Defaults align with scripts/qa/qa-host.env (remapped LocalTerra + operator 9194 — not Prometheus 9092).
+EVM_RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"
+EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"
+TERRA_RPC_URL="${TERRA_RPC_URL:-http://127.0.0.1:26658}"
+TERRA_LCD_URL="${TERRA_LCD_URL:-http://127.0.0.1:1318}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://127.0.0.1:8899}"
+DATABASE_URL="${DATABASE_URL:-postgres://operator:operator@127.0.0.1:5433/operator}"
+OPERATOR_API_URL="${OPERATOR_API_URL:-http://127.0.0.1:9194}"
+CANCELER_HEALTH_URL="${CANCELER_HEALTH_URL:-http://127.0.0.1:9099}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -91,6 +101,20 @@ check_anvil() {
     fi
 }
 
+# Second Anvil (EVM1 / chain id 31338 in docker-compose)
+check_anvil1() {
+    local block_number
+    block_number=$(cast block-number --rpc-url "$EVM1_RPC_URL" 2>/dev/null || echo "")
+
+    if [ -n "$block_number" ]; then
+        log_status "Anvil1" "running" "(block $block_number)"
+        return 0
+    else
+        log_status "Anvil1" "stopped"
+        return 1
+    fi
+}
+
 # Check LocalTerra
 check_localterra() {
     local status
@@ -136,8 +160,13 @@ check_postgres() {
         fi
     fi
     
-    # Fallback: Check if Docker container is running
-    if docker compose ps 2>/dev/null | grep -q "postgres.*running"; then
+    # Fallback: docker compose postgres (psql may be missing or DATABASE_URL may not match compose)
+    cd "$PROJECT_ROOT"
+    if docker compose ps postgres 2>/dev/null | grep -qiE '\bUp\b'; then
+        if docker compose exec -T postgres pg_isready -U operator -d operator &>/dev/null; then
+            log_status "PostgreSQL" "running" "(docker)"
+            return 0
+        fi
         log_status "PostgreSQL" "running" "(docker)"
         return 0
     fi
@@ -249,6 +278,18 @@ get_contracts() {
             echo "  EVM Bridge:   (not set)"
         fi
 
+        if [ -n "${EVM1_BRIDGE_ADDRESS:-}" ]; then
+            local code1
+            code1=$(cast codesize "$EVM1_BRIDGE_ADDRESS" --rpc-url "$EVM1_RPC_URL" 2>/dev/null || echo "0")
+            if [ "$code1" -gt 0 ] 2>/dev/null; then
+                echo -e "  EVM1 Bridge:  $EVM1_BRIDGE_ADDRESS ${GREEN}(verified on-chain)${NC}"
+            else
+                echo -e "  EVM1 Bridge:  $EVM1_BRIDGE_ADDRESS ${RED}(NOT found on-chain)${NC}"
+            fi
+        else
+            echo "  EVM1 Bridge:  (not set)"
+        fi
+
         if [ -n "${TERRA_BRIDGE_ADDRESS:-}" ]; then
             local terra_info
             terra_info=$(curl -sf "${TERRA_LCD_URL}/cosmwasm/wasm/v1/contract/${TERRA_BRIDGE_ADDRESS}" 2>/dev/null | jq -r '.contract_info.label // empty' 2>/dev/null || echo "")
@@ -297,6 +338,7 @@ output_json() {
     echo "  },"
     echo "  \"contracts\": {"
     echo "    \"evm_bridge\": \"${EVM_BRIDGE_ADDRESS:-}\","
+    echo "    \"evm1_bridge\": \"${EVM1_BRIDGE_ADDRESS:-}\","
     echo "    \"terra_bridge\": \"${TERRA_BRIDGE_ADDRESS:-}\","
     echo "    \"solana_program\": \"${SOLANA_PROGRAM_ID:-}\""
     echo "  }"
@@ -316,6 +358,7 @@ main() {
     
     check_docker || true
     check_anvil || true
+    check_anvil1 || true
     check_localterra || true
     check_solana || true
     check_postgres || true

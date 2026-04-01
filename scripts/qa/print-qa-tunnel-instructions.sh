@@ -70,6 +70,8 @@ echo ""
 printf '%b\n' "${_W}  Optional in repo-root ${_G}.env${_N}: ${_G}QA_SSH_HOST${_N} (hostname from laptop), ${_G}QA_SSH_PORT${_N} (if not 22)."
 printf '%b\n' "  SSH/scp user in the commands below is ${_G}$(whoami)${_N} (who ran start-qa on the server)."
 echo ""
+printf '%b\n' "${_C}  Single-host QA:${_N} If the browser runs on ${_W}this same machine${_N} as start-qa, skip Steps 2–3 (no SSH tunnel, no scp). Chains are already on 127.0.0.1; ${_G}start-qa${_N} wrote ${_G}.deploy/local.env${_N} and ${_G}packages/frontend/.env.local${_N}. Do Step 1, then Step 5 (restart Vite if needed)."
+echo ""
 
 printf '%b\n' "${_SRV}${_B}  Step 1 — SERVER ONLY${_N}"
 printf '%b\n' "${_SRV}         On the QA server only:${_N} confirm stacks after start-qa."

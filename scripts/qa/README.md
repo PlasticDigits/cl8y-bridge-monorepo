@@ -66,9 +66,22 @@ make stop-qa
 
 ---
 
+## Same machine as the QA host (single-host)
+
+If you run **`make start-qa`** and open the app **on the same computer** (no separate laptop), **skip** the SSH tunnel and **`scp .deploy/local.env`**. RPCs and LCD are already on **`127.0.0.1`** per **`scripts/qa/qa-host.env`**, and **`start-qa`** already wrote **`.deploy/local.env`**, **`.env.e2e.local`**, and **`packages/frontend/.env.local`**.
+
+1. Confirm the stack: **`make status`** (or **`./scripts/status.sh`** with **`.env.e2e.local`** present).
+2. Run the frontend: **`cd packages/frontend && npm run dev`** and open the URL Vite prints; restart dev if you changed env files.
+
+Re-run **`./scripts/qa/write-frontend-env-local.sh`** only if you updated **`.deploy/local.env`** or **`qa-host.env`** without re-running **`start-qa`**.
+
+---
+
 ## On your laptop
 
 Do these **in order** after the QA server has finished **`make start-qa`** successfully. The same steps are printed at the end of **`make start-qa`** so you can copy-paste.
+
+**Skip this entire section** if you use the machine that ran **`start-qa`** as your browser host; see **[Same machine as the QA host](#same-machine-as-the-qa-host-single-host)** above.
 
 This laptop workflow is for **manual frontend QA** (Vite in the browser). **Automated tests** (Playwright, Vitest bridge/integration, e2e-infra, etc.) should be run **on the QA server** directly—they need services beyond the reduced SSH tunnel (operator, canceler, Postgres, etc.).
 
