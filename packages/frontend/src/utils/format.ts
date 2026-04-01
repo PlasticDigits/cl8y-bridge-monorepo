@@ -4,6 +4,20 @@
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 
+function microToHumanNumber(microAmount: string | number | bigint, decimals: number): number {
+  if (typeof microAmount === 'bigint') {
+    const divisor = BigInt(10 ** decimals);
+    const wholePart = microAmount / divisor;
+    const fractionalPart = microAmount % divisor;
+    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+    return parseFloat(`${wholePart}.${fractionalStr}`);
+  }
+  if (typeof microAmount === 'string') {
+    return parseFloat(microAmount) / Math.pow(10, decimals);
+  }
+  return microAmount / Math.pow(10, decimals);
+}
+
 /**
  * Format a micro-denominated amount to human-readable
  * @param microAmount The amount in micro units (accepts string, number, or bigint)
@@ -15,27 +29,32 @@ export function formatAmount(
   decimals: number = DECIMALS.LUNC,
   displayDecimals?: number
 ): string {
-  let amount: number;
-  
-  if (typeof microAmount === 'bigint') {
-    // For bigint, convert to string first to preserve precision
-    const divisor = BigInt(10 ** decimals);
-    const wholePart = microAmount / divisor;
-    const fractionalPart = microAmount % divisor;
-    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
-    amount = parseFloat(`${wholePart}.${fractionalStr}`);
-  } else if (typeof microAmount === 'string') {
-    amount = parseFloat(microAmount) / Math.pow(10, decimals);
-  } else {
-    amount = microAmount / Math.pow(10, decimals);
-  }
-  
+  const amount = microToHumanNumber(microAmount, decimals);
+
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
-  
+
   return amount.toLocaleString('en-US', {
     minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
+  });
+}
+
+/** Same rules as formatAmount but no thousands separators (for HTML type="number" inputs). */
+export function formatAmountForNumberInput(
+  microAmount: string | number | bigint,
+  decimals: number = DECIMALS.LUNC,
+  displayDecimals?: number
+): string {
+  const amount = microToHumanNumber(microAmount, decimals);
+
+  const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
+  const minDecimals = Math.min(2, maxDecimals);
+
+  return amount.toLocaleString('en-US', {
+    minimumFractionDigits: minDecimals,
+    maximumFractionDigits: maxDecimals,
+    useGrouping: false,
   });
 }
 

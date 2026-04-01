@@ -56,7 +56,7 @@ import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
 import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
-import { parseAmount, formatAmount, formatCompact } from '../../utils/format'
+import { parseAmount, formatAmount, formatAmountForNumberInput, formatCompact } from '../../utils/format'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -834,7 +834,7 @@ export function TransferForm() {
       effectiveMax = effectiveMax < maxTransferInSrc ? effectiveMax : maxTransferInSrc
     if (bridgeRemainingInSrc != null && bridgeRemainingInSrc > 0n)
       effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
-    setAmount(formatAmount(effectiveMax.toString(), srcDecimals))
+    setAmount(formatAmountForNumberInput(effectiveMax, srcDecimals))
   }, [
     isSourceTerra,
     isSourceSolana,

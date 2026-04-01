@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   formatAmount,
+  formatAmountForNumberInput,
   formatCompact,
   parseAmount,
   formatRate,
@@ -70,6 +71,19 @@ describe('formatAmount', () => {
   it('handles small amounts', () => {
     expect(formatAmount('1', 6)).toBe('0.000001')
     expect(formatAmount('100', 6)).toBe('0.0001')
+  })
+})
+
+describe('formatAmountForNumberInput', () => {
+  it('matches formatAmount without thousands separators', () => {
+    expect(formatAmountForNumberInput('1000000', 6)).toBe('1.00')
+    expect(formatAmountForNumberInput(BigInt('1000000000000'), 6)).toBe('1000000.00')
+    expect(formatAmountForNumberInput('1000000000000', 6)).toBe('1000000.00')
+    expect(formatAmountForNumberInput('999999999999', 6)).toBe('999999.999999')
+  })
+
+  it('respects displayDecimals', () => {
+    expect(formatAmountForNumberInput('1234567', 6, 2)).toBe('1.23')
   })
 })
 
