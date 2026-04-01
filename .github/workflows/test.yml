@@ -297,6 +297,7 @@ jobs:
         working-directory: packages/contracts-terraclassic/bridge
         env:
           RUST_BACKTRACE: 1
+          PROPTEST_CASES: 512
         run: cargo test -- --nocapture
 
   # ==========================================================================

@@ -624,6 +624,41 @@ mod tests {
         );
     }
 
+    /// Terra → Solana: `dest_account` is the full 32-byte Ed25519 pubkey (V2 hash word), not the
+    /// lossy `UniversalAddress::to_bytes32` carrier. Cross-chain parity with `HashLib.t.sol`.
+    #[test]
+    fn test_xchain_hash_id_terra_to_solana_full_pubkey_dest() {
+        let terra_chain: [u8; 4] = [0, 0, 0, 2];
+        let sol_chain: [u8; 4] = [0, 0, 0, 5];
+
+        let src_account =
+            hex_to_bytes32("00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d")
+                .unwrap();
+
+        let mut dest_account = [0u8; 32];
+        for (i, b) in dest_account.iter_mut().enumerate() {
+            *b = (i + 1) as u8;
+        }
+
+        let token = [0xCDu8; 32];
+
+        let hash = compute_xchain_hash_id(
+            &terra_chain,
+            &sol_chain,
+            &src_account,
+            &dest_account,
+            &token,
+            500_000,
+            99,
+        );
+
+        assert_eq!(
+            bytes32_to_hex(&hash),
+            "0x5546e5381d73afc31ae405eea765c2c6c6ead75be0ccbf809cd0ad7be7059f71",
+            "Terra->Solana hash must match Solidity HashLib and operator"
+        );
+    }
+
     /// EVM → Terra transfer hash with CW20 token.
     #[test]
     fn test_xchain_hash_id_evm_to_terra_cw20() {

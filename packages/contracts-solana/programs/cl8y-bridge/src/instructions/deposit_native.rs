@@ -1,5 +1,6 @@
 use crate::address_codec::pubkey_to_bytes32;
 use crate::error::BridgeError;
+use crate::fee::deposit_fee_and_net;
 use crate::hash::compute_transfer_hash;
 use crate::state::{BridgeConfig, ChainEntry, DepositRecord, TokenMapping};
 use anchor_lang::prelude::*;
@@ -61,15 +62,7 @@ pub fn handler(ctx: Context<DepositNative>, params: DepositNativeParams) -> Resu
 
     let dest_token = ctx.accounts.token_mapping.dest_token;
 
-    let fee = (params.amount as u128)
-        .checked_mul(bridge.fee_bps as u128)
-        .ok_or(BridgeError::ArithmeticOverflow)?
-        .checked_div(10000)
-        .ok_or(BridgeError::ArithmeticOverflow)? as u64;
-    let net_amount = params
-        .amount
-        .checked_sub(fee)
-        .ok_or(BridgeError::FeeExceedsAmount)?;
+    let (fee, net_amount) = deposit_fee_and_net(params.amount, bridge.fee_bps)?;
 
     system_program::transfer(
         CpiContext::new(

@@ -3,6 +3,7 @@ use crate::state::{BridgeConfig, TokenMapping};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
+/// Admin pulls accrued fees (native or SPL). See `docs/SOLANA_BRIDGE_INVARIANTS.md` (fee accounting).
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct WithdrawFeesParams {
     pub amount: u64,

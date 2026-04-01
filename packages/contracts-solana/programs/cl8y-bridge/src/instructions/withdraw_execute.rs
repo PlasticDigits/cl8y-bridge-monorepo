@@ -9,6 +9,7 @@ use anchor_spl::token_interface::{
     self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
 };
 
+/// SPL (or Token-2022) withdrawal execution: lock/unlock transfer or mint. See `docs/SOLANA_BRIDGE_INVARIANTS.md` (INV-W2, INV-D1).
 #[derive(Accounts)]
 pub struct WithdrawExecute<'info> {
     #[account(

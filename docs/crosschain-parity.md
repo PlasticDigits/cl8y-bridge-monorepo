@@ -21,7 +21,7 @@ flowchart LR
     Deposit -- "same hash" --- Withdraw
 ```
 
-**Key invariant**: `deposit_hash == withdraw_hash` for the same transfer, regardless of which chains are involved (EVM↔EVM, EVM↔Terra, Terra↔EVM).
+**Key invariant**: `deposit_hash == withdraw_hash` for the same transfer, regardless of which chains are involved (EVM↔EVM, EVM↔Terra, Terra↔EVM, Terra↔Solana, etc.).
 
 ---
 
@@ -160,6 +160,14 @@ bytes32(uint256(uint160(evmAddress)))
 
 This is the same layout as EVM addresses, ensuring consistent encoding.
 
+### Solana (Ed25519 public key)
+
+For the **V2 transfer hash** `destAccount` / `srcAccount` words when the account is a Solana wallet, the word is the **raw 32-byte Ed25519 public key** (same as Anchor / SPL “pubkey” bytes). This matches `UniversalAddress::to_hash_bytes()` in CosmWasm ([`packages/contracts-terraclassic/bridge/src/address_codec.rs`](../packages/contracts-terraclassic/bridge/src/address_codec.rs)) and [`packages/multichain-rs/src/address_codec.rs`](../packages/multichain-rs/src/address_codec.rs).
+
+**Do not** use the lossy `UniversalAddress::to_bytes32()` carrier for hash inputs: it stores only the first **28** bytes of the pubkey plus a 4-byte chain-type prefix, so two distinct pubkeys can share the same `to_bytes32` while still having different `to_hash_bytes` and different transfer hashes. For lossless off-chain payloads, use `to_bytes()` / `from_bytes()` (36 bytes for Solana: chain type + pubkey).
+
+**Terra `DepositNative` / CW20 lock:** the contract accepts `dest_account` as an opaque `Binary` of **exactly 32 bytes** passed straight into `compute_xchain_hash_id` ([`execute/outgoing.rs`](../packages/contracts-terraclassic/bridge/src/execute/outgoing.rs)). Integrations **must** supply the same 32 bytes the destination chain expects in the hash (for Solana → full pubkey). Golden vector: `HashLib.t.sol` `test_TransferHash_TerraToSolana_FullPubkeyDest_CrossChainParity`, CosmWasm `hash::tests::test_xchain_hash_id_terra_to_solana_full_pubkey_dest`.
+
 ---
 
 ## Chain ID Encoding
@@ -197,10 +205,13 @@ The hash computation is implemented identically in four codebases:
 |----------|------|----------|
 | Solidity (EVM) | `contracts-evm/src/lib/HashLib.sol` | `computeTransferHash()` |
 | Rust (shared library) | `multichain-rs/src/hash.rs` | `compute_transfer_hash()` |
-| CosmWasm (Terra) | `contracts-terraclassic/bridge/src/hash.rs` | `compute_transfer_hash()` |
-| Operator/Canceler | Via `multichain-rs` dependency | `compute_transfer_hash()` |
+| CosmWasm (Terra) | `contracts-terraclassic/bridge/src/hash.rs` | `compute_xchain_hash_id()` (same layout as `compute_transfer_hash` in multichain-rs) |
+| Solana (Anchor) | `contracts-solana/programs/cl8y-bridge/src/hash.rs` | `compute_transfer_hash` |
+| Operator/Canceler | Via `multichain-rs` dependency | `compute_transfer_hash()` / `compute_xchain_hash_id()` |
 
-All four must produce identical output for the same input.
+All must produce identical output for the same input.
+
+**Property tests (Terra codec + hash):** `contracts-terraclassic/bridge/tests/proptest_codec.rs` (Solana `to_hash_bytes`, lossy `to_bytes32` collisions, dest-account sensitivity).
 
 ---
 
@@ -238,7 +249,7 @@ Both chains compute identical hashes from identical inputs.
 | Algorithm | keccak256 | keccak256 (tiny_keccak) |
 | Encoding | `abi.encode` (32-byte slots) | Matching byte layout |
 | Chain ID | bytes4 left-aligned in bytes32 | `[u8; 4]` left-aligned in `[u8; 32]` |
-| Address | left-padded to bytes32 | left-padded to `[u8; 32]` |
+| Address | left-padded to bytes32 (EVM/Terra); Solana **full 32-byte pubkey** in hash word | Same: EVM/Cosmos left-pad; Solana raw pubkey |
 | Amount | uint256, big-endian | u128, left-padded to 32 bytes BE |
 | Nonce | uint256, big-endian | u64, left-padded to 32 bytes BE |
 | Token | bytes32 (dest token) | `[u8; 32]` (dest token) |
@@ -290,6 +301,7 @@ Cross-chain hash parity is verified by unit tests across all four codebases. Eac
 | EVM→Terra | CW20 | `test_DepositWithdraw_EvmToTerra_Cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` | `test_deposit_withdraw_match_evm_to_terra_cw20` |
 | Terra→EVM | Native (uluna)→ERC20 | `test_DepositWithdraw_TerraToEvm_UlunaErc20` | `test_deposit_withdraw_match_terra_to_evm_uluna` | `test_deposit_withdraw_match_terra_to_evm_uluna` | `test_deposit_withdraw_match_terra_to_evm_uluna` |
 | Terra→EVM | CW20→ERC20 | `test_DepositWithdraw_TerraToEvm_Cw20Erc20` | `test_deposit_withdraw_match_terra_to_evm_cw20` | `test_deposit_withdraw_match_terra_to_evm_cw20` | `test_deposit_withdraw_match_terra_to_evm_cw20` |
+| Terra→Solana | Dest = full Ed25519 pubkey | `test_TransferHash_TerraToSolana_FullPubkeyDest_CrossChainParity` | — | — | `test_xchain_hash_id_terra_to_solana_full_pubkey_dest` |
 
 ### Running the Tests
 
@@ -303,8 +315,8 @@ cd packages/multichain-rs && cargo test hash::tests
 # Operator integration tests (29 tests including 5 deposit/withdraw parity)
 cd packages/operator && cargo test hash_parity
 
-# Terra contract (tests including 5 deposit/withdraw parity)
-cd packages/contracts-terraclassic/bridge && cargo test --lib hash::tests
+# Terra contract (hash + address codec + proptest)
+cd packages/contracts-terraclassic/bridge && cargo test
 ```
 
 ### What the Tests Verify

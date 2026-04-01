@@ -28,6 +28,8 @@
 //! - Cosmos: 20-byte address from bech32 decoding
 //! - Solana: 32-byte Ed25519 public key
 
+use std::fmt;
+
 use cosmwasm_std::{Addr, StdError, StdResult};
 
 // ============================================================================
@@ -124,6 +126,22 @@ impl UniversalAddress {
             raw: RawAddress::Full(*pubkey),
             reserved: [0u8; 8],
         })
+    }
+
+    /// Create a Solana address from a base58-encoded public key string.
+    pub fn from_solana_base58(addr: &str) -> StdResult<Self> {
+        let bytes = bs58::decode(addr)
+            .into_vec()
+            .map_err(|e| StdError::generic_err(format!("Invalid base58 address: {}", e)))?;
+        if bytes.len() != 32 {
+            return Err(StdError::generic_err(format!(
+                "Invalid Solana address length: expected 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let mut pubkey = [0u8; 32];
+        pubkey.copy_from_slice(&bytes);
+        Self::from_solana(&pubkey)
     }
 
     // ============================================================================
@@ -285,6 +303,82 @@ impl UniversalAddress {
                 result
             }
             RawAddress::Full(raw) => *raw,
+        }
+    }
+
+    /// Lossless serialization for off-chain transport.
+    /// EVM/Cosmos: 32 bytes (same as [`Self::to_bytes32`]).
+    /// Solana: 36 bytes (`chain_type` BE + raw pubkey).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match &self.raw {
+            RawAddress::Short(_) => self.to_bytes32().to_vec(),
+            RawAddress::Full(raw) => {
+                let mut result = Vec::with_capacity(36);
+                result.extend_from_slice(&self.chain_type.to_be_bytes());
+                result.extend_from_slice(raw);
+                result
+            }
+        }
+    }
+
+    /// Parse [`Self::to_bytes`] output: 32 bytes (short) or 36 bytes (Solana).
+    pub fn from_bytes(bytes: &[u8]) -> StdResult<Self> {
+        match bytes.len() {
+            32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(bytes);
+                Self::from_bytes32(&arr)
+            }
+            36 => {
+                let chain_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                if chain_type != CHAIN_TYPE_SOLANA {
+                    return Err(StdError::generic_err(format!(
+                        "36-byte encoding only valid for Solana (chain_type=3), got {}",
+                        chain_type
+                    )));
+                }
+                let mut pubkey = [0u8; 32];
+                pubkey.copy_from_slice(&bytes[4..36]);
+                Self::from_solana(&pubkey)
+            }
+            other => Err(StdError::generic_err(format!(
+                "Invalid length: expected 32 or 36 bytes, got {}",
+                other
+            ))),
+        }
+    }
+
+    /// Base58-encoded Solana public key (standard wallet address form).
+    pub fn to_solana_string(&self) -> StdResult<String> {
+        if self.chain_type != CHAIN_TYPE_SOLANA {
+            return Err(StdError::generic_err(format!(
+                "Expected Solana chain type (3), got {}",
+                self.chain_type
+            )));
+        }
+        match &self.raw {
+            RawAddress::Full(raw) => Ok(bs58::encode(raw).into_string()),
+            RawAddress::Short(_) => Err(StdError::generic_err("Solana address must be 32 bytes")),
+        }
+    }
+}
+
+impl fmt::Display for UniversalAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.chain_type {
+            CHAIN_TYPE_EVM => write!(f, "EVM:{}", hex::encode(self.raw_address_bytes())),
+            CHAIN_TYPE_COSMOS => write!(f, "COSMOS:{}", hex::encode(self.raw_address_bytes())),
+            CHAIN_TYPE_SOLANA => match &self.raw {
+                RawAddress::Full(raw) => write!(f, "SOLANA:{}", bs58::encode(raw).into_string()),
+                RawAddress::Short(raw) => write!(f, "SOLANA:{}", hex::encode(raw)),
+            },
+            CHAIN_TYPE_BITCOIN => write!(f, "BITCOIN:{}", hex::encode(self.raw_address_bytes())),
+            _ => write!(
+                f,
+                "UNKNOWN({}):{}",
+                self.chain_type,
+                hex::encode(self.raw_address_bytes())
+            ),
         }
     }
 }

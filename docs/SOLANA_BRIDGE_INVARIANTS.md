@@ -6,7 +6,8 @@ This document lists security and correctness invariants for the Anchor programs 
 
 - `packages/contracts-evm/src/lib/HashLib.sol` — **no diff** vs `main` for V2 `computeXchainHashId`.
 - `packages/multichain-rs/src/hash.rs` — V2 `compute_xchain_hash_id` layout **unchanged** vs `main` (minor test / style deltas only).
-- `packages/contracts-terraclassic/bridge/src/hash.rs` — V2 path **unchanged** vs `main` (trivial `div_ceil` refactor in legacy helpers only).
+- `packages/contracts-terraclassic/bridge/src/hash.rs` — V2 `compute_xchain_hash_id` **unchanged** vs `main` (trivial `div_ceil` refactor in legacy helpers only). **New** Terra→Solana golden: `test_xchain_hash_id_terra_to_solana_full_pubkey_dest`.
+- `packages/contracts-terraclassic/bridge/src/address_codec.rs` — **diff vs `main`**: Solana support in `UniversalAddress` (`to_hash_bytes`, lossy `to_bytes32`, lossless `to_bytes` / `from_bytes`, base58). See [contracts-terraclassic.md](./contracts-terraclassic.md) § Universal address encoding.
 - `packages/contracts-solana/programs/cl8y-bridge/src/hash.rs` — **new**; must stay byte-identical in layout to the three references above (enforced by golden vectors from `HashLib.t.sol` + proptest vs `tiny-keccak` in-crate).
 
 ---
@@ -33,6 +34,18 @@ The 32-byte transfer id is `keccak256` over 224 bytes: seven 32-byte ABI words (
 The `token` word is always the **destination** chain representation (mint pubkey bytes on Solana dest, ERC-20/CW20/native encoding per `crosschain-parity.md`).
 
 | Evidence | Narrative + registry tests; `deposit_*` / `withdraw_submit` handlers bind `TokenMapping` to that convention |
+
+### INV-H3 — Terra lock `dest_account` uses hash bytes (Solana full pubkey)
+
+When Terra is the **source** of a transfer to Solana, the depositor’s `dest_account` argument on `DepositNative` / lock must be the **32-byte pubkey** used in the V2 hash (`UniversalAddress::to_hash_bytes()`), not the 32-byte lossy `to_bytes32()` wire form.
+
+| Evidence | Location |
+|----------|----------|
+| CosmWasm golden | `packages/contracts-terraclassic/bridge/src/hash.rs` (`test_xchain_hash_id_terra_to_solana_full_pubkey_dest`) |
+| Solidity golden | `packages/contracts-evm/test/HashLib.t.sol` (`test_TransferHash_TerraToSolana_FullPubkeyDest_CrossChainParity`) |
+| Codec + lock | `packages/contracts-terraclassic/bridge/src/address_codec.rs` (`to_hash_bytes`), `bridge/tests/test_address_codec.rs` |
+| Property tests | `packages/contracts-terraclassic/bridge/tests/proptest_codec.rs` (`proptest_solana_*`, `proptest_xchain_hash_different_dest_changes_hash`) |
+| Narrative | [crosschain-parity.md](./crosschain-parity.md) § Solana |
 
 ---
 

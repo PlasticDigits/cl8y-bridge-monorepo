@@ -69,6 +69,73 @@ packages/contracts-terraclassic/
 └── Cargo.toml               # Workspace config
 ```
 
+### Branch vs `main` (audit inventory)
+
+As of the Solana integration branch, `git diff main -- packages/contracts-terraclassic/` touches **four paths** only:
+
+| File | Summary |
+|------|---------|
+| `bridge/src/address_codec.rs` | Solana (`CHAIN_TYPE_SOLANA`), `UniversalAddress` short vs full raw payload, `to_hash_bytes`, lossy `to_bytes32`, lossless `to_bytes` / `from_bytes`, base58 helpers |
+| `bridge/src/hash.rs` | Equivalent padding math (`div_ceil`) in legacy ABI helpers only |
+| `bridge/tests/test_address_codec.rs` | Integration + Solana codec tests |
+| `Cargo.toml` (workspace) | Comment for cw20-mintable acquisition |
+
+## Universal address encoding (EVM / Cosmos / Solana)
+
+Implementation: [`packages/contracts-terraclassic/bridge/src/address_codec.rs`](../packages/contracts-terraclassic/bridge/src/address_codec.rs). Parity with off-chain code: [`packages/multichain-rs/src/address_codec.rs`](../packages/multichain-rs/src/address_codec.rs), EVM [`AddressCodecLib.sol`](../packages/contracts-evm/src/lib/AddressCodecLib.sol).
+
+| Chain | `to_bytes32()` (32-byte carrier) | `to_hash_bytes()` (V2 hash word) |
+|-------|----------------------------------|----------------------------------|
+| EVM | Chain type + 20-byte address + reserved | 12 zero bytes + 20-byte address (same as Solidity `bytes32(uint256(uint160)))`) |
+| Cosmos / Terra | Same layout as EVM with bech32-decoded 20 bytes | Same left-pad as EVM |
+| Solana | Chain type + **first 28 bytes** of pubkey (lossy) | **Full 32-byte** Ed25519 pubkey |
+
+**Rule:** For `compute_xchain_hash_id` / lock `dest_account`, use **`to_hash_bytes()`** for Solana recipients. See [crosschain-parity.md](./crosschain-parity.md) § Solana and [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) **INV-H3**.
+
+**Note:** On lock, the contract stores `BridgeTransaction.recipient` as `0x` + hex of the opaque 32-byte `dest_account` ([`execute/outgoing.rs`](../packages/contracts-terraclassic/bridge/src/execute/outgoing.rs)) for operator visibility; that string is **not** a Solana base58 address.
+
+## Governance and trust (on-chain)
+
+Aligned with [security-model.md](./security-model.md) (watchtower). Code references:
+
+| Role | Responsibility | Code |
+|------|----------------|------|
+| **Admin** | Pause/unpause, chain/token/operator registry, fees, canceler list, withdraw delay, rate limits, propose/accept admin after timelock, emergency recover (when paused) | [`execute/admin.rs`](../packages/contracts-terraclassic/bridge/src/execute/admin.rs), [`execute/config.rs`](../packages/contracts-terraclassic/bridge/src/execute/config.rs) |
+| **Operator** | Approve pending withdrawals (`withdraw_approve`); admin may also approve | [`execute/withdraw.rs`](../packages/contracts-terraclassic/bridge/src/execute/withdraw.rs) (`OPERATORS` map; see [`state.rs`](../packages/contracts-terraclassic/bridge/src/state.rs) `OPERATORS`) |
+| **Canceler** | Cancel fraudulent approvals during delay window | [`execute/withdraw.rs`](../packages/contracts-terraclassic/bridge/src/execute/withdraw.rs), [`ContractError::NotCanceler`](../packages/contracts-terraclassic/bridge/src/error.rs) |
+| **Anyone** | Execute withdrawal after delay if not cancelled | [`execute/withdraw.rs`](../packages/contracts-terraclassic/bridge/src/execute/withdraw.rs) |
+
+**Admin transfer timelock:** `ADMIN_TIMELOCK_DURATION` = 604_800 seconds (7 days) in [`state.rs`](../packages/contracts-terraclassic/bridge/src/state.rs).
+
+## Security test and attack-path matrix
+
+Automated tests live under `packages/contracts-terraclassic/bridge/tests/` and `bridge/src/*/tests`. **Property / fuzz-style:** [`proptest_codec.rs`](../packages/contracts-terraclassic/bridge/tests/proptest_codec.rs) (run with `PROPTEST_CASES=4096 cargo test -p bridge proptest_` for more iterations). CI sets `PROPTEST_CASES=512` for the Terra bridge job ([`.github/workflows/test.yml`](../.github/workflows/test.yml)).
+
+| # | Risk / path | Mitigation | Test / property evidence |
+|---|-------------|------------|-------------------------|
+| 1 | Wrong Solana encoding in hash (`to_bytes32` vs pubkey) | Docs + goldens; clients use `to_hash_bytes` | `hash::test_xchain_hash_id_terra_to_solana_full_pubkey_dest`, `HashLib.t.sol` `test_TransferHash_TerraToSolana_*`, **INV-H3** |
+| 2 | Distinct Solana pubkeys collide on lossy carrier | Hash uses full pubkey | `proptest_solana_lossy_bytes32_collision_only_same_prefix28`, `test_solana_to_hash_bytes_is_full_pubkey` |
+| 3 | Wrong chain-type interpretation off-chain | Operator / registry discipline | Operational; codec `CHAIN_TYPE_*` constants |
+| 4 | Bech32 / wrong HRP | Validate terra addresses | `test_address_codec.rs`, `address_codec` unit tests |
+| 5 | Lock to same chain | Rejected in contract | `execute/outgoing.rs`, `test_chain_registry` |
+| 6 | Unregistered / disabled destination chain | `CHAINS` + `enabled` | `test_chain_registry.rs` |
+| 7 | Unsupported / disabled token | `TOKENS` | `integration.rs`, registry tests |
+| 8 | Wrong token type for native lock | `LockUnlock` check | `integration.rs` |
+| 9 | Missing `SetTokenDestination` mapping | `resolve_dest_token` errors | `test_chain_registry` / integration flows |
+| 10 | Fee / rounding issues | Fee manager | `test_fee_system.rs`, `fee_manager` tests |
+| 11 | Withdraw nonce replay | `WITHDRAW_NONCE_USED` | `test_withdraw_flow.rs`, `integration.rs` |
+| 12 | Double execute | `executed` flag | `test_withdraw_flow.rs` |
+| 13 | Execute before delay | Block time vs delay | `test_withdraw_flow.rs`, `integration.rs` |
+| 14 | Unauthorized operator approval | Operator map | `integration.rs` `test_withdraw_approve_requires_operator` |
+| 15 | Unauthorized cancel | Canceler map | `integration.rs`, `test_withdraw_flow.rs` |
+| 16 | Unauthorized admin | `config.admin` | `test_chain_registry`, `test_fee_system`, admin tests |
+| 17 | Admin takeover without timelock | `PENDING_ADMIN` + timestamp | `integration.rs` recover / admin tests |
+| 18 | Pause bypass | `BridgePaused` on paths | `test_withdraw_flow`, `integration.rs` |
+| 19 | Malicious CW20 in `AddToken` | `addr_validate` + wasm info + optional code ID allowlist | `execute/config.rs`, `test_incoming_token_registry.rs` |
+| 20 | Operator hash / param griefing | Cancelers + cross-chain hash parity | `test_hash_parity.rs`, E2E / operator (off-chain) |
+
+**Residual risk:** Paths 3 and 20 rely on **honest operator and canceler processes** and off-chain verification; on-chain code provides the hooks (hashes, roles, delay) but not full economic security without monitoring.
+
 ## Messages
 
 ### InstantiateMsg
@@ -453,10 +520,14 @@ Lock transactions emit attributes for operator observation:
 ## Building
 
 ```bash
-cd packages/contracts-terraclassic
+cd packages/contracts-terraclassic/bridge
 
-# Build
-cargo build --release --target wasm32-unknown-unknown
+# Unit + integration + property tests (optional: PROPTEST_CASES=4096)
+cargo test
+
+# Build (workspace root)
+cd ..
+cargo build --release --target wasm32-unknown-unknown -p bridge --features cosmwasm_1_2
 
 # Optimize for deployment
 docker run --rm -v "$(pwd)":/code \
@@ -488,3 +559,4 @@ See [packages/contracts-terraclassic/scripts/README.md](../packages/contracts-te
 - [Security Model](./security-model.md) - Watchtower pattern
 - [Gap Analysis](./gap-analysis-terraclassic.md) - Security gap analysis
 - [Cross-Chain Parity](./crosschain-parity.md) - Parity requirements
+- [Solana bridge invariants](./SOLANA_BRIDGE_INVARIANTS.md) - INV-H1, INV-H3 (Terra `dest_account`)

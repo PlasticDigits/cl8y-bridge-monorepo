@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 pub mod address_codec;
 pub mod decimal;
 pub mod error;
+pub mod fee;
 pub mod rate_limit;
 pub mod hash;
 pub mod instructions;

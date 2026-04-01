@@ -430,6 +430,6 @@ Rate limits are configured per token in the GuardBridge:
 ## Related Documentation
 
 - [EVM Contracts](./contracts-evm.md) - Contract implementation details
-- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm implementation
+- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm implementation; on-chain **governance map** (admin timelock, operators, cancelers) under *Governance and trust (on-chain)*
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Gap Analysis](./gap-analysis-terraclassic.md) - Security parity analysis
