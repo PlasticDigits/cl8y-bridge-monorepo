@@ -7,7 +7,6 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
 import * as anchor from "@coral-xyz/anchor";
 import { Program, AnchorProvider, Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
@@ -21,6 +20,7 @@ import {
   findChainPda,
   findTokenPda,
 } from "../tests/helpers/setup";
+import { terraDestTokenKeccakUtf8Bytes } from "../../frontend/src/services/terraTokenEncoding";
 
 /** Wrapped SOL — UI uses `deposit_native`; no bridge SPL vault required. */
 const WSOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
@@ -119,19 +119,6 @@ interface QaTokens {
   };
 }
 
-const keccakCache = new Map<string, string>();
-
-function keccak256Utf8(s: string): string {
-  const c = keccakCache.get(s);
-  if (c) return c;
-  const out = execSync(`cast keccak "${s.replace(/"/g, '\\"')}"`, {
-    encoding: "utf8",
-    env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: "1" },
-  }).trim();
-  keccakCache.set(s, out);
-  return out;
-}
-
 function evmAddrToDestTokenBytes(addr: string): Buffer {
   const b = Buffer.alloc(32);
   const hex = addr.slice(2).toLowerCase();
@@ -141,8 +128,8 @@ function evmAddrToDestTokenBytes(addr: string): Buffer {
   return b;
 }
 
-function keccakHexToBytes32(hex: string): Buffer {
-  return Buffer.from(hex.replace(/^0x/, ""), "hex");
+function terraTokenToDestToken32(terraTokenId: string): Buffer {
+  return Buffer.from(terraDestTokenKeccakUtf8Bytes(terraTokenId));
 }
 
 async function registerChainIfNeeded(
@@ -284,7 +271,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.tokenA),
       dec: SPL_ABC,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.tokenA),
-      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.tokenA)),
+      terraTok: terraTokenToDestToken32(t.terra.tokenA),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.tokenA),
       srcAnvil: 18,
       srcTerra: 6,
@@ -294,7 +281,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.tokenB),
       dec: SPL_ABC,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.tokenB),
-      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.tokenB)),
+      terraTok: terraTokenToDestToken32(t.terra.tokenB),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.tokenB),
       srcAnvil: 18,
       srcTerra: 6,
@@ -304,7 +291,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.tokenC),
       dec: SPL_ABC,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.tokenC),
-      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.tokenC)),
+      terraTok: terraTokenToDestToken32(t.terra.tokenC),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.tokenC),
       srcAnvil: 18,
       srcTerra: 6,
@@ -314,7 +301,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.lunc),
       dec: SPL_LUNC,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.lunc),
-      terraTok: keccakHexToBytes32(keccak256Utf8("uluna")),
+      terraTok: terraTokenToDestToken32("uluna"),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.lunc),
       srcAnvil: 6,
       srcTerra: 6,
@@ -324,7 +311,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.kdec),
       dec: SPL_KDEC,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.kdec),
-      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.kdec)),
+      terraTok: terraTokenToDestToken32(t.terra.kdec),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.kdec),
       srcAnvil: 18,
       srcTerra: 6,
@@ -334,7 +321,7 @@ async function main(): Promise<void> {
       mint: new PublicKey(t.solana.wsol),
       dec: SPL_SOL,
       anvilTok: evmAddrToDestTokenBytes(t.anvil.sol),
-      terraTok: keccakHexToBytes32(keccak256Utf8(t.terra.sol)),
+      terraTok: terraTokenToDestToken32(t.terra.sol),
       anvil1Tok: evmAddrToDestTokenBytes(t.anvil1.sol),
       srcAnvil: 9,
       srcTerra: 9,
@@ -397,7 +384,7 @@ async function main(): Promise<void> {
       admin,
       t2022Mint,
       destTerra,
-      keccakHexToBytes32(keccak256Utf8(t.terra.t2022)),
+      terraTokenToDestToken32(t.terra.t2022),
       SPL_T2022,
       6
     );

@@ -12,7 +12,10 @@ import type { TokenAddresses } from './deploy-tokens'
 import { KDEC_DECIMALS } from './deploy-tokens'
 import { isPlaceholderAddress } from './deploy-terra'
 import { resolveLocalterraDockerExecTarget } from './localterra-docker'
-import { terraIncomingSrcTokenB64 } from '../../services/terraTokenEncoding'
+import {
+  terraIncomingSrcTokenB64,
+  terraTokenIdToEncodeTokenAddressHex,
+} from '../../services/terraTokenEncoding'
 
 const __registerTokensDir = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT_REGISTER_TOKENS = resolve(__registerTokensDir, '../../../../..')
@@ -304,33 +307,6 @@ function registerEvmSolanaMappings(
   console.log(`[register-tokens] EVM↔Solana TokenRegistry mappings on ${rpcUrl}`)
 }
 
-/** Cache for keccak256 results */
-const keccakCache = new Map<string, string>()
-
-/** Compute keccak256 of an arbitrary string via cast. Results are cached. */
-function getKeccak256(input: string): string {
-  const cached = keccakCache.get(input)
-  if (cached) return cached
-  try {
-    const result = execSync(`cast keccak "${input}"`, {
-      encoding: 'utf8',
-      env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' },
-    }).trim()
-    keccakCache.set(input, result)
-    return result
-  } catch {
-    console.warn(`[register-tokens] Failed to compute keccak256("${input}"), using fallback`)
-    const fallback = '0x' + '0'.repeat(64)
-    keccakCache.set(input, fallback)
-    return fallback
-  }
-}
-
-/** Convenience: keccak256("uluna") for LUNC → uluna mapping */
-function getKeccak256Uluna(): string {
-  return getKeccak256('uluna')
-}
-
 /**
  * Convert an address (EVM hex or Terra bech32) to bytes32 format.
  * For EVM addresses: left-pad 20-byte address to 32 bytes.
@@ -381,7 +357,7 @@ function registerEvmTokensForChain(
       if (dest.chainKey === CHAIN_KEYS.terra) {
         const terraAddr = terraTokens[tokenKey]
         if (isPlaceholderAddress(terraAddr)) continue
-        destTokenBytes32 = getKeccak256(terraAddr)
+        destTokenBytes32 = terraTokenIdToEncodeTokenAddressHex(terraAddr)
         decimals = 6
       } else {
         destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens)[tokenKey])
@@ -409,7 +385,7 @@ function registerEvmTokensForChain(
   for (const dest of destinations) {
     const destTokenBytes32 =
       dest.chainKey === CHAIN_KEYS.terra
-        ? getKeccak256Uluna()
+        ? terraTokenIdToEncodeTokenAddressHex('uluna')
         : addressToBytes32((dest.tokens as EvmChainTokens).lunc)
     const decimals = 6
     castSend(
@@ -433,7 +409,7 @@ function registerEvmTokensForChain(
   for (const dest of destinations) {
     let destTokenBytes32: string
     if (dest.chainKey === CHAIN_KEYS.terra) {
-      destTokenBytes32 = getKeccak256(terraTokens.kdec)
+      destTokenBytes32 = terraTokenIdToEncodeTokenAddressHex(terraTokens.kdec)
     } else {
       destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).kdec)
     }
@@ -466,7 +442,7 @@ function registerEvmTokensForChain(
     }
     let destTokenBytes32: string
     if (dest.chainKey === CHAIN_KEYS.terra) {
-      destTokenBytes32 = getKeccak256(terraTokens.sol)
+      destTokenBytes32 = terraTokenIdToEncodeTokenAddressHex(terraTokens.sol)
     } else {
       destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).sol)
     }

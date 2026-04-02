@@ -43,3 +43,57 @@ export function expandScientificNotationToDecimalString(sci: string): string {
   }
   return sign + allDigits.slice(0, newDot) + '.' + allDigits.slice(newDot)
 }
+
+/**
+ * Parse on-chain / API base-unit amounts (integer strings, possibly from JSON `Number` re-encoding).
+ * Expands scientific notation before `BigInt` so values like `"1e+21"` never throw (GitLab #95).
+ * Truncates toward zero at `.` if a fractional part appears after expansion.
+ */
+export function bigintFromBaseUnitsString(
+  value: string | number | bigint | null | undefined
+): bigint {
+  if (value === null || value === undefined) return 0n
+  if (typeof value === 'bigint') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new SyntaxError('bigintFromBaseUnitsString: non-finite number')
+    }
+    if (Number.isInteger(value) && Number.isSafeInteger(value)) {
+      return BigInt(value)
+    }
+    return bigintFromBaseUnitsString(String(value))
+  }
+
+  const trimmed = value.trim()
+  if (trimmed === '' || trimmed === '+' || trimmed === '-') return 0n
+
+  let s = trimmed
+  if (/[eE]/.test(s)) {
+    s = expandScientificNotationToDecimalString(s).trim()
+  }
+
+  const neg = s.startsWith('-')
+  let body = neg ? s.slice(1) : s
+  if (body.startsWith('+')) body = body.slice(1).trim()
+
+  const dotIdx = body.indexOf('.')
+  const intSliceRaw = dotIdx >= 0 ? body.slice(0, dotIdx) : body
+  const intSlice = intSliceRaw === '' ? '0' : intSliceRaw
+
+  if (!/^\d+$/.test(intSlice)) {
+    throw new SyntaxError(
+      `bigintFromBaseUnitsString: expected integer base units, got ${JSON.stringify(value)}`
+    )
+  }
+
+  const normalized = intSlice.replace(/^0+/, '') || '0'
+  const signed = neg && normalized !== '0' ? `-${normalized}` : normalized
+
+  try {
+    return BigInt(signed)
+  } catch {
+    throw new SyntaxError(
+      `bigintFromBaseUnitsString: cannot convert to BigInt: ${JSON.stringify(value)}`
+    )
+  }
+}

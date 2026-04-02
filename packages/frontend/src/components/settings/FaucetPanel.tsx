@@ -15,6 +15,7 @@ import { getEvmClient } from '../../services/evmClient'
 import { BRIDGE_CHAINS } from '../../utils/bridgeChains'
 import { DEFAULT_NETWORK, NETWORKS } from '../../utils/constants'
 import { pow10BigInt } from '../../utils/pow10'
+import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { sounds } from '../../lib/sounds'
 import { anchorDiscriminator } from '../../utils/anchorDiscriminator'
 import type { NetworkTier } from '../../utils/bridgeChains'
@@ -274,7 +275,7 @@ const LOCAL_ALL_CHAINS: ChainConfig[] = [
 
 /** Format raw token amount (bigint string) to human-readable with 3 significant figures */
 function formatBalanceSigFigs(raw: string, decimals: number): string {
-  const n = BigInt(raw)
+  const n = bigintFromBaseUnitsString(raw)
   if (n === 0n) return '0'
   const divisor = pow10BigInt(decimals)
   const whole = n / divisor

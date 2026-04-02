@@ -6,7 +6,7 @@
  *
  * Aligns with Settings token verification (`useTokenVerification` / `terraAddressToBytes32`).
  */
-import { hexToBytes, keccak256, toBytes, type Hex } from 'viem'
+import { bytesToHex, hexToBytes, keccak256, toBytes, type Hex } from 'viem'
 
 import { terraAddressToBytes32 } from './hashVerification'
 
@@ -45,9 +45,25 @@ export function terraTokenIdToSrcTokenBytes(terraTokenId: string): Uint8Array {
   return terraTokenIdToSrcTokenBytesStrict(terraTokenId)
 }
 
-/** 32-byte `dest_token` for Solana↔Terra mappings: keccak256(UTF-8 `terraTokenId`). */
+/**
+ * 32-byte `dest_token` for Solana `register_token` when the remote chain is Terra
+ * (TokenMapping PDA seed). Same rules as {@link terraTokenIdToSrcTokenBytesStrict} /
+ * `encode_token_address`: native denom → keccak256(UTF-8); CW20 → bech32-decoded bytes
+ * left-padded to 32 bytes (not keccak of the bech32 string).
+ */
 export function terraDestTokenKeccakUtf8Bytes(terraTokenId: string): Uint8Array {
-  return hexToBytes(keccak256(toBytes(terraTokenId)) as Hex)
+  return terraTokenIdToSrcTokenBytesStrict(terraTokenId)
+}
+
+/**
+ * `0x`-prefixed 32-byte hex for Terra-side token in:
+ * - EVM `TokenRegistry.setTokenDestinationWithDecimals` when dest chain is Terra
+ * - cross-chain `xchainHashId` / `HashLib.computeXchainHashId` token word
+ *
+ * Matches CosmWasm `encode_token_address` (`packages/contracts-terraclassic/bridge/src/hash.rs`).
+ */
+export function terraTokenIdToEncodeTokenAddressHex(terraTokenId: string): Hex {
+  return bytesToHex(terraTokenIdToSrcTokenBytesStrict(terraTokenId)) as Hex
 }
 
 /** Base64-encoded 32-byte `src_token` for Terra `set_incoming_token_mapping`. */

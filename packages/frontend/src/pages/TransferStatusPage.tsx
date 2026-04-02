@@ -39,6 +39,7 @@ import {
 } from '../utils/bridgeChains'
 import type { BridgeChainConfig } from '../types/chain'
 import { DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL } from '../utils/constants'
+import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 
@@ -621,8 +622,8 @@ export default function TransferStatusPage() {
             srcAccB32 as `0x${string}`,
             destAccB32 as `0x${string}`,
             tokenB32 as `0x${string}`,
-            BigInt(parsed.amount || transfer.amount || '0'),
-            BigInt(parsed.nonce)
+            bigintFromBaseUnitsString(parsed.amount || transfer.amount || '0'),
+            bigintFromBaseUnitsString(parsed.nonce)
           )
         }
       } catch (err) {

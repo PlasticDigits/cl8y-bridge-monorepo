@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { hexToBytes, keccak256, toBytes } from 'viem'
 
-import { tokenUlunaBytes32 } from './hashVerification'
+import { terraAddressToBytes32, tokenUlunaBytes32 } from './hashVerification'
 import {
   terraDestTokenKeccakUtf8Bytes,
   terraIncomingSrcTokenB64,
@@ -54,10 +54,20 @@ describe('terraIncomingSrcTokenB64WithKeccakFallback', () => {
 })
 
 describe('terraDestTokenKeccakUtf8Bytes', () => {
-  it('matches keccak utf8 bytes32 for a denom string', () => {
+  it('matches keccak utf8 bytes32 for a native denom', () => {
     const bytes = terraDestTokenKeccakUtf8Bytes('uluna')
     expect(Buffer.from(bytes).toString('hex')).toBe(
       tokenUlunaBytes32().replace(/^0x/, '')
     )
+  })
+
+  it('uses canonical bech32 bytes for CW20 (same as incoming mapping), not keccak of string', () => {
+    const cw20 =
+      'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh'
+    const bytes = terraDestTokenKeccakUtf8Bytes(cw20)
+    const fromStrict = hexToBytes(terraAddressToBytes32(cw20))
+    expect(Buffer.from(bytes).equals(Buffer.from(fromStrict))).toBe(true)
+    const keccakOfString = hexToBytes(keccak256(toBytes(cw20)))
+    expect(Buffer.from(bytes).equals(Buffer.from(keccakOfString))).toBe(false)
   })
 })

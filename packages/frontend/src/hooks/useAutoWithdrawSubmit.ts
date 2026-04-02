@@ -38,6 +38,7 @@ import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolv
 import { solanaAddressToBytes32 } from '../services/solana/address'
 import { bytes32HexToPublicKey } from '../services/solana/transaction'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
+import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
@@ -355,8 +356,8 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           srcAccount: srcAccountHex,
           destAccount: (transfer.destAccount || '0x' + '0'.repeat(64)) as Hex,
           token: destTokenAddress,
-          amount: BigInt(transfer.amount || '0'),
-          nonce: BigInt(transfer.depositNonce || 0),
+          amount: bigintFromBaseUnitsString(transfer.amount || '0'),
+          nonce: bigintFromBaseUnitsString(transfer.depositNonce ?? 0),
         })
 
         if (txHash) {
@@ -602,8 +603,8 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           srcAccount: srcAccountBytes32Sol,
           srcToken: srcTokenBytes,
           destTokenMint: destMintPk.toBase58(),
-          amount: BigInt(transfer.amount || '0'),
-          nonce: BigInt(transfer.depositNonce || 0),
+          amount: bigintFromBaseUnitsString(transfer.amount || '0'),
+          nonce: bigintFromBaseUnitsString(transfer.depositNonce ?? 0),
           bridgeChainId: destChainConfig.bytes4ChainId
             ? hexToUint8Array(destChainConfig.bytes4ChainId)
             : new Uint8Array([0, 0, 0, 5]),

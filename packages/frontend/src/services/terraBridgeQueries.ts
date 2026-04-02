@@ -7,6 +7,7 @@
 
 import { queryContract } from './lcdClient'
 import { pow10BigInt } from '../utils/pow10'
+import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import {
   base64ToHex,
   hexToBase64,
@@ -115,10 +116,10 @@ export async function queryTerraDeposit(
         ? bytes4Base64ToBytes32Hex(response.dest_chain)
         : ('0x' + '0'.repeat(64)) as Hex
 
-    const amount = BigInt(response.amount)
-    const nonce = BigInt(response.nonce)
+    const amount = bigintFromBaseUnitsString(response.amount)
+    const nonce = bigintFromBaseUnitsString(response.nonce)
     // CosmWasm Timestamp serializes as nanoseconds string
-    const timestampNanos = BigInt(response.deposited_at)
+    const timestampNanos = bigintFromBaseUnitsString(response.deposited_at)
     const timestamp = timestampNanos / 1_000_000_000n
 
     return {
@@ -199,10 +200,10 @@ export async function queryTerraPendingWithdraw(
       ? chainIdToBytes32(parseInt(terraChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16))
       : ('0x' + '0'.repeat(64)) as Hex
 
-    const amount = BigInt(response.amount)
-    const nonce = BigInt(response.nonce)
-    const submittedAt = BigInt(response.submitted_at)
-    const approvedAt = BigInt(response.approved_at)
+    const amount = bigintFromBaseUnitsString(response.amount)
+    const nonce = bigintFromBaseUnitsString(response.nonce)
+    const submittedAt = bigintFromBaseUnitsString(response.submitted_at)
+    const approvedAt = bigintFromBaseUnitsString(response.approved_at)
 
     return {
       chainId: typeof terraChainConfig.chainId === 'number' ? terraChainConfig.chainId : 0,
@@ -297,13 +298,13 @@ export async function queryTerraRateLimitStatus(
     }
 
     const payoutAmount = normalizeDecimals(amount, srcDecimals, destDecimals)
-    const remainingAmount = BigInt(usage.remaining_amount)
+    const remainingAmount = bigintFromBaseUnitsString(usage.remaining_amount)
 
     // Uint128::MAX (~3.4e38) indicates no explicit rate limit configured
     const UINT128_THRESHOLD = 10n ** 30n
 
     if (rateCfg && typeof rateCfg === 'object') {
-      const maxPerPeriod = BigInt(rateCfg.max_per_period ?? '0')
+      const maxPerPeriod = bigintFromBaseUnitsString(rateCfg.max_per_period ?? '0')
       if (maxPerPeriod === 0n) return { kind: 'ok' }
 
       const permanentlyBlocked =

@@ -60,6 +60,7 @@ import {
   formatCompact,
 } from '../../utils/format'
 import { pow10BigInt } from '../../utils/pow10'
+import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -463,7 +464,7 @@ export function TransferForm() {
       const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
       const addr = new PublicKey(solanaAddress!)
       if (solanaDepositNative) {
-        return BigInt(await connection.getBalance(addr))
+        return bigintFromBaseUnitsString(await connection.getBalance(addr))
       }
       const mint = solanaLocalMint!
       const mintInfo = await connection.getAccountInfo(mint)
@@ -472,7 +473,7 @@ export function TransferForm() {
       const ata = getAssociatedTokenAddressSync(mint, addr, false, mintInfo.owner)
       try {
         const bal = await connection.getTokenAccountBalance(ata)
-        return BigInt(bal.value.amount)
+        return bigintFromBaseUnitsString(bal.value.amount)
       } catch {
         return 0n
       }
@@ -669,16 +670,16 @@ export function TransferForm() {
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     }
-    const balance = balanceStr ? BigInt(balanceStr) : 0n
+    const balance = balanceStr ? bigintFromBaseUnitsString(balanceStr) : 0n
 
     let maxTransferInSrc: bigint | null = null
     if (destTokenDetails?.maxTransfer) {
-      const raw = BigInt(destTokenDetails.maxTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.maxTransfer)
       if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
     }
     let bridgeRemainingInSrc: bigint | null = null
     if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
-      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.withdrawRateLimit.remainingAmount)
       if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
     }
 
@@ -690,7 +691,7 @@ export function TransferForm() {
 
     let effectiveMin: bigint | null = null
     if (destTokenDetails?.minTransfer) {
-      const raw = BigInt(destTokenDetails.minTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.minTransfer)
       if (raw > 0n) effectiveMin = toSourceUnits(raw)
     }
 
@@ -765,16 +766,16 @@ export function TransferForm() {
     } else {
       return
     }
-    const balance = BigInt(balanceStr)
+    const balance = bigintFromBaseUnitsString(balanceStr)
 
     let maxTransferInSrc: bigint | null = null
     if (destTokenDetails?.maxTransfer) {
-      const raw = BigInt(destTokenDetails.maxTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.maxTransfer)
       if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
     }
     let bridgeRemainingInSrc: bigint | null = null
     if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
-      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.withdrawRateLimit.remainingAmount)
       if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
     }
 
@@ -892,8 +893,8 @@ export function TransferForm() {
                 srcAccB32 as `0x${string}`,
                 destAccB32 as `0x${string}`,
                 tokenB32 as `0x${string}`,
-                BigInt(depositAmount),
-                BigInt(depositNonce)
+                bigintFromBaseUnitsString(depositAmount),
+                bigintFromBaseUnitsString(depositNonce)
               )
             }
           } catch (err) {
@@ -1090,8 +1091,8 @@ export function TransferForm() {
               srcAccB32 as `0x${string}`,
               destAccB32 as `0x${string}`,
               tokenB32 as `0x${string}`,
-              BigInt(netAmount),
-              BigInt(depositNonce)
+              bigintFromBaseUnitsString(netAmount),
+              bigintFromBaseUnitsString(depositNonce)
             )
           } catch (err) {
             console.warn('[TransferForm:terra] Failed to compute Terra transfer hash:', err)
@@ -1243,7 +1244,7 @@ export function TransferForm() {
           destAccBytes,
           tokenBytes,
           netAmount,
-          BigInt(confirmedDepositNonce),
+          bigintFromBaseUnitsString(confirmedDepositNonce),
         )
       }
     } catch (e) {
