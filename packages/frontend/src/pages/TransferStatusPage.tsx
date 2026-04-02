@@ -42,6 +42,8 @@ import { DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL } from '../utils/constants'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
+import { bytes32ToSolanaAddress } from '../services/solana/address'
+import type { Hex } from 'viem'
 
 const LOG = '[TransferStatus]'
 
@@ -863,10 +865,28 @@ export default function TransferStatusPage() {
 
     const canonicalToken = source?.token
     const resolvedToken = canonicalToken ?? transfer.destToken ?? ''
-    const tokenAsAddress = resolvedToken.length === 66 ? bytes32ToEvmAddress(resolvedToken) : resolvedToken
-
     const canonicalDestAccount = source?.destAccount
     const resolvedDestAccount = canonicalDestAccount ?? transfer.destAccount ?? ''
+    const destIsSolana = resolvedDestEntry?.[1]?.type === 'solana'
+
+    let tokenSplMint: string | undefined
+    let destAccountSolana: string | undefined
+    if (destIsSolana && resolvedToken.startsWith('0x') && resolvedToken.length === 66) {
+      try {
+        tokenSplMint = bytes32ToSolanaAddress(resolvedToken as Hex)
+      } catch {
+        tokenSplMint = undefined
+      }
+    }
+    if (destIsSolana && resolvedDestAccount.startsWith('0x') && resolvedDestAccount.length === 66) {
+      try {
+        destAccountSolana = bytes32ToSolanaAddress(resolvedDestAccount as Hex)
+      } catch {
+        destAccountSolana = undefined
+      }
+    }
+
+    const tokenAsAddress = resolvedToken.length === 66 ? bytes32ToEvmAddress(resolvedToken) : resolvedToken
     const destAccountAsAddress =
       resolvedDestAccount.length === 66 ? bytes32ToEvmAddress(resolvedDestAccount) : resolvedDestAccount
 
@@ -885,8 +905,11 @@ export default function TransferStatusPage() {
       amount: source ? source.amount.toString() : transfer.amount,
       tokenBytes32: resolvedToken || 'unknown',
       tokenAddress: tokenAsAddress || 'unknown',
+      tokenSplMint,
+      destIsSolana,
       destAccountBytes32: resolvedDestAccount || 'unknown',
       destAccountAddress: destAccountAsAddress || 'unknown',
+      destAccountSolana,
       sourceOfTruth: source ? 'on-chain source deposit' : 'local transfer record',
     }
   }, [transfer, source])
@@ -1035,8 +1058,9 @@ export default function TransferStatusPage() {
                 {autoError || 'The withdrawSubmit transaction was rejected.'}
               </p>
               <p className="text-red-400/60 text-xs mt-1">
-                This usually means the XChain Hash ID is invalid or was computed with incorrect parameters.
-                The hash may need to be recomputed from the original deposit receipt.
+                {submitDiagnostics?.destIsSolana
+                  ? 'Often TokenMappingMismatch: EVM TokenRegistry dest token must equal raw SPL mint bytes on Solana, and you must sign with the same Solana wallet as destAccount.'
+                  : 'This usually means the XChain Hash ID is invalid or was computed with incorrect parameters. The hash may need to be recomputed from the original deposit receipt.'}
               </p>
               {submitDiagnostics && (
                 <div className="mt-2 border border-red-700/70 bg-black/30 p-2 font-mono text-[10px] text-red-200/90">
@@ -1048,9 +1072,17 @@ export default function TransferStatusPage() {
                   <p>nonce: {submitDiagnostics.nonce}</p>
                   <p>amount: {submitDiagnostics.amount}</p>
                   <p>token(bytes32): {submitDiagnostics.tokenBytes32}</p>
-                  <p>token(address): {submitDiagnostics.tokenAddress}</p>
+                  {submitDiagnostics.destIsSolana && submitDiagnostics.tokenSplMint ? (
+                    <p>token (SPL mint base58): {submitDiagnostics.tokenSplMint}</p>
+                  ) : (
+                    <p>token(address): {submitDiagnostics.tokenAddress}</p>
+                  )}
                   <p>destAccount(bytes32): {submitDiagnostics.destAccountBytes32}</p>
-                  <p>destAccount(address): {submitDiagnostics.destAccountAddress}</p>
+                  {submitDiagnostics.destIsSolana && submitDiagnostics.destAccountSolana ? (
+                    <p>destAccount (Solana): {submitDiagnostics.destAccountSolana}</p>
+                  ) : (
+                    <p>destAccount(address): {submitDiagnostics.destAccountAddress}</p>
+                  )}
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">

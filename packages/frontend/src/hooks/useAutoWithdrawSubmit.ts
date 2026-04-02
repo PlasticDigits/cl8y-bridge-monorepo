@@ -19,6 +19,7 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useAccount, useSwitchChain } from 'wagmi'
+import { Connection, PublicKey } from '@solana/web3.js'
 import type { Address, Hex } from 'viem'
 import { useWallet } from './useWallet'
 import { useSolanaWallet } from './useSolanaWallet'
@@ -36,7 +37,7 @@ import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
-import { bytes32HexToPublicKey } from '../services/solana/transaction'
+import { bytes32HexToPublicKey, fetchTokenMappingLocalMint } from '../services/solana/transaction'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
@@ -549,24 +550,36 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             : new Uint8Array(32)
         }
 
+        // EVM→Solana: withdraw_submit + transfer hash must use the same bytes32 as
+        // Bridge.deposit (TokenRegistry.getDestToken). Always prefer a live registry read
+        // over transfer.destToken — a persisted non-zero wrong value (e.g. stale row, or
+        // Terra-style keccak mistaken for a mint) would never refresh if we only
+        // queried when destToken was empty (same class of bug as glab #89 for Terra).
         let destTokenHex: string | undefined = transfer.destToken
-        if (!destTokenHex || destTokenHex === '0x' + '0'.repeat(64)) {
-          const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
-          const chains = BRIDGE_CHAINS[tier]
-          const srcCfg = chains[transfer.sourceChain]
-          if (srcCfg?.type === 'evm' && srcCfg.bridgeAddress && transfer.token?.startsWith('0x') && destChainConfig.bytes4ChainId) {
-            try {
-              const srcClient = getEvmClient(srcCfg)
-              const dt = await getDestToken(
-                srcClient,
-                srcCfg.bridgeAddress as Address,
-                transfer.token as Address,
-                destChainConfig.bytes4ChainId as Hex
-              )
-              if (dt) destTokenHex = dt
-            } catch (e) {
-              console.warn(`${LOG} getDestToken (Solana dest) failed:`, e)
+        const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
+        const chains = BRIDGE_CHAINS[tier]
+        const srcCfg = chains[transfer.sourceChain]
+        if (srcCfg?.type === 'evm' && srcCfg.bridgeAddress && transfer.token?.startsWith('0x') && destChainConfig.bytes4ChainId) {
+          try {
+            const srcClient = getEvmClient(srcCfg)
+            const dt = await getDestToken(
+              srcClient,
+              srcCfg.bridgeAddress as Address,
+              transfer.token as Address,
+              destChainConfig.bytes4ChainId as Hex
+            )
+            if (dt) {
+              const prev = transfer.destToken?.toLowerCase()
+              if (prev && prev !== dt.toLowerCase()) {
+                console.warn(
+                  `${LOG} Solana destToken from transfer record (${prev.slice(0, 18)}…) ` +
+                    `differs from TokenRegistry; using on-chain bytes32 (raw SPL mint bytes).`
+                )
+              }
+              destTokenHex = dt
             }
+          } catch (e) {
+            console.warn(`${LOG} getDestToken (Solana dest) failed:`, e)
           }
         }
         if (!destTokenHex || destTokenHex === '0x' + '0'.repeat(64)) {
@@ -587,6 +600,42 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           setError(msg)
           submittedRef.current = false
           return
+        }
+
+        const mintPkToHex = (pk: PublicKey) =>
+          `0x${Array.from(pk.toBytes())
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')}`
+
+        const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+        if (programIdStr && destChainConfig.rpcUrl) {
+          try {
+            const conn = new Connection(destChainConfig.rpcUrl, 'confirmed')
+            const programPk = new PublicKey(programIdStr)
+            const mappedMint = await fetchTokenMappingLocalMint(
+              conn,
+              programPk,
+              srcChainBytes4Data,
+              srcTokenBytes,
+            )
+            if (mappedMint) {
+              const solMintHex = mintPkToHex(mappedMint).toLowerCase()
+              if (solMintHex !== destTokenHex.toLowerCase()) {
+                const msg =
+                  'EVM TokenRegistry getDestToken does not match Solana TokenMapping.local_mint (withdraw_submit would fail). ' +
+                  'Re-register the Anvil→Solana mapping: setTokenDestinationWithDecimals must store raw SPL mint bytes ' +
+                  '(same as splMintToBytes32Hex in register-tokens), not keccak(UTF-8) or other encodings. ' +
+                  `registry=${destTokenHex.slice(0, 22)}… Solana local_mint=${solMintHex.slice(0, 22)}…`
+                console.error(`${LOG} ${msg}`)
+                setPhase('error')
+                setError(msg)
+                submittedRef.current = false
+                return
+              }
+            }
+          } catch (e) {
+            console.warn(`${LOG} Solana TokenMapping preflight failed (continuing):`, e)
+          }
         }
 
         const destMintPk = bytes32HexToPublicKey(destTokenHex)
