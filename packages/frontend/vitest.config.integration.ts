@@ -8,7 +8,7 @@
  *   npx vitest run --config vitest.config.integration.ts
  *
  * The globalSetup starts Docker containers and deploys contracts.
- * The globalTeardown stops containers and cleans up.
+ * There is no Vitest `globalTeardown` here; Playwright E2E uses `e2e-infra/teardown.ts` separately.
  */
 
 import { defineConfig } from 'vitest/config'

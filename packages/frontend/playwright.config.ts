@@ -12,11 +12,26 @@
  *   npx playwright test --ui         # Open Playwright UI mode
  *   npx playwright test --headed     # Run with visible browser
  *
- * Against an existing QA stack (keep Docker, .env.e2e.local, operator):
- *   E2E_SKIP_TEARDOWN=1 npx playwright test e2e/some.spec.ts
+ * Teardown: local runs default to **E2E_SKIP_TEARDOWN=1** (Docker and env files preserved).
+ * CI (CI=true) defaults to full teardown unless you set E2E_SKIP_TEARDOWN=1.
+ * See `packages/frontend/e2e/README.md`.
  */
 
 import { defineConfig, devices } from '@playwright/test'
+
+/** Lets shared `globalSetup` print Playwright-specific teardown hints (Vitest integration skips these). */
+process.env.CL8Y_PLAYWRIGHT_E2E = '1'
+
+const ciTruthy = process.env.CI === 'true' || process.env.CI === '1'
+if (ciTruthy) {
+  if (process.env.E2E_TEARDOWN === '1' || process.env.E2E_TEARDOWN === 'true') {
+    process.env.E2E_SKIP_TEARDOWN = '0'
+  }
+} else if (process.env.E2E_TEARDOWN === '1' || process.env.E2E_TEARDOWN === 'true') {
+  process.env.E2E_SKIP_TEARDOWN = '0'
+} else if (process.env.E2E_SKIP_TEARDOWN === undefined) {
+  process.env.E2E_SKIP_TEARDOWN = '1'
+}
 
 export default defineConfig({
   testDir: './e2e',

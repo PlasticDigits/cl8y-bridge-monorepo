@@ -38,6 +38,24 @@ const LOCALNET_SOLANA_BRIDGE_PROGRAM_ID = 'mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZj
 // We write VITE_* vars here so import.meta.env picks them up at dev time.
 const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 
+/** When Playwright loads `playwright.config.ts`, it sets `CL8Y_PLAYWRIGHT_E2E` and default `E2E_SKIP_TEARDOWN`. */
+function logPlaywrightTeardownPolicy(): void {
+  if (process.env.CL8Y_PLAYWRIGHT_E2E !== '1') return
+  if (process.env.E2E_PRESERVE_INFRA === '1' || process.env.E2E_SKIP_TEARDOWN === '1') {
+    console.log(
+      '[e2e] Teardown is off for this Playwright run: Docker, .env.e2e.local, and packages/frontend/.env.local are left in place (operator/canceler unchanged).'
+    )
+    console.log(
+      '[e2e] To tear down when finished: E2E_TEARDOWN=1 npx playwright test …  or  npm run test:e2e:teardown  (from packages/frontend).'
+    )
+    console.log('[e2e] Details: packages/frontend/e2e/README.md')
+  } else {
+    console.log(
+      '[e2e] Full teardown will run after tests (docker compose down, remove env files). Local default is skip teardown; this run uses CI or E2E_TEARDOWN=1.'
+    )
+  }
+}
+
 /**
  * Start the canceler via canceler-ctl.sh (which sources .env.e2e.local automatically).
  * Builds the binary first if needed, then starts instance 1.
@@ -67,6 +85,7 @@ function startCanceler(rootDir: string): void {
 
 export default async function setup(): Promise<void> {
   console.log('=== E2E Test Infrastructure Setup ===\n')
+  logPlaywrightTeardownPolicy()
   const start = Date.now()
 
   try {

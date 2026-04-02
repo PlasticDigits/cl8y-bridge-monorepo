@@ -115,7 +115,7 @@ Restart **`npm run dev`** after this (or the server’s **`write-qa-env-e2e.sh`*
 
 Or: **`npm run env:local --prefix packages/frontend`**
 
-This merges **`qa-host.env`** (remapped Terra ports, same as Docker/SSH) with **`.deploy/local.env`**. It writes **`VITE_*`** URLs **and** bridge addresses.
+This merges **`qa-host.env`** (Terra RPC/LCD ports aligned with **`docker-compose`**, unless you remap) with **`.deploy/local.env`**. It writes **`VITE_*`** URLs **and** bridge addresses.
 
 **`VITE_SOLANA_PROGRAM_ID`:** set from **`SOLANA_PROGRAM_ID`** in **`.deploy/local.env`** ( **`make deploy` / `setup-bridge`** persist it after Solana deploy). If that line is missing, **`write-frontend-env-local.sh`** derives the pubkey from **`packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`** when the file exists (e.g. laptop clone with Anchor build).
 
@@ -130,6 +130,16 @@ cd packages/frontend && npm ci && npm run dev
 ### Step 5 — Open the app
 
 Open the URL Vite prints (often **`http://localhost:5173`**).
+
+---
+
+## Playwright browser E2E (`packages/frontend`)
+
+Browser E2E uses **`npm run test:e2e`** (or **`npx playwright test`**) from **`packages/frontend`**. **`playwright.config.ts`** defaults **local** runs to **`E2E_SKIP_TEARDOWN=1`** so Docker, **`.env.e2e.local`**, and **`packages/frontend/.env.local`** are not removed after tests. **`globalSetup`** prints a short notice at the start of each run.
+
+- Full write-up: **`packages/frontend/e2e/README.md`**
+- Manual cleanup after a skipped teardown: **`npm run test:e2e:teardown`** (from **`packages/frontend`**)
+- Force teardown in the same Playwright invocation (local): **`E2E_TEARDOWN=1 npx playwright test …`**
 
 ---
 
@@ -149,7 +159,7 @@ After **`make deploy`** or **`make start-qa`**, **`bash scripts/qa/verify-qa-onc
 | **`verify-qa-onchain` fails only on `TERRA_T2022`** | Often a **placeholder** after failed CW20 T2022 instantiate; re-run **`qa:full-token-setup`** or check **`deploy-terra`** logs (full **`docker exec` stderr** + fee retries). Use **`VERIFY_QA_STRICT_T2022=1`** only if CI must enforce a real Terra T2022. |
 | **Bridge page: no tokens in the selector** | On the **server**, run **`make start-qa`** (includes **`qa:full-token-setup`**) or after **`make deploy`** run **`make qa-full-token-setup`**. Legacy: **`make deploy-tokens && make register-tokens`**. |
 | **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered by the full QA token setup. |
-| **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |
+| **LocalTerra “Failed to fetch” or wrong LCD port** | Regenerate **`.env.local`** after Step 2; confirm **`write-frontend-env-local.sh`** logs **`LCD=http://127.0.0.1:1317`** (default compose port) or your remapped port if **`E2E_TERRA_LCD_PORT`** is overridden. Restart **`npm run dev`**. |
 | **`localterra` exits (1), logs: `empty set` / `validator set` / replay error** | Usually **stale `localterra-data` from an older Compose file**. Current **`docker-compose.yml` does not mount that volume** (ephemeral chain in the container). Run **`docker compose down`**, remove any leftover volume once: **`docker volume rm cl8y-bridge-monorepo_localterra-data`** (name may differ — check **`docker volume ls`**), then **`docker compose up -d localterra`**. If you **re-add** a bind mount for Terra data yourself, **`docker compose down -v`** before upgrades when replay errors appear. |
 | **`localterra` container exits (1) (other)** | **`docker compose logs localterra`**. **Port in use**: **`E2E_TERRA_*`** in **`.env`** vs **`ss -tlnp`**. **ARM**: **`platform: linux/amd64`** needs QEMU or use **amd64**. |
 | **`scp: open local ".deploy/local.env": No such file or directory`** | Your clone is missing **`.deploy/`** — **`git pull`** (the repo tracks **`.deploy/.gitkeep`**) or run **`mkdir -p .deploy`**. |
@@ -162,9 +172,9 @@ After **`make deploy`** or **`make start-qa`**, **`bash scripts/qa/verify-qa-onc
 
 ## Appendix: port conflict (LocalTerra)
 
-If another stack already uses **26657 / 1317 / 9090 / 9091**, the bridge uses remapped ports via **`scripts/qa/qa-host.env`** (defaults **26658**, **1318**, **9092**, **9093**).
+**`docker-compose.yml`** publishes LocalTerra on **26657** (RPC), **1317** (LCD), **9090** / **9091** (gRPC). **`scripts/qa/qa-host.env`** defaults match those ports.
 
-**Option A — append to repo-root `.env`** (Docker Compose reads it):
+If another stack already uses those host ports, remap **before** **`docker compose up`** and export the same values for tooling (or put them in repo-root **`.env`** for Compose):
 
 ```bash
 cd /path/to/cl8y-bridge-monorepo
@@ -176,7 +186,7 @@ E2E_TERRA_GRPC_WEB_PORT=9093
 EOF
 ```
 
-**Option B:** Rely on **`make start-qa`**, which sources **`scripts/qa/qa-host.env`** before **`docker compose up`**.
+**`make start-qa`** sources **`scripts/qa/qa-host.env`** before Compose; override the **`E2E_TERRA_*`** exports in your shell or **`.env`** when remapping.
 
 ---
 

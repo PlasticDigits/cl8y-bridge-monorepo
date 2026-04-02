@@ -5,6 +5,10 @@
  * 1. Stop and remove Docker containers and volumes (anvil, anvil1, localterra, postgres)
  * 2. Delete .env.e2e.local
  * 3. Kill any orphaned processes
+ *
+ * Skipped when `E2E_SKIP_TEARDOWN=1` or `E2E_PRESERVE_INFRA=1`.
+ * Playwright defaults local runs to skip teardown (see `playwright.config.ts`); use
+ * `E2E_TEARDOWN=1` for one-shot full cleanup after tests, or `npm run test:e2e:teardown`.
  */
 
 import { execSync } from 'child_process'
