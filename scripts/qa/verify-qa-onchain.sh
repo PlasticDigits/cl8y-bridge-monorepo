@@ -18,9 +18,11 @@ source "$REPO_ROOT/.deploy/local.env"
 source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+
 EVM_RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"
 EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"
-TERRA_LCD_URL="${TERRA_LCD_URL:-http://127.0.0.1:1318}"
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://127.0.0.1:8899}"
 
 fail=0

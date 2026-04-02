@@ -21,6 +21,9 @@ source "$REPO_ROOT/.deploy/local.env"
 source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+
 E2E_OUT="$REPO_ROOT/.env.e2e.local"
 
 {
@@ -70,6 +73,8 @@ E2E_OUT="$REPO_ROOT/.env.e2e.local"
   echo "export VITE_SOLANA_KDEC=${SOLANA_KDEC:-}"
   echo "export VITE_SOLANA_WSOL=${SOLANA_WSOL:-}"
   echo "export VITE_SOLANA_T2022=${SOLANA_T2022:-}"
+  echo "export E2E_TERRA_LCD_PORT=${E2E_TERRA_LCD_PORT}"
+  echo "export E2E_TERRA_RPC_PORT=${E2E_TERRA_RPC_PORT}"
   echo "export TERRA_RPC_URL=${TERRA_RPC_URL}"
   echo "export TERRA_LCD_URL=${TERRA_LCD_URL}"
   echo "export EVM_RPC_URL=${EVM_RPC_URL}"

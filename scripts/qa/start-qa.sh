@@ -72,6 +72,11 @@ else
   fi
 fi
 
+echo "==> Syncing LocalTerra host ports from docker compose (LCD/RPC URLs for wait + deploy + .env.e2e.local)..."
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+echo "[start-qa] LocalTerra LCD=$TERRA_LCD_URL RPC=$TERRA_RPC_URL"
+
 echo "==> Waiting for chain RPCs: EVM + EVM1 + Terra + Solana (up to ~90s)..."
 for _ in $(seq 1 45); do
   if curl -sf -X POST -H 'Content-Type: application/json' \
@@ -98,10 +103,7 @@ make operator-migrate
 echo "==> Terra WASM artifacts (required for deploy-terra --cw20)..."
 make ensure-terra-artifacts
 
-echo "==> Deploy contracts + setup-bridge (uses TERRA_RPC_URL / TERRA_LCD_URL from qa-host.env)..."
-# Force remapped LocalTerra URLs into deploy / setup-bridge (override stale .env from operator template).
-export TERRA_RPC_URL="http://127.0.0.1:${E2E_TERRA_RPC_PORT:-26658}"
-export TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT:-1318}"
+echo "==> Deploy contracts + setup-bridge (TERRA_* synced from compose publish ports above)..."
 export TERRA_RPC_URL TERRA_LCD_URL EVM_RPC_URL EVM1_RPC_URL SOLANA_RPC_URL
 make deploy
 

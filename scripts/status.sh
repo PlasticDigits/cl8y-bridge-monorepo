@@ -40,6 +40,16 @@ fi
 [ -n "${VITE_TERRA_BRIDGE_ADDRESS:-}" ] && TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-$VITE_TERRA_BRIDGE_ADDRESS}"
 [ -n "${VITE_SOLANA_PROGRAM_ID:-}" ] && SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:-$VITE_SOLANA_PROGRAM_ID}"
 
+# When .env.e2e.local has E2E_TERRA_* but no TERRA_* (e.g. partial regen), build URLs before compose sync.
+if [ -z "${TERRA_RPC_URL:-}" ] && [ -n "${E2E_TERRA_RPC_PORT:-}" ]; then
+    TERRA_RPC_URL="http://127.0.0.1:${E2E_TERRA_RPC_PORT}"
+fi
+if [ -z "${TERRA_LCD_URL:-}" ] && [ -n "${E2E_TERRA_LCD_PORT:-}" ]; then
+    TERRA_LCD_URL="http://127.0.0.1:${E2E_TERRA_LCD_PORT}"
+fi
+# shellcheck source=/dev/null
+source "$PROJECT_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+
 # Defaults align with docker-compose LocalTerra + scripts/qa/qa-host.env (26657 RPC, 1317 LCD).
 EVM_RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"
 EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"

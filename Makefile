@@ -109,7 +109,7 @@ start:
 
 # Full QA server bootstrap (shared host with remapped Terra ports — scripts/qa/qa-host.env)
 start-qa:
-	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh scripts/qa/print-qa-tunnel-instructions.sh scripts/solana/airdrop-qa-wallets.sh scripts/qa/fund-qa-gas-wallets.sh
+	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/sync-localterra-compose-ports.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh scripts/qa/print-qa-tunnel-instructions.sh scripts/solana/airdrop-qa-wallets.sh scripts/qa/fund-qa-gas-wallets.sh
 	./scripts/qa/start-qa.sh
 
 qa-start: start-qa
