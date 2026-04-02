@@ -117,6 +117,8 @@ Or: **`npm run env:local --prefix packages/frontend`**
 
 This merges **`qa-host.env`** (remapped Terra ports, same as Docker/SSH) with **`.deploy/local.env`**. It writes **`VITE_*`** URLs **and** bridge addresses.
 
+**`VITE_SOLANA_PROGRAM_ID`:** set from **`SOLANA_PROGRAM_ID`** in **`.deploy/local.env`** ( **`make deploy` / `setup-bridge`** persist it after Solana deploy). If that line is missing, **`write-frontend-env-local.sh`** derives the pubkey from **`packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`** when the file exists (e.g. laptop clone with Anchor build).
+
 - **URLs only** (e.g. Settings checks before you have **`local.env`**): **`./scripts/qa/write-frontend-env-local.sh --urls-only`** — bridge addresses stay empty; the transfer page will not list all chains until you complete Step 2 and re-run **without** **`--urls-only`**.
 
 ### Step 4 — Install and run the frontend

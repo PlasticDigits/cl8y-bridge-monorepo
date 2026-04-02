@@ -60,6 +60,16 @@ fi
 source "${REPO_ROOT}/scripts/qa/qa-host.env"
 set +a
 
+# If .deploy/local.env was copied before SOLANA_PROGRAM_ID was written (or line missing), derive from Anchor keypair.
+_SOL_KP="${REPO_ROOT}/packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json"
+if [ -z "${SOLANA_PROGRAM_ID:-}" ] && [ -f "$_SOL_KP" ] && command -v solana-keygen >/dev/null 2>&1; then
+  SOLANA_PROGRAM_ID="$(solana-keygen pubkey "$_SOL_KP" 2>/dev/null || true)"
+  export SOLANA_PROGRAM_ID
+  if [ -n "${SOLANA_PROGRAM_ID}" ]; then
+    echo "[write-frontend-env-local] Derived SOLANA_PROGRAM_ID from ${_SOL_KP} (.deploy/local.env had none)" >&2
+  fi
+fi
+
 FE_OUT="${REPO_ROOT}/packages/frontend/.env.local"
 mkdir -p "$(dirname "$FE_OUT")"
 

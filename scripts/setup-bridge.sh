@@ -100,6 +100,13 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 log_phase() { echo "[setup-bridge] phase: $1" >&2; }
 
+# Persist for QA: scp .deploy/local.env → write-frontend-env-local.sh → VITE_SOLANA_PROGRAM_ID.
+# deploy-solana usually writes SOLANA_PROGRAM_ID; this ensures the line exists whenever we resolved an id (keypair or env).
+if [ -n "${SOLANA_PROGRAM_ID}" ]; then
+    write_deploy_env_solana "$SOLANA_PROGRAM_ID"
+    log_info "Ensured SOLANA_PROGRAM_ID in ${DEPLOY_ENV_FILE} (Vite / laptop scp workflow)"
+fi
+
 # Run terrad tx via docker exec (must match deploy-terra-local.sh: test keyring in container)
 terrad_tx() {
     docker exec "$CONTAINER_NAME" terrad "$@" --keyring-backend test
