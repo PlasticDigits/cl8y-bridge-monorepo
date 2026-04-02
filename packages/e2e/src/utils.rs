@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 /// ```no_run
 /// # async fn example() -> eyre::Result<()> {
 /// use std::time::Duration;
-/// use crate::utils::poll_until;
+/// use cl8y_e2e::utils::poll_until;
 ///
 /// poll_until(
 ///     "PostgreSQL",
@@ -77,7 +77,7 @@ where
 /// ```no_run
 /// # async fn example() -> eyre::Result<()> {
 /// use std::time::Duration;
-/// use crate::utils::retry_with_backoff;
+/// use cl8y_e2e::utils::retry_with_backoff;
 ///
 /// let result = retry_with_backoff(
 ///     "Connect to RPC",
@@ -139,7 +139,7 @@ where
 /// # Example
 /// ```no_run
 /// # use alloy::primitives::B256;
-/// # use crate::utils::encode_terra_address;
+/// # use cl8y_e2e::utils::encode_terra_address;
 /// let bytes = encode_terra_address("terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v")?;
 /// # Ok::<(), eyre::Error>(())
 /// ```
@@ -173,7 +173,7 @@ pub fn decode_terra_address(bytes: &B256) -> Result<String> {
 /// ```no_run
 /// # use std::collections::HashMap;
 /// # use std::path::Path;
-/// # use crate::utils::write_env_file;
+/// # use cl8y_e2e::utils::write_env_file;
 /// let mut vars = HashMap::new();
 /// vars.insert("DATABASE_URL".to_string(), "postgres://localhost".to_string());
 /// write_env_file(Path::new(".env"), &vars)?;
@@ -202,7 +202,7 @@ pub fn write_env_file(path: &Path, vars: &HashMap<String, String>) -> Result<()>
 /// # Example
 /// ```no_run
 /// # use std::path::Path;
-/// # use crate::utils::read_env_file;
+/// # use cl8y_e2e::utils::read_env_file;
 /// let vars = read_env_file(Path::new(".env"))?;
 /// # Ok::<(), eyre::Error>(())
 /// ```
@@ -235,7 +235,7 @@ pub fn read_env_file(path: &Path) -> Result<HashMap<String, String>> {
 /// # Example
 /// ```no_run
 /// # use std::path::Path;
-/// # use crate::utils::load_env_file;
+/// # use cl8y_e2e::utils::load_env_file;
 /// load_env_file(Path::new(".env"))?;
 /// # Ok::<(), eyre::Error>(())
 /// ```
