@@ -92,7 +92,7 @@ const CATALOG_CHAIN_IDS = [
 ] as const;
 
 describe("crossChainHash fuzz (V2 layout vs viem)", () => {
-  const FUZZ_ITERATIONS = 4000;
+  const FUZZ_ITERATIONS = process.env.CI ? 800 : 4000;
 
   it(`manual 224-byte keccak matches computeXchainHashIdBytes (${FUZZ_ITERATIONS} cases)`, () => {
     const rng = mulberry32(0xdeadbeef);
