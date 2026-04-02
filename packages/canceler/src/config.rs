@@ -580,11 +580,12 @@ mod tests {
             ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
             ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
         ];
-        // Make sure multi-EVM is NOT set
-        std::env::remove_var("EVM_CHAINS_COUNT");
         for (k, v) in &required {
             std::env::set_var(k, v);
         }
+        // Repo-root .env often sets EVM_CHAINS_COUNT=1 for QA. Config::load() runs dotenv first,
+        // which would re-inject that after a bare remove_var — force multi-EVM off (same as unset).
+        std::env::set_var("EVM_CHAINS_COUNT", "0");
 
         let config = Config::load().expect("Config should load");
         assert!(config.multi_evm.is_none());
@@ -592,5 +593,6 @@ mod tests {
         for (k, _) in &required {
             std::env::remove_var(k);
         }
+        std::env::remove_var("EVM_CHAINS_COUNT");
     }
 }
