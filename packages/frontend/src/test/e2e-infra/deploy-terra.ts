@@ -38,6 +38,13 @@ export const CANCELER_TERRA_ADDRESS = TEST_ADDRESS
 /** Sentinel for tokens that could not be deployed (skip from registration and env). */
 export const PLACEHOLDER_PREFIX = 'terra1placeholder_'
 
+/**
+ * QA Token-2022 row: on-chain ticker for EVM ERC20 + Terra CW20 (and docs).
+ * CW20 instantiate rejects symbols outside `[a-zA-Z\\-]{3,12}` (no digits) — `T2022` fails.
+ * Keep in sync with `packages/contracts-evm/script/DeployT2022TestToken.s.sol`.
+ */
+export const QA_TOKEN2022_TICKER = 'TTWT'
+
 export function isPlaceholderAddress(addr: string): boolean {
   return addr.startsWith(PLACEHOLDER_PREFIX)
 }
@@ -348,8 +355,9 @@ export function deployCw20KdecToken(): string {
 }
 
 /**
- * Deploy CW20 "T2022" (6 decimals) — pairs with EVM T2022 + Token-2022 SPL on Solana.
+ * Deploy CW20 Token-2022 QA row (6 decimals) — pairs with EVM + Token-2022 SPL on Solana.
  * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
+ * Symbol {@link QA_TOKEN2022_TICKER} — CW20 mintable allows `[a-zA-Z\\-]{3,12}` only (no `T2022`).
  */
 export function deployCw20T2022Token(): string {
   const codeId = getLatestCodeId()
@@ -357,8 +365,10 @@ export function deployCw20T2022Token(): string {
     console.warn('[deploy-terra] No CW20 code_id available for T2022; returning placeholder')
     return `${PLACEHOLDER_PREFIX}t2022`
   }
-  console.log(`[deploy-terra] Deploying CW20 T2022 (6 decimals, code_id=${codeId})...`)
-  const addr = instantiateCw20Token(codeId, 'Token-2022 QA', 'T2022', 6, '1000000000000')
+  console.log(
+    `[deploy-terra] Deploying CW20 Token-2022 QA (${QA_TOKEN2022_TICKER}, 6 decimals, code_id=${codeId})...`
+  )
+  const addr = instantiateCw20Token(codeId, 'Token-2022 QA', QA_TOKEN2022_TICKER, 6, '1000000000000')
   if (!addr) {
     console.warn('[deploy-terra] Failed to deploy CW20 T2022; returning placeholder')
     return `${PLACEHOLDER_PREFIX}t2022`

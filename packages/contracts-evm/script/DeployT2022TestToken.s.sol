@@ -16,7 +16,8 @@ contract DeployT2022TestToken is Script {
 
         vm.startBroadcast(deployerKey);
 
-        MockMintableToken t = new MockMintableToken("Token-2022 QA", "T2022", 18);
+        // Symbol matches QA_TOKEN2022_TICKER in deploy-terra.ts — CW20 allows [a-zA-Z\-]{3,12} only (no "T2022").
+        MockMintableToken t = new MockMintableToken("Token-2022 QA", "TTWT", 18);
         t.mint(deployer, initialSupply);
         t.mint(testAccount1, initialSupply);
         t.mint(testAccount2, initialSupply);

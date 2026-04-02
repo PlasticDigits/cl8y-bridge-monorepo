@@ -113,10 +113,11 @@ export function deployThreeTokens(rpcUrl: string): TokenDeployResult {
 }
 
 /**
- * Deploy T2022 ERC20 (18 decimals) — paired with Token-2022 SPL mint on Solana for QA.
+ * Deploy Token-2022 QA ERC20 (18 decimals, symbol TTWT) — paired with Token-2022 SPL + Terra CW20 for QA.
+ * Ticker matches `QA_TOKEN2022_TICKER` in `deploy-terra.ts` (CW20 disallows digits in symbols).
  */
 export function deployT2022TestToken(rpcUrl: string): string {
-  console.log(`[deploy-evm] Deploying T2022 test token to ${rpcUrl}...`)
+  console.log(`[deploy-evm] Deploying Token-2022 QA ERC20 (TTWT) to ${rpcUrl}...`)
   const output = execSync(
     `forge script script/DeployT2022TestToken.s.sol:DeployT2022TestToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
     { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }

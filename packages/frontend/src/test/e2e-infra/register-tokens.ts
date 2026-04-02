@@ -291,11 +291,13 @@ function registerEvmSolanaMappings(
   for (const { erc, spl, destDecimals, incomingSrcDecimals } of rows) {
     ensureTokenRegistered(rpcUrl, tokenRegistry, erc)
     const destHex = splMintToBytes32Hex(spl)
-    castSend(
+    castSendSetTokenDestinationWithDecimals(
       rpcUrl,
       tokenRegistry,
-      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
-      `${erc} ${sol} ${destHex} ${destDecimals}`
+      erc,
+      sol,
+      destHex,
+      destDecimals
     )
     castSend(
       rpcUrl,
@@ -363,11 +365,13 @@ function registerEvmTokensForChain(
         destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens)[tokenKey])
         decimals = dest.decimals
       }
-      castSend(
+      castSendSetTokenDestinationWithDecimals(
         rpcUrl,
         tokenRegistry,
-        '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
-        `${tokenAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
+        tokenAddr,
+        dest.chainKey,
+        destTokenBytes32,
+        decimals
       )
       const srcDecimals = dest.chainKey === CHAIN_KEYS.terra ? 6 : 18
       castSend(
@@ -388,11 +392,13 @@ function registerEvmTokensForChain(
         ? terraTokenIdToEncodeTokenAddressHex('uluna')
         : addressToBytes32((dest.tokens as EvmChainTokens).lunc)
     const decimals = 6
-    castSend(
+    castSendSetTokenDestinationWithDecimals(
       rpcUrl,
       tokenRegistry,
-      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
-      `${luncAddr} ${dest.chainKey} ${destTokenBytes32} ${decimals}`
+      luncAddr,
+      dest.chainKey,
+      destTokenBytes32,
+      decimals
     )
     castSend(
       rpcUrl,
@@ -414,12 +420,17 @@ function registerEvmTokensForChain(
       destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).kdec)
     }
     const destKdecDecimals = KDEC_DECIMALS_BY_CHAIN[dest.chainKey]
+    if (destKdecDecimals === undefined) {
+      throw new Error(`[register-tokens] KDEC decimals unknown for dest chain ${dest.chainKey}`)
+    }
     // Outgoing: local KDEC → dest chain (dest_decimals = KDEC decimals on dest)
-    castSend(
+    castSendSetTokenDestinationWithDecimals(
       rpcUrl,
       tokenRegistry,
-      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
-      `${kdecAddr} ${dest.chainKey} ${destTokenBytes32} ${destKdecDecimals}`
+      kdecAddr,
+      dest.chainKey,
+      destTokenBytes32,
+      destKdecDecimals
     )
     // Incoming: dest chain → local KDEC (srcDecimals = KDEC decimals on source/dest chain)
     castSend(
@@ -446,11 +457,13 @@ function registerEvmTokensForChain(
     } else {
       destTokenBytes32 = addressToBytes32((dest.tokens as EvmChainTokens).sol)
     }
-    castSend(
+    castSendSetTokenDestinationWithDecimals(
       rpcUrl,
       tokenRegistry,
-      '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"',
-      `${solAddr} ${dest.chainKey} ${destTokenBytes32} ${SOL_D}`
+      solAddr,
+      dest.chainKey,
+      destTokenBytes32,
+      SOL_D
     )
     castSend(
       rpcUrl,
@@ -1092,4 +1105,69 @@ function castSend(
       `[register-tokens] cast send failed (${sig.trim()} @ ${rpcUrl}): ${detail.slice(0, 2000)}`
     )
   }
+}
+
+/** `DestTokenAlreadyClaimed(bytes4,bytes32,address)` — `cast sig` */
+const DEST_TOKEN_ALREADY_CLAIMED_HEX_RE =
+  /(?:0x)?(850b0cbb[0-9a-fA-F]{192})\b/i
+
+const SIG_SET_TOKEN_DEST_WITH_DECIMALS =
+  '"setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)"'
+
+/**
+ * Decode `existingSource` from TokenRegistry `DestTokenAlreadyClaimed` revert data (if present in cast stderr/stdout).
+ */
+function parseDestTokenAlreadyClaimedOwner(errorText: string): string | null {
+  const m = errorText.match(DEST_TOKEN_ALREADY_CLAIMED_HEX_RE)
+  if (!m?.[1]) return null
+  const body = m[1]
+  const thirdWord = body.slice(8 + 128, 8 + 192)
+  if (thirdWord.length < 64) return null
+  return ('0x' + thirdWord.slice(24)).toLowerCase()
+}
+
+/**
+ * `setTokenDestinationWithDecimals` enforces a 1:1 (destChain, destToken) → source token claim.
+ * After `make deploy`, EVM ERC20s get new addresses while Terra `uluna` / CW20 ids stay the same, so the claim
+ * still belongs to the previous ERC20. Unregister the stale source token and retry (QA-local only; deployer is owner).
+ */
+function castSendSetTokenDestinationWithDecimals(
+  rpcUrl: string,
+  tokenRegistry: string,
+  token: string,
+  destChainKey: string,
+  destBytes32: string,
+  destDecimals: number,
+  maxStaleReleases = 6
+): void {
+  const args = `${token} ${destChainKey} ${destBytes32} ${destDecimals}`
+  const tokenLc = token.toLowerCase()
+  for (let i = 0; i <= maxStaleReleases; i++) {
+    try {
+      execSync(
+        `cast send ${tokenRegistry} ${SIG_SET_TOKEN_DEST_WITH_DECIMALS} ${args} --rpc-url ${rpcUrl} --private-key ${DEPLOYER_KEY}`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: CAST_EXEC_ENV }
+      )
+      return
+    } catch (err) {
+      const detail = execSyncErrorText(err)
+      const conflicting = parseDestTokenAlreadyClaimedOwner(detail)
+      if (
+        !conflicting ||
+        conflicting === tokenLc ||
+        conflicting === '0x0000000000000000000000000000000000000000'
+      ) {
+        throw new Error(
+          `[register-tokens] cast send failed (${SIG_SET_TOKEN_DEST_WITH_DECIMALS.trim()} @ ${rpcUrl}): ${detail.slice(0, 2000)}`
+        )
+      }
+      console.warn(
+        `[register-tokens] DestTokenAlreadyClaimed: ${destChainKey} ${destBytes32.slice(0, 18)}… owned by stale ${conflicting}; unregisterToken then retry (new source ${token.slice(0, 12)}…)`
+      )
+      castSend(rpcUrl, tokenRegistry, '"unregisterToken(address)"', conflicting)
+    }
+  }
+  throw new Error(
+    `[register-tokens] setTokenDestinationWithDecimals: exhausted stale-token releases for ${token} @ ${rpcUrl}`
+  )
 }
