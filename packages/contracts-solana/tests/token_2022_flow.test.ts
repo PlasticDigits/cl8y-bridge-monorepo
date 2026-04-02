@@ -256,6 +256,7 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(destToken),
         destToken: mint,
+        destAccount: ctx.user.publicKey,
         amount: toBn(expectedNet),
         nonce: toBn(withdrawNonce),
         operatorGas: new anchor.BN(0),
@@ -266,7 +267,7 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
         tokenMapping: tokenPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: ctx.user.publicKey,
+        payer: ctx.user.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([ctx.user])

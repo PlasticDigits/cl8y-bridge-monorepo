@@ -330,6 +330,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(remoteDestToken),
         destToken: tokenPubkey,
+        destAccount: recipient.publicKey,
         amount: toBn(amount),
         nonce: toBn(nonce),
         operatorGas: new anchor.BN(0),
@@ -340,7 +341,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
         tokenMapping: tokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: recipient.publicKey,
+        payer: recipient.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([recipient])
@@ -1134,6 +1135,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
+            destAccount: attacker.publicKey,
             amount: toBn(amount),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -1144,7 +1146,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: victimWithdrawPda,
             executedHashCheck: victimExecutedPda,
-            recipient: attacker.publicKey,
+            payer: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([attacker])
@@ -1489,6 +1491,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
+            destAccount: ctx.user.publicKey,
             amount: toBn(amount),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -1499,7 +1502,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: replayWithdrawPda,
             executedHashCheck: replayExecutedPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
@@ -2736,6 +2739,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
+            destAccount: ctx.user.publicKey,
             amount: toBn(0n),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -2746,7 +2750,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
@@ -2835,6 +2839,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: NATIVE_SOL_TOKEN,
+            destAccount: ctx.user.publicKey,
             amount: toBn(100_000n),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -2845,7 +2850,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: wp,
             executedHashCheck: ep,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])

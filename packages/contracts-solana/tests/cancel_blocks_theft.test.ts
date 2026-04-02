@@ -129,6 +129,7 @@ describe("cancel blocks theft (full guarantee)", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
         destToken: NATIVE_SOL_TOKEN,
+        destAccount: ctx.user.publicKey,
         amount: new anchor.BN(amount.toString()),
         nonce: new anchor.BN(Number(nonce)),
         operatorGas: new anchor.BN(0),
@@ -139,7 +140,7 @@ describe("cancel blocks theft (full guarantee)", () => {
         tokenMapping: withdrawNativeTokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: ctx.user.publicKey,
+        payer: ctx.user.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([ctx.user])

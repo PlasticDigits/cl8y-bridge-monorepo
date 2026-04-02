@@ -11,6 +11,8 @@ pub struct WithdrawSubmitParams {
     /// Remote token identifier (bytes32); must match registered [`TokenMapping::dest_token`].
     pub src_token: [u8; 32],
     pub dest_token: Pubkey,
+    /// Recipient pubkey (32 bytes); must match `destAccount` in the source-chain deposit / V2 hash.
+    pub dest_account: Pubkey,
     pub amount: u128,
     pub nonce: u64,
     /// Lamports escrowed for the operator; paid on approve (EVM `operatorGas`).
@@ -46,13 +48,13 @@ pub struct WithdrawSubmit<'info> {
 
     #[account(
         init,
-        payer = recipient,
+        payer = payer,
         space = 8 + PendingWithdraw::INIT_SPACE,
         seeds = [PendingWithdraw::SEED, &compute_transfer_hash(
             &params.src_chain,
             &bridge.chain_id,
             &params.src_account,
-            &recipient.key().to_bytes(),
+            &params.dest_account.to_bytes(),
             &params.dest_token.to_bytes(),
             params.amount,
             params.nonce,
@@ -68,7 +70,7 @@ pub struct WithdrawSubmit<'info> {
             &params.src_chain,
             &bridge.chain_id,
             &params.src_account,
-            &recipient.key().to_bytes(),
+            &params.dest_account.to_bytes(),
             &params.dest_token.to_bytes(),
             params.amount,
             params.nonce,
@@ -78,7 +80,7 @@ pub struct WithdrawSubmit<'info> {
     pub executed_hash_check: AccountInfo<'info>,
 
     #[account(mut)]
-    pub recipient: Signer<'info>,
+    pub payer: Signer<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -91,6 +93,10 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
         params.src_chain != bridge.chain_id,
         BridgeError::SameChainTransfer
     );
+    require!(
+        params.dest_account != Pubkey::default(),
+        BridgeError::InvalidDestAccount
+    );
 
     // Reject if this transfer hash was already executed (close+reinit protection)
     require!(
@@ -98,7 +104,7 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
         BridgeError::AlreadyExecutedHash
     );
 
-    let dest_account = ctx.accounts.recipient.key().to_bytes();
+    let dest_account = params.dest_account.to_bytes();
     let token_bytes = params.dest_token.to_bytes();
 
     let transfer_hash = compute_transfer_hash(
@@ -117,7 +123,7 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
-                    from: ctx.accounts.recipient.to_account_info(),
+                    from: ctx.accounts.payer.to_account_info(),
                     to: ctx.accounts.bridge.to_account_info(),
                 },
             ),
@@ -129,7 +135,7 @@ pub fn handler(ctx: Context<WithdrawSubmit>, params: WithdrawSubmitParams) -> Re
     pw.transfer_hash = transfer_hash;
     pw.src_chain = params.src_chain;
     pw.src_account = params.src_account;
-    pw.dest_account = ctx.accounts.recipient.key();
+    pw.dest_account = params.dest_account;
     pw.token = params.dest_token;
     pw.amount = params.amount;
     pw.nonce = params.nonce;

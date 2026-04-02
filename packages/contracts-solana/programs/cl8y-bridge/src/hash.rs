@@ -9,7 +9,8 @@ use solana_program::keccak;
 ///
 /// **Tests:** Vectors in `#[cfg(test)]` below vs `packages/contracts-evm/test/HashLib.t.sol`;
 /// TS `packages/contracts-solana/tests/hash_parity.test.ts`; E2E
-/// `packages/e2e/tests/test_solana_flows.rs`.
+/// `packages/e2e/tests/test_solana_flows.rs`; CosmWasm parity
+/// `packages/multichain-rs/tests/hash_agrees_with_cosmwasm_bridge.rs`.
 ///
 /// Layout: 7 x 32 = 224 bytes (abi.encode compatible)
 ///   - srcChain:    bytes4 left-aligned in 32-byte slot

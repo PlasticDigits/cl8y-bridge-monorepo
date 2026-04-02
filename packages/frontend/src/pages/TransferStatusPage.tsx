@@ -1079,7 +1079,7 @@ export default function TransferStatusPage() {
               </p>
               <p className="text-red-400/60 text-xs mt-1">
                 {submitDiagnostics?.destIsSolana
-                  ? 'Often TokenMappingMismatch: EVM TokenRegistry dest token must equal raw SPL mint bytes on Solana, and you must sign with the same Solana wallet as destAccount.'
+                  ? 'Often TokenMappingMismatch: EVM TokenRegistry dest token must equal raw SPL mint bytes on Solana. withdraw_submit can use a different fee payer than destAccount; withdraw_execute still requires the recipient wallet to match destAccount.'
                   : 'This usually means the XChain Hash ID is invalid or was computed with incorrect parameters. The hash may need to be recomputed from the original deposit receipt.'}
               </p>
               {submitDiagnostics && (

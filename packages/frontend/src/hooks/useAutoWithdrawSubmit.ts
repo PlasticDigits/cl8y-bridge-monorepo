@@ -42,7 +42,10 @@ import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVe
 import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
 import { withdrawSubmitSrcAccountBytes32 } from '../services/solana/srcAccountBytes32'
-import { bytes32HexToPublicKey, fetchTokenMappingLocalMint } from '../services/solana/transaction'
+import {
+  bytes32HexToPublicKey,
+  fetchTokenMappingLocalMint,
+} from '../services/solana/transaction'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
@@ -708,6 +711,17 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
 
         const destMintPk = bytes32HexToPublicKey(destTokenHex)
 
+        if (!transfer.destAccount || !transfer.destAccount.startsWith('0x') || transfer.destAccount.length !== 66) {
+          const msg =
+            'Solana withdrawSubmit requires transfer.destAccount as 0x + 64 hex (32-byte recipient pubkey)'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const destAccountPk = bytes32HexToPublicKey(transfer.destAccount)
+
         const programForLog = destChainConfig.programId || destChainConfig.bridgeAddress
         console.info(
           `${LOG} Submitting Solana withdrawSubmit: program=${programForLog}, ` +
@@ -721,6 +735,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           srcAccount: srcAccountBytes32Sol,
           srcToken: srcTokenBytes,
           destTokenMint: destMintPk.toBase58(),
+          destAccount: destAccountPk.toBase58(),
           amount: bigintFromBaseUnitsString(transfer.amount || '0'),
           nonce: bigintFromBaseUnitsString(transfer.depositNonce ?? 0),
           bridgeChainId: destChainConfig.bytes4ChainId

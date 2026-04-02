@@ -128,6 +128,7 @@ describe("cancel flow", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
         destToken: destToken,
+        destAccount: ctx.user.publicKey,
         amount: new anchor.BN(amount.toString()),
         nonce: new anchor.BN(Number(nonce)),
         operatorGas: new anchor.BN(0),
@@ -138,7 +139,7 @@ describe("cancel flow", () => {
         tokenMapping: withdrawNativeTokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: ctx.user.publicKey,
+        payer: ctx.user.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([ctx.user])
@@ -242,6 +243,7 @@ describe("cancel flow", () => {
         srcAccount: Array.from(srcAccount2),
         srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
         destToken: destToken2,
+        destAccount: ctx.user.publicKey,
         amount: new anchor.BN(1000),
         nonce: new anchor.BN(20),
         operatorGas: new anchor.BN(0),
@@ -252,7 +254,7 @@ describe("cancel flow", () => {
         tokenMapping: withdrawNativeTokenMappingPda,
         pendingWithdraw: wp2,
         executedHashCheck: eh2,
-        recipient: ctx.user.publicKey,
+        payer: ctx.user.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([ctx.user])

@@ -232,6 +232,7 @@ describe("bridge SPL security and multi-user coverage", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(remoteDestToken),
         destToken: mint,
+        destAccount: recipient.publicKey,
         amount: toBn(amount),
         nonce: toBn(nonce),
         operatorGas: new anchor.BN(0),
@@ -242,7 +243,7 @@ describe("bridge SPL security and multi-user coverage", () => {
         tokenMapping: tokenPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: recipient.publicKey,
+        payer: recipient.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([recipient])
@@ -972,6 +973,7 @@ describe("bridge SPL security and multi-user coverage", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
+            destAccount: ctx.user.publicKey,
             amount: toBn(amount),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -982,7 +984,7 @@ describe("bridge SPL security and multi-user coverage", () => {
             tokenMapping: withdrawNativeMap,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])

@@ -521,10 +521,14 @@ export function computeTransferHash(
 
 /**
  * Build a withdraw_submit instruction for the Solana bridge program.
+ *
+ * @param payer Signs the tx and pays rent + optional operator_gas (may differ from `destAccount`).
+ * @param destAccount Recipient pubkey; must match V2 `destAccount` bytes in the cross-chain hash.
  */
 export function buildWithdrawSubmitInstruction(
   programId: PublicKey,
-  recipient: PublicKey,
+  payer: PublicKey,
+  destAccount: PublicKey,
   srcChain: Uint8Array,
   srcAccount: Uint8Array,
   /** Remote source token id (bytes32), must match TokenMapping PDA seeds. */
@@ -548,7 +552,7 @@ export function buildWithdrawSubmitInstruction(
     srcChain,
     bridgeChainId,
     srcAccount,
-    recipient.toBytes(),
+    destAccount.toBytes(),
     destTokenMint.toBytes(),
     amount,
     nonce,
@@ -579,8 +583,8 @@ export function buildWithdrawSubmitInstruction(
   const discriminator = anchorDiscriminator("withdraw_submit");
 
   // WithdrawSubmitParams: src_chain(4) + src_account(32) + src_token(32) + dest_token(32)
-  // + amount(u128 le) + nonce(u64 le) + operator_gas(u64 le)
-  const paramsSize = 4 + 32 + 32 + 32 + 16 + 8 + 8;
+  // + dest_account(32) + amount(u128 le) + nonce(u64 le) + operator_gas(u64 le)
+  const paramsSize = 4 + 32 + 32 + 32 + 32 + 16 + 8 + 8;
   const data = Buffer.alloc(8 + paramsSize);
   let offset = 0;
 
@@ -597,6 +601,9 @@ export function buildWithdrawSubmitInstruction(
   offset += 32;
 
   destTokenMint.toBuffer().copy(data, offset);
+  offset += 32;
+
+  destAccount.toBuffer().copy(data, offset);
   offset += 32;
 
   let amt = amount;
@@ -627,7 +634,7 @@ export function buildWithdrawSubmitInstruction(
       { pubkey: tokenMappingPda, isSigner: false, isWritable: false },
       { pubkey: pendingWithdrawPda, isSigner: false, isWritable: true },
       { pubkey: executedHashCheck, isSigner: false, isWritable: false },
-      { pubkey: recipient, isSigner: true, isWritable: true },
+      { pubkey: payer, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
     data,

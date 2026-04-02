@@ -44,6 +44,21 @@ fn derive_executed_hash_pda(program_id: &Pubkey, transfer_hash: &[u8; 32]) -> (P
     Pubkey::find_program_address(&[b"executed", transfer_hash], program_id)
 }
 
+fn derive_chain_entry_pda(program_id: &Pubkey, src_chain: &[u8; 4]) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"chain", src_chain.as_ref()], program_id)
+}
+
+fn derive_token_mapping_pda(
+    program_id: &Pubkey,
+    src_chain: &[u8; 4],
+    src_token: &[u8; 32],
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[b"token", src_chain.as_ref(), src_token.as_ref()],
+        program_id,
+    )
+}
+
 #[derive(BorshDeserialize)]
 #[allow(dead_code)]
 struct BridgeConfigData {
@@ -75,6 +90,9 @@ struct PendingWithdrawData {
     token: [u8; 32],
     amount: u128,
     nonce: u64,
+    src_decimals: u8,
+    dest_decimals: u8,
+    operator_gas: u64,
     approved: bool,
     approved_at: i64,
     cancelled: bool,
@@ -94,9 +112,12 @@ fn parse_pending_withdraw(data: &[u8]) -> eyre::Result<PendingWithdrawData> {
 struct WithdrawSubmitArgs {
     src_chain: [u8; 4],
     src_account: [u8; 32],
+    src_token: [u8; 32],
     dest_token: [u8; 32],
+    dest_account: [u8; 32],
     amount: u128,
     nonce: u64,
+    operator_gas: u64,
 }
 
 #[derive(BorshSerialize)]
@@ -107,9 +128,11 @@ struct WithdrawApproveArgs {
 fn build_withdraw_submit_ix(
     program_id: Pubkey,
     bridge: Pubkey,
+    src_chain_entry: Pubkey,
+    token_mapping: Pubkey,
     pending_withdraw: Pubkey,
     executed_hash_check: Pubkey,
-    recipient: Pubkey,
+    payer: Pubkey,
     args: WithdrawSubmitArgs,
 ) -> Instruction {
     let mut data = anchor_discriminator("withdraw_submit").to_vec();
@@ -117,10 +140,12 @@ fn build_withdraw_submit_ix(
     Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new_readonly(bridge, false),
+            AccountMeta::new(bridge, false),
+            AccountMeta::new_readonly(src_chain_entry, false),
+            AccountMeta::new_readonly(token_mapping, false),
             AccountMeta::new(pending_withdraw, false),
             AccountMeta::new_readonly(executed_hash_check, false),
-            AccountMeta::new(recipient, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
         data,
@@ -301,13 +326,15 @@ pub(super) async fn run_solana_destination_fraud_test(config: &E2eConfig) -> Tes
                 .saturating_add(9_000_000);
             let withdraw_amount: u128 = 100_000_000;
             let src_account = [0x77u8; 32];
+            let src_token = [0u8; 32];
             let dest_token = Keypair::new().pubkey();
+            let dest_account = user.pubkey().to_bytes();
 
             let transfer_hash = multichain_rs::hash::compute_xchain_hash_id(
                 &evm_v2,
                 &solana_chain_id,
                 &src_account,
-                &user.pubkey().to_bytes(),
+                &dest_account,
                 &dest_token.to_bytes(),
                 withdraw_amount,
                 withdraw_nonce,
@@ -317,19 +344,26 @@ pub(super) async fn run_solana_destination_fraud_test(config: &E2eConfig) -> Tes
                 derive_pending_withdraw_pda(&program_id, &transfer_hash);
             let (executed_hash_check_pda, _) =
                 derive_executed_hash_pda(&program_id, &transfer_hash);
+            let (src_chain_entry_pda, _) = derive_chain_entry_pda(&program_id, &evm_v2);
+            let (token_mapping_pda, _) = derive_token_mapping_pda(&program_id, &evm_v2, &src_token);
 
             let submit_ix = build_withdraw_submit_ix(
                 program_id,
                 bridge_pda,
+                src_chain_entry_pda,
+                token_mapping_pda,
                 pending_withdraw_pda,
                 executed_hash_check_pda,
                 user.pubkey(),
                 WithdrawSubmitArgs {
                     src_chain: evm_v2,
                     src_account,
+                    src_token,
                     dest_token: dest_token.to_bytes(),
+                    dest_account,
                     amount: withdraw_amount,
                     nonce: withdraw_nonce,
+                    operator_gas: 0,
                 },
             );
             send_tx(&client, &user, vec![submit_ix])?;

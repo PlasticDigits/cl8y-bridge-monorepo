@@ -60,6 +60,8 @@ pub enum BridgeError {
     CancelWindowExpired,
     #[msg("This source-chain nonce was already approved")]
     NonceAlreadyApproved,
+    #[msg("Invalid destination account (must be non-zero)")]
+    InvalidDestAccount,
     #[msg("Source chain cannot equal this chain")]
     SameChainTransfer,
     #[msg("Token mapping does not match withdraw parameters")]

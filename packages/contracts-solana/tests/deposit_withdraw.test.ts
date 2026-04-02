@@ -440,6 +440,7 @@ describe("deposit and withdraw flow", () => {
           srcAccount: Array.from(srcAccount),
           srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
           destToken: destToken,
+          destAccount: ctx.user.publicKey,
           amount: new anchor.BN(withdrawAmount.toString()),
           nonce: new anchor.BN(Number(withdrawNonce)),
           operatorGas: new anchor.BN(0),
@@ -450,7 +451,7 @@ describe("deposit and withdraw flow", () => {
           tokenMapping: withdrawNativeTokenMappingPda,
           pendingWithdraw: withdrawPda,
           executedHashCheck: executedHashPda,
-          recipient: ctx.user.publicKey,
+          payer: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])
@@ -612,6 +613,7 @@ describe("deposit and withdraw flow", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
+            destAccount: ctx.user.publicKey,
             amount: new anchor.BN(withdrawAmount.toString()),
             nonce: new anchor.BN(Number(withdrawNonce)),
             operatorGas: new anchor.BN(0),
@@ -622,7 +624,7 @@ describe("deposit and withdraw flow", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
@@ -666,6 +668,7 @@ describe("deposit and withdraw flow", () => {
           srcAccount: Array.from(srcAccount),
           srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
           destToken: destToken,
+          destAccount: ctx.user.publicKey,
           amount: new anchor.BN(amount.toString()),
           nonce: new anchor.BN(Number(nonce)),
           operatorGas: new anchor.BN(0),
@@ -676,7 +679,7 @@ describe("deposit and withdraw flow", () => {
           tokenMapping: withdrawNativeTokenMappingPda,
           pendingWithdraw: withdrawPda,
           executedHashCheck: executedHashPda,
-          recipient: ctx.user.publicKey,
+          payer: ctx.user.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([ctx.user])

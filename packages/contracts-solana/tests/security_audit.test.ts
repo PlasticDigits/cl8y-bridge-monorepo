@@ -308,6 +308,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(remoteDestToken),
         destToken: tokenPubkey,
+        destAccount: recipient.publicKey,
         amount: toBn(amount),
         nonce: toBn(nonce),
         operatorGas: new anchor.BN(0),
@@ -318,7 +319,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         tokenMapping: tokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: recipient.publicKey,
+        payer: recipient.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([recipient])
@@ -720,6 +721,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
+            destAccount: ctx.user.publicKey,
             amount: toBn(amount),
             nonce: toBn(nonce),
             operatorGas: new anchor.BN(0),
@@ -730,7 +732,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: replayWithdrawPda,
             executedHashCheck: replayExecutedPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
@@ -930,6 +932,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
+            destAccount: attacker.publicKey,
             amount: toBn(50_000n),
             nonce: toBn(9011n),
             operatorGas: new anchor.BN(0),
@@ -940,7 +943,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
-            recipient: attacker.publicKey,
+            payer: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([attacker])
@@ -1090,6 +1093,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken: destToken,
+            destAccount: ctx.user.publicKey,
             amount: toBn(100_000n),
             nonce: toBn(9020n),
             operatorGas: new anchor.BN(0),
@@ -1100,7 +1104,7 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])

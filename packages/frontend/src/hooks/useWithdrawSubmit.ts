@@ -40,6 +40,11 @@ export interface WithdrawSubmitSolanaParams {
   bridgeChainId: Uint8Array
   /** Lamports escrowed for operator; paid on approve (default 0). */
   operatorGas?: bigint
+  /**
+   * Recipient pubkey (base58); must match V2 `destAccount` on the transfer record.
+   * When omitted, defaults to the connected wallet (same as payer).
+   */
+  destAccount?: string
 }
 
 export type WithdrawSubmitStatus =
@@ -144,12 +149,14 @@ export function useWithdrawSubmit() {
         }
         const connection = new Connection(params.rpcUrl, 'confirmed')
         const programId = new PublicKey(params.programId)
-        const recipient = new PublicKey(solanaWallet.address)
+        const payer = new PublicKey(solanaWallet.address)
+        const destAccount = new PublicKey(params.destAccount ?? solanaWallet.address)
         const destMint = new PublicKey(params.destTokenMint)
 
         const instruction = buildWithdrawSubmitInstruction(
           programId,
-          recipient,
+          payer,
+          destAccount,
           params.srcChain,
           params.srcAccount,
           params.srcToken,

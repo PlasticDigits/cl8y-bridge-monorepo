@@ -204,6 +204,7 @@ describe("hardening tests", () => {
         srcAccount: Array.from(srcAccount),
         srcToken: Array.from(remoteDestToken),
         destToken: tokenPubkey,
+        destAccount: recipient.publicKey,
         amount: toBn(amount),
         nonce: toBn(nonce),
         operatorGas: new anchor.BN(0),
@@ -214,7 +215,7 @@ describe("hardening tests", () => {
         tokenMapping: tokenMappingPda,
         pendingWithdraw: withdrawPda,
         executedHashCheck: executedHashPda,
-        recipient: recipient.publicKey,
+        payer: recipient.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .signers([recipient])
@@ -580,6 +581,7 @@ describe("hardening tests", () => {
             srcAccount: Array.from(srcAccount),
             srcToken: Array.from(EVM_REMOTE_NATIVE_TOKEN),
             destToken,
+            destAccount: ctx.user.publicKey,
             amount: toBn(0),
             nonce: toBn(9990),
             operatorGas: new anchor.BN(0),
@@ -590,7 +592,7 @@ describe("hardening tests", () => {
             tokenMapping: withdrawNativeTokenMappingPda,
             pendingWithdraw: withdrawPda,
             executedHashCheck: executedHashPda,
-            recipient: ctx.user.publicKey,
+            payer: ctx.user.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([ctx.user])
