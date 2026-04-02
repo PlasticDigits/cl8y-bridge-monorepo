@@ -4,7 +4,10 @@
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 import { pow10BigInt } from './pow10';
-import { expandScientificNotationToDecimalString } from './scientificDecimal';
+import {
+  bigintFromBaseUnitsString,
+  expandScientificNotationToDecimalString,
+} from './scientificDecimal';
 export { expandScientificNotationToDecimalString };
 import {
   formatCompactHumanRational,
@@ -144,12 +147,12 @@ export function parseAmount(humanAmount: string | number, decimals: number = DEC
   return neg ? `-${raw}` : raw
 }
 
-/** Same as BigInt(parseAmount(...)) without duplicating call sites; relies on parseAmount's safe string output. */
+/** Base units as bigint; uses {@link bigintFromBaseUnitsString} so JSON/scientific forms never throw (GitLab #95). */
 export function parseAmountAsBigInt(
   humanAmount: string | number,
   decimals: number = DECIMALS.LUNC
 ): bigint {
-  return BigInt(parseAmount(humanAmount, decimals))
+  return bigintFromBaseUnitsString(parseAmount(humanAmount, decimals))
 }
 
 /**

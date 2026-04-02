@@ -217,6 +217,14 @@ describe('parseAmount', () => {
     expect(parseAmountAsBigInt('1000', 18)).toBe(BigInt('1000000000000000000000'))
   })
 
+  it('parseAmountAsBigInt + fee deduction stays exact integer (no float scientific notation)', () => {
+    const gross = parseAmountAsBigInt('2.985', 18)
+    expect(gross).toBe(2_985_000_000_000_000_000n)
+    const feeBps = 50n
+    const net = gross - (gross * feeBps) / 10000n
+    expect(net).toBe(2_970_075_000_000_000_000n)
+  })
+
   it('parseAmountAsBigInt matches expected bigint for typical inputs', () => {
     expect(parseAmountAsBigInt('1.5', 6)).toBe(1_500_000n)
     expect(parseAmountAsBigInt(0, 6)).toBe(0n)

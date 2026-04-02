@@ -610,13 +610,6 @@ export function TransferForm() {
     return terraAddress ?? ''
   }, [recipient, isDestEvm, isDestSolana, evmAddress, terraAddress, solanaAddress])
 
-  const receiveAmount = useMemo(() => {
-    if (!amount || !isValidAmount(amount)) return '0'
-    const inputAmount = parseFloat(amount)
-    const feeAmount = inputAmount * (BRIDGE_CONFIG.feePercent / 100)
-    return (inputAmount - feeAmount).toFixed(6)
-  }, [amount])
-
   const isSubmitting =
     evmStatus === 'switching-chain' ||
     evmStatus === 'checking-allowance' ||
@@ -640,6 +633,19 @@ export function TransferForm() {
         ? (solanaSplDecimals ?? registryDecimalsFallback)
         : 9
       : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+
+  const receiveAmount = useMemo(() => {
+    if (!amount || !isValidAmount(amount)) return '0'
+    try {
+      const gross = parseAmountAsBigInt(amount, amountDecimals)
+      const feeBps = BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100))
+      const net = gross - (gross * feeBps) / 10000n
+      return formatAmount(net, amountDecimals, 6)
+    } catch {
+      return '0'
+    }
+  }, [amount, amountDecimals])
+
   const destDecimals = isDestEvmChain
     ? (destChainDecimals?.[selectedTokenId]
         ?? registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals
