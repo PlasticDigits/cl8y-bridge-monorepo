@@ -19,7 +19,11 @@ import {
 } from '../services/terra/withdrawSubmit'
 import { TerraTxError } from '../services/terra/transaction'
 import { Connection, PublicKey, Transaction } from '@solana/web3.js'
-import { buildWithdrawSubmitInstruction, sendSolanaTransaction } from '../services/solana/transaction'
+import {
+  buildWithdrawSubmitInstruction,
+  formatSolanaWalletError,
+  sendSolanaTransaction,
+} from '../services/solana/transaction'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
 
 export interface WithdrawSubmitSolanaParams {
@@ -162,14 +166,17 @@ export function useWithdrawSubmit() {
         setState({ status: 'success', txHash: signature, error: null })
         return signature
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'WithdrawSubmit failed'
-        const isRejection = message.toLowerCase().includes('rejected') || message.toLowerCase().includes('denied')
+        const message = formatSolanaWalletError(err)
+        const isRejection =
+          message.toLowerCase().includes('rejected') || message.toLowerCase().includes('denied')
+        const finalMessage = isRejection ? 'Transaction rejected by user' : message
         setState({
           status: 'error',
           txHash: null,
-          error: isRejection ? 'Transaction rejected by user' : message,
+          error: finalMessage,
         })
-        return null
+        // Propagate so callers (e.g. useAutoWithdrawSubmit) surface the real failure instead of a generic null.
+        throw new Error(finalMessage)
       }
     },
     []

@@ -26,7 +26,11 @@ import { useSolanaWallet } from './useSolanaWallet'
 import { useWithdrawSubmit } from './useWithdrawSubmit'
 import { useTransferStore } from '../stores/transfer'
 import { BRIDGE_WITHDRAW_VIEW_ABI } from '../services/evm/withdrawSubmit'
-import { queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
+import {
+  queryTerraBridgeTransactionByNonce,
+  queryTerraPendingWithdraw,
+} from '../services/terraBridgeQueries'
+import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { getDestToken, bytes32ToAddress } from '../services/evm/tokenRegistry'
 import {
   chainIdToBytes4,
@@ -37,6 +41,7 @@ import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
+import { withdrawSubmitSrcAccountBytes32 } from '../services/solana/srcAccountBytes32'
 import { bytes32HexToPublicKey, fetchTokenMappingLocalMint } from '../services/solana/transaction'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
@@ -537,18 +542,9 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
-        let srcAccountBytes32Sol: Uint8Array
-        if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
-          try {
-            srcAccountBytes32Sol = hexToUint8Array(solanaAddressToBytes32(transfer.srcAccount))
-          } catch {
-            srcAccountBytes32Sol = new Uint8Array(32)
-          }
-        } else {
-          srcAccountBytes32Sol = transfer.srcAccount
-            ? hexToUint8Array(transfer.srcAccount)
-            : new Uint8Array(32)
-        }
+        const srcAccountBytes32Sol = withdrawSubmitSrcAccountBytes32(
+          transfer.srcAccount || '',
+        )
 
         // EVM→Solana: withdraw_submit + transfer hash must use the same bytes32 as
         // Bridge.deposit (TokenRegistry.getDestToken). Always prefer a live registry read

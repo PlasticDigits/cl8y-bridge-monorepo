@@ -417,6 +417,21 @@ export async function sendSolanaTransaction(
       "Wallet did not return a signed transaction. Try another Solana wallet or check the extension for blocked popups.",
     );
   }
+
+  const sim = await connection.simulateTransaction(signed);
+  if (sim.value.err) {
+    const logs = (sim.value.logs ?? []).filter(Boolean).slice(-24).join("\n");
+    const base =
+      typeof sim.value.err === "object"
+        ? JSON.stringify(sim.value.err)
+        : String(sim.value.err);
+    throw new Error(
+      logs
+        ? `Solana simulation failed: ${base}\n--- program logs ---\n${logs}`
+        : `Solana simulation failed: ${base}`,
+    );
+  }
+
   let signature: string;
   try {
     signature = await connection.sendRawTransaction(signed.serialize());
@@ -520,6 +535,11 @@ export function buildWithdrawSubmitInstruction(
   bridgeChainId: Uint8Array,
   operatorGas = 0n,
 ): TransactionInstruction {
+  if (srcAccount.length !== 32) {
+    throw new Error(
+      `withdraw_submit srcAccount must be 32 bytes (left-padded EVM address or raw bytes32); got ${srcAccount.length}`,
+    );
+  }
   if (srcToken.length !== 32) {
     throw new Error("srcToken must be 32 bytes");
   }
