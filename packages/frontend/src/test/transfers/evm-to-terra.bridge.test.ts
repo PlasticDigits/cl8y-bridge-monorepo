@@ -33,8 +33,9 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execSync } from 'child_process'
-import { readFileSync, existsSync } from 'fs'
+import { existsSync } from 'fs'
 import { resolve } from 'path'
+import { loadE2eEnvFile } from '../../utils/loadE2eEnvFile'
 import { getTerraBalance } from '../../../e2e/fixtures/chain-helpers'
 import {
   depositErc20ViaCast,
@@ -47,10 +48,9 @@ import {
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
-const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
 
-function loadEnv() {
+function loadE2eBridgeEnv(): void {
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       '\n' +
@@ -66,15 +66,7 @@ function loadEnv() {
       '╚══════════════════════════════════════════════════════════════════╝\n'
     )
   }
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) {
-      envVars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-    }
-  }
+  loadE2eEnvFile(ENV_FILE)
 }
 
 describe('EVM → Terra Bridge Transfer', () => {
@@ -84,11 +76,12 @@ describe('EVM → Terra Bridge Transfer', () => {
   let tokenA: string
 
   beforeAll(() => {
-    loadEnv()
-    bridgeAddress = envVars['VITE_EVM_BRIDGE_ADDRESS'] || ''
-    lockUnlockAddress = envVars['EVM_LOCK_UNLOCK_ADDRESS'] || ''
-    terraBridgeAddress = envVars['VITE_TERRA_BRIDGE_ADDRESS'] || ''
-    tokenA = envVars['ANVIL_TOKEN_A'] || ''
+    loadE2eBridgeEnv()
+    bridgeAddress = process.env.VITE_EVM_BRIDGE_ADDRESS || ''
+    lockUnlockAddress =
+      process.env.EVM_LOCK_UNLOCK_ADDRESS || process.env.VITE_LOCK_UNLOCK_ADDRESS || ''
+    terraBridgeAddress = process.env.VITE_TERRA_BRIDGE_ADDRESS || ''
+    tokenA = process.env.ANVIL_TOKEN_A || process.env.VITE_ANVIL_TOKEN_A || ''
 
     if (!bridgeAddress || !terraBridgeAddress) {
       throw new Error('Missing bridge addresses in .env.e2e.local')
@@ -97,8 +90,6 @@ describe('EVM → Terra Bridge Transfer', () => {
 
   function terraLcdBase(): string {
     return (
-      envVars['TERRA_LCD_URL'] ||
-      envVars['VITE_TERRA_LCD_URL'] ||
       process.env.TERRA_LCD_URL ||
       process.env.VITE_TERRA_LCD_URL ||
       'http://localhost:1317'
@@ -182,7 +173,7 @@ describe('EVM → Terra Bridge Transfer', () => {
       })
 
       try {
-        execSync(
+        const out = execSync(
           [
             'docker compose exec -T localterra',
             'terrad tx wasm execute',
@@ -192,14 +183,19 @@ describe('EVM → Terra Bridge Transfer', () => {
             '--keyring-backend test',
             '--chain-id localterra',
             '--gas auto',
-            '--gas-adjustment 1.5',
-            '--fees 10000000uluna',
+            '--gas-adjustment 2.5',
+            '--fees 50000000uluna',
             '-y',
             '--output json',
           ].join(' '),
-          { cwd: ROOT_DIR, encoding: 'utf8', timeout: 30_000 }
+          { cwd: ROOT_DIR, encoding: 'utf8', timeout: 60_000 }
         )
-        console.log(`[test] Terra withdraw_submit tx sent`)
+        const parsed = JSON.parse(String(out)) as { code?: number | string; raw_log?: string }
+        if (Number(parsed.code ?? 0) !== 0) {
+          console.warn('[test] Terra withdraw_submit rejected:', parsed.raw_log ?? parsed)
+        } else {
+          console.log(`[test] Terra withdraw_submit tx sent`)
+        }
       } catch (err) {
         console.warn('[test] Terra withdraw_submit failed:', err)
       }

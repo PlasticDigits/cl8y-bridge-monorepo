@@ -33,27 +33,25 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execSync } from 'child_process'
-import { readFileSync, existsSync } from 'fs'
+import { existsSync } from 'fs'
 import { resolve } from 'path'
+import { loadE2eEnvFile } from '../../utils/loadE2eEnvFile'
 import { getErc20Balance, skipAnvilTime } from '../../../e2e/fixtures/chain-helpers'
 import {
   withdrawSubmitViaCast,
   withdrawExecuteViaCast,
   pollForApproval,
-  computeXchainHashIdViaCast,
   ANVIL_ACCOUNTS,
-  TERRA_ACCOUNTS,
 } from '../../../e2e/fixtures/transfer-helpers'
-import { terraAddressToBytes32 } from '../../services/hashVerification'
+import { base64ToHex } from '../../services/hashVerification'
+import type { Address, Hex } from 'viem'
 
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
-// Config loaded from env file
-const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
 
-function loadEnv() {
+function loadE2eBridgeEnv(): void {
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       '\n' +
@@ -69,34 +67,76 @@ function loadEnv() {
       '╚══════════════════════════════════════════════════════════════════╝\n'
     )
   }
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) {
-      envVars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-    }
-  }
+  loadE2eEnvFile(ENV_FILE)
 }
 
 function terraLcdBase(): string {
   return (
-    envVars['TERRA_LCD_URL'] ||
-    envVars['VITE_TERRA_LCD_URL'] ||
     process.env.TERRA_LCD_URL ||
     process.env.VITE_TERRA_LCD_URL ||
     'http://localhost:1317'
   ).replace(/\/$/, '')
 }
 
-/** Net uluna amount stored in Terra bridge hash (post-fee), via CosmWasm smart query. */
-async function queryTerraDepositNetAmount(
+/** Next outgoing nonce counter on Terra bridge (after a deposit, last deposit nonce is `n - 1`). */
+async function queryTerraCurrentOutgoingNonce(
+  lcd: string,
+  bridge: string,
+  timeoutMs = 10_000
+): Promise<number | null> {
+  const q = Buffer.from(JSON.stringify({ current_nonce: {} })).toString('base64')
+  const url = `${lcd}/cosmwasm/wasm/v1/contract/${bridge}/smart/${encodeURIComponent(q)}`
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) {
+        await new Promise((r) => setTimeout(r, 500))
+        continue
+      }
+      const parsed = (await res.json()) as { data?: string | Record<string, unknown> }
+      if (parsed.data == null) {
+        await new Promise((r) => setTimeout(r, 500))
+        continue
+      }
+      const inner =
+        typeof parsed.data === 'string'
+          ? (JSON.parse(Buffer.from(parsed.data, 'base64').toString('utf8')) as { nonce?: string | number })
+          : (parsed.data as { nonce?: string | number })
+      const n = inner.nonce
+      if (n != null) return typeof n === 'number' ? n : parseInt(String(n), 10)
+    } catch {
+      /* LCD lag */
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return null
+}
+
+/** EVM token address: Terra stores dest token as 32 bytes (left-padded ERC20). */
+function destTokenBytes32ToEvmAddress(tokenBytes32: Hex): Address {
+  const h = tokenBytes32.replace(/^0x/i, '')
+  return (`0x${h.slice(-40)}`) as Address
+}
+
+/**
+ * Full Terra deposit record for `nonce` (canonical hash + fields for EVM withdrawSubmit).
+ * Must match what the operator and EVM bridge use — do not recompute the hash in TS.
+ */
+async function queryTerraDepositInfo(
   lcd: string,
   bridge: string,
   nonce: number,
-  timeoutMs = 30_000
-): Promise<string | null> {
+  timeoutMs = 90_000
+): Promise<{
+  xchainHashId: Hex
+  amount: string
+  nonce: number
+  srcChainBytes4: Hex
+  srcAccount: Hex
+  destAccount: Hex
+  tokenAddress: Address
+} | null> {
   const q = Buffer.from(JSON.stringify({ deposit_by_nonce: { nonce } })).toString('base64')
   const url = `${lcd}/cosmwasm/wasm/v1/contract/${bridge}/smart/${encodeURIComponent(q)}`
   const start = Date.now()
@@ -108,20 +148,56 @@ async function queryTerraDepositNetAmount(
         continue
       }
       const parsed = (await res.json()) as { data?: string | Record<string, unknown> }
-      if (!parsed.data) {
+      if (parsed.data == null) {
         await new Promise((r) => setTimeout(r, 2000))
         continue
       }
-      let inner: { amount?: string }
+      let inner: Record<string, unknown>
       if (typeof parsed.data === 'string') {
-        inner = JSON.parse(Buffer.from(parsed.data, 'base64').toString('utf8')) as { amount?: string }
-      } else if (parsed.data && typeof parsed.data === 'object') {
-        inner = parsed.data as { amount?: string }
+        inner = JSON.parse(Buffer.from(parsed.data, 'base64').toString('utf8')) as Record<string, unknown>
+      } else if (typeof parsed.data === 'object') {
+        inner = parsed.data as Record<string, unknown>
       } else {
         await new Promise((r) => setTimeout(r, 2000))
         continue
       }
-      if (inner.amount != null && inner.amount !== '') return String(inner.amount)
+      const xid = inner.xchain_hash_id
+      const srcChain = inner.src_chain
+      const srcAccount = inner.src_account
+      const destAccount = inner.dest_account
+      const destTok = inner.dest_token_address
+      const amount = inner.amount
+      const n = inner.nonce
+      if (
+        typeof xid !== 'string' ||
+        typeof srcChain !== 'string' ||
+        typeof srcAccount !== 'string' ||
+        typeof destAccount !== 'string' ||
+        typeof destTok !== 'string' ||
+        (typeof amount !== 'string' && typeof amount !== 'number') ||
+        (typeof n !== 'number' && typeof n !== 'string')
+      ) {
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      const srcBytes = Uint8Array.from(atob(srcChain), (c) => c.charCodeAt(0))
+      if (srcBytes.length < 4) {
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      const srcChainBytes4 = (`0x${Array.from(srcBytes.subarray(0, 4))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')}`) as Hex
+      const tokenBytes32 = base64ToHex(destTok)
+      return {
+        xchainHashId: base64ToHex(xid),
+        amount: String(amount),
+        nonce: typeof n === 'number' ? n : parseInt(String(n), 10),
+        srcChainBytes4,
+        srcAccount: base64ToHex(srcAccount),
+        destAccount: base64ToHex(destAccount),
+        tokenAddress: destTokenBytes32ToEvmAddress(tokenBytes32),
+      }
     } catch {
       /* LCD lag */
     }
@@ -136,10 +212,10 @@ describe('Terra → EVM Bridge Transfer', () => {
   let tokenA: string
 
   beforeAll(() => {
-    loadEnv()
-    bridgeAddress = envVars['VITE_EVM_BRIDGE_ADDRESS'] || ''
-    terraBridgeAddress = envVars['VITE_TERRA_BRIDGE_ADDRESS'] || ''
-    tokenA = envVars['ANVIL_TOKEN_A'] || ''
+    loadE2eBridgeEnv()
+    bridgeAddress = process.env.VITE_EVM_BRIDGE_ADDRESS || ''
+    terraBridgeAddress = process.env.VITE_TERRA_BRIDGE_ADDRESS || ''
+    tokenA = process.env.ANVIL_TOKEN_A || process.env.VITE_ANVIL_TOKEN_A || ''
 
     if (!bridgeAddress || !terraBridgeAddress) {
       throw new Error('Missing bridge addresses in .env.e2e.local')
@@ -150,18 +226,10 @@ describe('Terra → EVM Bridge Transfer', () => {
     // Use user4 to avoid nonce conflicts with other tests running in parallel
     const recipient = ANVIL_ACCOUNTS.user4
     const recipientKey = ANVIL_ACCOUNTS.user4Key
-    const amount = '1000000' // 1 LUNC (6 decimals)
+    // Unique gross amount per run so repeat test invocations do not replay the same Terra tx / xchain id.
+    const amount = String(1_000_000 + (Date.now() % 900_000)) // uluna, >= min_bridge_amount
 
-    // 1. Record initial ERC20 balance on anvil
-    // For Terra → EVM, the destination token depends on the bridge mapping
-    // Using tokenA as the destination ERC20
-    let initialBalance = 0n
-    if (tokenA) {
-      initialBalance = await getErc20Balance(ANVIL_RPC, tokenA, recipient)
-    }
-    console.log(`[test] Initial balance of ${recipient}: ${initialBalance}`)
-
-    // 2. Deposit on Terra via terrad using V2 deposit_native message
+    // 1. Deposit on Terra via terrad using V2 deposit_native message
     // dest_chain: bytes4 of V2 chain ID 1 (Anvil) as base64
     // dest_account: bytes32 left-padded recipient address as base64
     const destChainB64 = btoa(String.fromCharCode(0, 0, 0, 1)) // V2 chain ID 1 (Anvil) as bytes4 base64
@@ -179,6 +247,11 @@ describe('Terra → EVM Bridge Transfer', () => {
       },
     })
 
+    const lcdBase = terraLcdBase()
+    const nonceBefore =
+      (await queryTerraCurrentOutgoingNonce(lcdBase, terraBridgeAddress, 15_000)) ?? 0
+    console.log(`[test] Terra outgoing nonce before deposit: ${nonceBefore}`)
+
     let terraTxHash: string
     try {
       const result = execSync(
@@ -192,97 +265,85 @@ describe('Terra → EVM Bridge Transfer', () => {
           '--keyring-backend test',
           '--chain-id localterra',
           '--gas auto',
-          '--gas-adjustment 1.5',
-          '--fees 10000000uluna',
+          '--gas-adjustment 2.5',
+          '--fees 50000000uluna',
           '-y',
           '--output json',
         ].join(' '),
-        { cwd: ROOT_DIR, encoding: 'utf8', timeout: 30_000 }
+        { cwd: ROOT_DIR, encoding: 'utf8', timeout: 60_000 }
       )
-      const txResult = JSON.parse(result)
-      terraTxHash = txResult.txhash
+      const txResult = JSON.parse(result) as { txhash?: string; code?: number | string; raw_log?: string }
+      if (Number(txResult.code ?? 0) !== 0) {
+        throw new Error(
+          `[test] Terra deposit_native rejected (code=${String(txResult.code)}): ${txResult.raw_log ?? 'no log'}`
+        )
+      }
+      terraTxHash = txResult.txhash ?? ''
+      if (!terraTxHash) throw new Error('[test] Terra broadcast returned no txhash')
       console.log(`[test] Terra deposit_native tx: ${terraTxHash}`)
     } catch (err) {
       console.error('[test] Terra deposit_native failed:', err)
       throw err
     }
 
-    // Wait for Terra tx to be included in a block
-    await new Promise((r) => setTimeout(r, 5000))
+    // Wait for Terra tx + wasm state (current_nonce / deposit_by_nonce) on LCD
+    await new Promise((r) => setTimeout(r, 4000))
 
-    // 3. Extract nonce from Terra tx (query via LCD)
-    // V2 deposit_native emits events with type 'wasm' or 'wasm-deposit_native'
-    let nonce = 0
-    try {
-      const txResult = execSync(
-        `curl -s ${terraLcdBase()}/cosmos/tx/v1beta1/txs/${terraTxHash}`,
-        { encoding: 'utf8', timeout: 10_000 }
-      )
-      const parsed = JSON.parse(txResult)
-      // Look for nonce in wasm events (V2 emits 'nonce' attribute)
-      for (const event of parsed.tx_response?.events || []) {
-        if (event.type === 'wasm' || event.type === 'wasm-deposit_native' || event.type === 'wasm-lock') {
-          for (const attr of event.attributes) {
-            const key = attr.key
-            if (key === 'nonce' || key === 'deposit_nonce') {
-              nonce = parseInt(attr.value, 10)
-            }
-          }
-        }
+    // 3. Last deposit nonce = current outgoing counter minus one, after counter advances past pre-deposit value
+    let curAfter = nonceBefore
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const cur = await queryTerraCurrentOutgoingNonce(lcdBase, terraBridgeAddress, 12_000)
+      if (cur != null && cur > nonceBefore) {
+        curAfter = cur
+        break
       }
-      console.log(`[test] Deposit nonce: ${nonce}`)
-    } catch (err) {
-      console.warn('[test] Failed to extract nonce:', err)
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    if (curAfter <= nonceBefore) {
+      throw new Error(
+        `[test] Terra current_nonce did not advance after deposit (before=${nonceBefore}, after=${curAfter})`
+      )
+    }
+    const nonce = curAfter - 1
+    console.log(`[test] Deposit nonce (from current_nonce): ${nonce}`)
+
+    // 4. Canonical deposit row from Terra (hash + every field the EVM bridge must use for withdrawSubmit).
+    const depositInfo = await queryTerraDepositInfo(lcdBase, terraBridgeAddress, nonce, 90_000)
+    if (!depositInfo) {
+      throw new Error(`[test] deposit_by_nonce(${nonce}) missing on LCD after deposit`)
+    }
+    if (depositInfo.nonce !== nonce) {
+      throw new Error(`[test] deposit nonce mismatch: lcd=${depositInfo.nonce} expected=${nonce}`)
+    }
+    if (tokenA && depositInfo.tokenAddress.toLowerCase() !== tokenA.toLowerCase()) {
+      console.warn(
+        `[test] ANVIL_TOKEN_A (${tokenA}) differs from Terra dest_token (${depositInfo.tokenAddress}); using on-chain mapping`
+      )
     }
 
-    // 4. Net amount + src_account must match on-chain Terra deposit (V2 hash uses post-fee amount).
-    const netFromChain = await queryTerraDepositNetAmount(
-      terraLcdBase(),
-      terraBridgeAddress,
-      nonce,
-      30_000
-    )
-    const amountForHash = netFromChain ?? amount
-    if (!netFromChain) {
-      console.warn('[test] deposit_by_nonce query returned no amount; using gross deposit amount (hash may mismatch)')
-    }
+    const destErc20 = depositInfo.tokenAddress
+    const initialBalance = await getErc20Balance(ANVIL_RPC, destErc20, recipient)
+    console.log(`[test] Initial ERC20 balance (${destErc20}): ${initialBalance}`)
 
-    // 4b. Call withdrawSubmit on anvil
-    const srcChain = '0x00000002'
-    const srcAccount = terraAddressToBytes32(TERRA_ACCOUNTS.test1)
-    const destAccount = '0x' + ANVIL_ACCOUNTS.user4.slice(2).padStart(64, '0')
-
-    if (tokenA) {
-      const wsTxHash = withdrawSubmitViaCast({
-        rpcUrl: ANVIL_RPC,
-        bridgeAddress,
-        privateKey: recipientKey,
-        srcChain,
-        srcAccount,
-        destAccount,
-        token: tokenA,
-        amount: amountForHash,
-        nonce: String(nonce),
-      })
-      console.log(`[test] WithdrawSubmit tx: ${wsTxHash}`)
-    } else {
-      console.warn('[test] No tokenA address, skipping withdrawSubmit')
-      return
-    }
-
-    // 5. Compute withdraw hash and poll for operator approval
-    const xchainHashId = computeXchainHashIdViaCast({
-      srcChain,
-      destChain: '0x00000001', // Anvil V2 chain ID
-      srcAccount,
-      destAccount,
-      token: tokenA,
-      amount: amountForHash,
-      nonce: String(nonce),
+    // 4b. Call withdrawSubmit on anvil (args must match Terra deposit byte-for-byte)
+    const wsTxHash = withdrawSubmitViaCast({
+      rpcUrl: ANVIL_RPC,
+      bridgeAddress,
+      privateKey: recipientKey,
+      srcChain: depositInfo.srcChainBytes4,
+      srcAccount: depositInfo.srcAccount,
+      destAccount: depositInfo.destAccount,
+      token: destErc20,
+      amount: depositInfo.amount,
+      nonce: String(depositInfo.nonce),
     })
-    console.log(`[test] Xchain hash id: ${xchainHashId}`)
+    console.log(`[test] WithdrawSubmit tx: ${wsTxHash}`)
+
+    // 5. Poll for operator approval (use Terra-stored xchain id — same as EVM pending withdraw if submit matched)
+    const xchainHashId = depositInfo.xchainHashId
+    console.log(`[test] Xchain hash id (from Terra): ${xchainHashId}`)
     console.log('[test] Polling for operator approval...')
-    const approved = await pollForApproval(ANVIL_RPC, bridgeAddress, xchainHashId, 60_000)
+    const approved = await pollForApproval(ANVIL_RPC, bridgeAddress, xchainHashId, 120_000)
     console.log(`[test] Approval status: ${approved}`)
 
     // 6. Skip cancel window on anvil
@@ -299,11 +360,9 @@ describe('Terra → EVM Bridge Transfer', () => {
     })
     console.log(`[test] WithdrawExecute tx: ${execTxHash}`)
 
-    // 8. Check balance - recipient should have received tokenA tokens
-    if (tokenA) {
-      const finalBalance = await getErc20Balance(ANVIL_RPC, tokenA, recipient)
-      console.log(`[test] Final balance: ${finalBalance} (was ${initialBalance})`)
-      expect(finalBalance).toBeGreaterThan(initialBalance)
-    }
-  }, 90_000) // 90s timeout for this test
+    // 8. Check balance — destination ERC20 comes from Terra mapping (destErc20)
+    const finalBalance = await getErc20Balance(ANVIL_RPC, destErc20, recipient)
+    console.log(`[test] Final balance: ${finalBalance} (was ${initialBalance})`)
+    expect(finalBalance).toBeGreaterThan(initialBalance)
+  }, 240_000) // LCD + operator polling need headroom on shared LocalTerra
 })
