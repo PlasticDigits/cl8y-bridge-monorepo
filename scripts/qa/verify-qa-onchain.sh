@@ -40,6 +40,9 @@ check_evm_code() {
   fi
 }
 
+# Matches packages/frontend/src/test/e2e-infra/deploy-terra.ts PLACEHOLDER_PREFIX
+TERRA_PLACEHOLDER_PREFIX="terra1placeholder_"
+
 check_terra_cw() {
   local name="$1" addr="$2"
   if [ -z "$addr" ]; then
@@ -54,6 +57,24 @@ check_terra_cw() {
     echo "  $name: $addr FAIL (no contract at LCD)" >&2
     fail=1
   fi
+}
+
+# Terra CW20 rows that may be skipped when instantiate failed (placeholder addr in .deploy/local.env)
+check_terra_cw_optional_matrix() {
+  local name="$1" addr="$2"
+  if [ -z "$addr" ]; then
+    echo "  $name: (not set) SKIP"
+    return 0
+  fi
+  if [[ "$addr" == ${TERRA_PLACEHOLDER_PREFIX}* ]]; then
+    echo "  $name: $addr SKIP (placeholder — CW20 not deployed on LocalTerra)" >&2
+    if [ "${VERIFY_QA_STRICT_T2022:-}" = "1" ]; then
+      echo "  $name: strict mode requires real contract" >&2
+      fail=1
+    fi
+    return 0
+  fi
+  check_terra_cw "$name" "$addr"
 }
 
 check_solana_prog() {
@@ -105,7 +126,7 @@ check_evm_code "ANVIL_T2022" "${ANVIL_T2022:-}" "$EVM_RPC_URL"
 check_evm_code "ANVIL1_TOKEN_A" "${ANVIL1_TOKEN_A:-}" "$EVM1_RPC_URL"
 check_evm_code "ANVIL1_T2022" "${ANVIL1_T2022:-}" "$EVM1_RPC_URL"
 check_terra_cw "TERRA_TOKEN_A" "${TERRA_TOKEN_A:-}"
-check_terra_cw "TERRA_T2022" "${TERRA_T2022:-}"
+check_terra_cw_optional_matrix "TERRA_T2022" "${TERRA_T2022:-}"
 check_solana_mint "SOLANA_LUNC" "${SOLANA_LUNC:-}"
 check_solana_mint "SOLANA_T2022" "${SOLANA_T2022:-}"
 

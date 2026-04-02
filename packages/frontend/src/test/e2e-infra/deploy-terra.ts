@@ -8,12 +8,13 @@
  * 3. Instantiate (3x for TokenA/B/C), query list-contract-by-code for addresses
  */
 
-import { execSync, execFileSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 import { resolveLocalterraDockerExecTarget } from './localterra-docker'
+import { resolveCw20InstantiateAttempts } from '../../utils/terraCw20InstantiateAttempts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
@@ -103,11 +104,24 @@ interface Cw20DeployResult {
 }
 
 function dockerExec(args: string[]): string {
-  const out = execFileSync('docker', ['exec', localterraDockerTarget(), ...args], {
+  const container = localterraDockerTarget()
+  const r = spawnSync('docker', ['exec', container, ...args], {
     encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
+    maxBuffer: 32 * 1024 * 1024,
   })
-  return typeof out === 'string' ? out.trim() : String(out).trim()
+  if (r.error) {
+    console.error(`[deploy-terra] docker exec spawn error (container=${container}):`, r.error.message)
+    throw r.error
+  }
+  if (r.status !== 0) {
+    console.error(`[deploy-terra] docker exec failed (container=${container}) exit=${r.status}`)
+    const errOut = (r.stderr || '').trim()
+    const stdOut = (r.stdout || '').trim()
+    if (errOut) console.error('[deploy-terra] stderr:\n', errOut)
+    if (stdOut && !errOut) console.error('[deploy-terra] stdout:\n', stdOut)
+    throw new Error(`docker exec failed (exit ${r.status})`)
+  }
+  return (r.stdout || '').trim()
 }
 
 function terradQuery(...args: string[]): string {
@@ -171,27 +185,55 @@ function instantiateCw20Token(
     mint: { minter: TEST_ADDRESS },
   })
 
-  try {
-    terradTx(
-      'wasm', 'instantiate', String(codeId), initMsg,
-      '--label', `${symbol.toLowerCase()}-e2e`,
-      '--admin', TEST_ADDRESS,
-      '--from', KEY_NAME,
-      '--chain-id', 'localterra',
-      '--gas', 'auto', '--gas-adjustment', '1.5',
-      '--fees', '10000000uluna',
-      '--broadcast-mode', 'sync',
-      '-y'
-    )
-  } catch (err) {
-    console.warn(`[deploy-terra] Instantiate failed for ${symbol}:`, (err as Error).message?.slice(0, 80))
+  const attempts = resolveCw20InstantiateAttempts()
+  let lastErr: unknown
+  let succeeded = false
+  for (let i = 0; i < attempts.length; i++) {
+    const { gasAdjustment, fees } = attempts[i]!
+    try {
+      console.log(
+        `[deploy-terra] wasm instantiate ${symbol} attempt ${i + 1}/${attempts.length} gas-adjustment=${gasAdjustment} fees=${fees}`
+      )
+      terradTx(
+        'wasm', 'instantiate', String(codeId), initMsg,
+        '--label', `${symbol.toLowerCase()}-e2e`,
+        '--admin', TEST_ADDRESS,
+        '--from', KEY_NAME,
+        '--chain-id', 'localterra',
+        '--gas', 'auto', '--gas-adjustment', gasAdjustment,
+        '--fees', fees,
+        '--broadcast-mode', 'sync',
+        '-y'
+      )
+      succeeded = true
+      break
+    } catch (err) {
+      lastErr = err
+      console.warn(
+        `[deploy-terra] Instantiate attempt ${i + 1} failed for ${symbol}:`,
+        err instanceof Error ? err.message : err
+      )
+    }
+  }
+  if (!succeeded) {
+    console.warn(`[deploy-terra] All instantiate attempts failed for ${symbol}`, lastErr)
     return null
   }
 
-  // Wait for block inclusion (~6s on LocalTerra)
-  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
-
-  return getContractByCodeId(codeId)
+  // Poll for new contract on this code_id (LCD can lag; avoids false placeholder).
+  const deadline = Date.now() + 30_000
+  let last: string | null = null
+  while (Date.now() < deadline) {
+    try {
+      execSync('sleep 2', { encoding: 'utf8' })
+    } catch {
+      /* ignore */
+    }
+    last = getContractByCodeId(codeId)
+    if (last) return last
+  }
+  console.warn(`[deploy-terra] Instantiate tx ok but no contract in list-contract-by-code for code_id=${codeId} (${symbol})`)
+  return null
 }
 
 /**

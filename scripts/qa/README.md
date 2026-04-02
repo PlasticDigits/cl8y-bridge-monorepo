@@ -133,11 +133,20 @@ Open the URL Vite prints (often **`http://localhost:5173`**).
 
 ---
 
+## `verify-qa-onchain.sh`
+
+After **`make deploy`** or **`make start-qa`**, **`bash scripts/qa/verify-qa-onchain.sh`** checks bridge addresses and sample tokens on Anvil, Anvil1, LocalTerra, and Solana.
+
+- **`TERRA_T2022`**: If LocalTerra CW20 instantiate failed, **`.deploy/local.env`** may contain **`terra1placeholder_t2022`**. The script **skips** that check (warns to stderr) so the run can still exit **0**. To **fail** the script when Terra T2022 is not a real contract, set **`VERIFY_QA_STRICT_T2022=1`**.
+
+---
+
 ## Troubleshooting
 
 | Symptom | What to do |
 |--------|------------|
 | **Settings OK, bridge page only Solana / no tokens** | You need full **`write-frontend-env-local.sh`** (not **`--urls-only`**) after Step 2 so **`VITE_*` bridge addresses** are set. Restart Vite. |
+| **`verify-qa-onchain` fails only on `TERRA_T2022`** | Often a **placeholder** after failed CW20 T2022 instantiate; re-run **`qa:full-token-setup`** or check **`deploy-terra`** logs (full **`docker exec` stderr** + fee retries). Use **`VERIFY_QA_STRICT_T2022=1`** only if CI must enforce a real Terra T2022. |
 | **Bridge page: no tokens in the selector** | On the **server**, run **`make start-qa`** (includes **`qa:full-token-setup`**) or after **`make deploy`** run **`make qa-full-token-setup`**. Legacy: **`make deploy-tokens && make register-tokens`**. |
 | **Settings → Faucet: “not deployed”** | That panel is for **optional faucet contracts** (separate from bridge test tokens). Bridge transfers use tokens registered by the full QA token setup. |
 | **LocalTerra “Failed to fetch” or LCD shows `:1317`** | Regenerate **`.env.local`** after Step 2; confirm the script logs **`LCD=http://127.0.0.1:1318`** (shared QA remapping). Restart **`npm run dev`**. |

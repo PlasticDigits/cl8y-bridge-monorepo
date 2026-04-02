@@ -7,7 +7,7 @@ const DEFAULT_TIMEOUT = 60_000 // 60 seconds
 const POLL_INTERVAL = 2_000 // 2 seconds
 
 /** Match docker-compose `E2E_TERRA_LCD_PORT` / `.env.e2e.local` `TERRA_LCD_URL` (default 1317). */
-function terraLcdUrl(): string {
+export function terraLcdUrl(): string {
   return process.env.TERRA_LCD_URL?.trim() || 'http://localhost:1317'
 }
 

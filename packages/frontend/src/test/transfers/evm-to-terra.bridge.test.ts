@@ -49,7 +49,6 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
 const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
-const TERRA_LCD = 'http://localhost:1317'
 
 function loadEnv() {
   if (!existsSync(ENV_FILE)) {
@@ -96,6 +95,16 @@ describe('EVM → Terra Bridge Transfer', () => {
     }
   })
 
+  function terraLcdBase(): string {
+    return (
+      envVars['TERRA_LCD_URL'] ||
+      envVars['VITE_TERRA_LCD_URL'] ||
+      process.env.TERRA_LCD_URL ||
+      process.env.VITE_TERRA_LCD_URL ||
+      'http://localhost:1317'
+    ).replace(/\/$/, '')
+  }
+
   it('should complete an EVM → Terra transfer with operator relay', async () => {
     // Use user3 to avoid nonce conflicts with evm-to-evm test (which uses user1)
     const depositor = ANVIL_ACCOUNTS.user3
@@ -104,7 +113,7 @@ describe('EVM → Terra Bridge Transfer', () => {
     const amount = '1000000000000000000' // 1 token (18 decimals for ERC20)
 
     // 1. Record initial balance on Terra
-    const initialBalance = await getTerraBalance(TERRA_LCD, terraRecipient, 'uluna')
+    const initialBalance = await getTerraBalance(terraLcdBase(), terraRecipient, 'uluna')
     console.log(`[test] Initial Terra balance: ${initialBalance}`)
 
     // 2. Mint tokens to depositor and deposit on anvil
@@ -203,7 +212,7 @@ describe('EVM → Terra Bridge Transfer', () => {
     await new Promise((r) => setTimeout(r, 30_000))
 
     // 6. Check balance on Terra
-    const finalBalance = await getTerraBalance(TERRA_LCD, terraRecipient, 'uluna')
+    const finalBalance = await getTerraBalance(terraLcdBase(), terraRecipient, 'uluna')
     console.log(`[test] Final Terra balance: ${finalBalance} (was ${initialBalance})`)
 
     // Assert balance changed (accounting for gas fees, the balance may go up from the transfer)

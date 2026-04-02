@@ -38,7 +38,7 @@ import { resolve } from 'path'
 import { getErc20Balance, skipAnvilTime } from '../../../e2e/fixtures/chain-helpers'
 import {
   depositErc20ViaCast,
-  getDepositNonceFromReceipt,
+  parseDepositEvent,
   withdrawSubmitViaCast,
   withdrawExecuteViaCast,
   pollForApproval,
@@ -167,9 +167,9 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
     })
     console.log(`[test] Deposit tx on anvil: ${txHash}`)
 
-    // Extract nonce
-    const nonce = getDepositNonceFromReceipt(ANVIL_RPC, txHash)
-    console.log(`[test] Deposit nonce: ${nonce}`)
+    // V2 hash uses post-fee net amount (same as on-chain Deposit event and operator verification).
+    const { nonce, netAmount } = parseDepositEvent(ANVIL_RPC, txHash)
+    console.log(`[test] Deposit nonce: ${nonce}, netAmount: ${netAmount}`)
 
     // 3. Call withdrawSubmit on anvil1 bridge
     // V2 chain ID: Anvil = 0x00000001 globally
@@ -184,7 +184,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       srcAccount,
       destAccount,
       token: token1A,
-      amount,
+      amount: netAmount,
       nonce: String(nonce),
     })
     console.log(`[test] WithdrawSubmit tx on anvil1: ${wsTxHash}`)
@@ -196,7 +196,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       srcAccount,
       destAccount,
       token: token1A,
-      amount,
+      amount: netAmount,
       nonce: String(nonce),
     })
     console.log(`[test] Xchain hash id: ${xchainHashId}`)

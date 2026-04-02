@@ -42,7 +42,9 @@ import {
   pollForApproval,
   computeXchainHashIdViaCast,
   ANVIL_ACCOUNTS,
+  TERRA_ACCOUNTS,
 } from '../../../e2e/fixtures/transfer-helpers'
+import { terraAddressToBytes32 } from '../../services/hashVerification'
 
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
@@ -50,7 +52,6 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 // Config loaded from env file
 const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
-const TERRA_LCD = 'http://localhost:1317'
 
 function loadEnv() {
   if (!existsSync(ENV_FILE)) {
@@ -77,6 +78,56 @@ function loadEnv() {
       envVars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
     }
   }
+}
+
+function terraLcdBase(): string {
+  return (
+    envVars['TERRA_LCD_URL'] ||
+    envVars['VITE_TERRA_LCD_URL'] ||
+    process.env.TERRA_LCD_URL ||
+    process.env.VITE_TERRA_LCD_URL ||
+    'http://localhost:1317'
+  ).replace(/\/$/, '')
+}
+
+/** Net uluna amount stored in Terra bridge hash (post-fee), via CosmWasm smart query. */
+async function queryTerraDepositNetAmount(
+  lcd: string,
+  bridge: string,
+  nonce: number,
+  timeoutMs = 30_000
+): Promise<string | null> {
+  const q = Buffer.from(JSON.stringify({ deposit_by_nonce: { nonce } })).toString('base64')
+  const url = `${lcd}/cosmwasm/wasm/v1/contract/${bridge}/smart/${encodeURIComponent(q)}`
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) {
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      const parsed = (await res.json()) as { data?: string | Record<string, unknown> }
+      if (!parsed.data) {
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      let inner: { amount?: string }
+      if (typeof parsed.data === 'string') {
+        inner = JSON.parse(Buffer.from(parsed.data, 'base64').toString('utf8')) as { amount?: string }
+      } else if (parsed.data && typeof parsed.data === 'object') {
+        inner = parsed.data as { amount?: string }
+      } else {
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      if (inner.amount != null && inner.amount !== '') return String(inner.amount)
+    } catch {
+      /* LCD lag */
+    }
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  return null
 }
 
 describe('Terra → EVM Bridge Transfer', () => {
@@ -164,7 +215,7 @@ describe('Terra → EVM Bridge Transfer', () => {
     let nonce = 0
     try {
       const txResult = execSync(
-        `curl -s ${TERRA_LCD}/cosmos/tx/v1beta1/txs/${terraTxHash}`,
+        `curl -s ${terraLcdBase()}/cosmos/tx/v1beta1/txs/${terraTxHash}`,
         { encoding: 'utf8', timeout: 10_000 }
       )
       const parsed = JSON.parse(txResult)
@@ -184,11 +235,21 @@ describe('Terra → EVM Bridge Transfer', () => {
       console.warn('[test] Failed to extract nonce:', err)
     }
 
-    // 4. Call withdrawSubmit on anvil
-    // srcChain = Terra = 0x00000002
-    // srcAccount = Terra address as bytes32 (padded)
+    // 4. Net amount + src_account must match on-chain Terra deposit (V2 hash uses post-fee amount).
+    const netFromChain = await queryTerraDepositNetAmount(
+      terraLcdBase(),
+      terraBridgeAddress,
+      nonce,
+      30_000
+    )
+    const amountForHash = netFromChain ?? amount
+    if (!netFromChain) {
+      console.warn('[test] deposit_by_nonce query returned no amount; using gross deposit amount (hash may mismatch)')
+    }
+
+    // 4b. Call withdrawSubmit on anvil
     const srcChain = '0x00000002'
-    const srcAccount = '0x' + '0'.repeat(64) // simplified - Terra address encoding
+    const srcAccount = terraAddressToBytes32(TERRA_ACCOUNTS.test1)
     const destAccount = '0x' + ANVIL_ACCOUNTS.user4.slice(2).padStart(64, '0')
 
     if (tokenA) {
@@ -200,7 +261,7 @@ describe('Terra → EVM Bridge Transfer', () => {
         srcAccount,
         destAccount,
         token: tokenA,
-        amount,
+        amount: amountForHash,
         nonce: String(nonce),
       })
       console.log(`[test] WithdrawSubmit tx: ${wsTxHash}`)
@@ -216,7 +277,7 @@ describe('Terra → EVM Bridge Transfer', () => {
       srcAccount,
       destAccount,
       token: tokenA,
-      amount,
+      amount: amountForHash,
       nonce: String(nonce),
     })
     console.log(`[test] Xchain hash id: ${xchainHashId}`)
