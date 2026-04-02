@@ -403,7 +403,21 @@ function buildCanonicalTransferUpdatesFromSource(
 
   const srcIsCosmos = sourceChain?.type === 'cosmos' || sourceKey.includes('terra')
   const destIsCosmos = destChain?.type === 'cosmos' || destKey.includes('terra')
-  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+  const srcIsSolana = sourceChain?.type === 'solana' || sourceKey.includes('solana')
+  const destIsSolana = destChain?.type === 'solana' || destKey.includes('solana')
+  const direction: TransferRecord['direction'] = srcIsSolana && destIsCosmos
+    ? 'solana-to-terra'
+    : srcIsSolana
+      ? 'solana-to-evm'
+      : destIsSolana && srcIsCosmos
+        ? 'terra-to-solana'
+        : destIsSolana
+          ? 'evm-to-solana'
+          : srcIsCosmos
+            ? 'terra-to-evm'
+            : destIsCosmos
+              ? 'evm-to-terra'
+              : 'evm-to-evm'
 
   const candidate: Partial<TransferRecord> = {
     sourceChain: sourceKey,
@@ -790,7 +804,13 @@ export default function TransferStatusPage() {
             lifecycle: 'hash-submitted' as const,
             sourceChain: fix.wrongChainKey,
             destChain: fix.correctDestChainKey,
-            direction: (fix.correctDestChain.type === 'cosmos' ? 'evm-to-terra' : 'evm-to-evm') as TransferRecord['direction'],
+            direction: (
+              fix.correctDestChain.type === 'cosmos'
+                ? 'evm-to-terra'
+                : fix.correctDestChain.type === 'solana'
+                  ? 'evm-to-solana'
+                  : 'evm-to-evm'
+            ) as TransferRecord['direction'],
           }
           updateTransferRecord(transfer.id, updates)
           setTransfer((prev) => (prev ? { ...prev, ...updates } : null))

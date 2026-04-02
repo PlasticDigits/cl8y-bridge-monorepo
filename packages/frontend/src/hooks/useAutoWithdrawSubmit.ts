@@ -640,8 +640,9 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
 
         const destMintPk = bytes32HexToPublicKey(destTokenHex)
 
+        const programForLog = destChainConfig.programId || destChainConfig.bridgeAddress
         console.info(
-          `${LOG} Submitting Solana withdrawSubmit: program=${destChainConfig.programId}, ` +
+          `${LOG} Submitting Solana withdrawSubmit: program=${programForLog}, ` +
           `amount=${transfer.amount}, nonce=${transfer.depositNonce}`
         )
 

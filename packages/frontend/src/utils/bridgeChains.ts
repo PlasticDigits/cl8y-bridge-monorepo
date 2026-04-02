@@ -51,6 +51,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       rpcUrl: 'http://localhost:8899',
       // No default: must match deployed program (same as EVM/Terra — avoids "only Solana" when env is incomplete)
       bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
       bytes4ChainId: '0x00000005',
     },
   },
@@ -100,6 +101,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       name: 'Solana Devnet',
       rpcUrl: 'https://api.devnet.solana.com',
       bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
       bytes4ChainId: '0x00000005',
     },
   },
@@ -154,6 +156,7 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       name: 'Solana',
       rpcUrl: 'https://api.mainnet-beta.solana.com',
       bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
       bytes4ChainId: '0x00000005',
     },
   },
