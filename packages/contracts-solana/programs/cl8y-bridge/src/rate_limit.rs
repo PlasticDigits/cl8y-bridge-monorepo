@@ -9,13 +9,24 @@ use anchor_lang::prelude::{error, Result};
 /// 24 hours in seconds (matches Terra `RATE_LIMIT_PERIOD` and EVM `RATE_LIMIT_WINDOW`).
 pub const RATE_LIMIT_WINDOW_SECS: i64 = 86_400;
 
-/// When supply is zero, Terra uses this cap for the default per-period limit (`withdraw.rs`).
+/// When SPL mint supply is unavailable (e.g. native SOL path passes `mint_supply == 0`), use this
+/// per-period floor. EVM leaves limits unset when ERC-20 `totalSupply() == 0`; Solana keeps a finite
+/// cap here so native payouts are not implicitly uncapped. Operators should still set explicit limits
+/// via `set_rate_limit` for production native routes.
 pub const DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY: u128 = 100_000_000_000_000_000_000;
+
+/// `minPerTransaction = supply / DEFAULT_MIN_DIVISOR` (0.0001% of supply), matching EVM `TokenRegistry`.
+pub const DEFAULT_MIN_DIVISOR: u128 = 1_000_000;
+/// `maxPerTransaction` / default `maxPerPeriod` = `supply / DEFAULT_MAX_DIVISOR` (0.01% of supply).
+pub const DEFAULT_MAX_DIVISOR: u128 = 10_000;
 
 /// Resolve effective (min, max per tx, max per period) from stored config and optional mint supply.
 ///
-/// - `explicit_config == true`: use stored fields (EVM-style explicit registry).
-/// - `explicit_config == false`: Terra default — no min, unlimited per-tx, period = `supply/1000` or [`DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY`].
+/// - `explicit_config == true`: use stored fields (EVM `setRateLimit` / admin `set_rate_limit`).
+/// - `explicit_config == false`: **EVM / Terra registration defaults** — same as EVM `_setDefaultRateLimits`
+///   and Terra `add_token` auto `RATE_LIMITS`: `min = supply / 1_000_000`, `max_per_tx = supply / 10_000`,
+///   `max_per_period = max_per_tx`. If `mint_supply == 0` (native SOL execute path), only
+///   [`DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY`] applies as the period cap; min and per-tx stay zero.
 pub fn resolve_effective_limits(
     explicit_config: bool,
     min_per_transaction: u128,
@@ -30,12 +41,13 @@ pub fn resolve_effective_limits(
             max_per_period,
         );
     }
-    let period = if mint_supply == 0 {
-        DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY
-    } else {
-        mint_supply / 1000
-    };
-    (0, 0, period)
+    if mint_supply == 0 {
+        return (0, 0, DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY);
+    }
+    let min = mint_supply / DEFAULT_MIN_DIVISOR;
+    let max_tx = mint_supply / DEFAULT_MAX_DIVISOR;
+    let max_period = max_tx;
+    (min, max_tx, max_period)
 }
 
 /// Enforce limits and update rolling 24h window (Terra + EVM semantics).
@@ -54,7 +66,7 @@ pub fn check_and_update_withdraw_rate_limit(
     if max_per_tx != 0 && payout_amount > max_per_tx {
         return Err(error!(BridgeError::RateLimitExceededPerTx));
     }
-    // Unlimited period (Terra: `max_per_period.is_zero()` short-circuit; EVM: `maxPerPeriod == 0`).
+    // Unlimited period when `max_per_period == 0` (explicit admin choice or implicit tiny supply).
     if max_per_period == 0 {
         return Ok(());
     }
@@ -82,16 +94,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terra_default_implicit_period_uses_supply_div_1000() {
+    fn implicit_defaults_match_evm_token_registry() {
+        // supply 1_000_000: min = 1, max_tx = max_period = 100
         let (min, max_tx, max_p) = resolve_effective_limits(false, 0, 0, 0, 1_000_000);
-        assert_eq!(min, 0);
-        assert_eq!(max_tx, 0);
-        assert_eq!(max_p, 1000);
+        assert_eq!(min, 1);
+        assert_eq!(max_tx, 100);
+        assert_eq!(max_p, 100);
     }
 
     #[test]
-    fn terra_default_zero_supply_uses_constant() {
-        let (_, _, max_p) = resolve_effective_limits(false, 0, 0, 0, 0);
+    fn implicit_large_supply_matches_formula() {
+        let supply = 10_000_000_000_000u128;
+        let (min, max_tx, max_p) = resolve_effective_limits(false, 0, 0, 0, supply);
+        assert_eq!(min, supply / DEFAULT_MIN_DIVISOR);
+        assert_eq!(max_tx, supply / DEFAULT_MAX_DIVISOR);
+        assert_eq!(max_p, max_tx);
+    }
+
+    #[test]
+    fn implicit_zero_mint_supply_uses_period_floor_only() {
+        let (min, max_tx, max_p) = resolve_effective_limits(false, 0, 0, 0, 0);
+        assert_eq!(min, 0);
+        assert_eq!(max_tx, 0);
         assert_eq!(max_p, DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY);
     }
 

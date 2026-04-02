@@ -21,3 +21,7 @@ Earlier versions of the UI always called `deposit_native` while only changing th
 
 - On-chain: `packages/contracts-solana/programs/cl8y-bridge/src/instructions/deposit_native.rs`, `deposit_spl.rs`
 - Frontend: `packages/frontend/src/services/solana/transaction.ts`, `packages/frontend/src/hooks/useSolanaDeposit.ts`, `packages/frontend/src/components/transfer/TransferForm.tsx`
+
+## Withdrawals and rate limits
+
+Outgoing withdrawals (SPL via `withdraw_execute`, native SOL via `withdraw_execute_native`) enforce **withdraw rate limits** at execution time. This is not optional for security: limits include **minimum per transaction**, **maximum per transaction**, and **maximum per 24h window**, reducing maximum extract in incident scenarios. Until admin `set_rate_limit` runs, implicit defaults match **EVM `TokenRegistry`** / **Terra `add_token`** (min = `supply / 10^6`, per-tx and period caps = `supply / 10^4`; native SOL path: see `rate_limit.rs`). Operators should still configure explicit production limits per `local_mint` (and native-SOL mapping key) where policy requires overrides; see [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) (INV-W4) and [security-model.md](./security-model.md) (rate limiting).

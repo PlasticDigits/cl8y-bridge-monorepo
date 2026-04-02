@@ -1543,6 +1543,33 @@ export function TransferForm() {
       }
       const destAccount = encodeTerraAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
+    } else if (direction === 'evm-to-solana') {
+      // EVM → Solana: same Bridge.depositERC20 path; dest account is pubkey as bytes32
+      if (!recipientAddr?.trim()) {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      try {
+        new PublicKey(recipientAddr)
+      } catch {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      if (!tokenConfig) {
+        setError('Token configuration not available for this network')
+        frozenChainsRef.current = null
+        return
+      }
+      const destChainBytes4Sol = destConfig?.bytes4ChainId as Hex | undefined
+      if (!destChainBytes4Sol) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destAccountSol = solanaAddressToBytes32(recipientAddr) as Hex
+      await evmDeposit(amount, destChainBytes4Sol, destAccountSol, tokenConfig.decimals)
     } else {
       // EVM → EVM: depositERC20 on Bridge (V2) with bytes4 dest chain ID
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {

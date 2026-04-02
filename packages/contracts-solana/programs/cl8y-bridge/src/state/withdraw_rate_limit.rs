@@ -4,8 +4,10 @@ use anchor_lang::prelude::*;
 #[account]
 #[derive(InitSpace)]
 pub struct WithdrawRateLimit {
-    /// When true, `min_*` / `max_*` are used as set by admin (EVM `TokenRegistry` semantics).
-    /// When false, Terra-style implicit limits apply: no min, no per-tx cap, period cap = supply/1000 or default.
+    /// When true, stored fields are used as set by admin (`set_rate_limit`, EVM `setRateLimit` parity).
+    /// When false, implicit defaults match EVM `_setDefaultRateLimits` / Terra `add_token` auto limits:
+    /// min = supply/1e6, max per tx = supply/1e4, max per period = max per tx; zero SPL supply uses a
+    /// fixed period floor (native SOL path) — see `rate_limit::resolve_effective_limits`.
     pub explicit_config: bool,
     pub min_per_transaction: u128,
     pub max_per_transaction: u128,

@@ -1000,6 +1000,10 @@ register_token instruction with:
   mode: LockUnlock or MintBurn
 ```
 
+### 10c-ops. Bridge withdraw rate limits (not optional)
+
+**Bridge** withdraw rate limiting (per SPL mint and native SOL mapping) is distinct from **RPC** endpoint rate limits mentioned elsewhere in this document. It is a **required operational security control**: admin `set_rate_limit` on the Solana program configures min per transaction, max per transaction, and max per 24h window for payouts on execute. Production deployments **must** use risk-appropriate values; explicit configuration with all limits set to zero disables the per-period cap and must not be used as a production policy. See [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) (INV-W4), [security-model.md](./security-model.md), and [SPL_BRIDGE_SECURITY_AUDIT.md](./SPL_BRIDGE_SECURITY_AUDIT.md).
+
 ### 10d. Deployment Sequence
 
 ```

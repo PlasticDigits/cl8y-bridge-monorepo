@@ -263,9 +263,15 @@ export async function registerChainIfNeeded(
 }
 
 /**
- * Sets explicit withdraw rate limits to zero (unlimited min/tx/period), matching admin `set_rate_limit`
- * semantics used in production registries. Implicit defaults use mint supply/1000 per 24h for SPL,
- * which security suites can exceed across many withdrawals in one validator run.
+ * Test-only helper: sets **explicit** withdraw rate limits to zero via admin `set_rate_limit`.
+ * On-chain, explicit zeros mean no min, no per-tx cap, and **no 24h period cap** (`max_per_period == 0`
+ * short-circuit in `rate_limit.rs`). **Do not use this configuration in production**—withdraw rate
+ * limits are core security: they cap how much an attacker can extract if other controls fail.
+ *
+ * Use this only in unit/Anchor suites that are **not** asserting rate-limit behavior. Without it,
+ * many tests would hit **implicit** defaults when the PDA was never explicitly configured: same
+ * formula as EVM `TokenRegistry` / Terra `add_token` auto limits (`min = supply/1e6`, per-tx and
+ * 24h period = `supply/1e4`), which tight suites can exceed across many withdrawals in one run.
  */
 export async function setExplicitUnlimitedWithdrawRateLimit(
   ctx: TestContext,

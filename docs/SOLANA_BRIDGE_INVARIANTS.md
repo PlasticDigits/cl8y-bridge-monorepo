@@ -67,7 +67,13 @@ When Terra is the **source** of a transfer to Solana, the depositor’s `dest_ac
 
 Approved, non-cancelled, non-executed invariants for approve/cancel/execute; delay enforced after approve.
 
-| Evidence | `cancel_flow.test.ts`, `cancel_blocks_theft.test.ts`, `rate_limit_integration.test.ts`, `full_security_audit.test.ts` |
+| Evidence | `cancel_flow.test.ts`, `cancel_blocks_theft.test.ts`, `full_security_audit.test.ts`, `deposit_withdraw.test.ts` |
+
+### INV-W4 — Withdraw rate limits (SPL and native)
+
+`withdraw_execute` and `withdraw_execute_native` apply per–local-mint withdraw rate limits (24h rolling window, aligned with Terra Classic and EVM semantics). Limits are **core risk mitigation**: they bound how much can be paid out per window even if operators or other controls are abused. When the withdraw-rate-limit PDA is first created without admin `set_rate_limit`, **implicit** defaults match **EVM `TokenRegistry` auto registration** and **Terra `add_token` auto `RATE_LIMITS`**: min per tx = `supply / 1_000_000`, max per tx = `supply / 10_000`, max per 24h = max per tx (see `programs/cl8y-bridge/src/rate_limit.rs`). The native-SOL execute path passes zero mint supply and uses a fixed period floor only. Operators may override with explicit `set_rate_limit`. **Production must not** rely on explicit all-zero limits, which disable the per-period cap (and min / per-tx checks when all three are zero).
+
+| Evidence | `programs/cl8y-bridge/src/instructions/withdraw_execute.rs`, `withdraw_execute_native.rs`; Rust unit tests in `programs/cl8y-bridge/src/rate_limit.rs`; `rate_limit_integration.test.ts` (admin PDA / explicit config layout) |
 
 ---
 
