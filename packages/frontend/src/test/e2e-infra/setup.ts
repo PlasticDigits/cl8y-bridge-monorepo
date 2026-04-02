@@ -70,7 +70,7 @@ export default async function setup(): Promise<void> {
   const start = Date.now()
 
   try {
-    // Match Terra LCD/RPC to QA host (e.g. 1318) before health checks — avoids false "down" + full redeploy.
+    // Match Terra LCD/RPC from .env.e2e.local / process.env before health checks — avoids false "down" + full redeploy.
     loadE2eEnvFile(ENV_FILE)
 
     // Skip full re-deployment if .env.e2e.local already exists and chains are healthy

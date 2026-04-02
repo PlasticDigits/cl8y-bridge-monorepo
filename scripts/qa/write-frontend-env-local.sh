@@ -46,9 +46,8 @@ if [ ! -f "$DEPLOY_ENV" ]; then
   echo "[write-frontend-env-local] No ${DEPLOY_ENV} — writing VITE_* URLs only (--urls-only); bridge addresses will be empty." >&2
 fi
 
-# Match shared-host QA URLs (remapped Terra ports) so laptop + SSH -L match server loopback.
-# Source deploy env *before* qa-host.env: .deploy/local.env may contain TERRA_LCD_URL / TERRA_RPC_URL
-# from older tooling (e.g. localhost:1317) and would otherwise overwrite remapped ports (1318/26658).
+# Source deploy env *before* qa-host.env: .deploy/local.env may set TERRA_LCD_URL / TERRA_RPC_URL;
+# qa-host.env (and QA_SHARED_HOST) then aligns them with docker-compose publish ports.
 export QA_SHARED_HOST="${QA_SHARED_HOST:-1}"
 set -a
 if [ -f "$DEPLOY_ENV" ]; then

@@ -40,11 +40,11 @@ fi
 [ -n "${VITE_TERRA_BRIDGE_ADDRESS:-}" ] && TERRA_BRIDGE_ADDRESS="${TERRA_BRIDGE_ADDRESS:-$VITE_TERRA_BRIDGE_ADDRESS}"
 [ -n "${VITE_SOLANA_PROGRAM_ID:-}" ] && SOLANA_PROGRAM_ID="${SOLANA_PROGRAM_ID:-$VITE_SOLANA_PROGRAM_ID}"
 
-# Defaults align with scripts/qa/qa-host.env (remapped LocalTerra + operator 9194 — not Prometheus 9092).
+# Defaults align with docker-compose LocalTerra + scripts/qa/qa-host.env (26657 RPC, 1317 LCD).
 EVM_RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"
 EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"
-TERRA_RPC_URL="${TERRA_RPC_URL:-http://127.0.0.1:26658}"
-TERRA_LCD_URL="${TERRA_LCD_URL:-http://127.0.0.1:1318}"
+TERRA_RPC_URL="${TERRA_RPC_URL:-http://127.0.0.1:26657}"
+TERRA_LCD_URL="${TERRA_LCD_URL:-http://127.0.0.1:1317}"
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-http://127.0.0.1:8899}"
 DATABASE_URL="${DATABASE_URL:-postgres://operator:operator@127.0.0.1:5433/operator}"
 OPERATOR_API_URL="${OPERATOR_API_URL:-http://127.0.0.1:9194}"
