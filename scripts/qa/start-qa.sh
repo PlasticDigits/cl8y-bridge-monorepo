@@ -73,8 +73,10 @@ else
 fi
 
 echo "==> Syncing LocalTerra host ports from docker compose (LCD/RPC URLs for wait + deploy + .env.e2e.local)..."
+LOCALTERRA_URL_SYNC_MODE=strict
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+unset LOCALTERRA_URL_SYNC_MODE
 echo "[start-qa] LocalTerra LCD=$TERRA_LCD_URL RPC=$TERRA_RPC_URL"
 
 echo "==> Waiting for chain RPCs: EVM + EVM1 + Terra + Solana (up to ~90s)..."

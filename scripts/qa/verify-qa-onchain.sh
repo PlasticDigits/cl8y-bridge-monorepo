@@ -18,8 +18,10 @@ source "$REPO_ROOT/.deploy/local.env"
 source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
+LOCALTERRA_URL_SYNC_MODE=strict
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+unset LOCALTERRA_URL_SYNC_MODE
 
 EVM_RPC_URL="${EVM_RPC_URL:-http://127.0.0.1:8545}"
 EVM1_RPC_URL="${EVM1_RPC_URL:-http://127.0.0.1:8546}"

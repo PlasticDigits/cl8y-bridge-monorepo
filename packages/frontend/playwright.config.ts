@@ -11,6 +11,9 @@
  *   npx playwright test              # Run all E2E tests
  *   npx playwright test --ui         # Open Playwright UI mode
  *   npx playwright test --headed     # Run with visible browser
+ *
+ * Against an existing QA stack (keep Docker, .env.e2e.local, operator):
+ *   E2E_SKIP_TEARDOWN=1 npx playwright test e2e/some.spec.ts
  */
 
 import { defineConfig, devices } from '@playwright/test'

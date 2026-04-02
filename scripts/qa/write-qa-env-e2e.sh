@@ -21,8 +21,10 @@ source "$REPO_ROOT/.deploy/local.env"
 source "$REPO_ROOT/scripts/qa/qa-host.env"
 set +a
 
+LOCALTERRA_URL_SYNC_MODE=strict
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/qa/sync-localterra-compose-ports.sh"
+unset LOCALTERRA_URL_SYNC_MODE
 
 E2E_OUT="$REPO_ROOT/.env.e2e.local"
 
