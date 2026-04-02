@@ -38,6 +38,12 @@ interface TerraPendingWithdrawQuery {
   }
 }
 
+interface TerraTransactionQuery {
+  transaction: {
+    nonce: number
+  }
+}
+
 // Terra contract response types (from LCD JSON)
 interface TerraDepositInfoResponse {
   xchain_hash_id: string // base64 Binary
@@ -49,6 +55,17 @@ interface TerraDepositInfoResponse {
   amount: string // Uint128 as string
   nonce: number // u64
   deposited_at: string // CosmWasm Timestamp: nanoseconds as string
+}
+
+interface TerraTransactionResponse {
+  nonce: number
+  sender: string
+  recipient: string
+  token: string
+  amount: string
+  dest_chain: string
+  timestamp: string
+  is_outgoing: boolean
 }
 
 interface TerraPendingWithdrawResponse {
@@ -74,6 +91,25 @@ interface TerraPendingWithdrawResponse {
  * Query Terra bridge deposit by hash.
  * Returns null if deposit not found.
  */
+/**
+ * Load outgoing bridge transaction by nonce (includes local `token` = denom or CW20 address).
+ * Used when the transfer record lost `token` (e.g. hash-only lookup) or stored a wrong bytes32.
+ */
+export async function queryTerraBridgeTransactionByNonce(
+  lcdUrls: string[],
+  bridgeAddress: string,
+  nonce: number,
+): Promise<TerraTransactionResponse | null> {
+  try {
+    const query: TerraTransactionQuery = {
+      transaction: { nonce },
+    }
+    return await queryContract<TerraTransactionResponse>(lcdUrls, bridgeAddress, query)
+  } catch {
+    return null
+  }
+}
+
 export async function queryTerraDeposit(
   lcdUrls: string[],
   bridgeAddress: string,

@@ -546,15 +546,72 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           transfer.srcAccount || '',
         )
 
-        // EVM→Solana: withdraw_submit + transfer hash must use the same bytes32 as
-        // Bridge.deposit (TokenRegistry.getDestToken). Always prefer a live registry read
-        // over transfer.destToken — a persisted non-zero wrong value (e.g. stale row, or
-        // Terra-style keccak mistaken for a mint) would never refresh if we only
-        // queried when destToken was empty (same class of bug as glab #89 for Terra).
-        let destTokenHex: string | undefined = transfer.destToken
         const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
         const chains = BRIDGE_CHAINS[tier]
         const srcCfg = chains[transfer.sourceChain]
+
+        // Local Terra token id (denom / CW20 bech32) for TokenMapping PDA + token_dest_mapping.
+        // Synthetic records from hash lookup often omit `token`; receipt may wrongly carry a bytes32.
+        let terraLocalTokenId = transfer.token?.trim() || ''
+        const initialTokenLooksLikeBytes32Hex =
+          terraLocalTokenId.startsWith('0x') && terraLocalTokenId.length === 66
+        const nonceOk = transfer.depositNonce !== undefined && transfer.depositNonce !== null
+        if (
+          srcCfg?.type === 'cosmos' &&
+          srcCfg.bridgeAddress &&
+          nonceOk &&
+          (!terraLocalTokenId || initialTokenLooksLikeBytes32Hex)
+        ) {
+          const lcdUrls =
+            srcCfg.lcdFallbacks?.length ? [...srcCfg.lcdFallbacks] : srcCfg.lcdUrl ? [srcCfg.lcdUrl] : []
+          if (lcdUrls.length > 0) {
+            const row = await queryTerraBridgeTransactionByNonce(
+              lcdUrls,
+              srcCfg.bridgeAddress,
+              transfer.depositNonce as number,
+            )
+            if (row?.token) {
+              if (terraLocalTokenId && terraLocalTokenId !== row.token) {
+                console.warn(
+                  `${LOG} Replacing transfer.token (${terraLocalTokenId.slice(0, 22)}…) ` +
+                    `with Terra bridge transaction.token=${row.token.slice(0, 24)}… for Solana withdrawSubmit`
+                )
+              }
+              terraLocalTokenId = row.token
+            }
+          }
+        }
+
+        const terraTokenIdForMapping = terraLocalTokenId
+        const mappingKeyIsTerraShaped =
+          !!terraTokenIdForMapping &&
+          !(terraTokenIdForMapping.startsWith('0x') && terraTokenIdForMapping.length === 66)
+
+        // EVM→Solana: prefer TokenRegistry.getDestToken (raw SPL mint bytes32).
+        // Terra→Solana: prefer Terra `token_dest_mapping` for (local token, Solana chain) — same
+        // bytes the Terra contract used in the deposit hash (glab #94 / #89 class of bugs).
+        let destTokenHex: string | undefined = transfer.destToken
+        if (
+          srcCfg?.type === 'cosmos' &&
+          destChainConfig.bytes4ChainId &&
+          mappingKeyIsTerraShaped
+        ) {
+          try {
+            const mapped = await queryTokenDestMapping(terraTokenIdForMapping, destChainConfig.bytes4ChainId)
+            if (mapped?.hex) {
+              const prev = destTokenHex?.toLowerCase()
+              if (prev && prev !== mapped.hex.toLowerCase()) {
+                console.warn(
+                  `${LOG} Solana destToken from transfer record (${prev.slice(0, 18)}…) ` +
+                    `differs from Terra token_dest_mapping; using LCD bytes32 (raw SPL mint).`
+                )
+              }
+              destTokenHex = mapped.hex
+            }
+          } catch (e) {
+            console.warn(`${LOG} Terra token_dest_mapping (Solana dest) failed:`, e)
+          }
+        }
         if (srcCfg?.type === 'evm' && srcCfg.bridgeAddress && transfer.token?.startsWith('0x') && destChainConfig.bytes4ChainId) {
           try {
             const srcClient = getEvmClient(srcCfg)
@@ -565,7 +622,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               destChainConfig.bytes4ChainId as Hex
             )
             if (dt) {
-              const prev = transfer.destToken?.toLowerCase()
+              const prev = destTokenHex?.toLowerCase()
               if (prev && prev !== dt.toLowerCase()) {
                 console.warn(
                   `${LOG} Solana destToken from transfer record (${prev.slice(0, 18)}…) ` +
@@ -587,15 +644,30 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
-        const srcTokenBytes = resolveWithdrawSrcTokenBytesForSolana(transfer.token || '')
+        const solanaSrcTokenKey =
+          srcCfg?.type === 'cosmos' && mappingKeyIsTerraShaped ? terraTokenIdForMapping : transfer.token || ''
+        const srcTokenBytes = resolveWithdrawSrcTokenBytesForSolana(solanaSrcTokenKey)
         if (!srcTokenBytes || srcTokenBytes.length !== 32) {
           const msg =
             'Could not resolve source token for Solana withdrawSubmit (expected EVM 0x address/bytes32, or Terra denom/CW20)'
-          console.error(`${LOG} ${msg}`, { token: transfer.token })
+          console.error(`${LOG} ${msg}`, { token: transfer.token, terraLocalTokenId, solanaSrcTokenKey })
           setPhase('error')
           setError(msg)
           submittedRef.current = false
           return
+        }
+
+        if (
+          terraLocalTokenId &&
+          (terraLocalTokenId !== transfer.token ||
+            (destTokenHex && destTokenHex.toLowerCase() !== transfer.destToken?.toLowerCase()))
+        ) {
+          updateTransferRecord(transfer.id, {
+            ...(terraLocalTokenId !== transfer.token ? { token: terraLocalTokenId } : {}),
+            ...(destTokenHex && destTokenHex.toLowerCase() !== transfer.destToken?.toLowerCase()
+              ? { destToken: destTokenHex }
+              : {}),
+          })
         }
 
         const mintPkToHex = (pk: PublicKey) =>
@@ -618,10 +690,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               const solMintHex = mintPkToHex(mappedMint).toLowerCase()
               if (solMintHex !== destTokenHex.toLowerCase()) {
                 const msg =
-                  'EVM TokenRegistry getDestToken does not match Solana TokenMapping.local_mint (withdraw_submit would fail). ' +
-                  'Re-register the Anvil→Solana mapping: setTokenDestinationWithDecimals must store raw SPL mint bytes ' +
-                  '(same as splMintToBytes32Hex in register-tokens), not keccak(UTF-8) or other encodings. ' +
-                  `registry=${destTokenHex.slice(0, 22)}… Solana local_mint=${solMintHex.slice(0, 22)}…`
+                  'Solana withdrawSubmit dest mint does not match TokenMapping.local_mint (withdraw_submit would fail). ' +
+                  'Re-register mappings: EVM→Solana uses setTokenDestinationWithDecimals with raw SPL mint bytes; ' +
+                  'Terra→Solana uses set_token_destination with splMintToBytes32Hex (not keccak of mint strings). ' +
+                  `expected_mint≈${destTokenHex.slice(0, 22)}… mapping_mint=${solMintHex.slice(0, 22)}…`
                 console.error(`${LOG} ${msg}`)
                 setPhase('error')
                 setError(msg)
