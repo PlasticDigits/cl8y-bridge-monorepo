@@ -2,7 +2,7 @@
 
 This document covers the complete step-by-step process for deploying the CL8Y Bridge Solana integration to mainnet with noneconomic test tokens (testa, testb, tdec) across all four chains (BSC, opBNB, Terra Classic, Solana), including a CL8Y rate-limit safety measure.
 
-**Important:** On live BSC/opBNB today, **`TokenRegistry.rateLimitBridge`** and **`Bridge.guardBridge`** are unset, so **registry-stored limits and `TokenRateLimit` guards do not run**. Complete **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** before the rest of the rollout unless you explicitly accept unenforced EVM-side caps.
+**Important:** On live BSC/opBNB, **`TokenRegistry.rateLimitBridge == address(0)`** or **`Bridge.guardBridge == address(0)`** is a **critical security gap**: registry withdraw limits and the guard stack (including **`TokenRateLimit`**) **never run**, regardless of values in storage. After **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)**, **[verify wiring](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)**; if either address is zero on a chain, **fix it immediately** (Steps 2–3) **before** Solana registration, mapping work, or other rollout steps.
 
 Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
 
@@ -77,8 +77,8 @@ Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, 
 | Cancel window | 300s (5 min) on both EVM and Terra |
 | EVM fee | 50 bps (0.50%) |
 | Terra fee | 30 bps (0.30%) |
-| GuardBridge (EVM) | Not set (`address(0)`) |
-| rateLimitBridge (EVM) | Not set (`address(0)`) |
+| GuardBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
+| rateLimitBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
 
 ### Live Token Registrations
 
@@ -130,7 +130,7 @@ LCD `incoming_token_mappings` therefore shows a **32-byte `src_token`** that **d
 
 **EVM side:** There is **no** symmetric `incoming` table on `TokenRegistry`; **BSC → Terra** destination selection is validated **off-chain by the operator** when approving the Terra-origin withdrawal that pays out on BSC ([OPERATIONAL_NOTES.md §12](../packages/contracts-evm/OPERATIONAL_NOTES.md)). That is unrelated to Terra’s on-chain incoming map for **BSC → Terra**.
 
-`cast call` can confirm CL8Y ERC20 is **registered** on BSC `TokenRegistry`. **`rateLimitBridge` may still be `0x0`**, so registry-backed withdraw limits are **not** enforced on EVM until `setRateLimitBridge` is called. **opBNB:** CL8Y is usually **not** registered there (no CL8Y route on opBNB in the default matrix); confirm with `tokenRegistered` before sending any `setRateLimit` on opBNB.
+`cast call` can confirm CL8Y ERC20 is **registered** on BSC `TokenRegistry`. If **`rateLimitBridge`** is **`address(0)`**, registry-backed withdraw limits are **not** enforced—that is a **critical** misconfiguration until wired (see prerequisite). **opBNB:** CL8Y is usually **not** registered there (no CL8Y route on opBNB in the default matrix); confirm with `tokenRegistered` before sending any `setRateLimit` on opBNB.
 
 CL8Y is deliberately **not** getting Solana destination mappings in this deployment. Only noneconomic test tokens will be bridged to Solana.
 
@@ -144,7 +144,7 @@ CL8Y is deliberately **not** getting Solana destination mappings in this deploym
 | tdec | `1000` | `5000` |
 | uluna | `646781276175022` | `646781276175022` |
 
-**EVM rate limits**: `rateLimitBridge` is `address(0)` on BSC/opBNB, so `TokenRegistry` withdraw rate limits are **not enforced**. `guardBridge` is also `address(0)`, so `TokenRateLimit` guard is not active. Rate limit values exist in storage (e.g. tokena: min=1e18, max=1e21, period=5e21) but are effectively dormant. See **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** to enable enforcement safely.
+**EVM rate limits**: If `rateLimitBridge` or `guardBridge` is `address(0)`, limits in `TokenRegistry` storage and **`TokenRateLimit`** **do not** apply on-chain—a **critical** gap. Confirm live pointers with **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** and correct before proceeding. When wired, stored configs (e.g. tokena: min=1e18, max=1e21, period=5e21) take effect as designed.
 
 ### Contract Upgrade Analysis (feat/solana-integration vs main)
 
@@ -158,25 +158,22 @@ CL8Y is deliberately **not** getting Solana destination mappings in this deploym
 
 ## Prerequisite: EVM rate limits (BSC and opBNB)
 
-Do this **before** Solana registration and token mapping work if you want **withdraw** caps enforced via `TokenRegistry` and optional **deposit + withdraw** caps via `TokenRateLimit` + `GuardBridge`.
+Complete this **before** Solana registration and token mapping. **`rateLimitBridge` and `guardBridge` must not remain `address(0)`** on BSC or opBNB: with either unset, **withdraw registry limits and the guard path are disabled** on-chain—a **critical** exposure. Stored `setRateLimit` values and guard modules do nothing until the Bridge and registry are wired.
 
-### Two mechanisms (both are currently off)
+### Two mechanisms (both must be wired in production)
 
-| Mechanism | What it does | Live state |
-|-----------|----------------|------------|
-| **`TokenRegistry` + `rateLimitBridge`** | When `rateLimitBridge` is the **Bridge proxy**, the bridge calls `checkAndUpdateWithdrawRateLimit` on withdraw execution (registry stores min / max-per-tx / 24h period per token). **Deposit-side registry hook is a no-op.** | `rateLimitBridge == address(0)` |
-| **`GuardBridge` + `TokenRateLimit`** | When `Bridge.guardBridge` is set, the bridge calls `checkDeposit` / `checkWithdraw` on the guard stack. `TokenRateLimit` enforces **separate** 24h deposit and withdraw windows (global per token, not per user). | `guardBridge == address(0)` |
+| Mechanism | What it does | If pointer is `address(0)` |
+|-----------|----------------|----------------------------|
+| **`TokenRegistry` + `rateLimitBridge`** | When `rateLimitBridge` is the **Bridge proxy**, the bridge calls `checkAndUpdateWithdrawRateLimit` on withdraw execution (registry stores min / max-per-tx / 24h period per token). **Deposit-side registry hook is a no-op.** | Registry withdraw limits **never run**. |
+| **`GuardBridge` + `TokenRateLimit`** | When `Bridge.guardBridge` is set, the bridge calls `checkDeposit` / `checkWithdraw` on the guard stack. `TokenRateLimit` can enforce **separate** 24h deposit and withdraw windows (global per token, not per user). | Guard hooks **never run** (no deposit/withdraw checks via the stack). |
 
 See [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md) for guard wiring.
 
 ### Order of operations (recommended)
 
 1. [Nonce alignment](#nonce-alignment-for-matching-addresses) if you plan **new** deployments (`GuardBridge`, `TokenRateLimit`, extra modules).
-2. On **each** chain (BSC, then opBNB with same logical config):
-   - **Audit** `getRateLimitConfig(token)` for every registered token you care about.
-   - Set **explicit** `setRateLimit` values where defaults are wrong (especially **generous** limits for noneconomic test tokens, **tight** limits for CL8Y BSC if you are about to enable enforcement).
-   - Call **`TokenRegistry.setRateLimitBridge(0xb2a22c74da8e3642e0effc107d3ac362ce885369)`** as **owner** (`0xCd4Eb…`). Repeat on opBNB pointing at the **opBNB Bridge proxy** (same address today).
-3. Optionally deploy **`TokenRateLimit`** + **`GuardBridge`** (+ datastore / AccessManager roles), register the rate-limit module, then **`Bridge.setGuardBridge(guardBridge)`**. This is more work but activates **deposit** rate limits; there is **no** repo `script/*.s.sol` today—mirror `packages/contracts-evm/test/TokenRateLimit.t.sol` or add a Foundry script.
+2. **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)** (storage limits), then **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** (live wiring). If **`rateLimitBridge == address(0)`** on a chain, complete **[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc)** for that chain **immediately** (after setting appropriate `setRateLimit` values). If **`guardBridge == address(0)`**, complete **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for that chain **immediately**. Re-run Step 1b until both addresses are correct on **BSC and opBNB** before Solana or mapping work.
+3. **Tune policy** on each chain: adjust `setRateLimit` per token as needed (generous test tokens, tight CL8Y if required). Step 2 wiring must already be in place so changes take effect on withdraw.
 
 ### Nonce alignment for matching addresses
 
@@ -232,6 +229,29 @@ cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
 
 Interpretation: `setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)` — **`maxPerPeriod == 0` means unlimited** for the 24h window; use **non-zero** caps when tightening CL8Y.
 
+### Step 1b — Verify `rateLimitBridge` and `guardBridge` (critical)
+
+Immediately after Step 1, confirm the **Bridge** is actually wired to enforce registry withdraw limits and the guard stack. **`rateLimitBridge() == address(0)`** or **`guardBridge() == address(0)`** is a **critical** defect: limits in storage and guard modules **do not execute** until these are set.
+
+Expected when healthy: **`rateLimitBridge`** equals the chain’s **Bridge proxy** (`0xb2a22c74da8e3642e0effc107d3ac362ce885369`); **`guardBridge`** equals your deployed **`GuardBridge`** (never `address(0)` in production).
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC_BSC=https://bsc-dataseed1.binance.org
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+
+echo "=== BSC TokenRegistry.rateLimitBridge / Bridge.guardBridge ==="
+cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_BSC"
+cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_BSC"
+
+echo "=== opBNB TokenRegistry.rateLimitBridge / Bridge.guardBridge ==="
+cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_OPBNB"
+cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_OPBNB"
+```
+
+If **either** call returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. **Do not** continue with Solana chain registration, token mappings, or operator rollout until both pointers are non-zero and correct on **both** BSC and opBNB.
+
 ### Step 2 — Set limits, then activate `rateLimitBridge` (BSC)
 
 **Owner** signs (multi-sig or EOA per your process):
@@ -269,9 +289,9 @@ RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_OPBNB" --interactive
 ```
 
-### Step 3 — Optional: `TokenRateLimit` + `GuardBridge`
+### Step 3 — `TokenRateLimit` + `GuardBridge` (required when `guardBridge` is zero)
 
-- Deploy using the **same constructor pattern** as tests (`TokenRateLimit(accessManager)`, `GuardBridge(accessManager, datastore)`), grant `restricted` caller rights, push module addresses into the guard’s datastore sets for deposit/withdraw, then:
+Required when Step 1b shows **`guardBridge == address(0)`** (treat as **critical** until fixed). Deploy using the **same constructor pattern** as tests (`TokenRateLimit(accessManager)`, `GuardBridge(accessManager, datastore)`), grant `restricted` caller rights, push module addresses into the guard’s datastore sets for deposit/withdraw, then:
 
 ```bash
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
@@ -330,7 +350,7 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 
 ### Step 0.2: EVM rate limits during the safety window
 
-Follow **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** in full if you want registry-backed withdraw caps on BSC/opBNB. CL8Y on BSC is **`0x8f452a1fdd388a45e1080992eff051b4dd9048d2`** ([CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token)).
+Follow **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** in full. **`rateLimitBridge`** and **`guardBridge`** must be non-zero; use **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** to confirm, and fix immediately if either is `address(0)`. CL8Y on BSC is **`0x8f452a1fdd388a45e1080992eff051b4dd9048d2`** ([CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token)).
 
 **WARNING:** `setRateLimitBridge` enforces limits for **all** registered tokens on withdraw. Set **generous** explicit limits for noneconomic test tokens before enabling, or withdrawals for those tokens may fail.
 
@@ -982,7 +1002,7 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 If issues are discovered at any point:
 
 1. **Solana bridge**: The bridge PDA init is idempotent (skips if exists). If not yet initialized, simply don't initialize. If already live, the admin can pause deposits by not funding the operator or removing operator permissions.
-2. **EVM**: Chain registrations cannot be removed, but token destination mappings can be unset. Pause the bridge via `pause()` on the Bridge contract if critical. If you enabled registry withdraw caps, `setRateLimitBridge(address(0))` on `TokenRegistry` stops that enforcement; `setGuardBridge(address(0))` stops the guard path.
+2. **EVM**: Chain registrations cannot be removed, but token destination mappings can be unset. Pause the bridge via `pause()` on the Bridge contract if critical. **`setRateLimitBridge(address(0))` or `setGuardBridge(address(0))` re-creates the critical unwired state**—use only as an **emergency** brake, then restore correct non-zero addresses as soon as it is safe (see [Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)).
 3. **Terra**: Pause the bridge via `{"pause":{}}` execute msg. Remove token destinations or unregister chains as needed.
 4. **CL8Y**: Rate limit is already at minimum (1 base unit). Restore original values only after verification (Phase 7).
 5. **Operator/Canceler**: Remove `SOLANA_*` env vars and restart to disable Solana processing. Existing EVM/Terra flows are unaffected.
