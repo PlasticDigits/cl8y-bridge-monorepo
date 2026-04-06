@@ -150,7 +150,7 @@ export async function queryEvmDeposit(
       nonce: deposit.nonce,
       timestamp: deposit.timestamp,
     }
-  } catch (err) {
+  } catch {
     // Contract call failed (e.g., deposit not found, RPC error)
     return null
   }
@@ -222,7 +222,7 @@ export async function queryEvmPendingWithdraw(
       srcDecimals: Number(pendingWithdraw.srcDecimals),
       cancelWindowRemaining,
     }
-  } catch (err) {
+  } catch {
     // Contract call failed (e.g., withdraw not found, RPC error)
     return null
   }

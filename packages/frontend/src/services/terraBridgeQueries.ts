@@ -131,7 +131,7 @@ export async function queryTerraDeposit(
       nonce,
       timestamp,
     }
-  } catch (err) {
+  } catch {
     // Contract query failed (e.g., deposit not found, LCD error)
     return null
   }
@@ -222,7 +222,7 @@ export async function queryTerraPendingWithdraw(
       destTokenDenom: response.token,
       cancelWindowRemaining: response.cancel_window_remaining,
     }
-  } catch (err) {
+  } catch {
     // Contract query failed (e.g., withdraw not found, LCD error)
     return null
   }

@@ -8,9 +8,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { WagmiProvider } from 'wagmi'
 import { config } from './lib/wagmi'
 import { Layout } from './components/Layout'
+import { UnderConstructionPage } from './pages/UnderConstructionPage'
 import { validateEnv } from './utils/validateEnv'
 import { loadChainlist } from './utils/chainlist'
 import './index.css'
+
+const UNDER_CONSTRUCTION = import.meta.env.VITE_UNDER_CONSTRUCTION === 'true'
 
 validateEnv()
 
@@ -23,6 +26,16 @@ const HashVerificationPage = lazy(() => import('./pages/HashVerificationPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 function App() {
+  if (UNDER_CONSTRUCTION) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="*" element={<UnderConstructionPage />} />
+        </Routes>
+      </BrowserRouter>
+    )
+  }
+
   return (
     <BrowserRouter>
       <Routes>
@@ -89,7 +102,9 @@ function PageFallback() {
 }
 
 async function init() {
-  await loadChainlist()
+  if (!UNDER_CONSTRUCTION) {
+    await loadChainlist()
+  }
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <WagmiProvider config={config}>

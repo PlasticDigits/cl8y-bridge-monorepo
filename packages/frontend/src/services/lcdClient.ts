@@ -36,7 +36,7 @@ export async function fetchLcd<T>(
       }
 
       return await response.json()
-    } catch (err) {
+    } catch {
       // Continue to next fallback
       continue
     }

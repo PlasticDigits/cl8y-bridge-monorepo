@@ -18,6 +18,7 @@ const REQUIRED_ENV_VARS = [
 
 export function validateEnv(): void {
   if (import.meta.env.MODE !== 'production') return
+  if (import.meta.env.VITE_UNDER_CONSTRUCTION === 'true') return
 
   const missing = REQUIRED_ENV_VARS.filter(
     (key) => !import.meta.env[key]

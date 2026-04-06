@@ -3,6 +3,8 @@
 declare module 'react-blockies'
 
 interface ImportMetaEnv {
+  /** When "true", all routes show a static under-construction page (no bridge UI). */
+  readonly VITE_UNDER_CONSTRUCTION?: string
   readonly VITE_EVM_RPC_URL: string
   readonly VITE_TERRA_LCD_URL: string
   readonly VITE_EVM_BRIDGE_ADDRESS: string
