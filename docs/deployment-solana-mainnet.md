@@ -42,9 +42,12 @@ Mainnet **core bridge proxies** match on BSC and opBNB because the same deploy a
 **Always re-check nonces before any new contract deployment** you want mirrored:
 
 ```bash
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 export DEPLOYER=0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
-cast nonce "$DEPLOYER" --rpc-url https://bsc-dataseed1.binance.org
-cast nonce "$DEPLOYER" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+
+cast nonce "$DEPLOYER" --rpc-url "$RPC_BSC"
+cast nonce "$DEPLOYER" --rpc-url "$RPC_OPBNB"
 ```
 
 If nonces differ, the **next** `CREATE` deployment from that EOA will generally **not** yield the same contract address on both chains. Align them first (see [Nonce alignment](#nonce-alignment-for-matching-addresses) under the EVM prerequisite) or use **CREATE2** with an explicit salt (see [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md) §10 and deployment scripts using `Create3Deployer`).
@@ -177,22 +180,54 @@ See [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md) f
 
 ### Nonce alignment for matching addresses
 
-If BSC `nonce_B` > opBNB `nonce_O`, you must bring opBNB up to `nonce_B` **without** changing the intended multi-chain deploy sequence (or deploy only on BSC until you pause and sync). Typical approach:
+Use separate RPC env vars and compare **pending** transaction counts for the historical deployer on each chain:
 
-- From **`0xD699…`**, submit **self-transfers** (or other no-op txs) on **opBNB only** until `cast nonce` matches BSC **before** the first bytecode deploy you need to match.
+```bash
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+export DEPLOYER=0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
 
-Never assume nonces stay equal; always measure immediately before a paired deploy.
+NONCE_BSC=$(cast nonce "$DEPLOYER" --rpc-url "$RPC_BSC")
+NONCE_OPBNB=$(cast nonce "$DEPLOYER" --rpc-url "$RPC_OPBNB")
+echo "BSC nonce: $NONCE_BSC   opBNB nonce: $NONCE_OPBNB"
+```
 
-### Step 1 — Inspect registry limits (BSC example)
+If **opBNB lags BSC** (`NONCE_OPBNB` < `NONCE_BSC`), bump opBNB only: from that deployer EOA, send **zero-value self-transfers** (one transaction consumes one nonce). Sign with the key that controls `DEPLOYER`:
+
+```bash
+# Repeat this until cast nonce on opBNB equals BSC (check after each tx confirms)
+cast send "$DEPLOYER" --value 0 --rpc-url "$RPC_OPBNB" --interactive
+
+cast nonce "$DEPLOYER" --rpc-url "$RPC_BSC"
+cast nonce "$DEPLOYER" --rpc-url "$RPC_OPBNB"
+```
+
+If **BSC lags opBNB** (less common), do the same with `--rpc-url "$RPC_BSC"` instead—never raise the *ahead* chain’s nonce past the *behind* chain’s unless you intend a deliberately divergent deploy.
+
+**Verify they match** immediately before any paired `CREATE` deploy:
+
+```bash
+[ "$(cast nonce "$DEPLOYER" --rpc-url "$RPC_BSC")" = "$(cast nonce "$DEPLOYER" --rpc-url "$RPC_OPBNB")" ] && echo "nonces match" || echo "nonces differ — stop and align"
+```
+
+Never assume nonces stay equal; always re-run the check right before a mirrored deployment.
+
+### Step 1 — Inspect registry limits (BSC and opBNB)
 
 ```bash
 TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
-RPC=https://bsc-dataseed1.binance.org
+RPC_BSC=https://bsc-dataseed1.binance.org
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 
+# BSC
 cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
-  0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c --rpc-url "$RPC"
+  0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c --rpc-url "$RPC_BSC"
 cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
-  0x8f452a1fdd388a45e1080992eff051b4dd9048d2 --rpc-url "$RPC"
+  0x8f452a1fdd388a45e1080992eff051b4dd9048d2 --rpc-url "$RPC_BSC"
+
+# opBNB (same TokenRegistry proxy address; token set differs—audit each registered token you care about)
+cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
+  0xF073d5685594F465a66EA54516f0D2f76b6cc6F3 --rpc-url "$RPC_OPBNB"
 ```
 
 Interpretation: `setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)` — **`maxPerPeriod == 0` means unlimited** for the 24h window; use **non-zero** caps when tightening CL8Y.
@@ -201,35 +236,55 @@ Interpretation: `setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)` — **`m
 
 **Owner** signs (multi-sig or EOA per your process):
 
+**BSC** (`RPC_BSC`):
+
 ```bash
 TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
-RPC=https://bsc-dataseed1.binance.org
+RPC_BSC=https://bsc-dataseed1.binance.org
 
 # Example: strict CL8Y withdraw cap (1 wei per tx and per 24h window) — adjust policy as ops requires
 cast send "$TR" \
   "setRateLimit(address,uint256,uint256,uint256)" \
   0x8f452a1fdd388a45e1080992eff051b4dd9048d2 \
   0 1 1 \
-  --rpc-url "$RPC" --interactive
+  --rpc-url "$RPC_BSC" --interactive
 
 # Example: keep test tokens usable (set explicitly if needed — values depend on your policy)
 # cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" <TOKENA> ...
 
 # Enable enforcement (Bridge applies withdraw checks)
-cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC" --interactive
+cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_BSC" --interactive
 ```
 
-Repeat on **opBNB** with `RPC=https://opbnb-mainnet-rpc.bnbchain.org` for **every token registered on opBNB** (see [CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token); CL8Y is usually **only** on BSC in the default deployment; skip CL8Y on opBNB if `tokenRegistered` is false).
+**opBNB** (`RPC_OPBNB`): repeat **`setRateLimit`** for **every token registered on opBNB**, then `setRateLimitBridge` on the **same** bridge proxy address (see [CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token); CL8Y is usually **only** on BSC—skip CL8Y on opBNB if `tokenRegistered` is false):
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+
+# cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" <OPBNB_TOKEN> ... --rpc-url "$RPC_OPBNB" --interactive
+
+cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_OPBNB" --interactive
+```
 
 ### Step 3 — Optional: `TokenRateLimit` + `GuardBridge`
 
 - Deploy using the **same constructor pattern** as tests (`TokenRateLimit(accessManager)`, `GuardBridge(accessManager, datastore)`), grant `restricted` caller rights, push module addresses into the guard’s datastore sets for deposit/withdraw, then:
 
 ```bash
-cast send 0xb2a22c74da8e3642e0effc107d3ac362ce885369 \
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC_BSC=https://bsc-dataseed1.binance.org
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+
+cast send "$BRIDGE" \
   "setGuardBridge(address)" <GUARD_BRIDGE> \
-  --rpc-url "$RPC" --interactive
+  --rpc-url "$RPC_BSC" --interactive
+
+cast send "$BRIDGE" \
+  "setGuardBridge(address)" <GUARD_BRIDGE> \
+  --rpc-url "$RPC_OPBNB" --interactive
 ```
 
 **Warning:** `TokenRateLimit` treats **`limit == 0` as “use default (0.1% supply)”**, not “block everything.” Set **explicit non-zero** small limits to clamp a token.
