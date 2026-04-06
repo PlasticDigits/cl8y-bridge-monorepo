@@ -172,7 +172,7 @@ See [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md) f
 ### Order of operations (recommended)
 
 1. [Nonce alignment](#nonce-alignment-for-matching-addresses) if you plan **new** deployments (`GuardBridge`, `TokenRateLimit`, extra modules).
-2. **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)** (storage limits), then **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** (live wiring). If **`rateLimitBridge == address(0)`** on a chain, complete **[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc)** for that chain **immediately** (after setting appropriate `setRateLimit` values). If **`guardBridge == address(0)`**, complete **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for that chain **immediately**. Re-run Step 1b until both addresses are correct on **BSC and opBNB** before Solana or mapping work.
+2. **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)** (storage limits), then **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** (live wiring). If **`rateLimitBridge == address(0)`** on a chain, complete **[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for that chain **immediately** (after setting appropriate `setRateLimit` values). If **`guardBridge == address(0)`**, complete **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for that chain **immediately**. Re-run Step 1b until both addresses are correct on **BSC and opBNB** before Solana or mapping work.
 3. **Tune policy** on each chain: adjust `setRateLimit` per token as needed (generous test tokens, tight CL8Y if required). Step 2 wiring must already be in place so changes take effect on withdraw.
 
 ### Nonce alignment for matching addresses
@@ -252,11 +252,13 @@ cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_OPBNB"
 
 The same pattern applies to **any EVM network** (substitute that chain’s `TokenRegistry` proxy, Bridge proxy, and RPC). See [Production Deployment Guide — §6.1a](./deployment-guide.md#61a-verify-ratelimitbridge-and-guardbridge-critical).
 
-If **either** call returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. **Do not** continue with Solana chain registration, token mappings, or operator rollout until both pointers are non-zero and correct on **both** BSC and opBNB.
+If **either** call returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. **Do not** continue with Solana chain registration, token mappings, or operator rollout until both pointers are non-zero and correct on **both** BSC and opBNB.
 
-### Step 2 — Set limits, then activate `rateLimitBridge` (BSC)
+### Step 2 — Set limits, then activate `rateLimitBridge` (BSC and opBNB)
 
-**Owner** signs (multi-sig or EOA per your process):
+**Live spot-check (BSC / opBNB):** **`rateLimitBridge()`** returns **`0x000…000`** today—stored **`getRateLimitConfig`** rows do **not** enforce until you **`setRateLimitBridge`**. Set **`setRateLimit`** for **every** registered token on that chain **first**, then enable the bridge pointer.
+
+**Signer:** **`TokenRegistry` owner** (README admin `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` or multisig).
 
 **BSC** (`RPC_BSC`):
 
@@ -265,51 +267,142 @@ TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
 RPC_BSC=https://bsc-dataseed1.binance.org
 
-# Example: strict CL8Y withdraw cap (1 wei per tx and per 24h window) — adjust policy as ops requires
-cast send "$TR" \
-  "setRateLimit(address,uint256,uint256,uint256)" \
+# Noneconomic test tokens — example aligns with typical live storage (reconcile with cast getRateLimitConfig):
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c \
+  1000000000000000000 1000000000000000000000 5000000000000000000000 \
+  --rpc-url "$RPC_BSC" --interactive
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52 \
+  1000000000000000000 1000000000000000000000 5000000000000000000000 \
+  --rpc-url "$RPC_BSC" --interactive
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0xe159c7a58d694fafba82221905d5a49e7f314330 \
+  1000000000000000000 1000000000000000000000 5000000000000000000000 \
+  --rpc-url "$RPC_BSC" --interactive
+
+# CL8Y on BSC — tight safety example (1 wei / tx and / 24h period); tune to policy
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
   0x8f452a1fdd388a45e1080992eff051b4dd9048d2 \
   0 1 1 \
   --rpc-url "$RPC_BSC" --interactive
 
-# Example: keep test tokens usable (set explicitly if needed — values depend on your policy)
-# cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" <TOKENA> ...
-
-# Enable enforcement (Bridge applies withdraw checks)
 cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_BSC" --interactive
+
+cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_BSC"
+# expect: 0xb2a22c74da8e3642e0effc107d3ac362ce885369
 ```
 
-**opBNB** (`RPC_OPBNB`): repeat **`setRateLimit`** for **every token registered on opBNB**, then `setRateLimitBridge` on the **same** bridge proxy address (see [CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token); CL8Y is usually **only** on BSC—skip CL8Y on opBNB if `tokenRegistered` is false):
+**opBNB** (`RPC_OPBNB`) — testa/testb **18** decimals; **tdec 12** decimals (limits in **base units**). CL8Y is usually **absent** on opBNB; confirm with **`tokenRegistered`** before setting a CL8Y row.
 
 ```bash
 TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
 RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 
-# cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" <OPBNB_TOKEN> ... --rpc-url "$RPC_OPBNB" --interactive
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0xF073d5685594F465a66EA54516f0D2f76b6cc6F3 \
+  1000000000000000000 1000000000000000000000 5000000000000000000000 \
+  --rpc-url "$RPC_OPBNB" --interactive
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e \
+  1000000000000000000 1000000000000000000000 5000000000000000000000 \
+  --rpc-url "$RPC_OPBNB" --interactive
+# tdec — 12 decimals; example caps (verify against getRateLimitConfig on opBNB):
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd \
+  1000 1000000000000000 5000000000000000 \
+  --rpc-url "$RPC_OPBNB" --interactive
 
 cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_OPBNB" --interactive
+
+cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_OPBNB"
 ```
 
 ### Step 3 — `TokenRateLimit` + `GuardBridge` (required when `guardBridge` is zero)
 
-Required when Step 1b shows **`guardBridge == address(0)`** (treat as **critical** until fixed). Deploy using the **same constructor pattern** as tests (`TokenRateLimit(accessManager)`, `GuardBridge(accessManager, datastore)`), grant `restricted` caller rights, push module addresses into the guard’s datastore sets for deposit/withdraw, then:
+Step 1b shows **`guardBridge == address(0)`** on mainnet. The [README](../README.md) has **no** **`GuardBridge`** row—you must **deploy** the stack **per chain**, **configure `AccessManagerEnumerable`** ([README](../README.md); **`0xa958d75c61227606df21e3261ba80dc399d19676`** on BSC and opBNB), **register** `TokenRateLimit` on `GuardBridge`, set **guard** limits, then **`Bridge.setGuardBridge`**.
+
+Follow [`TokenRateLimit.t.sol`](../packages/contracts-evm/test/TokenRateLimit.t.sol) (`setUp`, `test_Integration_With_GuardBridge`).
+
+#### 3.1 Deploy (`packages/contracts-evm`)
+
+Run once per RPC (**BSC**, then **opBNB**). New bytecode addresses each time unless you rely on CREATE3 + nonce alignment.
+
+```bash
+cd packages/contracts-evm
+
+ACCESS_MANAGER=0xa958d75c61227606df21e3261ba80dc399d19676
+RPC=<https://bsc-dataseed1.binance.org OR https://opbnb-mainnet-rpc.bnbchain.org>
+
+forge create src/DatastoreSetAddress.sol:DatastoreSetAddress \
+  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# DATASTORE=<0x…>
+
+forge create src/TokenRateLimit.sol:TokenRateLimit \
+  --constructor-args "$ACCESS_MANAGER" \
+  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# TOKEN_RATE_LIMIT=<0x…>
+
+forge create src/GuardBridge.sol:GuardBridge \
+  --constructor-args "$ACCESS_MANAGER" "$DATASTORE" \
+  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# GUARD_BRIDGE=<0x…>
+```
+
+#### 3.2 AccessManager — `grantRole` + `setTargetFunctionRole`
+
+Use an unused **`ROLE_ID`** (example **`64`**). **`ADMIN_EOA`** must be the account executing AccessManager txs (use multisig execution if admin is a safe).
+
+```bash
+AM=0xa958d75c61227606df21e3261ba80dc399d19676
+ADMIN_EOA=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+ROLE_ID=64
+RPC=<same chain as 3.1>
+
+cast send "$AM" "grantRole(uint64,address,uint32)" "$ROLE_ID" "$ADMIN_EOA" 0 \
+  --rpc-url "$RPC" --interactive
+
+# TokenRateLimit admin fns: setDepositLimit, setWithdrawLimit, setLimitsBatch
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$TOKEN_RATE_LIMIT" \
+  "[0x272d177d,0xb53da186,0xd5b4c456]" "$ROLE_ID" \
+  --rpc-url "$RPC" --interactive
+
+# GuardBridge: add/remove module selectors
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$GUARD_BRIDGE" \
+  "[0xf54365aa,0x51bacc80,0xe358b6f2,0xb0db329b,0xd02a94b4,0x823eae5d]" "$ROLE_ID" \
+  --rpc-url "$RPC" --interactive
+```
+
+Re-check selectors with **`cast sig`** after any bytecode change.
+
+#### 3.3 Register `TokenRateLimit` on `GuardBridge`
+
+```bash
+cast send "$GUARD_BRIDGE" "addGuardModuleDeposit(address)" "$TOKEN_RATE_LIMIT" \
+  --rpc-url "$RPC" --interactive
+cast send "$GUARD_BRIDGE" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_LIMIT" \
+  --rpc-url "$RPC" --interactive
+```
+
+#### 3.4 Set guard policy on `TokenRateLimit`
+
+**`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. Call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) per token. **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values.
+
+#### 3.5 `Bridge.setGuardBridge` (owner)
 
 ```bash
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
-RPC_BSC=https://bsc-dataseed1.binance.org
-RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+cast send "$BRIDGE" "setGuardBridge(address)" "$GUARD_BRIDGE" --rpc-url "$RPC" --interactive
 
-cast send "$BRIDGE" \
-  "setGuardBridge(address)" <GUARD_BRIDGE> \
-  --rpc-url "$RPC_BSC" --interactive
-
-cast send "$BRIDGE" \
-  "setGuardBridge(address)" <GUARD_BRIDGE> \
-  --rpc-url "$RPC_OPBNB" --interactive
+cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC"
 ```
 
-**Warning:** `TokenRateLimit` treats **`limit == 0` as “use default (0.1% supply)”**, not “block everything.” Set **explicit non-zero** small limits to clamp a token.
+Repeat **3.1–3.5** on the **other** chain’s **`$RPC`**.
+
+**Warning:** A mis-tuned **`TokenRateLimit`** can block deposits or **`withdrawExecute*`** at the guard layer.
+
+**Warning:** **`limit == 0`** on **`TokenRateLimit`** means **default cap**, not “disabled.”
 
 ---
 
