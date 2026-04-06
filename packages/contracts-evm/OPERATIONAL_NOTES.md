@@ -128,7 +128,7 @@ The Bridge now integrates with `GuardBridge` via `setGuardBridge(address)`. When
 - **Deposits:** `checkDeposit(token, netAmount, sender)` is called after fee calculation but before lock/burn.
 - **Withdraw executions:** `checkWithdraw(token, normalizedAmount, recipient)` is called after decimal normalization but before unlock/mint.
 
-**Guard disabled by default:** `guardBridge` starts as `address(0)`. When disabled, all guard checks are no-ops (zero-cost skip).
+**Guard disabled by default:** `guardBridge` starts as `address(0)`. When disabled, all guard checks are no-ops (zero-cost skip). **Production:** leaving `guardBridge` or **`TokenRegistry.rateLimitBridge`** as `address(0)` is a **critical** misconfiguration—on-chain rate limits and guard enforcement **do not run**. After deploying to a **new EVM chain**, or after **`registerChain`** work on an existing EVM deployment, verify both pointers per **[deployment-guide.md §6.1a](../../docs/deployment-guide.md#61a-verify-ratelimitbridge-and-guardbridge-critical)** (and the post-deploy **§9.3** query block).
 
 **Setting up guards:**
 1. Deploy `GuardBridge` via `AccessManagerEnumerable`

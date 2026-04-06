@@ -452,6 +452,12 @@ for TOKEN in $OPBNB_TESTA $OPBNB_TESTB $OPBNB_TDEC; do
 done
 ```
 
+### 4.9 EVM rate-limit wiring (verify after Phase 4)
+
+`Deploy.s.sol` does **not** call `TokenRegistry.setRateLimitBridge` or `Bridge.setGuardBridge`. With **`rateLimitBridge == address(0)`** or **`guardBridge == address(0)`**, stored `setRateLimit` values and `TokenRateLimit` **never execute** on-chain—a **critical** gap for production.
+
+**When to run checks:** On **every EVM network** you operate, complete **[§6.1a — Verify `rateLimitBridge` and `guardBridge`](#61a-verify-ratelimitbridge-and-guardbridge-critical)** after **[§6.1 — Register chains on EVM bridges](#61-register-chains-on-evm-bridges)** (and again after any later **`registerChain`** batch on that network, if operators want a hard checkpoint). If you **deploy a new Bridge + TokenRegistry to an additional EVM chain** in the future, run the same §6.1a procedure on **that** chain’s RPC and proxy addresses before routing users or liquidity there. Set sane `setRateLimit` values and wire **`rateLimitBridge`** to the Bridge proxy (and deploy/wire **`GuardBridge`** as required) per [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md) §8.
+
 ---
 
 ## 5. Phase 3 — Deploy Terra Classic Contract
@@ -741,6 +747,30 @@ cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
 cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
   $OPBNB_CHAIN_REGISTRY "registerChain(string,bytes4)" "evm_56" $BSC_CHAIN_ID
 ```
+
+### 6.1a Verify `rateLimitBridge` and `guardBridge` (critical)
+
+**`TokenRegistry.rateLimitBridge()`** must point at the **Bridge proxy** on that network, and **`Bridge.guardBridge()`** must point at a live **`GuardBridge`** deployment (not `address(0)`). If either is zero, **stop** and fix before token mapping, operator cutover, or public use—see [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md).
+
+On **BSC** and **opBNB**, using the exports from [§4.5](#45-record-deployed-addresses):
+
+```bash
+# BSC
+echo "rateLimitBridge (expect: $BSC_BRIDGE)" \
+  && cast call $BSC_TOKEN_REGISTRY "rateLimitBridge()(address)" --rpc-url https://bsc-dataseed1.binance.org
+echo "guardBridge (expect: non-zero GuardBridge)" \
+  && cast call $BSC_BRIDGE "guardBridge()(address)" --rpc-url https://bsc-dataseed1.binance.org
+
+# opBNB
+echo "rateLimitBridge (expect: $OPBNB_BRIDGE)" \
+  && cast call $OPBNB_TOKEN_REGISTRY "rateLimitBridge()(address)" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+echo "guardBridge (expect: non-zero GuardBridge)" \
+  && cast call $OPBNB_BRIDGE "guardBridge()(address)" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+```
+
+If any value is **`0x0000000000000000000000000000000000000000`**, set **`setRateLimit`** policy for registered tokens, call **`TokenRegistry.setRateLimitBridge(bridgeProxy)`**, and deploy/configure **`GuardBridge`** + **`Bridge.setGuardBridge`** as owner before continuing. Re-run the calls above until all four addresses are correct.
+
+For **another EVM chain**, substitute that chain’s `TokenRegistry` proxy, Bridge proxy, and RPC URL—the checks are the same.
 
 ### 6.2 Register Chains on Terra
 
@@ -1440,6 +1470,8 @@ Execute a small test transfer to validate the full pipeline:
 
 ### 9.3 Query Contract State
 
+Re-run the **[§6.1a](#61a-verify-ratelimitbridge-and-guardbridge-critical)** `cast call` checks on **each** production EVM network as part of this step. Any `rateLimitBridge` or `guardBridge` regression to `address(0)` disables registry withdraw limits and guard enforcement.
+
 **Terra:**
 
 ```bash
@@ -1456,8 +1488,13 @@ terrad query wasm contract-state smart $TERRA_BRIDGE_ADDRESS '{"cancelers":{}}' 
 **EVM:**
 
 ```bash
-cast call $BSC_BRIDGE "withdrawDelay()" --rpc-url https://bsc-dataseed1.binance.org | cast to-dec
+# Critical: must not be address(0) on either chain (see §6.1a)
+cast call $BSC_TOKEN_REGISTRY "rateLimitBridge()(address)" --rpc-url https://bsc-dataseed1.binance.org
+cast call $BSC_BRIDGE "guardBridge()(address)" --rpc-url https://bsc-dataseed1.binance.org
+cast call $OPBNB_TOKEN_REGISTRY "rateLimitBridge()(address)" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+cast call $OPBNB_BRIDGE "guardBridge()(address)" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
 
+cast call $BSC_BRIDGE "withdrawDelay()" --rpc-url https://bsc-dataseed1.binance.org | cast to-dec
 cast call $OPBNB_BRIDGE "withdrawDelay()" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org | cast to-dec
 ```
 
@@ -1580,6 +1617,9 @@ journalctl -u cl8y-canceler -f
 
 - [ ] Contracts audited by independent security firm
 - [ ] Multi-sig configured for admin keys on all chains
+- [ ] **`TokenRegistry.rateLimitBridge`** on **each** EVM chain points at that chain’s Bridge proxy (not `address(0)`); verified via §6.1a and §9.3
+- [ ] **`Bridge.guardBridge`** on **each** EVM chain points at the deployed GuardBridge (not `address(0)`); verified via §6.1a and §9.3
+- [ ] Per-token **`setRateLimit`** values on each EVM `TokenRegistry` match operational policy before/while `rateLimitBridge` is active
 - [ ] Rate limits configured on TokenRateLimit guard
 - [ ] Blacklist guard deployed and configured
 - [ ] Withdraw delay set (300s recommended for mainnet)

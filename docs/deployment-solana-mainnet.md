@@ -250,6 +250,8 @@ cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_OPBNB"
 cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_OPBNB"
 ```
 
+The same pattern applies to **any EVM network** (substitute that chain’s `TokenRegistry` proxy, Bridge proxy, and RPC). See [Production Deployment Guide — §6.1a](./deployment-guide.md#61a-verify-ratelimitbridge-and-guardbridge-critical).
+
 If **either** call returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. **Do not** continue with Solana chain registration, token mappings, or operator rollout until both pointers are non-zero and correct on **both** BSC and opBNB.
 
 ### Step 2 — Set limits, then activate `rateLimitBridge` (BSC)
