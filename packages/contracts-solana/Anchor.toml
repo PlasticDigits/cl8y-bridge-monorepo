@@ -8,8 +8,8 @@ skip-lint = false
 
 [programs.localnet]
 # Match packages/contracts-solana/keys/localnet/*-keypair.json (committed; used by make deploy-solana)
-cl8y_bridge = "mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb"
-cl8y_faucet = "B9zRqdnkfrMjLiW8n5Ejw6KSR9DmQscogpijoi5qyyY2"
+cl8y_bridge = "74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW"
+cl8y_faucet = "7uqKHSr6naMr3LakCSRkZpiRTBboALh4ZgZdw7hvTwG4"
 
 [registry]
 url = "https://api.apr.dev"

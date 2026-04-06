@@ -6,7 +6,7 @@ This document covers the complete step-by-step process for deploying the CL8Y Br
 
 **Watchtower:** **`Bridge.getCancelerCount() == 0`** on BSC or opBNB means **no** dedicated cancelers can **`withdrawCancel`**—only the **owner** can (see [OPERATIONAL_NOTES §11](../packages/contracts-evm/OPERATIONAL_NOTES.md)). That is a **serious operational gap** for the watchtower model. Complete **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** ( **`addCanceler`**) **before** guard-stack tuning, Solana registration, or mapping work—not only as a best practice, but so automated canceler nodes can act during the cancel window.
 
-Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
+Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
 
 ---
 
@@ -614,6 +614,7 @@ Use a **dedicated deployer key** stored on disk **only** as a gpg-encrypted file
 |------|---------|
 | `~/.config/solana/id-deployer.json` | Decrypted keypair (**ephemeral**): create only when signing; remove after use when practical |
 | `~/.config/solana/id-deployer.json.gpg` | **Canonical** backup on disk (symmetric gpg) |
+| `~/.config/solana/id-devnet.json` | Devnet-only keypair for **[Step 0.4](#step-04-devnet-deploy-cost-dry-run)** (cost dry run; never use for mainnet) |
 
 **Requirements:** `gpg` (GnuPG 2.x), `solana-keygen`, and a **separate** record of the **seed phrase** (and your **BIP39 passphrase**, if you set one) in a password manager or offline backup. Losing both the **`.gpg` file** and the **mnemonic** loses the key.
 
@@ -679,17 +680,60 @@ export SOLANA_KEYPAIR="${PLAIN}"
 export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
 ```
 
-Optional after you are done signing for the session:
+Optional after you are done signing for the session, **overwrite then unlink** the plaintext (same `shred` caveats as Step 0.2 on SSDs):
 
 ```bash
-rm -f "${PLAIN}"
+PLAIN="${HOME}/.config/solana/id-deployer.json"
+shred -u "${PLAIN}" 2>/dev/null || rm -f "${PLAIN}"
 ```
 
 If you prefer the default CLI filename instead, you can copy **`SOLANA_KEYPAIR`** to `~/.config/solana/id.json` only temporarily—but **two files mean two chances to leak**; prefer one explicit path (`id-deployer.json`) and `export SOLANA_KEYPAIR`.
 
-#### Step 0.4: Fund the deployer pubkey
+#### Step 0.4: Devnet deploy (cost dry run)
 
-Send **SOL** (e.g. ~5–10 SOL on mainnet-beta for two program deploys + rent) to:
+Solana charges **transaction fees** and **program account rent** for deployment, not EVM-style gas. **`deploy.sh` deploys `cl8y_bridge` only** (same as mainnet). Running it on **devnet** with a **separate** funded wallet estimates mainnet **bridge** deploy cost (same `.so` size and instruction layout).
+
+1. Create a devnet-only keypair if needed:
+
+   ```bash
+   solana-keygen new -o "${HOME}/.config/solana/id-devnet.json"
+   ```
+
+2. Fund it on devnet (official RPC):
+
+   ```bash
+   solana airdrop 5 "$(solana-keygen pubkey "${HOME}/.config/solana/id-devnet.json")" --url https://api.devnet.solana.com
+   ```
+
+   Repeat or request more devnet SOL from a public airdrop endpoint if `solana airdrop` is rate-limited.
+
+3. Note the balance **before** deploy:
+
+   ```bash
+   solana balance "$(solana-keygen pubkey "${HOME}/.config/solana/id-devnet.json")" --url https://api.devnet.solana.com
+   ```
+
+4. From the **repo root**, deploy to devnet using the official endpoint (matches **`./scripts/solana/deploy.sh`** for `devnet`):
+
+   ```bash
+   export SOLANA_KEYPAIR="${HOME}/.config/solana/id-devnet.json"
+   export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+   ./scripts/solana/deploy.sh devnet
+   ```
+
+   `deploy.sh` uses **`https://api.devnet.solana.com`** for the `devnet` cluster.
+
+5. Compare balance **after** deploy; the difference is your **observed** devnet SOL spend (fees + rent). Add a small buffer for mainnet fee volatility and priority fees if you use them.
+
+If those program IDs are **already** deployed on devnet, you may not pay full initial program-data rent again; **rent is driven by `.so` size**, which is the same on mainnet—use a first-time devnet deploy when you need a full balance-delta estimate.
+
+**`Program … has been closed, use a new Program Id`:** The program data account for that **program ID** was **closed** on-chain (common on devnet). Solana will not deploy again to the same address. Fix by issuing a **new program keypair** for that program, updating **`declare_id!`**, **`[programs.localnet]`** in **`Anchor.toml`**, **`keys/localnet/*-keypair.json`**, and any hardcoded pubkeys in scripts or tests (search the repo for the old address). **`deploy.sh`** only deploys **`cl8y_bridge`** and copies **`keys/localnet/cl8y_bridge-keypair.json`** into **`target/deploy/`** before each build—rotating the **bridge** program id is a major migration; treat closed-bridge cases as exceptional.
+
+**Do not** reuse `id-devnet.json` as the mainnet deployer. Mainnet signing still follows **Step 0.3** with **`id-deployer.json`**.
+
+#### Step 0.5: Fund the deployer pubkey
+
+Send **SOL** (e.g. ~2–5 SOL on mainnet-beta for **`deploy.sh`** bridge deploy + buffer) to:
 
 ```bash
 gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
@@ -699,25 +743,25 @@ gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
 
 ---
 
-### Step 1.1: Build Solana Programs
+### Step 1.1: Build Solana Programs (bridge)
+
+Matches **`./scripts/solana/deploy.sh`** (bridge only, **`no-log-ix-name`**):
 
 ```bash
 cd packages/contracts-solana
-anchor build
+mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+anchor build -p cl8y_bridge -- --features no-log-ix-name
 ```
 
-Verify program IDs match `declare_id!` in source:
+Confirm the bridge program pubkey matches **`declare_id!`** in `programs/cl8y-bridge/src/lib.rs`:
 
 ```bash
 solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json
-solana-keygen pubkey target/deploy/cl8y_faucet-keypair.json
 ```
-
-These must match the IDs in `programs/cl8y-bridge/src/lib.rs` and `programs/cl8y-faucet/src/lib.rs`.
 
 ### Step 1.2: Deploy to mainnet-beta
 
-Complete **Step 0.3** so **`SOLANA_KEYPAIR`** (and **`ANCHOR_WALLET`**) point at your decrypted `id-deployer.json`. Ensure that pubkey has enough SOL (~5-10 SOL for two program deploys + rent).
+Complete **Step 0.3** so **`SOLANA_KEYPAIR`** (and **`ANCHOR_WALLET`**) point at your decrypted `id-deployer.json`. Optional: run **Step 0.4** on devnet to estimate deployment cost. Ensure that pubkey has enough SOL after **Step 0.5** (~2–5 SOL for bridge-only deploy + buffer).
 
 From the repo root:
 
@@ -730,14 +774,13 @@ export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
 `deploy.sh` signs with **`ANCHOR_WALLET`** (defaulting to **`SOLANA_KEYPAIR`**, then `~/.config/solana/id.json`).
 
 This runs:
-1. `anchor build`
-2. `anchor deploy --provider.cluster mainnet-beta`
-3. `solana program show` to verify
+1. `anchor build -p cl8y_bridge`
+2. `anchor deploy --program-name cl8y_bridge` to the cluster RPC
+3. `solana program show` on the bridge program id to verify
 4. Hash parity mocha test
 
 Record from the output:
 - **`SOLANA_PROGRAM_ID`** (bridge program)
-- **`FAUCET_PROGRAM_ID`** (faucet program)
 
 ### Step 1.3: Initialize the Bridge
 
@@ -760,7 +803,6 @@ If the bridge PDA already exists, the script skips initialization.
 ```bash
 export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
-export FAUCET_PROGRAM_ID=<from step 1.2>
 
 ./scripts/solana/setup-test-tokens.sh
 ```
@@ -774,17 +816,6 @@ This creates three SPL mints:
 | tdec | 6 |
 
 Record all three mint addresses: `SOLANA_TESTA_MINT`, `SOLANA_TESTB_MINT`, `SOLANA_TDEC_MINT`.
-
-### Step 1.5: Deploy and Initialize Faucet (Optional)
-
-The faucet program was deployed with `anchor deploy` in Step 1.2. Initialize it and register mints:
-
-```bash
-cd packages/contracts-solana
-ANCHOR_PROVIDER_URL="$SOLANA_RPC_URL" \
-ANCHOR_WALLET="$SOLANA_KEYPAIR" \
-  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/faucet.test.ts --grep "initialize"
-```
 
 ---
 
@@ -1261,7 +1292,6 @@ Update frontend environment (`.env.production` or equivalent):
 ```bash
 VITE_SOLANA_PROGRAM_ID=<deployed bridge program id>
 VITE_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-VITE_SOLANA_FAUCET_ADDRESS=<faucet program id>
 VITE_SOLANA_TESTA_MINT=<testa SPL mint>
 VITE_SOLANA_TESTB_MINT=<testb SPL mint>
 VITE_SOLANA_TDEC_MINT=<tdec SPL mint>
@@ -1376,7 +1406,6 @@ If issues are discovered at any point:
 - [Solana Integration Plan](./SOLANA_INTEGRATION_PLAN.md)
 - [Solana Bridge Deposits](./SOLANA_BRIDGE_DEPOSITS.md)
 - [Solana Bridge Invariants](./SOLANA_BRIDGE_INVARIANTS.md)
-- [Solana Mainnet Faucet Deployment](./solana-mainnet-faucet-deployment.md)
 - [Cross-Chain Hash Parity](./crosschain-parity.md)
 - [Security Model](./security-model.md)
 - [Deployment Guide (EVM/Terra)](./deployment-guide.md)

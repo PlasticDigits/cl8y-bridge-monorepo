@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Deploy CL8Y Bridge Solana program (cl8y_bridge). On mainnet-beta, cl8y_faucet is not built or deployed.
+# Deploy CL8Y Bridge Solana program (cl8y_bridge) only. cl8y_faucet is not built or deployed here
+# (saves rent/fees and matches mainnet). For local all-program deploy use scripts/solana/anchor-deploy-localnet.sh;
+# optional SPL faucet program deploy is documented in docs/solana-mainnet-faucet-deployment.md.
 #
 # Usage: ./scripts/solana/deploy.sh [localnet|devnet|mainnet-beta]
 
@@ -36,14 +38,15 @@ echo
 
 cd "$REPO_ROOT/packages/contracts-solana"
 
-# Build (mainnet: bridge only — no cl8y_faucet on-chain; testers use real bridged assets)
-echo "[1/4] Building Anchor program..."
+# Bridge program pubkey must match declare_id! / Anchor.toml (committed under keys/localnet/).
+KEYS_DIR="$REPO_ROOT/packages/contracts-solana/keys/localnet"
+mkdir -p target/deploy
+cp "$KEYS_DIR/cl8y_bridge-keypair.json" target/deploy/
+
+# Build bridge only (smaller/faster; avoids faucet program rent on devnet/localnet when using this script).
+echo "[1/4] Building Anchor program (cl8y_bridge)..."
 # Smaller on-chain binary (less rent): size-optimized release profile (Cargo.toml) + no instruction-name logging.
-if [[ "${CLUSTER}" == "mainnet-beta" ]]; then
-  anchor build -p cl8y_bridge -- --features no-log-ix-name
-else
-  anchor build -- --features no-log-ix-name
-fi
+anchor build -p cl8y_bridge -- --features no-log-ix-name
 
 # Get program ID
 PROGRAM_ID=$(solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json)
@@ -54,12 +57,8 @@ export ANCHOR_WALLET="${ANCHOR_WALLET:-${SOLANA_KEYPAIR:-${HOME}/.config/solana/
 echo "  Signing with: ${ANCHOR_WALLET} ($(solana-keygen pubkey "${ANCHOR_WALLET}"))"
 
 # Deploy: pass --provider.wallet so deploy fee payer matches SOLANA_KEYPAIR (Anchor.toml wallet is id.json)
-echo "[2/4] Deploying to ${CLUSTER}..."
-if [[ "${CLUSTER}" == "mainnet-beta" ]]; then
-  anchor deploy --provider.cluster "${RPC_URL}" --provider.wallet "${ANCHOR_WALLET}" --program-name cl8y_bridge
-else
-  anchor deploy --provider.cluster "${RPC_URL}" --provider.wallet "${ANCHOR_WALLET}"
-fi
+echo "[2/4] Deploying cl8y_bridge to ${CLUSTER}..."
+anchor deploy --provider.cluster "${RPC_URL}" --provider.wallet "${ANCHOR_WALLET}" --program-name cl8y_bridge
 
 # Verify
 echo "[3/4] Verifying deployment..."

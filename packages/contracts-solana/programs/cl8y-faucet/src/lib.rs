@@ -5,7 +5,7 @@ mod state;
 
 use instructions::*;
 
-declare_id!("B9zRqdnkfrMjLiW8n5Ejw6KSR9DmQscogpijoi5qyyY2");
+declare_id!("7uqKHSr6naMr3LakCSRkZpiRTBboALh4ZgZdw7hvTwG4");
 
 #[program]
 pub mod cl8y_faucet {

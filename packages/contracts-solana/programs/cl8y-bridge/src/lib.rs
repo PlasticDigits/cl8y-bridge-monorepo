@@ -11,7 +11,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb");
+declare_id!("74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW");
 
 #[program]
 pub mod cl8y_bridge {

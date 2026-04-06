@@ -42,7 +42,7 @@ vi.mock('../utils/bridgeChains', () => ({
         type: 'solana',
         name: 'Solana Localnet',
         rpcUrl: 'http://127.0.0.1:8899',
-        bridgeAddress: 'mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb',
+        bridgeAddress: '74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW',
         bytes4ChainId: '0x00000005',
       },
     },

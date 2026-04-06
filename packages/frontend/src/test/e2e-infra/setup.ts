@@ -33,7 +33,7 @@ const ROOT_DIR = resolve(__dirname, '../../../../..')
 const FRONTEND_DIR = resolve(__dirname, '../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 /** Committed localnet program id (packages/contracts-solana/Anchor.toml [programs.localnet]). */
-const LOCALNET_SOLANA_BRIDGE_PROGRAM_ID = 'mYwQnKWjsX86Tmr2muoj19QtL1gmfX4iq5jZjCdG8Tb'
+const LOCALNET_SOLANA_BRIDGE_PROGRAM_ID = '74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW'
 // Vite reads .env.local from the project root (packages/frontend/).
 // We write VITE_* vars here so import.meta.env picks them up at dev time.
 const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')

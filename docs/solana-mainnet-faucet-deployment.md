@@ -44,7 +44,7 @@ Programs live under `packages/contracts-solana/programs/`:
 - **`cl8y_bridge`** — bridge logic (`declare_id!` in `programs/cl8y-bridge/src/lib.rs`).
 - **`cl8y_faucet`** — optional SPL faucet for test mints (`programs/cl8y-faucet`).
 
-`anchor build` produces deploy keypairs under `packages/contracts-solana/target/deploy/*.json`. Those files are **not** committed; they must match the `declare_id!` pubkeys. Treat the **upgrade authority** keypair as secrets: backup offline, never commit.
+Canonical program keypairs live under `packages/contracts-solana/keys/localnet/` (committed); **`deploy.sh`** copies the bridge keypair into `target/deploy/` before `anchor build -p cl8y_bridge`. Treat the **upgrade authority** wallet as secret: backup offline, never commit.
 
 First-time deploy: ensure local keypairs match the declared IDs (see `anchor keys` / project docs). Upgrades use the same program address with new bytecode.
 
@@ -54,13 +54,13 @@ From repo root:
 
 ```bash
 cd packages/contracts-solana
-anchor build
-# Confirm program pubkeys
+# Bridge only (matches ./scripts/solana/deploy.sh)
+mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+anchor build -p cl8y_bridge -- --features no-log-ix-name
 solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json
-solana-keygen pubkey target/deploy/cl8y_faucet-keypair.json
 ```
 
-Use a funded wallet (`SOLANA_KEYPAIR` or default `~/.config/solana/id.json`) with enough SOL for rent and two program deploys.
+Use a funded wallet (`SOLANA_KEYPAIR` or default `~/.config/solana/id.json`) with enough SOL for **bridge** program deploy + buffer (add more if you also deploy **`cl8y_faucet`**).
 
 **Option A — helper script:**
 
@@ -68,14 +68,16 @@ Use a funded wallet (`SOLANA_KEYPAIR` or default `~/.config/solana/id.json`) wit
 ./scripts/solana/deploy.sh mainnet-beta
 ```
 
-This builds, deploys via Anchor, verifies with `solana program show`, and runs the **hash parity** mocha suite (pure JS; no on-chain state required).
+This builds **`cl8y_bridge` only**, deploys it via Anchor, verifies with `solana program show`, and runs the **hash parity** mocha suite (pure JS; no on-chain state required).
 
 **Option B — manual:**
 
 ```bash
 cd packages/contracts-solana
-anchor deploy --provider.cluster https://api.mainnet-beta.solana.com
-# or: anchor deploy --provider.cluster mainnet-beta
+mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+anchor build -p cl8y_bridge -- --features no-log-ix-name
+anchor deploy --provider.cluster https://api.mainnet-beta.solana.com \
+  --program-name cl8y_bridge --provider.wallet "${SOLANA_KEYPAIR:-$HOME/.config/solana/id.json}"
 ```
 
 Record:
@@ -141,7 +143,7 @@ export TERRA_WALLET=<keyname>
 
 Use worthless mints only.
 
-1. Deploy `cl8y_faucet` (included in `anchor deploy` for the workspace).
+1. Deploy `cl8y_faucet` separately (e.g. `cp keys/localnet/cl8y_{bridge,faucet}-keypair.json target/deploy/`, `anchor build -p cl8y_faucet -- --features no-log-ix-name`, then `anchor deploy --program-name cl8y_faucet` with your RPC and wallet).
 2. `initialize` the faucet program (see `tests/faucet.test.ts`).
 3. Create SPL mints (`spl-token create-token`), then `register_mint` so the faucet can mint.
 4. Optionally adapt `scripts/solana/setup-test-tokens.sh`: set `SOLANA_RPC_URL` to mainnet RPC and `FAUCET_PROGRAM_ID` to your deployed faucet id.

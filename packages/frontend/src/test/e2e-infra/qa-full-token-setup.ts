@@ -17,7 +17,7 @@ import { registerAllTokens } from './register-tokens'
 
 /** Anchor `cl8y_faucet` program id (packages/contracts-solana/Anchor.toml) — used for Settings → Faucet on localnet. */
 const SOLANA_FAUCET_PROGRAM_ID_DEFAULT =
-  'B9zRqdnkfrMjLiW8n5Ejw6KSR9DmQscogpijoi5qyyY2'
+  '7uqKHSr6naMr3LakCSRkZpiRTBboALh4ZgZdw7hvTwG4'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../../../../..')
