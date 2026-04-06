@@ -1,7 +1,7 @@
 //! Chain configuration and contract setup module
 //!
 //! This module handles:
-//! - Role granting (OPERATOR_ROLE, CANCELER_ROLE) via AccessManager
+//! - Optional `AccessManager.grantRole` calls using numeric IDs **1** and **2** (historical / fraud-test helpers)
 //! - Chain key registration via ChainRegistry
 //! - Token registration via TokenRegistry
 //!
@@ -25,10 +25,19 @@ pub use crate::cw20_deploy::{
 // Constants
 // =============================================================================
 
-/// OPERATOR_ROLE ID in AccessManager (role ID 1)
+/// Numeric role ID used when calling `AccessManager.grantRole` in E2E setup (currently **1**).
+///
+/// **Not** the production Bridge operator: `Bridge` does **not**
+/// read `AccessManager` for `withdrawApprove` / `withdrawCancel`. Production uses
+/// `Bridge.addOperator` / `addCanceler`. On mainnet, `AccessManager` role **1** is already used for
+/// MintBurn/minter flows—do not copy these IDs to production Bridge RBAC.
 pub const OPERATOR_ROLE_ID: u64 = 1;
 
-/// CANCELER_ROLE ID in AccessManager (role ID 2)
+/// Numeric role ID used when calling `AccessManager.grantRole` in E2E setup (currently **2**).
+///
+/// **Not** the production Bridge canceler: see [`OPERATOR_ROLE_ID`]. Production cancelers are
+/// registered with `Bridge.addCanceler(address)`. Guard-stack docs reserve mainnet `AccessManager`
+/// role **2** for `TokenRateLimit` / `GuardBridge` admin—unrelated to this constant’s *name*.
 pub const CANCELER_ROLE_ID: u64 = 2;
 
 /// Bridge type for TokenRegistry

@@ -184,11 +184,12 @@ impl E2eSetup {
         }
     }
 
-    /// Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts via AccessManager.grantRole()
+    /// Call `AccessManager.grantRole` with IDs 1 and 2 for the EVM test account (fraud / config checks).
     ///
-    /// This grants both roles to the test account, enabling:
-    /// - OPERATOR_ROLE: Allows calling withdrawApprove() for testing
-    /// - CANCELER_ROLE: Allows cancelling fraudulent approvals for testing
+    /// **Does not** register the account on `Bridge` as operator or canceler—`Bridge` ignores
+    /// `AccessManager` for `withdrawApprove` / `withdrawCancel` (see `Bridge.onlyOperator` /
+    /// `onlyCanceler`). Local tests usually pass because the deploy wallet is `Bridge.owner()` or the
+    /// initial `initialize(operator)` already added the operator.
     pub async fn grant_roles(&self, deployed: &DeployedContracts) -> Result<()> {
         info!("Granting roles to test accounts");
 

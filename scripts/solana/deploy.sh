@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy CL8Y Bridge Solana program
+# Deploy CL8Y Bridge Solana program (cl8y_bridge). On mainnet-beta, cl8y_faucet is not built or deployed.
 #
 # Usage: ./scripts/solana/deploy.sh [localnet|devnet|mainnet-beta]
 
@@ -36,27 +36,44 @@ echo
 
 cd "$REPO_ROOT/packages/contracts-solana"
 
-# Build
+# Build (mainnet: bridge only — no cl8y_faucet on-chain; testers use real bridged assets)
 echo "[1/4] Building Anchor program..."
-anchor build
+# Smaller on-chain binary (less rent): size-optimized release profile (Cargo.toml) + no instruction-name logging.
+if [[ "${CLUSTER}" == "mainnet-beta" ]]; then
+  anchor build -p cl8y_bridge -- --features no-log-ix-name
+else
+  anchor build -- --features no-log-ix-name
+fi
 
 # Get program ID
 PROGRAM_ID=$(solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json)
 echo "  Program ID: ${PROGRAM_ID}"
 
-# Deploy
+# Wallet for `anchor deploy` / tests (override with SOLANA_KEYPAIR, e.g. ~/.config/solana/id-deployer.json)
+export ANCHOR_WALLET="${ANCHOR_WALLET:-${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}}"
+echo "  Signing with: ${ANCHOR_WALLET} ($(solana-keygen pubkey "${ANCHOR_WALLET}"))"
+
+# Deploy: pass --provider.wallet so deploy fee payer matches SOLANA_KEYPAIR (Anchor.toml wallet is id.json)
 echo "[2/4] Deploying to ${CLUSTER}..."
-anchor deploy --provider.cluster "${RPC_URL}"
+if [[ "${CLUSTER}" == "mainnet-beta" ]]; then
+  anchor deploy --provider.cluster "${RPC_URL}" --provider.wallet "${ANCHOR_WALLET}" --program-name cl8y_bridge
+else
+  anchor deploy --provider.cluster "${RPC_URL}" --provider.wallet "${ANCHOR_WALLET}"
+fi
 
 # Verify
 echo "[3/4] Verifying deployment..."
 solana program show "${PROGRAM_ID}" --url "${RPC_URL}"
 
-# Run hash parity test (call ts-mocha directly; anchor test passes -- args to cargo-build-sbf, not mocha)
+# Hash parity: full golden vectors for localnet/devnet; minimal TS smoke for mainnet (single Solana token fixture)
 echo "[4/4] Running hash parity verification..."
-ANCHOR_PROVIDER_URL="${RPC_URL}" \
-ANCHOR_WALLET="${SOLANA_KEYPAIR:-${HOME}/.config/solana/id.json}" \
-  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity.test.ts
+if [[ "${CLUSTER}" == "mainnet-beta" ]]; then
+  ANCHOR_PROVIDER_URL="${RPC_URL}" \
+    npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity_mainnet_deploy.test.ts
+else
+  ANCHOR_PROVIDER_URL="${RPC_URL}" \
+    npx ts-mocha -p ./tsconfig.json -t 1000000 tests/hash_parity.test.ts
+fi
 
 echo
 echo "============================================"

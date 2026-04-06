@@ -51,6 +51,14 @@ Proxy addresses are identical on BSC and opBNB (same deployer, same nonce order)
 | FactoryTokenCl8yBridged (BSC) | [`0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F`](https://bscscan.com/address/0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F) | Bridged token factory |
 | FactoryTokenCl8yBridged (opBNB) | [`0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b`](https://opbnbscan.com/address/0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b) | Bridged token factory |
 
+**Guard stack (BSC + opBNB, same addresses — CREATE + aligned nonces):** verified on-chain (code present; matching bytecode across chains; `GuardBridge.DATASTORE_ADDRESS()` and `TokenRateLimit.authority()` match the table). **`Bridge.guardBridge`** must still be set to **`GuardBridge`** via owner after AccessManager roles, module registration, and limits — see [deployment-solana-mainnet.md](./docs/deployment-solana-mainnet.md) §3. **`AccessManager`:** use **role `2`** for guard-stack admin (`grantRole` / `setTargetFunctionRole`); **role `1`** is reserved for MintBurn / minters — see [OPERATIONAL_NOTES.md §8](./packages/contracts-evm/OPERATIONAL_NOTES.md). **Bridge** operators/cancelers are **`Bridge.addOperator` / `addCanceler`**, not `AccessManager` numeric roles. **`getCancelerCount() == 0`** on an EVM Bridge is a **watchtower gap**—register cancelers ([runbook Step 2.5](./docs/deployment-solana-mainnet.md#step-25--register-bridge-cancelers-bsc--opbnb)).
+
+| Contract | Address | Role |
+|----------|---------|------|
+| DatastoreSetAddress | [`0xeafe298387f800101f1b9263208a0bfdc934a63e`](https://bscscan.com/address/0xeafe298387f800101f1b9263208a0bfdc934a63e) ([opBNB](https://opbnbscan.com/address/0xeafe298387f800101f1b9263208a0bfdc934a63e)) | Module allowlists for `GuardBridge` |
+| TokenRateLimit | [`0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c`](https://bscscan.com/address/0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c) ([opBNB](https://opbnbscan.com/address/0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c)) | 24h deposit/withdraw caps (`authority` = AccessManager) |
+| GuardBridge | [`0x12fedd29e71f66157e985aa1aaa434253e39a22`](https://bscscan.com/address/0x12fedd29e71f66157e985aa1aaa434253e39a22) ([opBNB](https://opbnbscan.com/address/0x12fedd29e71f66157e985aa1aaa434253e39a22)) | Guard orchestration |
+
 **BSC Test Tokens:**
 
 | Token | Address | Symbol | Decimals |

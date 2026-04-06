@@ -4,6 +4,8 @@ This document covers the complete step-by-step process for deploying the CL8Y Br
 
 **Important:** On live BSC/opBNB, **`TokenRegistry.rateLimitBridge == address(0)`** or **`Bridge.guardBridge == address(0)`** is a **critical security gap**: registry withdraw limits and the guard stack (including **`TokenRateLimit`**) **never run**, regardless of values in storage. After **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)**, **[verify wiring](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)**; if either address is zero on a chain, **fix it immediately** (Steps 2–3) **before** Solana registration, mapping work, or other rollout steps.
 
+**Watchtower:** **`Bridge.getCancelerCount() == 0`** on BSC or opBNB means **no** dedicated cancelers can **`withdrawCancel`**—only the **owner** can (see [OPERATIONAL_NOTES §11](../packages/contracts-evm/OPERATIONAL_NOTES.md)). That is a **serious operational gap** for the watchtower model. Complete **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** ( **`addCanceler`**) **before** guard-stack tuning, Solana registration, or mapping work—not only as a best practice, but so automated canceler nodes can act during the cancel window.
+
 Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
 
 ---
@@ -79,6 +81,22 @@ Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, 
 | Terra fee | 30 bps (0.30%) |
 | GuardBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
 | rateLimitBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
+| Bridge cancelers (EVM) | **`getCancelerCount() >= 1`** per chain after [Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb) (watchtower); owner-only cancel is **not** sufficient for production |
+
+### Terra Classic `terrad` keyring names (this rollout)
+
+**Signing:** **`terrad tx`** must use the **same** `--keyring-backend` (and `--home`, if you set it) as **`terrad keys list`**. If `keys list` works **without** passing `--keyring-backend`, run **`tx`** the same way—do **not** add `--keyring-backend os` unless your keys really live in the OS keyring. Forcing `os` when keys are in the **`file`** backend produces **`cl8y2_admin.info: key not found`**. Check the default with `terrad config get client keyring-backend` (or `grep keyring-backend ~/.terra/config/client.toml`).
+
+**Admin-only** `wasm execute` calls (rate limits, chain registration, token mappings, etc.) must use **`--from cl8y2_admin`** so the signer matches bridge **`config.admin`** (`terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l`).
+
+| `terrad` key name | Address | Typical use in this repo |
+|-------------------|---------|--------------------------|
+| `cl8y2_admin` | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` | Bridge admin (`config.admin`): `set_rate_limit`, `register_chain`, mappings, other admin `ExecuteMsg` |
+| `operator` | `terra1q7txczaxuvy923k4km9ya062dryk6mjwd6tmzm` | Operator wallet (matches table above) |
+| `canceler` | `terra1le993xczrgyhl022q9z3qly0xzfd5s7uyg7qg6` | Canceler wallet (matches table above) |
+| `bridgeassist` | `terra1wltzgav9t2ccljnmug69mqy6l0sqmf347gmsds` | Auxiliary / assistance (not bridge admin unless you reconfigure) |
+| `cl8ybridge_deployer` | `terra1njpnexcdnqm8cnl7g3fs5y60zm9l6xsflzpqv3` | Deploy / history key |
+| `cl8ydeploy` | `terra1hu4zggf3f8yw6jw3rxrjxn2drwad675gq5k2lv` | Deploy / history key |
 
 ### Live Token Registrations
 
@@ -172,7 +190,7 @@ See [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md) f
 ### Order of operations (recommended)
 
 1. [Nonce alignment](#nonce-alignment-for-matching-addresses) if you plan **new** deployments (`GuardBridge`, `TokenRateLimit`, extra modules).
-2. **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)** (storage limits), then **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** (live wiring). If **`rateLimitBridge == address(0)`** on a chain, complete **[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for that chain **immediately** (after setting appropriate `setRateLimit` values). If **`guardBridge == address(0)`**, complete **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for that chain **immediately**. Re-run Step 1b until both addresses are correct on **BSC and opBNB** before Solana or mapping work.
+2. **[Step 1](#step-1--inspect-registry-limits-bsc-and-opbnb)** (storage limits), then **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** (live wiring). If **`rateLimitBridge == address(0)`** on a chain, complete **[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for that chain **immediately** (after setting appropriate `setRateLimit` values). If **`getCancelerCount() == 0`** on a chain (Step 1b prints it), complete **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** **before** Solana or mapping work. If **`guardBridge == address(0)`**, complete **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for that chain **immediately**. Re-run Step 1b until rate limit + guard wiring **and** canceler counts meet production requirements on **BSC and opBNB**.
 3. **Tune policy** on each chain: adjust `setRateLimit` per token as needed (generous test tokens, tight CL8Y if required). Step 2 wiring must already be in place so changes take effect on withdraw.
 
 ### Nonce alignment for matching addresses
@@ -233,7 +251,7 @@ Interpretation: `setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)` — **`m
 
 Immediately after Step 1, confirm the **Bridge** is actually wired to enforce registry withdraw limits and the guard stack. **`rateLimitBridge() == address(0)`** or **`guardBridge() == address(0)`** is a **critical** defect: limits in storage and guard modules **do not execute** until these are set.
 
-Expected when healthy: **`rateLimitBridge`** equals the chain’s **Bridge proxy** (`0xb2a22c74da8e3642e0effc107d3ac362ce885369`); **`guardBridge`** equals your deployed **`GuardBridge`** (never `address(0)` in production).
+Expected when healthy: **`rateLimitBridge`** equals the chain’s **Bridge proxy** (`0xb2a22c74da8e3642e0effc107d3ac362ce885369`); **`guardBridge`** equals the live **`GuardBridge`** in [README](../README.md) (`0x12fedd29e71f66157e985aa1aaa434253e39a22` on BSC and opBNB once **`setGuardBridge`** is done — never `address(0)` in production).
 
 ```bash
 TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
@@ -241,18 +259,20 @@ BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
 RPC_BSC=https://bsc-dataseed1.binance.org
 RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 
-echo "=== BSC TokenRegistry.rateLimitBridge / Bridge.guardBridge ==="
+echo "=== BSC TokenRegistry.rateLimitBridge / Bridge.guardBridge / canceler count ==="
 cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_BSC"
 cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_BSC"
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_BSC"
 
-echo "=== opBNB TokenRegistry.rateLimitBridge / Bridge.guardBridge ==="
+echo "=== opBNB TokenRegistry.rateLimitBridge / Bridge.guardBridge / canceler count ==="
 cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_OPBNB"
 cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_OPBNB"
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_OPBNB"
 ```
 
 The same pattern applies to **any EVM network** (substitute that chain’s `TokenRegistry` proxy, Bridge proxy, and RPC). See [Production Deployment Guide — §6.1a](./deployment-guide.md#61a-verify-ratelimitbridge-and-guardbridge-critical).
 
-If **either** call returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. **Do not** continue with Solana chain registration, token mappings, or operator rollout until both pointers are non-zero and correct on **both** BSC and opBNB.
+If **`rateLimitBridge`** or **`guardBridge`** returns **`0x0000000000000000000000000000000000000000`** on a chain, **fix it on that chain now**—**[Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)** for `rateLimitBridge` (after setting sane `setRateLimit` values), **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** for `guardBridge`. If **`getCancelerCount() == 0`** on a chain, **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** **before** Solana or large config changes. **Do not** continue with Solana chain registration, token mappings, or operator rollout until rate limit + guard wiring **and** canceler registration are correct on **both** BSC and opBNB.
 
 ### Step 2 — Set limits, then activate `rateLimitBridge` (BSC and opBNB)
 
@@ -319,9 +339,55 @@ cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC_OPBNB" -
 cast call "$TR" "rateLimitBridge()(address)" --rpc-url "$RPC_OPBNB"
 ```
 
+### Step 2.5 — Register Bridge cancelers (BSC + opBNB)
+
+**Goal:** At least **one** dedicated canceler address per EVM chain on the **Bridge** proxy via **`addCanceler`**, so [canceler nodes](./canceler-network.md) can call **`withdrawCancel`** during the cancel window. **Relying only on the owner** is unsafe for operations: the owner may be offline, a multisig may be slow, and the watchtower is designed for **independent** cancelers.
+
+**When:** **Before** **[Step 3](#step-3--tokenratelimit--guardbridge-required-when-guardbridge-is-zero)** and **before** Solana registration or token-mapping phases.
+
+**Two addresses:**
+
+| Role | Address | Used for |
+|------|---------|----------|
+| **`Bridge` owner** (tx signer) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` | Enter this wallet’s private key when **`cast send --interactive`** runs **`addCanceler`** ([`onlyOwner`](../packages/contracts-evm/src/Bridge.sol)). |
+| **Canceler to register** | `0x732A65b80F4625658EbD2B4214E4f8Cf3A67AEEB` | Passed **into** **`addCanceler(address)`**; this wallet signs **`withdrawCancel`** later (same address on BSC and opBNB for this deployment). |
+
+Add more cancelers later with the **same owner** signer and a different argument; [deployment-guide §6.5](./deployment-guide.md#65-register-cancelers).
+
+**Verify current state:**
+
+```bash
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC_BSC=https://bsc-dataseed1.binance.org
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+
+cast call "$BRIDGE" "owner()(address)" --rpc-url "$RPC_BSC"
+# expect: 0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_BSC"
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_OPBNB"
+```
+
+**Register** (`--interactive` = **owner** `0xCd4…F39c`, not the canceler):
+
+```bash
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC_BSC=https://bsc-dataseed1.binance.org
+RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+CANCELER_EVM=0x732A65b80F4625658EbD2B4214E4f8Cf3A67AEEB
+
+cast send "$BRIDGE" "addCanceler(address)" "$CANCELER_EVM" --rpc-url "$RPC_BSC" --interactive
+cast send "$BRIDGE" "addCanceler(address)" "$CANCELER_EVM" --rpc-url "$RPC_OPBNB" --interactive
+
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_BSC"
+cast call "$BRIDGE" "getCancelerCount()(uint256)" --rpc-url "$RPC_OPBNB"
+```
+
+Confirm **`getCancelerCount() >= 1`** on **each** RPC. Optionally **`cast call "$BRIDGE" "cancelerAt(uint256)(address)" 0 --rpc-url "$RPC_BSC"`** (and opBNB) → expect **`0x732A65b80F4625658EbD2B4214E4f8Cf3A67AEEB`** after registration.
+
 ### Step 3 — `TokenRateLimit` + `GuardBridge` (required when `guardBridge` is zero)
 
-Step 1b shows **`guardBridge == address(0)`** on mainnet. The [README](../README.md) has **no** **`GuardBridge`** row—you must **deploy** the stack **per chain**, **configure `AccessManagerEnumerable`** ([README](../README.md); **`0xa958d75c61227606df21e3261ba80dc399d19676`** on BSC and opBNB), **register** `TokenRateLimit` on `GuardBridge`, set **guard** limits, then **`Bridge.setGuardBridge`**.
+If **`guardBridge == address(0)`** on a chain, the guard contracts are listed in [README](../README.md) — **configure `AccessManagerEnumerable`** (`0xa958d75c61227606df21e3261ba80dc399d19676` on BSC and opBNB), **register** `TokenRateLimit` on `GuardBridge`, set **guard** limits, then **`Bridge.setGuardBridge`** to the **GuardBridge** address there.
 
 Follow [`TokenRateLimit.t.sol`](../packages/contracts-evm/test/TokenRateLimit.t.sol) (`setUp`, `test_Integration_With_GuardBridge`).
 
@@ -340,46 +406,63 @@ ACCESS_MANAGER=0xa958d75c61227606df21e3261ba80dc399d19676
 
 echo "=== BSC: DatastoreSetAddress ==="
 forge create src/DatastoreSetAddress.sol:DatastoreSetAddress \
-  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_BSC" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
 # export DATASTORE_BSC=0x...   # from forge output
 
 echo "=== BSC: TokenRateLimit ==="
 forge create src/TokenRateLimit.sol:TokenRateLimit \
-  --constructor-args "$ACCESS_MANAGER" \
-  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_BSC" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive \
+  --constructor-args "$ACCESS_MANAGER"
 # export TOKEN_RATE_LIMIT_BSC=0x...
 
 echo "=== BSC: GuardBridge ==="
 forge create src/GuardBridge.sol:GuardBridge \
-  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_BSC" \
-  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_BSC" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive \
+  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_BSC"
 # export GUARD_BRIDGE_BSC=0x...
 
 echo "=== opBNB: DatastoreSetAddress ==="
 forge create src/DatastoreSetAddress.sol:DatastoreSetAddress \
-  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_OPBNB" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
 # export DATASTORE_OPBNB=0x...
 
 echo "=== opBNB: TokenRateLimit ==="
 forge create src/TokenRateLimit.sol:TokenRateLimit \
-  --constructor-args "$ACCESS_MANAGER" \
-  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_OPBNB" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive \
+  --constructor-args "$ACCESS_MANAGER"
 # export TOKEN_RATE_LIMIT_OPBNB=0x...
 
 echo "=== opBNB: GuardBridge ==="
 forge create src/GuardBridge.sol:GuardBridge \
-  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_OPBNB" \
-  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+  --rpc-url "$RPC_OPBNB" --broadcast --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive \
+  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_OPBNB"
 # export GUARD_BRIDGE_OPBNB=0x...
 ```
 
 After the block above, **export** the six addresses (or paste them into the next sections). **`DATASTORE_BSC` / `DATASTORE_OPBNB` must be set** before the corresponding **`GuardBridge`** `forge create` (same shell session).
 
+**Signing (§3.2–§3.5):** Every **`cast send`** below uses **`--interactive`** (Foundry prompts for the private key of the required account—do not pass keys on the command line). **`ADMIN_EOA`** (`0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c`, [README](../README.md) owner / upgrade wallet for this rollout) is the signer for all of these steps **when** it is both the **`AccessManager`** authority that may **`grantRole`** / **`setTargetFunctionRole`**, the role-holder on **`GuardBridge`** / **`TokenRateLimit`** after §3.2, and the **`Bridge`** **`owner`** (typical for this deployment).
+
+| Section | `cast send` target | Signer (use **`--interactive`** key for) |
+|---------|-------------------|-------------------------------------------|
+| §3.2 | **`AccessManager`** | Account authorized to administer **`AM`** (this runbook: **`ADMIN_EOA`**) |
+| §3.3 | **`GuardBridge`** | **`ADMIN_EOA`** after **`grantRole`** grants **`ROLE_ID`** on that chain |
+| §3.4 | **`TokenRateLimit`** | **`ADMIN_EOA`** (same **`ROLE_ID`** on that chain) |
+| §3.5 | **`Bridge`** | **`Bridge.owner`** (**`ADMIN_EOA`** here) |
+
 #### 3.2 AccessManager — `grantRole` + `setTargetFunctionRole`
 
 **AccessManager** uses the **same proxy address** on BSC and opBNB ([README](../README.md)), but **state is per chain**—run the full block **twice** (BSC then opBNB) with **`TOKEN_RATE_LIMIT_BSC` / `GUARD_BRIDGE_BSC`** vs **`TOKEN_RATE_LIMIT_OPBNB` / `GUARD_BRIDGE_OPBNB`**.
 
-Use an unused **`ROLE_ID`** (example **`64`**). **`ADMIN_EOA`** must sign these txs (multisig → execute from the safe).
+Use **`ROLE_ID` = `2`** for the guard admin role.
+
+**Why not role `1`?** [Production deployment guide](./deployment-guide.md) assigns **role `1`** to **MintBurn** (and faucet / minter flows) and maps **token `mint` / `burn`** to that role. [`TokenRateLimit.t.sol`](../packages/contracts-evm/test/TokenRateLimit.t.sol) uses role `1` only in a **greenfield** test `AccessManager`. On shared mainnet **`AccessManager`**, reusing **`1`** for **`TokenRateLimit` / `GuardBridge`** `setTargetFunctionRole` would let **every existing role‑`1` holder** (MintBurn, faucets, etc.) call guard configuration functions—use a **dedicated** role instead.
+
+**Why `2`?** For **`AccessManagerEnumerable`** at [`0xa958d75c61227606df21e3261ba80dc399d19676`](../README.md) (BSC and opBNB), **`getRoleMemberCount(2) == 0`** on both chains (verified). Reserve **`2`** for **guard stack admin** (`labelRole(2, "...")` optional). Before **`grantRole`**, re-check: `cast call $AM "getRoleMemberCount(uint64)(uint256)" 2 --rpc-url …` → **`0`**.
+
+**Bridge operator / canceler ≠ `AccessManager` roles:** Who may **`withdrawApprove`** / **`withdrawCancel`** is set on the **`Bridge`** proxy via **`addOperator`** / **`addCanceler`** ([`Bridge.sol`](../packages/contracts-evm/src/Bridge.sol)), **not** via **`AccessManager.grantRole`**. **`getCancelerCount() == 0`** is a **production defect** for the watchtower—complete **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** first; the owner **may** still **`withdrawCancel`** on EVM per [OPERATIONAL_NOTES.md §11](../packages/contracts-evm/OPERATIONAL_NOTES.md), but that is **not** a substitute for registered cancelers. The Rust e2e **`OPERATOR_ROLE_ID` / `CANCELER_ROLE_ID`** names apply to **test** `AccessManager` helpers, not to these Bridge enumerables. The live **[README](../README.md) operator** does **not** require **`AccessManager`** role **`2`** to operate the bridge; it also holds **no** roles **`1`–`3`** on mainnet **`AccessManager`** today (spot-check).
+
+**`grantRole`** assigns **`ROLE_ID`** **to** **`ADMIN_EOA`**; sign each tx **as** the **`AccessManager`** admin ( **`ADMIN_EOA`** for this rollout).
 
 Re-check selectors with **`cast sig`** after any bytecode change.
 
@@ -388,7 +471,7 @@ export RPC_BSC=https://bsc-dataseed1.binance.org
 export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 AM=0xa958d75c61227606df21e3261ba80dc399d19676
 ADMIN_EOA=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
-ROLE_ID=64
+ROLE_ID=2
 
 # --- BSC (set TOKEN_RATE_LIMIT_BSC, GUARD_BRIDGE_BSC from §3.1) ---
 echo "=== BSC: AccessManager grantRole + setTargetFunctionRole ==="
@@ -419,9 +502,12 @@ cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$GUARD_BRIDGE_
 
 #### 3.3 Register `TokenRateLimit` on `GuardBridge`
 
+Sign with **`ADMIN_EOA`** (`--interactive`).
+
 ```bash
 export RPC_BSC=https://bsc-dataseed1.binance.org
 export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+ADMIN_EOA=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
 
 echo "=== BSC: GuardBridge module registration ==="
 cast send "$GUARD_BRIDGE_BSC" "addGuardModuleDeposit(address)" "$TOKEN_RATE_LIMIT_BSC" \
@@ -440,12 +526,17 @@ cast send "$GUARD_BRIDGE_OPBNB" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_L
 
 **`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. On **BSC**, call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) on **`TOKEN_RATE_LIMIT_BSC`** (`--rpc-url "$RPC_BSC"`). On **opBNB**, the same on **`TOKEN_RATE_LIMIT_OPBNB`** (`--rpc-url "$RPC_OPBNB"`). **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values.
 
+Use **`cast send … --interactive`** for each policy tx; sign with **`ADMIN_EOA`**.
+
 #### 3.5 `Bridge.setGuardBridge` (owner)
+
+Sign as **Bridge.owner** ( **`ADMIN_EOA`** on this deployment). Use **`--interactive`** on each **`cast send`**.
 
 ```bash
 export RPC_BSC=https://bsc-dataseed1.binance.org
 export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+ADMIN_EOA=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
 
 echo "=== BSC: Bridge.setGuardBridge ==="
 cast send "$BRIDGE" "setGuardBridge(address)" "$GUARD_BRIDGE_BSC" --rpc-url "$RPC_BSC" --interactive
@@ -483,12 +574,12 @@ max_per_period:      1000000000000000000000  (1000 CL8Y at 18 decimals)
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_rate_limit":{"token":"terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3","max_per_transaction":"1","max_per_period":"1"}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 ```
 
 **Verify**:
@@ -513,6 +604,101 @@ The Solana bridge program has a `set_rate_limit` instruction. Since the bridge d
 
 ## Phase 1: Deploy Solana Programs
 
+### Step 0: Secure deployment keypair (BIP39 + gpg symmetric)
+
+Use a **dedicated deployer key** stored on disk **only** as a gpg-encrypted file. The Solana CLI keypair file (`*.json`) is **plaintext** unless you protect it yourself—gpg gives passphrase-protected storage at rest.
+
+**Paths:**
+
+| File | Purpose |
+|------|---------|
+| `~/.config/solana/id-deployer.json` | Decrypted keypair (**ephemeral**): create only when signing; remove after use when practical |
+| `~/.config/solana/id-deployer.json.gpg` | **Canonical** backup on disk (symmetric gpg) |
+
+**Requirements:** `gpg` (GnuPG 2.x), `solana-keygen`, and a **separate** record of the **seed phrase** (and your **BIP39 passphrase**, if you set one) in a password manager or offline backup. Losing both the **`.gpg` file** and the **mnemonic** loses the key.
+
+#### Step 0.1: Create the keypair (only if no encrypted deployer exists)
+
+```bash
+GPG_DEPLOYER="${HOME}/.config/solana/id-deployer.json.gpg"
+PLAIN="${HOME}/.config/solana/id-deployer.json"
+
+if [ -f "${GPG_DEPLOYER}" ]; then
+  echo "Already have ${GPG_DEPLOYER} — skip generation. Decrypt before deploy (Step 0.3)."
+else
+  solana-keygen new -o "${PLAIN}"
+fi
+```
+
+When `solana-keygen` runs:
+
+1. **Write down the seed phrase** and store it safely (never in git or a public ticket).
+2. **Do not** pass `--no-bip39-passphrase`. When prompted, set a **BIP39 passphrase** (optional but recommended). Same words + different passphrase → different keys; you must remember it to recover.
+
+#### Step 0.2: Encrypt with gpg and remove plaintext
+
+After confirming the pubkey and backing up the mnemonic:
+
+```bash
+PLAIN="${HOME}/.config/solana/id-deployer.json"
+GPG_DEPLOYER="${HOME}/.config/solana/id-deployer.json.gpg"
+
+gpg --symmetric --cipher-algo AES256 -o "${GPG_DEPLOYER}" "${PLAIN}"
+chmod 600 "${GPG_DEPLOYER}"
+```
+
+`gpg` prompts for a **new passphrase** used only to encrypt the file (independent of the BIP39 passphrase).
+
+**Verify** you can decrypt (check matches the pubkey you expect):
+
+```bash
+gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
+```
+
+Then **delete the plaintext** keypair:
+
+```bash
+shred -u "${PLAIN}" 2>/dev/null || rm -f "${PLAIN}"
+```
+
+(On some SSD setups `shred` is not cryptographically reliable; at minimum use `rm` and rely on full-disk encryption.)
+
+**Never** commit `id-deployer.json` or `id-deployer.json.gpg` into the repo; keep the `.gpg` file permissions tight (`chmod 600`).
+
+#### Step 0.3: Decrypt before deploy or admin steps
+
+For Phase 1 steps that sign transactions (`deploy.sh`, `initialize-bridge.sh`, `setup-test-tokens.sh`, etc.):
+
+```bash
+GPG_DEPLOYER="${HOME}/.config/solana/id-deployer.json.gpg"
+PLAIN="${HOME}/.config/solana/id-deployer.json"
+
+gpg --decrypt "${GPG_DEPLOYER}" > "${PLAIN}"
+chmod 600 "${PLAIN}"
+export SOLANA_KEYPAIR="${PLAIN}"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+```
+
+Optional after you are done signing for the session:
+
+```bash
+rm -f "${PLAIN}"
+```
+
+If you prefer the default CLI filename instead, you can copy **`SOLANA_KEYPAIR`** to `~/.config/solana/id.json` only temporarily—but **two files mean two chances to leak**; prefer one explicit path (`id-deployer.json`) and `export SOLANA_KEYPAIR`.
+
+#### Step 0.4: Fund the deployer pubkey
+
+Send **SOL** (e.g. ~5–10 SOL on mainnet-beta for two program deploys + rent) to:
+
+```bash
+gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
+```
+
+(or decrypt once to a file and run `solana-keygen pubkey "${PLAIN}"`).
+
+---
+
 ### Step 1.1: Build Solana Programs
 
 ```bash
@@ -531,11 +717,17 @@ These must match the IDs in `programs/cl8y-bridge/src/lib.rs` and `programs/cl8y
 
 ### Step 1.2: Deploy to mainnet-beta
 
-Ensure the deployer wallet has enough SOL (~5-10 SOL for two program deploys + rent):
+Complete **Step 0.3** so **`SOLANA_KEYPAIR`** (and **`ANCHOR_WALLET`**) point at your decrypted `id-deployer.json`. Ensure that pubkey has enough SOL (~5-10 SOL for two program deploys + rent).
+
+From the repo root:
 
 ```bash
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
 ./scripts/solana/deploy.sh mainnet-beta
 ```
+
+`deploy.sh` signs with **`ANCHOR_WALLET`** (defaulting to **`SOLANA_KEYPAIR`**, then `~/.config/solana/id.json`).
 
 This runs:
 1. `anchor build`
@@ -551,7 +743,8 @@ Record from the output:
 
 ```bash
 export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-export SOLANA_KEYPAIR=~/.config/solana/id.json   # admin keypair
+# After Step 0.3: same decrypted deployer as 1.2
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
 export SOLANA_PROGRAM_ID=<from step 1.2>
 export OPERATOR_PUBKEY=<solana operator pubkey>
 export FEE_BPS=50           # 0.5%, matching EVM
@@ -566,7 +759,7 @@ If the bridge PDA already exists, the script skips initialization.
 
 ```bash
 export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-export SOLANA_KEYPAIR=~/.config/solana/id.json
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
 export FAUCET_PROGRAM_ID=<from step 1.2>
 
 ./scripts/solana/setup-test-tokens.sh
@@ -637,7 +830,7 @@ export CHAIN_REGISTRY_ADDRESS=0x2e5d36c46680a38e7ae156fc9d109084c58c688e
 export TERRA_NODE_URL=https://terra-classic-rpc.publicnode.com:443
 export TERRA_CHAIN_ID=columbus-5
 export BRIDGE_CONTRACT=terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la
-export TERRA_WALLET=<admin key name>
+export TERRA_WALLET=cl8y2_admin
 
 ./scripts/solana/register-chain-terra.sh
 ```
@@ -872,34 +1065,34 @@ For each Terra test token, add Solana destination. Terra uses base64 for `chain_
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_token_destination":{"token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TESTA_HEX64>","dest_decimals":9}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 
 # testb: Terra -> Solana
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_token_destination":{"token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TESTB_HEX64>","dest_decimals":9}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 
 # tdec: Terra -> Solana
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_token_destination":{"token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TDEC_HEX64>","dest_decimals":6}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 ```
 
 **Incoming mappings** (Solana -> Terra):
@@ -909,34 +1102,34 @@ terrad tx wasm execute \
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TESTA_B64>","local_token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","src_decimals":9}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 
 # testb: Solana -> Terra
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TESTB_B64>","local_token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","src_decimals":9}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 
 # tdec: Solana -> Terra
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TDEC_B64>","local_token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","src_decimals":6}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 ```
 
 **Verify**:
@@ -1130,12 +1323,12 @@ Once confident the deployment is stable and all smoke tests pass, restore CL8Y r
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
   '{"set_rate_limit":{"token":"terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3","max_per_transaction":"0","max_per_period":"1000000000000000000000"}}' \
-  --from <TERRA_ADMIN_KEY> \
+  --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
   --gas auto --gas-adjustment 1.5 \
   --fees 100000000uluna \
-  --keyring-backend os -y
+  -y
 ```
 
 **Verify**:
@@ -1173,7 +1366,7 @@ If issues are discovered at any point:
 | SPL decimals | 9 for testa/testb, 6 for tdec |
 | CL8Y getting Solana mappings? | **No** -- only noneconomic test tokens |
 | EVM admin wallet | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
-| Terra admin wallet | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
+| Terra admin wallet | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` (`terrad --from cl8y2_admin`) |
 | DB migrations required | `010_solana.sql`, `011_evm_transfer_hash.sql`, `012_terra_transfer_hash.sql` |
 
 ---

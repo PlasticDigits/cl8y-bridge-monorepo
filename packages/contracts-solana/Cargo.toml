@@ -10,9 +10,11 @@ unexpected_cfgs = "allow"
 ambiguous_glob_reexports = "allow"
 
 [profile.release]
+opt-level = "z"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+strip = true
 
 [profile.release.build-override]
 opt-level = 3

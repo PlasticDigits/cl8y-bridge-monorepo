@@ -750,7 +750,7 @@ cast send --interactive --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
 
 ### 6.1a Verify `rateLimitBridge` and `guardBridge` (critical)
 
-**`TokenRegistry.rateLimitBridge()`** must point at the **Bridge proxy** on that network, and **`Bridge.guardBridge()`** must point at a live **`GuardBridge`** deployment (not `address(0)`). If either is zero, **stop** and fix before token mapping, operator cutover, or public use—see [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md).
+**`TokenRegistry.rateLimitBridge()`** must point at the **Bridge proxy** on that network, and **`Bridge.guardBridge()`** must point at a live **`GuardBridge`** deployment (not `address(0)`). If either is zero, **stop** and fix before token mapping, operator cutover, or public use—see [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md). **BSC / opBNB mainnet `DatastoreSetAddress` / `TokenRateLimit` / `GuardBridge`:** canonical addresses in the [README Live Deployments / guard stack](../README.md) section.
 
 On **BSC** and **opBNB**, using the exports from [§4.5](#45-record-deployed-addresses):
 

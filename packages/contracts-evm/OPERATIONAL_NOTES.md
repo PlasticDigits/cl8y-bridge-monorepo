@@ -131,9 +131,10 @@ The Bridge now integrates with `GuardBridge` via `setGuardBridge(address)`. When
 **Guard disabled by default:** `guardBridge` starts as `address(0)`. When disabled, all guard checks are no-ops (zero-cost skip). **Production:** leaving `guardBridge` or **`TokenRegistry.rateLimitBridge`** as `address(0)` is a **critical** misconfiguration—on-chain rate limits and guard enforcement **do not run**. After deploying to a **new EVM chain**, or after **`registerChain`** work on an existing EVM deployment, verify both pointers per **[deployment-guide.md §6.1a](../../docs/deployment-guide.md#61a-verify-ratelimitbridge-and-guardbridge-critical)** (and the post-deploy **§9.3** query block).
 
 **Setting up guards:**
-1. Deploy `GuardBridge` via `AccessManagerEnumerable`
-2. Register guard modules (`TokenRateLimit`, `BlacklistBasic`) on the `GuardBridge`
-3. Call `bridge.setGuardBridge(address(guardBridge))` as owner
+1. Deploy `DatastoreSetAddress`, `TokenRateLimit`, and `GuardBridge` (see [deployment-solana-mainnet.md](../../docs/deployment-solana-mainnet.md) §3).
+2. On **`AccessManagerEnumerable`**, grant a **dedicated** role to the operations EOA and **`setTargetFunctionRole`** for `TokenRateLimit` / `GuardBridge` admin selectors. **Do not reuse role `1`** on mainnet: it is already assigned for MintBurn / minter flows ([deployment-guide.md §4.8](../../docs/deployment-guide.md)); reusing it would let every role‑`1` holder configure the guard stack. **BSC / opBNB mainnet:** use **role `2`** for guard admin (`getRoleMemberCount(2) == 0` before first grant—re-verify on your RPC if re-reading this later). This is **unrelated** to **Bridge** **`addOperator`** / **`addCanceler`** (withdraw RBAC on the Bridge proxy, not `AccessManager`). **Production:** register at least one **Bridge** canceler per EVM chain via **`addCanceler`** ([deployment-guide.md §6.5](../../docs/deployment-guide.md#65-register-cancelers); [deployment-solana-mainnet.md Step 2.5](../../docs/deployment-solana-mainnet.md#step-25--register-bridge-cancelers-bsc--opbnb))—**`getCancelerCount() == 0`** leaves only the **owner** able to **`withdrawCancel`** (§11), which is **not** sufficient for watchtower redundancy.
+3. Register guard modules (`TokenRateLimit`, `BlacklistBasic`, …) on the `GuardBridge`
+4. Call `bridge.setGuardBridge(address(guardBridge))` as owner
 
 **Note:** Guard `check*` calls may mutate state (see §2). The Bridge's `nonReentrant` modifier prevents re-entry but does not prevent guard side effects.
 
@@ -165,11 +166,13 @@ The following are **not required** for this package's security posture but are d
 
 **Applies to:** `Bridge.withdrawCancel`, cross-chain parity
 
-On **EVM**, the contract owner (admin) can also cancel withdrawals — `withdrawCancel` checks `cancelers[msg.sender] || msg.sender == owner()`. This is a deliberate design choice for operational flexibility: the admin can act as an emergency canceler without a separate transaction to add themselves.
+On **EVM**, the contract owner (admin) can also cancel withdrawals — `withdrawCancel` checks `cancelers[msg.sender] || msg.sender == owner()`. This is a deliberate design choice for operational flexibility: the admin can act as an **emergency** canceler without a separate transaction to add themselves.
 
 On **TerraClassic**, the admin **cannot** cancel withdrawals; only explicitly registered cancelers can. The admin must first `AddCanceler(their_address)` before they can cancel.
 
 **Rationale:** The EVM approach reduces latency in emergency scenarios where the admin needs to immediately halt a suspicious withdrawal. Since the admin already has full control (pause, upgrade, set cancel window), allowing cancel does not expand their effective authority.
+
+**Production expectation:** You should still call **`addCanceler`** for each canceler hot wallet so **watchtower nodes** can cancel without owner involvement—see [deployment-guide §6.5](../../docs/deployment-guide.md#65-register-cancelers). Relying **only** on the owner path defeats distributed monitoring during the cancel window.
 
 **Cross-chain impact:** None — canceler behavior is local to each chain. A cancel on EVM does not affect TerraClassic and vice versa.
 
