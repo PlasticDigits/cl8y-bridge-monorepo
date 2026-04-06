@@ -2,8 +2,9 @@
 
 This document covers the complete step-by-step process for deploying the CL8Y Bridge Solana integration to mainnet with noneconomic test tokens (testa, testb, tdec) across all four chains (BSC, opBNB, Terra Classic, Solana), including a CL8Y rate-limit safety measure.
 
-For Solana architecture and design history, see [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md).
-For the existing deployment guide (EVM/Terra), see [deployment-guide.md](./deployment-guide.md).
+**Important:** On live BSC/opBNB today, **`TokenRegistry.rateLimitBridge`** and **`Bridge.guardBridge`** are unset, so **registry-stored limits and `TokenRateLimit` guards do not run**. Complete **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** before the rest of the rollout unless you explicitly accept unenforced EVM-side caps.
+
+Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
 
 ---
 
@@ -29,6 +30,26 @@ For the existing deployment guide (EVM/Terra), see [deployment-guide.md](./deplo
 | LockUnlock | `0xd7b3bf05987052009c350874e810df98da95d258` |
 | MintBurn | `0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc` |
 | Bridge | `0xb2a22c74da8e3642e0effc107d3ac362ce885369` |
+
+### Historical deployer (address parity BSC / opBNB)
+
+Mainnet **core bridge proxies** match on BSC and opBNB because the same deploy account was used with the **same transaction nonce order** on both chains.
+
+| Item | Value |
+|------|--------|
+| Historical deployer (CREATE / proxy deploys) | `0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e` |
+
+**Always re-check nonces before any new contract deployment** you want mirrored:
+
+```bash
+export DEPLOYER=0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
+cast nonce "$DEPLOYER" --rpc-url https://bsc-dataseed1.binance.org
+cast nonce "$DEPLOYER" --rpc-url https://opbnb-mainnet-rpc.bnbchain.org
+```
+
+If nonces differ, the **next** `CREATE` deployment from that EOA will generally **not** yield the same contract address on both chains. Align them first (see [Nonce alignment](#nonce-alignment-for-matching-addresses) under the EVM prerequisite) or use **CREATE2** with an explicit salt (see [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md) §10 and deployment scripts using `Create3Deployer`).
+
+Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, opBNB nonce **40** (two transactions behind BSC in that snapshot).
 
 **Terra Classic (`columbus-5`):**
 
@@ -76,14 +97,37 @@ For the existing deployment guide (EVM/Terra), see [deployment-guide.md](./deplo
 
 **Terra tokens** (all registered on bridge): testa, testb, tdec, CL8Y, uluna.
 
-### CL8Y Cross-Chain Mappings (the ONLY Economic Token)
+### CL8Y bidirectional routing (the ONLY economic token)
+
+| Asset | Network | Address / key |
+|-------|---------|----------------|
+| CL8Y | Terra CW20 | `terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3` |
+| CL8Y (bridged) | BSC ERC20 | `0x8f452a1fdd388a45e1080992eff051b4dd9048d2` |
+
+**Routing table (configuration):**
 
 | Direction | Status |
 |-----------|--------|
-| Terra CL8Y -> BSC | dest mapping EXISTS (dest_chain `0x00000038`) |
-| BSC -> Terra CL8Y | incoming mapping EXISTS (src_chain `AAAAOA==`) |
-| Terra CL8Y -> opBNB | NO mapping |
-| Terra CL8Y -> Solana | NO mapping (Solana not registered) |
+| Terra CL8Y → BSC | dest mapping EXISTS (dest_chain `0x00000038`) |
+| BSC → Terra CL8Y | incoming mapping EXISTS (src_chain `AAAAOA==`) |
+| Terra CL8Y → opBNB | NO mapping |
+| Terra CL8Y → Solana | NO mapping (Solana not registered) |
+
+**CL8Y is not “Terra → BSC only.”** Production supports **both**:
+
+| Direction | What happens |
+|-----------|----------------|
+| **Terra → BSC** | User bridges from Terra (`DepositCw20` / native deposit flows). Unlocked or minted **CL8Y ERC20 on BSC** at `0x8f45…` after EVM withdraw execute. Outgoing Terra mapping: local CL8Y CW20 → BSC chain + **BSC ERC20** as `dest_token` (left-padded 20-byte address in the V2 hash token word). |
+| **BSC → Terra** | User locks **CL8Y ERC20 on BSC** (EVM deposit). Relayer path leads to Terra `WithdrawSubmit` / approve / execute so **CL8Y CW20 on Terra** is minted to the recipient. The same V2 **`xchain_hash_id`** (e.g. `0x7e928aae83a50a51fab1ceaaf26cc3721725a28eddfd3dfbf2cff6647622564b`) appears on both sides for a completed transfer—use it in explorers, operator DB, and Terra event `xchain_hash_id` to **verify** source and destination legs. |
+
+**Terra “incoming” mapping for BSC → Terra (critical detail):**  
+`WithdrawSubmit` loads `TOKEN_SRC_MAPPINGS` using `(src_chain, hex(encode_token_address(**local_token**)))` where `local_token` is the Terra CW20 address passed in the message—**not** the BSC ERC20 address. So when admins ran `set_incoming_token_mapping` for CL8Y, the JSON/CLI `src_token` bytes must be exactly the **32-byte `encode_token_address` of the CL8Y CW20** (canonical address left-padded to 32 bytes), with `local_token` = that same CW20 string and `src_decimals` = **18** (BSC side). See `execute_withdraw_submit` in [`withdraw.rs`](../packages/contracts-terraclassic/bridge/src/execute/withdraw.rs) and the test *“CW20 requires incoming mapping”* in [`test_incoming_token_registry.rs`](../packages/contracts-terraclassic/bridge/tests/test_incoming_token_registry.rs) (`src_token` **must match** `encode_token_address` of the local CW20).
+
+LCD `incoming_token_mappings` therefore shows a **32-byte `src_token`** that **does not** decode to `0x8f45…` when read as “EVM padding;” it encodes the **Terra** token id used in the hash. **Do not** “fix” mainnet by replacing that value with the BSC ERC20 `bytes32`.
+
+**EVM side:** There is **no** symmetric `incoming` table on `TokenRegistry`; **BSC → Terra** destination selection is validated **off-chain by the operator** when approving the Terra-origin withdrawal that pays out on BSC ([OPERATIONAL_NOTES.md §12](../packages/contracts-evm/OPERATIONAL_NOTES.md)). That is unrelated to Terra’s on-chain incoming map for **BSC → Terra**.
+
+`cast call` can confirm CL8Y ERC20 is **registered** on BSC `TokenRegistry`. **`rateLimitBridge` may still be `0x0`**, so registry-backed withdraw limits are **not** enforced on EVM until `setRateLimitBridge` is called. **opBNB:** CL8Y is usually **not** registered there (no CL8Y route on opBNB in the default matrix); confirm with `tokenRegistered` before sending any `setRateLimit` on opBNB.
 
 CL8Y is deliberately **not** getting Solana destination mappings in this deployment. Only noneconomic test tokens will be bridged to Solana.
 
@@ -97,7 +141,7 @@ CL8Y is deliberately **not** getting Solana destination mappings in this deploym
 | tdec | `1000` | `5000` |
 | uluna | `646781276175022` | `646781276175022` |
 
-**EVM rate limits**: `rateLimitBridge` is `address(0)` on BSC/opBNB, so `TokenRegistry` withdraw rate limits are **not enforced**. `guardBridge` is also `address(0)`, so `TokenRateLimit` guard is not active. Rate limit values exist in storage (e.g. tokena: min=1e18, max=1e21, period=5e21) but are effectively dormant.
+**EVM rate limits**: `rateLimitBridge` is `address(0)` on BSC/opBNB, so `TokenRegistry` withdraw rate limits are **not enforced**. `guardBridge` is also `address(0)`, so `TokenRateLimit` guard is not active. Rate limit values exist in storage (e.g. tokena: min=1e18, max=1e21, period=5e21) but are effectively dormant. See **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** to enable enforcement safely.
 
 ### Contract Upgrade Analysis (feat/solana-integration vs main)
 
@@ -109,9 +153,92 @@ CL8Y is deliberately **not** getting Solana destination mappings in this deploym
 
 ---
 
+## Prerequisite: EVM rate limits (BSC and opBNB)
+
+Do this **before** Solana registration and token mapping work if you want **withdraw** caps enforced via `TokenRegistry` and optional **deposit + withdraw** caps via `TokenRateLimit` + `GuardBridge`.
+
+### Two mechanisms (both are currently off)
+
+| Mechanism | What it does | Live state |
+|-----------|----------------|------------|
+| **`TokenRegistry` + `rateLimitBridge`** | When `rateLimitBridge` is the **Bridge proxy**, the bridge calls `checkAndUpdateWithdrawRateLimit` on withdraw execution (registry stores min / max-per-tx / 24h period per token). **Deposit-side registry hook is a no-op.** | `rateLimitBridge == address(0)` |
+| **`GuardBridge` + `TokenRateLimit`** | When `Bridge.guardBridge` is set, the bridge calls `checkDeposit` / `checkWithdraw` on the guard stack. `TokenRateLimit` enforces **separate** 24h deposit and withdraw windows (global per token, not per user). | `guardBridge == address(0)` |
+
+See [OPERATIONAL_NOTES.md §8](../packages/contracts-evm/OPERATIONAL_NOTES.md) for guard wiring.
+
+### Order of operations (recommended)
+
+1. [Nonce alignment](#nonce-alignment-for-matching-addresses) if you plan **new** deployments (`GuardBridge`, `TokenRateLimit`, extra modules).
+2. On **each** chain (BSC, then opBNB with same logical config):
+   - **Audit** `getRateLimitConfig(token)` for every registered token you care about.
+   - Set **explicit** `setRateLimit` values where defaults are wrong (especially **generous** limits for noneconomic test tokens, **tight** limits for CL8Y BSC if you are about to enable enforcement).
+   - Call **`TokenRegistry.setRateLimitBridge(0xb2a22c74da8e3642e0effc107d3ac362ce885369)`** as **owner** (`0xCd4Eb…`). Repeat on opBNB pointing at the **opBNB Bridge proxy** (same address today).
+3. Optionally deploy **`TokenRateLimit`** + **`GuardBridge`** (+ datastore / AccessManager roles), register the rate-limit module, then **`Bridge.setGuardBridge(guardBridge)`**. This is more work but activates **deposit** rate limits; there is **no** repo `script/*.s.sol` today—mirror `packages/contracts-evm/test/TokenRateLimit.t.sol` or add a Foundry script.
+
+### Nonce alignment for matching addresses
+
+If BSC `nonce_B` > opBNB `nonce_O`, you must bring opBNB up to `nonce_B` **without** changing the intended multi-chain deploy sequence (or deploy only on BSC until you pause and sync). Typical approach:
+
+- From **`0xD699…`**, submit **self-transfers** (or other no-op txs) on **opBNB only** until `cast nonce` matches BSC **before** the first bytecode deploy you need to match.
+
+Never assume nonces stay equal; always measure immediately before a paired deploy.
+
+### Step 1 — Inspect registry limits (BSC example)
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+RPC=https://bsc-dataseed1.binance.org
+
+cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
+  0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c --rpc-url "$RPC"
+cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" \
+  0x8f452a1fdd388a45e1080992eff051b4dd9048d2 --rpc-url "$RPC"
+```
+
+Interpretation: `setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)` — **`maxPerPeriod == 0` means unlimited** for the 24h window; use **non-zero** caps when tightening CL8Y.
+
+### Step 2 — Set limits, then activate `rateLimitBridge` (BSC)
+
+**Owner** signs (multi-sig or EOA per your process):
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
+RPC=https://bsc-dataseed1.binance.org
+
+# Example: strict CL8Y withdraw cap (1 wei per tx and per 24h window) — adjust policy as ops requires
+cast send "$TR" \
+  "setRateLimit(address,uint256,uint256,uint256)" \
+  0x8f452a1fdd388a45e1080992eff051b4dd9048d2 \
+  0 1 1 \
+  --rpc-url "$RPC" --interactive
+
+# Example: keep test tokens usable (set explicitly if needed — values depend on your policy)
+# cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" <TOKENA> ...
+
+# Enable enforcement (Bridge applies withdraw checks)
+cast send "$TR" "setRateLimitBridge(address)" "$BRIDGE" --rpc-url "$RPC" --interactive
+```
+
+Repeat on **opBNB** with `RPC=https://opbnb-mainnet-rpc.bnbchain.org` for **every token registered on opBNB** (see [CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token); CL8Y is usually **only** on BSC in the default deployment; skip CL8Y on opBNB if `tokenRegistered` is false).
+
+### Step 3 — Optional: `TokenRateLimit` + `GuardBridge`
+
+- Deploy using the **same constructor pattern** as tests (`TokenRateLimit(accessManager)`, `GuardBridge(accessManager, datastore)`), grant `restricted` caller rights, push module addresses into the guard’s datastore sets for deposit/withdraw, then:
+
+```bash
+cast send 0xb2a22c74da8e3642e0effc107d3ac362ce885369 \
+  "setGuardBridge(address)" <GUARD_BRIDGE> \
+  --rpc-url "$RPC" --interactive
+```
+
+**Warning:** `TokenRateLimit` treats **`limit == 0` as “use default (0.1% supply)”**, not “block everything.” Set **explicit non-zero** small limits to clamp a token.
+
+---
+
 ## Phase 0: Pre-Deployment Safety -- Reduce CL8Y Rate Limit to 1
 
-CL8Y is the only economic cross-chain token. Temporarily restrict it to minimal throughput before making any infrastructure changes.
+CL8Y is the only economic cross-chain token. Temporarily restrict it to minimal throughput before making any infrastructure changes. This phase complements the EVM prerequisite above; Terra **already** enforces withdraw rate limits in the CosmWasm bridge.
 
 ### Step 0.1: Reduce CL8Y Rate Limit on Terra Classic
 
@@ -146,31 +273,11 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 # Expected: max_per_transaction: "1", max_per_period: "1"
 ```
 
-### Step 0.2: EVM Rate Limits for CL8Y (Optional)
+### Step 0.2: EVM rate limits during the safety window
 
-Currently `rateLimitBridge` is `address(0)` on BSC/opBNB, so TokenRegistry rate limits are **not enforced** even though values exist in storage. CL8Y can only be withdrawn on BSC from Terra deposits (there is no standalone CL8Y ERC20 on EVM).
+Follow **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** in full if you want registry-backed withdraw caps on BSC/opBNB. CL8Y on BSC is **`0x8f452a1fdd388a45e1080992eff051b4dd9048d2`** ([CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token)).
 
-**This step may not be strictly necessary** given that CL8Y is only bridgeable Terra -> BSC. However, if you want belt-and-suspenders protection:
-
-```bash
-# Option A: Set rate limit in TokenRegistry storage (dormant until rateLimitBridge is set)
-cast send \
-  0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setRateLimit(address,uint256,uint256,uint256)" \
-  <CL8Y_BSC_TOKEN_ADDRESS> 0 1 1 \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  --interactive
-
-# Option B: Also activate enforcement by setting rateLimitBridge to the Bridge address
-cast send \
-  0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setRateLimitBridge(address)" \
-  0xb2a22c74da8e3642e0effc107d3ac362ce885369 \
-  --rpc-url https://bsc-dataseed1.binance.org \
-  --interactive
-```
-
-**WARNING**: Setting `rateLimitBridge` will enforce rate limits for ALL tokens on withdraw, not just CL8Y. If other test tokens have tight default limits, this could block test token withdrawals. Set generous limits for test tokens first if activating this.
+**WARNING:** `setRateLimitBridge` enforces limits for **all** registered tokens on withdraw. Set **generous** explicit limits for noneconomic test tokens before enabling, or withdrawals for those tokens may fail.
 
 ### Step 0.3: Solana Rate Limits
 
@@ -820,7 +927,7 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 If issues are discovered at any point:
 
 1. **Solana bridge**: The bridge PDA init is idempotent (skips if exists). If not yet initialized, simply don't initialize. If already live, the admin can pause deposits by not funding the operator or removing operator permissions.
-2. **EVM**: Chain registrations cannot be removed, but token destination mappings can be unset. Pause the bridge via `pause()` on the Bridge contract if critical.
+2. **EVM**: Chain registrations cannot be removed, but token destination mappings can be unset. Pause the bridge via `pause()` on the Bridge contract if critical. If you enabled registry withdraw caps, `setRateLimitBridge(address(0))` on `TokenRegistry` stops that enforcement; `setGuardBridge(address(0))` stops the guard path.
 3. **Terra**: Pause the bridge via `{"pause":{}}` execute msg. Remove token destinations or unregister chains as needed.
 4. **CL8Y**: Rate limit is already at minimum (1 base unit). Restore original values only after verification (Phase 7).
 5. **Operator/Canceler**: Remove `SOLANA_*` env vars and restart to disable Solana processing. Existing EVM/Terra flows are unaffected.

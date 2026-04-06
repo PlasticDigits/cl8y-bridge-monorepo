@@ -23,6 +23,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Canceler Network](./canceler-network.md)
 - [Canceler Runbook](./runbook-cancelers.md)
 - [Production Deployment Guide](./deployment-guide.md)
+- [Solana Mainnet Deployment Runbook](./deployment-solana-mainnet.md)
 - [Terra Classic Upgrade Deployment](./deployment-terraclassic-upgrade.md)
 
 ### Development and Testing
