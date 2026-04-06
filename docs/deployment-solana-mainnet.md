@@ -327,78 +327,134 @@ Follow [`TokenRateLimit.t.sol`](../packages/contracts-evm/test/TokenRateLimit.t.
 
 #### 3.1 Deploy (`packages/contracts-evm`)
 
-Run once per RPC (**BSC**, then **opBNB**). New bytecode addresses each time unless you rely on CREATE3 + nonce alignment.
+Use fixed **`RPC_BSC`** / **`RPC_OPBNB`** everywhere below. Deploy **on each chain**; record **separate** addresses (`*_BSC` vs `*_OPBNB`). Matching bytecode addresses across chains **only** if you align deployer nonces + use CREATE3 (see [Nonce alignment](#nonce-alignment-for-matching-addresses)).
+
+**Before `GuardBridge` `forge create` on each chain:** set **`DATASTORE_BSC`** / **`DATASTORE_OPBNB`** in the same shell (e.g. `export DATASTORE_BSC=0x…` from the prior `forge create` output). The snippet uses `"$DATASTORE_BSC"` / `"$DATASTORE_OPBNB"` so a missing `export` fails fast instead of wiring the wrong datastore.
 
 ```bash
 cd packages/contracts-evm
 
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 ACCESS_MANAGER=0xa958d75c61227606df21e3261ba80dc399d19676
-RPC=<https://bsc-dataseed1.binance.org OR https://opbnb-mainnet-rpc.bnbchain.org>
 
+echo "=== BSC: DatastoreSetAddress ==="
 forge create src/DatastoreSetAddress.sol:DatastoreSetAddress \
-  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
-# DATASTORE=<0x…>
+  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export DATASTORE_BSC=0x...   # from forge output
 
+echo "=== BSC: TokenRateLimit ==="
 forge create src/TokenRateLimit.sol:TokenRateLimit \
   --constructor-args "$ACCESS_MANAGER" \
-  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
-# TOKEN_RATE_LIMIT=<0x…>
+  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export TOKEN_RATE_LIMIT_BSC=0x...
 
+echo "=== BSC: GuardBridge ==="
 forge create src/GuardBridge.sol:GuardBridge \
-  --constructor-args "$ACCESS_MANAGER" "$DATASTORE" \
-  --rpc-url "$RPC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
-# GUARD_BRIDGE=<0x…>
+  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_BSC" \
+  --rpc-url "$RPC_BSC" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export GUARD_BRIDGE_BSC=0x...
+
+echo "=== opBNB: DatastoreSetAddress ==="
+forge create src/DatastoreSetAddress.sol:DatastoreSetAddress \
+  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export DATASTORE_OPBNB=0x...
+
+echo "=== opBNB: TokenRateLimit ==="
+forge create src/TokenRateLimit.sol:TokenRateLimit \
+  --constructor-args "$ACCESS_MANAGER" \
+  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export TOKEN_RATE_LIMIT_OPBNB=0x...
+
+echo "=== opBNB: GuardBridge ==="
+forge create src/GuardBridge.sol:GuardBridge \
+  --constructor-args "$ACCESS_MANAGER" "$DATASTORE_OPBNB" \
+  --rpc-url "$RPC_OPBNB" --etherscan-api-key "$ETHERSCAN_API_KEY" --verify --interactive
+# export GUARD_BRIDGE_OPBNB=0x...
 ```
+
+After the block above, **export** the six addresses (or paste them into the next sections). **`DATASTORE_BSC` / `DATASTORE_OPBNB` must be set** before the corresponding **`GuardBridge`** `forge create` (same shell session).
 
 #### 3.2 AccessManager — `grantRole` + `setTargetFunctionRole`
 
-Use an unused **`ROLE_ID`** (example **`64`**). **`ADMIN_EOA`** must be the account executing AccessManager txs (use multisig execution if admin is a safe).
+**AccessManager** uses the **same proxy address** on BSC and opBNB ([README](../README.md)), but **state is per chain**—run the full block **twice** (BSC then opBNB) with **`TOKEN_RATE_LIMIT_BSC` / `GUARD_BRIDGE_BSC`** vs **`TOKEN_RATE_LIMIT_OPBNB` / `GUARD_BRIDGE_OPBNB`**.
+
+Use an unused **`ROLE_ID`** (example **`64`**). **`ADMIN_EOA`** must sign these txs (multisig → execute from the safe).
+
+Re-check selectors with **`cast sig`** after any bytecode change.
 
 ```bash
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 AM=0xa958d75c61227606df21e3261ba80dc399d19676
 ADMIN_EOA=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
 ROLE_ID=64
-RPC=<same chain as 3.1>
 
+# --- BSC (set TOKEN_RATE_LIMIT_BSC, GUARD_BRIDGE_BSC from §3.1) ---
+echo "=== BSC: AccessManager grantRole + setTargetFunctionRole ==="
 cast send "$AM" "grantRole(uint64,address,uint32)" "$ROLE_ID" "$ADMIN_EOA" 0 \
-  --rpc-url "$RPC" --interactive
+  --rpc-url "$RPC_BSC" --interactive
 
-# TokenRateLimit admin fns: setDepositLimit, setWithdrawLimit, setLimitsBatch
-cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$TOKEN_RATE_LIMIT" \
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$TOKEN_RATE_LIMIT_BSC" \
   "[0x272d177d,0xb53da186,0xd5b4c456]" "$ROLE_ID" \
-  --rpc-url "$RPC" --interactive
+  --rpc-url "$RPC_BSC" --interactive
 
-# GuardBridge: add/remove module selectors
-cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$GUARD_BRIDGE" \
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$GUARD_BRIDGE_BSC" \
   "[0xf54365aa,0x51bacc80,0xe358b6f2,0xb0db329b,0xd02a94b4,0x823eae5d]" "$ROLE_ID" \
-  --rpc-url "$RPC" --interactive
-```
+  --rpc-url "$RPC_BSC" --interactive
 
-Re-check selectors with **`cast sig`** after any bytecode change.
+# --- opBNB (set TOKEN_RATE_LIMIT_OPBNB, GUARD_BRIDGE_OPBNB from §3.1) ---
+echo "=== opBNB: AccessManager grantRole + setTargetFunctionRole ==="
+cast send "$AM" "grantRole(uint64,address,uint32)" "$ROLE_ID" "$ADMIN_EOA" 0 \
+  --rpc-url "$RPC_OPBNB" --interactive
+
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$TOKEN_RATE_LIMIT_OPBNB" \
+  "[0x272d177d,0xb53da186,0xd5b4c456]" "$ROLE_ID" \
+  --rpc-url "$RPC_OPBNB" --interactive
+
+cast send "$AM" "setTargetFunctionRole(address,bytes4[],uint64)" "$GUARD_BRIDGE_OPBNB" \
+  "[0xf54365aa,0x51bacc80,0xe358b6f2,0xb0db329b,0xd02a94b4,0x823eae5d]" "$ROLE_ID" \
+  --rpc-url "$RPC_OPBNB" --interactive
+```
 
 #### 3.3 Register `TokenRateLimit` on `GuardBridge`
 
 ```bash
-cast send "$GUARD_BRIDGE" "addGuardModuleDeposit(address)" "$TOKEN_RATE_LIMIT" \
-  --rpc-url "$RPC" --interactive
-cast send "$GUARD_BRIDGE" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_LIMIT" \
-  --rpc-url "$RPC" --interactive
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
+
+echo "=== BSC: GuardBridge module registration ==="
+cast send "$GUARD_BRIDGE_BSC" "addGuardModuleDeposit(address)" "$TOKEN_RATE_LIMIT_BSC" \
+  --rpc-url "$RPC_BSC" --interactive
+cast send "$GUARD_BRIDGE_BSC" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_LIMIT_BSC" \
+  --rpc-url "$RPC_BSC" --interactive
+
+echo "=== opBNB: GuardBridge module registration ==="
+cast send "$GUARD_BRIDGE_OPBNB" "addGuardModuleDeposit(address)" "$TOKEN_RATE_LIMIT_OPBNB" \
+  --rpc-url "$RPC_OPBNB" --interactive
+cast send "$GUARD_BRIDGE_OPBNB" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_LIMIT_OPBNB" \
+  --rpc-url "$RPC_OPBNB" --interactive
 ```
 
 #### 3.4 Set guard policy on `TokenRateLimit`
 
-**`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. Call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) per token. **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values.
+**`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. On **BSC**, call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) on **`TOKEN_RATE_LIMIT_BSC`** (`--rpc-url "$RPC_BSC"`). On **opBNB**, the same on **`TOKEN_RATE_LIMIT_OPBNB`** (`--rpc-url "$RPC_OPBNB"`). **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values.
 
 #### 3.5 `Bridge.setGuardBridge` (owner)
 
 ```bash
+export RPC_BSC=https://bsc-dataseed1.binance.org
+export RPC_OPBNB=https://opbnb-mainnet-rpc.bnbchain.org
 BRIDGE=0xb2a22c74da8e3642e0effc107d3ac362ce885369
-cast send "$BRIDGE" "setGuardBridge(address)" "$GUARD_BRIDGE" --rpc-url "$RPC" --interactive
 
-cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC"
+echo "=== BSC: Bridge.setGuardBridge ==="
+cast send "$BRIDGE" "setGuardBridge(address)" "$GUARD_BRIDGE_BSC" --rpc-url "$RPC_BSC" --interactive
+cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_BSC"
+
+echo "=== opBNB: Bridge.setGuardBridge ==="
+cast send "$BRIDGE" "setGuardBridge(address)" "$GUARD_BRIDGE_OPBNB" --rpc-url "$RPC_OPBNB" --interactive
+cast call "$BRIDGE" "guardBridge()(address)" --rpc-url "$RPC_OPBNB"
 ```
-
-Repeat **3.1–3.5** on the **other** chain’s **`$RPC`**.
 
 **Warning:** A mis-tuned **`TokenRateLimit`** can block deposits or **`withdrawExecute*`** at the guard layer.
 
