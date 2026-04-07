@@ -113,6 +113,14 @@ VITE_LOCK_UNLOCK_ADDRESS=0xd7b3bf05987052009c350874e810df98da95d258
 VITE_EVM_RPC_URL=https://bsc-dataseed1.binance.org
 VITE_TERRA_LCD_URL=https://terra-classic-lcd.publicnode.com
 VITE_TERRA_RPC_URL=https://terra-classic-rpc.publicnode.com
+VITE_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+
+# Solana bridge + noneconomic test SPL mints (Settings → Faucet / Solana routes)
+VITE_SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+# BridgeConfig PDA (mainnet, seeds ["bridge"]): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD — reference only; app derives PDAs from program id
+VITE_SOLANA_TESTA_MINT=6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E
+VITE_SOLANA_TESTB_MINT=EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX
+VITE_SOLANA_TDEC_MINT=765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR
 
 # WalletConnect — ask maintainer for the project ID
 VITE_WC_PROJECT_ID=

@@ -21,7 +21,9 @@ See [Security Model](../../docs/security-model.md) for details on the watchtower
 cp .env.example .env
 # Edit .env with your configuration
 
-# Run database migrations
+# Optional: run migrations via CLI (local/staging). In production, the operator binary
+# runs embedded migrations on startup (main.rs → db::run_migrations) unless SKIP_MIGRATIONS=1.
+# Do not expose production Postgres to the public internet just to run sqlx from a laptop.
 sqlx migrate run
 
 # Build

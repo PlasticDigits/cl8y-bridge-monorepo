@@ -1,5 +1,8 @@
 .anchor/
 # solana-test-validator / anchor test default ledger (do not commit)
 test-ledger/
+# Program deploy keypairs (never commit — see docs/deployment-solana-mainnet.md Step 1.1)
+keys/private/*
+!keys/private/.gitkeep
 # Persisted devnet test keypairs (auto-generated, contain private keys)
 .devnet-keys/

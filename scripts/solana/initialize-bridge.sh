@@ -52,11 +52,15 @@ fi
 echo ""
 echo "Sending initialize transaction..."
 
-# Run mocha directly with --grep; anchor test passes -- args to cargo-build-sbf, not mocha
+# Minimal mocha test (no setupTest / airdrops — bridge.test.ts funds test keypairs and
+# calls requestAirdrop on non-localhost, which mainnet RPCs reject with 410 Gone).
 cd "$REPO_ROOT/packages/contracts-solana"
-ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}" \
-ANCHOR_WALLET="${SOLANA_KEYPAIR}" \
-SOLANA_OPERATOR_KEYPAIR="${SOLANA_OPERATOR_KEYPAIR:-${SOLANA_KEYPAIR}}" \
-  npx ts-mocha -p ./tsconfig.json -t 1000000 tests/bridge.test.ts --grep "initialize"
+export ANCHOR_PROVIDER_URL="${SOLANA_RPC_URL}"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+export SOLANA_PROGRAM_ID
+export OPERATOR_PUBKEY
+export FEE_BPS
+export WITHDRAW_DELAY
+npx ts-mocha -p ./tsconfig.json -t 1000000 tests/production_initialize_bridge.test.ts
 
 echo "Bridge initialized!"

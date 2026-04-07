@@ -25,9 +25,19 @@ Keep these aligned everywhere (scripts, operator, canceler, frontend):
 
 | Item | Value | Notes |
 |------|--------|--------|
+| Mainnet-beta bridge program | `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt` | [Solscan](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt); set `SOLANA_PROGRAM_ID` / `VITE_SOLANA_PROGRAM_ID` |
+| Mainnet-beta BridgeConfig PDA | `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` | Seeds **`["bridge"]`** under program id above; [Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD). SPL MintBurn **mint authority**; not a separate env var |
 | Solana V2 `bytes4` chain ID | `0x00000005` | Big-endian bytes `[0,0,0,5]`; default in operator/canceler if `SOLANA_V2_CHAIN_ID` unset |
 | EVM `registerChain` string | `solana_mainnet-beta` | Used by `scripts/solana/register-chain-evm.sh` |
 | Terra `register_chain` identifier | `solana_mainnet-beta` | Same script family |
+
+**Mainnet noneconomic test SPL mints** (9 / 9 / 6 decimals; pair with BSC/opBNB/Terra test tokens — full mapping and EVM/Terra encodings in [deployment-solana-mainnet.md](./deployment-solana-mainnet.md)):
+
+| Label | Mint (base58) | Solscan |
+|-------|---------------|---------|
+| testa | `6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E` | [token](https://solscan.io/token/6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E) |
+| testb | `EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX` | [token](https://solscan.io/token/EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX) |
+| tdec | `765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR` | [token](https://solscan.io/token/765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR) |
 
 Set explicitly in production to avoid drift:
 
@@ -44,9 +54,9 @@ Programs live under `packages/contracts-solana/programs/`:
 - **`cl8y_bridge`** — bridge logic (`declare_id!` in `programs/cl8y-bridge/src/lib.rs`).
 - **`cl8y_faucet`** — optional SPL faucet for test mints (`programs/cl8y-faucet`).
 
-Canonical program keypairs live under `packages/contracts-solana/keys/localnet/` (committed); **`deploy.sh`** copies the bridge keypair into `target/deploy/` before `anchor build -p cl8y_bridge`. Treat the **upgrade authority** wallet as secret: backup offline, never commit.
+Program **private** keypairs belong under **`packages/contracts-solana/keys/private/`** (gitignored). **`deploy.sh`** resolves the bridge keypair (`CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH` → `keys/private/` → `keys/localnet/` fallback) and copies it into **`target/deploy/`** before `anchor build -p cl8y_bridge`. For first-time mainnet keys and syncing **`declare_id!` / `Anchor.toml`**, follow **[Step 1.1 in deployment-solana-mainnet.md](./deployment-solana-mainnet.md#step-11-build-solana-programs-bridge)**. Treat the **upgrade authority** wallet as secret: backup offline, never commit keypair JSON.
 
-First-time deploy: ensure local keypairs match the declared IDs (see `anchor keys` / project docs). Upgrades use the same program address with new bytecode.
+First-time deploy: ensure keypairs match the declared IDs. Upgrades use the same program address with new bytecode.
 
 ## 4. Deploy Solana programs (mainnet-beta)
 
@@ -54,8 +64,8 @@ From repo root:
 
 ```bash
 cd packages/contracts-solana
-# Bridge only (matches ./scripts/solana/deploy.sh)
-mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+# Bridge only (matches ./scripts/solana/deploy.sh): use keys/private/cl8y_bridge-keypair.json when present
+mkdir -p target/deploy && cp keys/private/cl8y_bridge-keypair.json target/deploy/
 anchor build -p cl8y_bridge -- --features no-log-ix-name
 solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json
 ```
@@ -74,7 +84,7 @@ This builds **`cl8y_bridge` only**, deploys it via Anchor, verifies with `solana
 
 ```bash
 cd packages/contracts-solana
-mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+mkdir -p target/deploy && cp keys/private/cl8y_bridge-keypair.json target/deploy/
 anchor build -p cl8y_bridge -- --features no-log-ix-name
 anchor deploy --provider.cluster https://api.mainnet-beta.solana.com \
   --program-name cl8y_bridge --provider.wallet "${SOLANA_KEYPAIR:-$HOME/.config/solana/id.json}"
@@ -83,6 +93,7 @@ anchor deploy --provider.cluster https://api.mainnet-beta.solana.com \
 Record:
 
 - `SOLANA_PROGRAM_ID` = bridge program id (for operator, canceler, frontend).
+- **BridgeConfig PDA** (seeds `["bridge"]`) — mainnet with this program: `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (not an env var; derive or see §2 table).
 - Faucet program id if you use the faucet (e.g. `VITE_SOLANA_FAUCET_ADDRESS`).
 
 ## 5. Upgrade an existing program
@@ -119,18 +130,19 @@ Use the TypeScript tests or custom transactions as in local dev (`tests/bridge.t
 
 ```bash
 export EVM_RPC_URL=<your-mainnet-or-test-evm-rpc>
-export PRIVATE_KEY=0x...
 export CHAIN_REGISTRY_ADDRESS=0x...
 ./scripts/solana/register-chain-evm.sh
+# Interactive: enter ChainRegistry owner key when cast prompts (do not export PRIVATE_KEY).
 ```
 
 **Terra — register Solana on the bridge contract:**
 
 ```bash
-export TERRA_NODE_URL=<lcd>
+export TERRA_NODE_URL=<tendermint-rpc>   # e.g. https://terra-classic-rpc.publicnode.com:443 (not LCD)
 export TERRA_CHAIN_ID=columbus-5
 export BRIDGE_CONTRACT=terra1...
-export TERRA_WALLET=<keyname>
+export TERRA_WALLET=<bridge-admin-keyname>
+# Optional: TERRA_KEYRING_BACKEND=file. Mainnet: script defaults to --gas-prices 28.325uluna; override with TERRA_GAS_PRICES or TERRA_FEES if needed.
 ./scripts/solana/register-chain-terra.sh
 ```
 
@@ -143,7 +155,7 @@ export TERRA_WALLET=<keyname>
 
 Use worthless mints only.
 
-1. Deploy `cl8y_faucet` separately (e.g. `cp keys/localnet/cl8y_{bridge,faucet}-keypair.json target/deploy/`, `anchor build -p cl8y_faucet -- --features no-log-ix-name`, then `anchor deploy --program-name cl8y_faucet` with your RPC and wallet).
+1. Deploy `cl8y_faucet` separately (e.g. `cp keys/private/cl8y_{bridge,faucet}-keypair.json target/deploy/` after syncing `declare_id!` / `Anchor.toml`, `anchor build -p cl8y_faucet -- --features no-log-ix-name`, then `anchor deploy --program-name cl8y_faucet` with your RPC and wallet; or use **`./scripts/solana/anchor-deploy-localnet.sh`** locally).
 2. `initialize` the faucet program (see `tests/faucet.test.ts`).
 3. Create SPL mints (`spl-token create-token`), then `register_mint` so the faucet can mint.
 4. Optionally adapt `scripts/solana/setup-test-tokens.sh`: set `SOLANA_RPC_URL` to mainnet RPC and `FAUCET_PROGRAM_ID` to your deployed faucet id.
@@ -185,7 +197,7 @@ SOLANA_V2_CHAIN_ID=0x00000005
 ## 12. Smoke checks after deploy
 
 - `solana program show <PROGRAM_ID> --url https://api.mainnet-beta.solana.com`
-- Query bridge config account (Anchor client or `solana account` on the bridge PDA).
+- Query bridge config account: `solana account HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD --url https://api.mainnet-beta.solana.com` (mainnet BridgeConfig PDA; seeds `["bridge"]` under `SOLANA_PROGRAM_ID`).
 - EVM: `cast call` on `ChainRegistry` for `getChainId("solana_mainnet-beta")`.
 - Terra: query bridge state for registered chain id `AAAABQ==` (base64 of four bytes `0x00000005`).
 - Start operator with DB migrated; confirm no startup errors and Solana watcher logs.
