@@ -121,7 +121,7 @@ async fn async_main() -> eyre::Result<()> {
             .program_id
             .parse()
             .map_err(|e| eyre::eyre!("Invalid SOLANA_PROGRAM_ID for writer: {}", e))?;
-        let keypair = solana_sdk::signature::Keypair::from_base58_string(&sol_cfg.private_key);
+        let keypair = crate::config::parse_solana_private_key(&sol_cfg.private_key)?;
 
         // Build EVM source chain endpoints for deposit verification
         let mut evm_endpoints = std::collections::HashMap::new();

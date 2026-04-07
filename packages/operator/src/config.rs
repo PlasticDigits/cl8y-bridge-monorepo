@@ -8,6 +8,42 @@ use std::path::Path;
 
 use crate::multi_evm::MultiEvmConfig;
 
+/// Parse `SOLANA_PRIVATE_KEY`: base58 (64-byte secret key) or JSON `[u8,...]` from `solana-keygen`/Anchor.
+pub fn parse_solana_private_key(s: &str) -> eyre::Result<solana_sdk::signature::Keypair> {
+    use solana_sdk::signature::Keypair;
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(eyre!("SOLANA_PRIVATE_KEY is empty"));
+    }
+    if s.starts_with('[') {
+        let bytes: Vec<u8> = serde_json::from_str(s).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: invalid JSON byte array (Anchor/solana-keygen format): {}",
+                e
+            )
+        })?;
+        Keypair::from_bytes(&bytes).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: invalid keypair bytes (expected 64-byte secret key): {}",
+                e
+            )
+        })
+    } else {
+        let decoded = bs58::decode(s).into_vec().map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: not valid base58 (or use JSON `[u8,...]` from keypair file): {}",
+                e
+            )
+        })?;
+        Keypair::from_bytes(&decoded).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: base58 decoded but invalid keypair length: {}",
+                e
+            )
+        })
+    }
+}
+
 /// Main configuration for the relayer
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {

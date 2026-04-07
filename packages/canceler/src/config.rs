@@ -1,6 +1,7 @@
 //! Canceler configuration
 
 use eyre::{eyre, Result, WrapErr};
+use solana_sdk::signature::Keypair;
 use std::env;
 use std::fmt;
 use url::Url;
@@ -33,6 +34,44 @@ pub fn parse_solana_v2_chain_ids_from_env() -> Result<Vec<[u8; 4]>> {
         return Ok(vec![parse_one_u32_chain_bytes(&v)?]);
     }
     Ok(vec![[0x00, 0x00, 0x00, 0x05]])
+}
+
+/// Parse `SOLANA_PRIVATE_KEY`: **base58** (64-byte secret key, same as `@solana/web3.js` `bs58.encode(keypair.secretKey)`)
+/// or **JSON byte array** `[u8,...]` as written by `solana-keygen new` / Anchor (`id.json`).
+///
+/// `Keypair::from_base58_string` panics on bad input; this returns `Err` instead.
+pub fn parse_solana_private_key(s: &str) -> Result<Keypair> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(eyre!("SOLANA_PRIVATE_KEY is empty"));
+    }
+    if s.starts_with('[') {
+        let bytes: Vec<u8> = serde_json::from_str(s).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: invalid JSON byte array (Anchor/solana-keygen format): {}",
+                e
+            )
+        })?;
+        Keypair::from_bytes(&bytes).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: invalid keypair bytes (expected 64-byte secret key): {}",
+                e
+            )
+        })
+    } else {
+        let decoded = bs58::decode(s).into_vec().map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: not valid base58 (or use JSON `[u8,...]` from keypair file): {}",
+                e
+            )
+        })?;
+        Keypair::from_bytes(&decoded).map_err(|e| {
+            eyre!(
+                "SOLANA_PRIVATE_KEY: base58 decoded but invalid keypair length: {}",
+                e
+            )
+        })
+    }
 }
 
 /// Canceler configuration
@@ -134,7 +173,7 @@ pub struct Config {
 pub struct SolanaConfig {
     pub rpc_url: String,
     pub program_id: String,
-    /// Base58-encoded full Solana keypair (same format as operator `SOLANA_PRIVATE_KEY`).
+    /// Solana signing secret: base58 64-byte secret key or JSON `[u8,...]` (keypair file contents).
     pub private_key: String,
     pub commitment: String,
     pub poll_interval_ms: u64,
@@ -304,7 +343,9 @@ impl Config {
                     .map_err(|_| eyre!("SOLANA_PROGRAM_ID required when SOLANA_ENABLED=true"))?;
 
                 let private_key = env::var("SOLANA_PRIVATE_KEY").map_err(|_| {
-                    eyre!("SOLANA_PRIVATE_KEY required when SOLANA_ENABLED=true (base58 keypair, same as operator)")
+                    eyre!(
+                        "SOLANA_PRIVATE_KEY required when SOLANA_ENABLED=true (base58 or JSON [u8,...] keypair)"
+                    )
                 })?;
 
                 let commitment =

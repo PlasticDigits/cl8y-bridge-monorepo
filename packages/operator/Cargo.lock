@@ -1715,6 +1715,7 @@ dependencies = [
  "bigdecimal",
  "bip39",
  "borsh 0.10.4",
+ "bs58",
  "chrono",
  "color-eyre",
  "config",

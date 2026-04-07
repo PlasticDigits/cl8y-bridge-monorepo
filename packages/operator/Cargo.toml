@@ -52,6 +52,7 @@ solana-sdk = "=2.1.0"
 solana-client = "=2.1.0"
 solana-transaction-status = "=2.1.0"
 borsh = "0.10"
+bs58 = "0.5"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }

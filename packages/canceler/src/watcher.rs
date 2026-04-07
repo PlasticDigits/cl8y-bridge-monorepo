@@ -206,8 +206,7 @@ impl CancelerWatcher {
                 .parse()
                 .map_err(|e| eyre!("Invalid SOLANA_PROGRAM_ID: {}", e))?;
 
-            let keypair =
-                solana_sdk::signature::Keypair::from_base58_string(&sol_config.private_key);
+            let keypair = crate::config::parse_solana_private_key(&sol_config.private_key)?;
 
             let client = SolanaCancelerClient::new(
                 &sol_config.rpc_url,

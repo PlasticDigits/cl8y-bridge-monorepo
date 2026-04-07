@@ -1401,19 +1401,25 @@ SOLANA_V2_CHAIN_ID=0x00000005
 
 ### Step 4.4: Add Canceler on Solana Bridge
 
-Register the canceler's Solana pubkey on the bridge program (**production canceler:** **`EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK`**). Sign as admin (**`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`**).
+Register the canceler's Solana pubkey on the bridge program (**production canceler:** **`EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK`**). Sign as **bridge admin** (same keypair as Steps 2.4 / 3.4 — this rollout: **`id-deployer.json`** / pubkey **`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`**).
 
-```typescript
-import { PublicKey } from '@solana/web3.js';
+**Script:** [`packages/contracts-solana/scripts/add-mainnet-canceler.ts`](../packages/contracts-solana/scripts/add-mainnet-canceler.ts) calls **`add_canceler`** with **`active: true`**. It is **idempotent** if that canceler is already active. Override the canceler with **`SOLANA_CANCELER_PUBKEY`** if needed.
 
-const cancelerPubkey = new PublicKey(
-  'EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK',
-);
-await program.methods
-  .addCanceler({ canceler: cancelerPubkey })
-  .accounts({ bridge: bridgePda, admin: admin.publicKey })
-  .rpc();
+```bash
+cd packages/contracts-solana
+
+export SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+export ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+
+# Optional: defaults to EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK
+# export SOLANA_CANCELER_PUBKEY=EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK
+
+npx tsx scripts/add-mainnet-canceler.ts
 ```
+
+Prerequisites: **`anchor build`** (IDL present).
 
 ### Step 4.5: Rebuild and Restart Operator + Canceler
 
