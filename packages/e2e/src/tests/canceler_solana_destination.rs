@@ -1,7 +1,7 @@
 //! Solana-destination (EVM→Solana) canceler fraud coverage.
 //!
 //! Requires a running Solana validator, deployed program, operator keypair, and canceler built with
-//! `SOLANA_ENABLED=true` (plus `SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, `SOLANA_KEYPAIR_PATH`, etc.).
+//! `SOLANA_ENABLED=true` (plus `SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, `SOLANA_PRIVATE_KEY`, etc.).
 
 use crate::services::{find_project_root, ServiceManager};
 use crate::tests::canceler_helpers::check_canceler_health;

@@ -190,7 +190,7 @@ For full Solana verification in cancelers:
 SOLANA_ENABLED=true
 SOLANA_RPC_URL=...
 SOLANA_PROGRAM_ID=...
-SOLANA_KEYPAIR_PATH=/path/to/keypair.json
+SOLANA_PRIVATE_KEY=<base58 encoded canceler keypair>
 SOLANA_V2_CHAIN_ID=0x00000005
 ```
 

@@ -206,17 +206,8 @@ impl CancelerWatcher {
                 .parse()
                 .map_err(|e| eyre!("Invalid SOLANA_PROGRAM_ID: {}", e))?;
 
-            let keypair_bytes = std::fs::read(&sol_config.keypair_path).map_err(|e| {
-                eyre!(
-                    "Failed to read SOLANA_KEYPAIR_PATH '{}': {}",
-                    sol_config.keypair_path,
-                    e
-                )
-            })?;
-            let keypair_data: Vec<u8> = serde_json::from_slice(&keypair_bytes)
-                .map_err(|e| eyre!("Failed to parse Solana keypair JSON: {}", e))?;
-            let keypair = solana_sdk::signature::Keypair::from_bytes(&keypair_data)
-                .map_err(|e| eyre!("Invalid Solana keypair bytes: {}", e))?;
+            let keypair =
+                solana_sdk::signature::Keypair::from_base58_string(&sol_config.private_key);
 
             let client = SolanaCancelerClient::new(
                 &sol_config.rpc_url,

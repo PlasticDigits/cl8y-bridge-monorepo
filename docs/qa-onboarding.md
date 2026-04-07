@@ -749,14 +749,24 @@ When the Solana program is deployed to devnet, verify:
 
 ### Operator/canceler env vars for Solana
 
-When running the operator or canceler with Solana enabled, add to the  
-service's environment:
+**Operator** (when `SOLANA_RPC_URL` is set — no `SOLANA_ENABLED`):
+
+```env
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_PROGRAM_ID=<program-id-from-deploy>
+SOLANA_PRIVATE_KEY=<base58 keypair>
+SOLANA_V2_CHAIN_ID=0x736f6c00
+SOLANA_POLL_INTERVAL_MS=5000
+SOLANA_COMMITMENT=finalized
+```
+
+**Canceler** (Solana watcher — set `SOLANA_ENABLED=true`):
 
 ```env
 SOLANA_ENABLED=true
 SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_PROGRAM_ID=<program-id-from-deploy>
-SOLANA_KEYPAIR_PATH=~/.config/solana/devnet-deployer.json
+SOLANA_PRIVATE_KEY=<base58 canceler keypair>
 SOLANA_V2_CHAIN_ID=0x736f6c00
 SOLANA_POLL_INTERVAL_MS=5000
 SOLANA_COMMITMENT=finalized

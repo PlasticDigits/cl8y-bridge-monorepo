@@ -129,12 +129,13 @@ pub struct Config {
 
 /// Solana chain configuration for the canceler.
 ///
-/// NOTE: `Debug` is manually implemented to redact the keypair path.
+/// NOTE: `Debug` is manually implemented to redact the signing secret.
 #[derive(Clone)]
 pub struct SolanaConfig {
     pub rpc_url: String,
     pub program_id: String,
-    pub keypair_path: String,
+    /// Base58-encoded full Solana keypair (same format as operator `SOLANA_PRIVATE_KEY`).
+    pub private_key: String,
     pub commitment: String,
     pub poll_interval_ms: u64,
     /// All SVM V2 chain IDs this deployment treats as Solana-family (mainnet, testnets, future SVM).
@@ -147,7 +148,7 @@ impl fmt::Debug for SolanaConfig {
         f.debug_struct("SolanaConfig")
             .field("rpc_url", &self.rpc_url)
             .field("program_id", &self.program_id)
-            .field("keypair_path", &"<redacted>")
+            .field("private_key", &"<redacted>")
             .field("commitment", &self.commitment)
             .field("poll_interval_ms", &self.poll_interval_ms)
             .field(
@@ -302,8 +303,9 @@ impl Config {
                 let program_id = env::var("SOLANA_PROGRAM_ID")
                     .map_err(|_| eyre!("SOLANA_PROGRAM_ID required when SOLANA_ENABLED=true"))?;
 
-                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
-                    .map_err(|_| eyre!("SOLANA_KEYPAIR_PATH required when SOLANA_ENABLED=true"))?;
+                let private_key = env::var("SOLANA_PRIVATE_KEY").map_err(|_| {
+                    eyre!("SOLANA_PRIVATE_KEY required when SOLANA_ENABLED=true (base58 keypair, same as operator)")
+                })?;
 
                 let commitment =
                     env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
@@ -318,7 +320,7 @@ impl Config {
                 Some(SolanaConfig {
                     rpc_url,
                     program_id,
-                    keypair_path,
+                    private_key,
                     commitment,
                     poll_interval_ms,
                     chain_ids,

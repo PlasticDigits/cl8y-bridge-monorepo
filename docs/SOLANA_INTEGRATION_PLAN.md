@@ -688,7 +688,7 @@ SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 SOLANA_WS_URL=wss://api.mainnet-beta.solana.com
 SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
 # Mainnet BridgeConfig PDA (seeds ["bridge"]): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD — not configured via env; derive from program id
-SOLANA_KEYPAIR_PATH=/path/to/operator-keypair.json
+SOLANA_PRIVATE_KEY=<base58 keypair>
 SOLANA_POLL_INTERVAL_MS=2000
 SOLANA_COMMITMENT=finalized             # finalized recommended (see 6c-i)
 SOLANA_BYTES4_CHAIN_ID=0x00000005       # or whatever ID is chosen

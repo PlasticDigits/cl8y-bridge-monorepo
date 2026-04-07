@@ -82,7 +82,7 @@ Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, 
 | Solana BridgeConfig PDA | `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` | Seeds **`["bridge"]`** under program id above; [Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD). **Mint authority** for MintBurn SPL mints must be this PDA (not the program id). Confirm: `solana find-program-derived-address "$SOLANA_PROGRAM_ID" string:bridge` (pubkey is first field) |
 | Solana deployer / bridge admin | `5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg` | **`SOLANA_KEYPAIR`** for deploy, **`initialize-bridge.sh`**, **`setup-test-tokens.sh`**, and **`addCanceler`** (admin signer) |
 | Solana operator | `7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro` | **`OPERATOR_PUBKEY`** at init; operator service Solana signer (**`SOLANA_PRIVATE_KEY`**) |
-| Solana canceler | `EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK` | Register with **`addCanceler`**; canceler **`SOLANA_KEYPAIR_PATH`** must be this keypair |
+| Solana canceler | `EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK` | Register with **`addCanceler`**; canceler **`SOLANA_PRIVATE_KEY`** (base58) must be this keypair |
 | Solana SPL **testa** (9 dec) | `6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E` | [Solscan](https://solscan.io/token/6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E); **`SOLANA_TESTA_MINT`** / **`VITE_SOLANA_TESTA_MINT`** |
 | Solana SPL **testb** (9 dec) | `EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX` | [Solscan](https://solscan.io/token/EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX); **`SOLANA_TESTB_MINT`** / **`VITE_SOLANA_TESTB_MINT`** |
 | Solana SPL **tdec** (6 dec) | `765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR` | [Solscan](https://solscan.io/token/765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR); **`SOLANA_TDEC_MINT`** / **`VITE_SOLANA_TDEC_MINT`** |
@@ -1394,8 +1394,8 @@ SOLANA_ENABLED=true
 SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
 # BridgeConfig PDA (reference): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD
-# Keypair must publish pubkey EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK
-SOLANA_KEYPAIR_PATH=/path/to/canceler-keypair.json
+# Must be the base58-encoded keypair whose pubkey is EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK
+SOLANA_PRIVATE_KEY=<base58 encoded canceler keypair>
 SOLANA_V2_CHAIN_ID=0x00000005
 ```
 
