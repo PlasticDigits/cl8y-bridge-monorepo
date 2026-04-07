@@ -405,6 +405,28 @@ contract HashLibTest is Test {
         );
     }
 
+    /// @notice Full 32-byte Solana pubkey as `destAccount` (matches `UniversalAddress::to_hash_bytes`, not lossy `to_bytes32`).
+    bytes32 constant SOLANA_DEST_PUBKEY = 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20;
+
+    /// @notice Placeholder SPL mint as 32-byte token id for parity tests.
+    bytes32 constant SPL_TOKEN_PLACEHOLDER = 0xCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCD;
+
+    /// @notice Terra→Solana V2 hash golden (CosmWasm `bridge::hash::compute_xchain_hash_id`, Anchor program).
+    function test_TransferHash_TerraToSolana_FullPubkeyDest_CrossChainParity() public pure {
+        bytes4 srcChain = bytes4(uint32(2)); // Terra
+        bytes4 destChain = bytes4(uint32(5)); // Solana (e.g. local dev chain id)
+
+        bytes32 hash = HashLib.computeXchainHashId(
+            srcChain, destChain, TERRA_ACCOUNT, SOLANA_DEST_PUBKEY, SPL_TOKEN_PLACEHOLDER, 500_000, 99
+        );
+
+        assertEq(
+            hash,
+            0x5546e5381d73afc31ae405eea765c2c6c6ead75be0ccbf809cd0ad7be7059f71,
+            "Terra->Solana hash must match Rust CosmWasm and operator"
+        );
+    }
+
     /// @notice Test EVM→Terra transfer hash with CW20 token, cross-chain parity with Rust.
     function test_TransferHash_EvmToTerra_CW20_CrossChainParity() public pure {
         bytes4 srcChain = bytes4(uint32(1)); // EVM

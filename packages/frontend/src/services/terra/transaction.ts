@@ -61,7 +61,8 @@ export function isTerraContractError(error: unknown, code: TerraTxErrorCode): bo
   return error instanceof TerraTxError && error.code === code
 }
 
-function handleSwapTransactionError(error: unknown): TerraTxError {
+/** Exported for unit tests and any caller that needs raw error classification. */
+export function handleSwapTransactionError(error: unknown): TerraTxError {
   const raw = error instanceof Error ? error.message : String(error)
   const m = raw.toLowerCase()
 
@@ -104,7 +105,11 @@ function handleSwapTransactionError(error: unknown): TerraTxError {
     )
   }
 
-  if (m.includes('withdraw already submitted') || m.includes('withdrawalreadysubmitted')) {
+  if (
+    m.includes('withdrawal already submitted') ||
+    m.includes('withdraw already submitted') ||
+    m.includes('withdrawalreadysubmitted')
+  ) {
     return new TerraTxError(
       TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED,
       'This withdrawal has already been submitted on-chain. ' +
@@ -154,6 +159,18 @@ function handleSwapTransactionError(error: unknown): TerraTxError {
   }
 
   if (m.includes('execute wasm contract failed') || m.includes('execute msg')) {
+    if (
+      m.includes('withdrawal already submitted') ||
+      m.includes('withdraw already submitted') ||
+      m.includes('withdrawalreadysubmitted')
+    ) {
+      return new TerraTxError(
+        TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED,
+        'This withdrawal has already been submitted on-chain. ' +
+          'It may be awaiting operator approval — do not retry.',
+        raw
+      )
+    }
     return new TerraTxError(
       TERRA_TX_ERROR.CONTRACT_ERROR,
       `Bridge contract rejected the transaction: ${raw}`,

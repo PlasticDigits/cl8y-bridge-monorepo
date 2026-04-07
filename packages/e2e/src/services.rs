@@ -171,12 +171,12 @@ impl ServiceManager {
             }
         }
 
-        // Small delay to let the process start
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Allow the detached process to exec the binary (slow disks / cold cache)
+        std::thread::sleep(std::time::Duration::from_millis(2000));
 
-        // Find the operator PID by searching for the process
+        // Find the operator PID by searching for the process (package/binary: cl8y-operator)
         let find_pid = Command::new("pgrep")
-            .args(["-f", "cl8y-relayer"])
+            .args(["-f", "cl8y-operator"])
             .output()
             .map_err(|e| eyre!("Failed to find operator PID: {}", e))?;
 
@@ -624,6 +624,34 @@ impl ServiceManager {
                 format!("{}", evm2.contracts.bridge),
             ));
             env.push(("EVM_PRIVATE_KEY".to_string(), canceler_pk));
+        }
+
+        // Forward Solana watcher config from the parent process (optional).
+        for (k, v) in std::env::vars() {
+            if k.starts_with("SOLANA_") {
+                env.push((k, v));
+            }
+        }
+
+        // Let canceler verify Solana-source withdrawals via JSON-RPC only (no SOLANA_ENABLED).
+        // Any PDA under this program for test nonces is absent on public devnet → null → fraud Invalid.
+        if !env
+            .iter()
+            .any(|(k, _)| k == "SOLANA_DEPOSIT_VERIFY_RPC_URL")
+        {
+            env.push((
+                "SOLANA_DEPOSIT_VERIFY_RPC_URL".to_string(),
+                "https://api.devnet.solana.com".to_string(),
+            ));
+        }
+        if !env
+            .iter()
+            .any(|(k, _)| k == "SOLANA_DEPOSIT_VERIFY_PROGRAM_ID")
+        {
+            env.push((
+                "SOLANA_DEPOSIT_VERIFY_PROGRAM_ID".to_string(),
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
+            ));
         }
 
         env

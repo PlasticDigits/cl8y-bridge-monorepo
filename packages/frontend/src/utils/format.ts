@@ -3,6 +3,39 @@
  */
 
 import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
+import { pow10BigInt } from './pow10';
+import {
+  bigintFromBaseUnitsString,
+  expandScientificNotationToDecimalString,
+} from './scientificDecimal';
+export { expandScientificNotationToDecimalString };
+import {
+  formatCompactHumanRational,
+  formatRationalHumanEnUs,
+  microRationalToHumanDenominator,
+  tryParseMicroRational,
+} from './bigintAmount';
+
+/** Em dash: display when a micro amount cannot be parsed as a rational base-unit value. */
+export const UNPARSEABLE_AMOUNT_DISPLAY = '\u2014'
+
+/** Empty string: safe for `type="number"` when max/amount cannot be formatted. */
+export const UNPARSEABLE_AMOUNT_NUMBER_INPUT = ''
+
+/** Same as {@link UNPARSEABLE_AMOUNT_DISPLAY} for compact labels. */
+export const UNPARSEABLE_AMOUNT_COMPACT = UNPARSEABLE_AMOUNT_DISPLAY
+
+function warnUnparseableMicroAmount(
+  fn: string,
+  microAmount: unknown,
+  decimals: number,
+  extra?: Record<string, unknown>
+): void {
+  console.warn(
+    `[cl8y-bridge/format] ${fn}: cannot parse micro amount as rational; returning sentinel.`,
+    { microAmount, decimals, ...extra }
+  )
+}
 
 /**
  * Format a micro-denominated amount to human-readable
@@ -15,28 +48,38 @@ export function formatAmount(
   decimals: number = DECIMALS.LUNC,
   displayDecimals?: number
 ): string {
-  let amount: number;
-  
-  if (typeof microAmount === 'bigint') {
-    // For bigint, convert to string first to preserve precision
-    const divisor = BigInt(10 ** decimals);
-    const wholePart = microAmount / divisor;
-    const fractionalPart = microAmount % divisor;
-    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
-    amount = parseFloat(`${wholePart}.${fractionalStr}`);
-  } else if (typeof microAmount === 'string') {
-    amount = parseFloat(microAmount) / Math.pow(10, decimals);
-  } else {
-    amount = microAmount / Math.pow(10, decimals);
-  }
-  
   const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
   const minDecimals = Math.min(2, maxDecimals);
-  
-  return amount.toLocaleString('en-US', {
-    minimumFractionDigits: minDecimals,
-    maximumFractionDigits: maxDecimals,
-  });
+
+  const rat = tryParseMicroRational(microAmount);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, true);
+  }
+
+  warnUnparseableMicroAmount('formatAmount', microAmount, decimals, { displayDecimals });
+  return UNPARSEABLE_AMOUNT_DISPLAY;
+}
+
+/** Same rules as formatAmount but no thousands separators (for HTML type="number" inputs). */
+export function formatAmountForNumberInput(
+  microAmount: string | number | bigint,
+  decimals: number = DECIMALS.LUNC,
+  displayDecimals?: number
+): string {
+  const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
+  const minDecimals = Math.min(2, maxDecimals);
+
+  const rat = tryParseMicroRational(microAmount);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatRationalHumanEnUs(hn, hd, maxDecimals, minDecimals, false);
+  }
+
+  warnUnparseableMicroAmount('formatAmountForNumberInput', microAmount, decimals, { displayDecimals });
+  return UNPARSEABLE_AMOUNT_NUMBER_INPUT;
 }
 
 /**
@@ -48,57 +91,68 @@ export function formatCompact(
   decimals: number = 6,
   sigfigs: number = 4
 ): string {
-  let num: number
-  if (typeof value === 'bigint') {
-    num = Number(value) / Math.pow(10, decimals)
-  } else if (typeof value === 'string') {
-    num = parseFloat(value) / Math.pow(10, decimals)
-  } else {
-    num = value / Math.pow(10, decimals)
+  const rat = tryParseMicroRational(value);
+  if (rat !== null) {
+    const hn = rat.neg ? -rat.n : rat.n;
+    const hd = microRationalToHumanDenominator(rat, decimals);
+    return formatCompactHumanRational(hn, hd, sigfigs);
   }
-  if (!Number.isFinite(num) || num === 0) return '0'
-  const abs = Math.abs(num)
-  if (abs >= 1e9) {
-    const scaled = num / 1e9
-    return numToSigFig(scaled, sigfigs) + 'b'
-  }
-  if (abs >= 1e6) {
-    const scaled = num / 1e6
-    return numToSigFig(scaled, sigfigs) + 'm'
-  }
-  if (abs >= 1e3) {
-    const scaled = num / 1e3
-    return numToSigFig(scaled, sigfigs) + 'k'
-  }
-  if (abs < 0.0001) {
-    // Show plain decimal instead of scientific notation (e.g. "0.000001" not "1e-6")
-    const exp = Math.floor(Math.log10(abs))
-    const decimalPlaces = Math.max(-exp + (sigfigs - 1), 1)
-    const formatted = num.toFixed(decimalPlaces)
-    // Strip trailing zeros but keep at least one decimal place
-    return formatted.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
-  }
-  return numToSigFig(num, sigfigs)
+
+  warnUnparseableMicroAmount('formatCompact', value, decimals, { sigfigs });
+  return UNPARSEABLE_AMOUNT_COMPACT;
 }
 
-function numToSigFig(n: number, sigfigs: number): string {
-  if (n === 0) return '0'
-  const s = n.toPrecision(sigfigs)
-  return parseFloat(s).toString()
+function floorHumanDecimalToBaseUnitsString(unsignedDecimal: string, decimals: number): string {
+  let u = unsignedDecimal.trim()
+  if (u === '' || u === '.') return '0'
+  if (/[eE]/.test(u)) u = expandScientificNotationToDecimalString(u)
+
+  const match = u.match(/^(\d*)(?:\.(\d*))?$/)
+  if (!match) {
+    const fallback = parseFloat(u)
+    if (!Number.isFinite(fallback)) return '0'
+    return floorHumanDecimalToBaseUnitsString(expandScientificNotationToDecimalString(fallback.toString()), decimals)
+  }
+
+  let intPart = match[1] || '0'
+  const fracPart = match[2] || ''
+  intPart = intPart.replace(/^0+/, '') || '0'
+
+  const fracFloored = (fracPart + '0'.repeat(decimals)).slice(0, decimals).padEnd(decimals, '0')
+  return (BigInt(intPart) * pow10BigInt(decimals) + BigInt(fracFloored || '0')).toString()
 }
 
 /**
- * Parse a human-readable amount to micro-denominated
+ * Parse a human-readable amount to base units as a decimal string (BigInt-safe, no scientific notation).
  */
-export function parseAmount(
+export function parseAmount(humanAmount: string | number, decimals: number = DECIMALS.LUNC): string {
+  let s: string
+  if (typeof humanAmount === 'number') {
+    if (!Number.isFinite(humanAmount)) return '0'
+    if (humanAmount === 0) return '0'
+    s = humanAmount.toString()
+  } else {
+    s = humanAmount.trim()
+  }
+
+  if (s === '' || s === '+' || s === '-') return '0'
+
+  const neg = s.startsWith('-')
+  let body = (neg ? s.slice(1) : s).trim()
+  if (body.startsWith('+')) body = body.slice(1).trim()
+  if (body === '' || body === '.') return '0'
+
+  const raw = floorHumanDecimalToBaseUnitsString(body, decimals)
+  if (raw === '0') return '0'
+  return neg ? `-${raw}` : raw
+}
+
+/** Base units as bigint; uses {@link bigintFromBaseUnitsString} so JSON/scientific forms never throw (GitLab #95). */
+export function parseAmountAsBigInt(
   humanAmount: string | number,
   decimals: number = DECIMALS.LUNC
-): string {
-  const str = typeof humanAmount === "number" ? humanAmount.toString() : humanAmount;
-  const [whole, frac = ""] = str.split(".");
-  const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
-  const raw = whole + padded;
-  return raw.replace(/^0+/, "") || "0";
+): bigint {
+  return bigintFromBaseUnitsString(parseAmount(humanAmount, decimals))
 }
 
 /**
@@ -232,7 +286,7 @@ export function getEvmTxUrl(txHash: string): string {
 export function getTokenExplorerUrl(
   explorerBaseUrl: string,
   tokenAddress: string,
-  chainType: 'evm' | 'cosmos'
+  chainType: 'evm' | 'cosmos' | 'solana'
 ): string {
   if (!explorerBaseUrl?.trim() || !tokenAddress?.trim()) return ''
   const base = explorerBaseUrl.replace(/\/$/, '')

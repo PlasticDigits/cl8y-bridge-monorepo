@@ -8,7 +8,7 @@ export interface ChainlistEntry {
   id: string
   name: string
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   icon: string
   rpcUrl?: string
   lcdUrl?: string

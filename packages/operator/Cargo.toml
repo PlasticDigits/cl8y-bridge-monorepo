@@ -47,6 +47,12 @@ eyre = "0.6"
 color-eyre = "0.6"
 thiserror = "1.0"
 
+# Solana interactions
+solana-sdk = "=2.1.0"
+solana-client = "=2.1.0"
+solana-transaction-status = "=2.1.0"
+borsh = "0.10"
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
@@ -67,3 +73,7 @@ tokio-test = "0.4"
 [[bin]]
 name = "cl8y-operator"
 path = "src/main.rs"
+
+[[bin]]
+name = "backfill-evm-transfer-hashes"
+path = "src/bin/backfill_evm_transfer_hashes.rs"

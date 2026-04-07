@@ -10,7 +10,47 @@ use crate::deploy;
 use alloy::primitives::{Address, B256};
 use eyre::{eyre, Result};
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+
+/// Reset a local Anvil chain to genesis so forge’s nonce tracking matches on-chain state.
+async fn try_anvil_reset(rpc_url: &str) {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    else {
+        return;
+    };
+    let Ok(resp) = client
+        .post(rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "anvil_reset",
+            "params": [],
+            "id": 1u64
+        }))
+        .send()
+        .await
+    else {
+        return;
+    };
+    if resp.status().is_success() {
+        debug!(rpc = %rpc_url, "anvil_reset sent before forge deploy");
+    }
+}
+
+/// Solana V2 chain id (bytes4 big-endian) from `SOLANA_V2_CHAIN_ID` or default `5` (`0x00000005`).
+fn parse_solana_v2_chain_id_from_env() -> u32 {
+    std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(h) = v.strip_prefix("0x") {
+                u32::from_str_radix(h, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5)
+}
 
 impl E2eSetup {
     /// Deploy EVM contracts using forge script
@@ -21,6 +61,8 @@ impl E2eSetup {
         let contracts_dir = self.project_root.join("packages").join("contracts-evm");
         let rpc_url = self.config.evm.rpc_url.to_string();
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+
+        try_anvil_reset(&rpc_url).await;
 
         // Run forge script from contracts-evm directory
         let output = std::process::Command::new("forge")
@@ -142,11 +184,12 @@ impl E2eSetup {
         }
     }
 
-    /// Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts via AccessManager.grantRole()
+    /// Call `AccessManager.grantRole` with IDs 1 and 2 for the EVM test account (fraud / config checks).
     ///
-    /// This grants both roles to the test account, enabling:
-    /// - OPERATOR_ROLE: Allows calling withdrawApprove() for testing
-    /// - CANCELER_ROLE: Allows cancelling fraudulent approvals for testing
+    /// **Does not** register the account on `Bridge` as operator or canceler—`Bridge` ignores
+    /// `AccessManager` for `withdrawApprove` / `withdrawCancel` (see `Bridge.onlyOperator` /
+    /// `onlyCanceler`). Local tests usually pass because the deploy wallet is `Bridge.owner()` or the
+    /// initial `initialize(operator)` already added the operator.
     pub async fn grant_roles(&self, deployed: &DeployedContracts) -> Result<()> {
         info!("Granting roles to test accounts");
 
@@ -303,6 +346,28 @@ impl E2eSetup {
             Err(e) => warn!("Failed to set incoming token mapping for Terra: {}", e),
         }
 
+        // Solana→EVM paths call `TokenRegistry.getSrcTokenDecimals(solanaChain, token)` in withdrawSubmit.
+        let solana_v2 = parse_solana_v2_chain_id_from_env();
+        if solana_v2 != 0 {
+            let solana_key = ChainId4::from_slice(&solana_v2.to_be_bytes());
+            match chain_config::set_incoming_token_mapping(
+                deployed.token_registry,
+                solana_key,
+                token,
+                18,
+                rpc_url,
+                &private_key,
+            )
+            .await
+            {
+                Ok(()) => info!(
+                    "Incoming token mapping set for Solana source (chain_id=0x{})",
+                    hex::encode(solana_key)
+                ),
+                Err(e) => warn!("Failed to set Solana incoming token mapping: {}", e),
+            }
+        }
+
         info!("Test token registration complete");
         Ok(())
     }
@@ -326,6 +391,8 @@ impl E2eSetup {
         let contracts_dir = self.project_root.join("packages").join("contracts-evm");
         let rpc_url = evm2.rpc_url.to_string();
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+
+        try_anvil_reset(&rpc_url).await;
 
         let output = std::process::Command::new("forge")
             .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
@@ -614,6 +681,37 @@ impl E2eSetup {
         }
 
         Ok(Some(token2))
+    }
+
+    /// Register Solana V2 chain ID on the primary EVM `ChainRegistry` (for Solana→EVM canceler tests).
+    ///
+    /// Uses `SOLANA_V2_CHAIN_ID` when set (hex or decimal); default `5` (`0x00000005`). Skips when 0.
+    pub async fn register_solana_chain_key(&self, deployed: &DeployedContracts) -> Result<()> {
+        let solana_v2 = parse_solana_v2_chain_id_from_env();
+
+        if solana_v2 == 0 {
+            warn!("SOLANA_V2_CHAIN_ID is 0, skipping Solana chain registration");
+            return Ok(());
+        }
+
+        let predetermined_id = ChainId4::from_slice(&solana_v2.to_be_bytes());
+        let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
+        let rpc_url = self.config.evm.rpc_url.as_str();
+
+        chain_config::register_named_chain_key(
+            deployed.chain_registry,
+            "solana_e2e",
+            predetermined_id,
+            rpc_url,
+            &private_key,
+        )
+        .await?;
+
+        info!(
+            "Solana E2E chain registered on ChainRegistry with ID 0x{}",
+            hex::encode(predetermined_id)
+        );
+        Ok(())
     }
 
     /// Check if EVM bridge is deployed and accessible

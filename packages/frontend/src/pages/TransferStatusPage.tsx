@@ -39,8 +39,11 @@ import {
 } from '../utils/bridgeChains'
 import type { BridgeChainConfig } from '../types/chain'
 import { DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL } from '../utils/constants'
+import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
+import { bytes32ToSolanaAddress } from '../services/solana/address'
+import type { Hex } from 'viem'
 
 const LOG = '[TransferStatus]'
 
@@ -56,13 +59,18 @@ const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; a
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
 
+/**
+ * Index of the step that should show as ACTIVE in the stepper (not the STEPS row
+ * whose `key` equals the lifecycle). E.g. lifecycle `hash-submitted` means
+ * withdrawSubmit finished — steps 0–1 are done and step 2 (Approval) is active.
+ */
 function getStepIndex(lifecycle?: TransferLifecycle): number {
   if (!lifecycle || lifecycle === 'failed') return 0
-  const idx = LIFECYCLE_ORDER.indexOf(lifecycle)
-  if (idx < 0) return 0
-  // When executed (complete), use STEPS.length so the final step shows as DONE
   if (lifecycle === 'executed') return STEPS.length
-  return idx
+  if (lifecycle === 'deposited') return 0
+  if (lifecycle === 'hash-submitted') return 2
+  if (lifecycle === 'approved') return 3
+  return 0
 }
 
 function StepIndicator({
@@ -70,16 +78,27 @@ function StepIndicator({
   currentIdx,
   idx,
   isFailed,
+  transferLifecycle,
 }: {
   step: typeof STEPS[number]
   currentIdx: number
   idx: number
   isFailed: boolean
+  transferLifecycle?: TransferLifecycle
 }) {
   const isDone = idx < currentIdx
   const isActive = idx === currentIdx
   const isError = isFailed && isActive
-  const progress = useStepProgress(step.key, isDone, isActive && !isError)
+  const progressKey =
+    step.key === 'approved' && isActive && transferLifecycle === 'hash-submitted'
+      ? 'hash-submitted'
+      : step.key
+  const progress = useStepProgress(progressKey, isDone, isActive && !isError)
+
+  const activeDescription =
+    step.key === 'approved' && transferLifecycle === 'hash-submitted'
+      ? 'Operator verifying deposit on the source chain'
+      : step.activeDescription
 
   const stateLabel = isDone ? 'DONE' : isError ? 'FAILED' : isActive ? 'ACTIVE' : 'UP NEXT'
   const squareTone = isDone
@@ -147,7 +166,7 @@ function StepIndicator({
           {step.label}
         </p>
         <p className={`text-xs ${descriptionTone}`}>
-          {isDone ? step.doneDescription : isActive ? step.activeDescription : step.doneDescription}
+          {isDone ? step.doneDescription : isActive ? activeDescription : step.doneDescription}
         </p>
         {isActive && !isError && step.estimatedTime && (
           <p className="mt-0.5 text-[11px] text-yellow-400/60 italic">
@@ -319,7 +338,15 @@ function buildTransferFromLookup(
   // us which chain the tokens are destined for.
   const srcIsCosmos = sourceChain?.type === 'cosmos' || resolvedSourceChainKey.includes('terra')
   const destIsCosmos = resolvedDestChainConfig?.type === 'cosmos' || (resolvedDestChainKey ?? '').includes('terra')
-  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+  const srcIsSolana = sourceChain?.type === 'solana' || resolvedSourceChainKey.includes('solana')
+  const destIsSolana = resolvedDestChainConfig?.type === 'solana' || (resolvedDestChainKey ?? '').includes('solana')
+  const direction: TransferRecord['direction'] = srcIsSolana && destIsCosmos ? 'solana-to-terra'
+    : srcIsSolana ? 'solana-to-evm'
+    : destIsSolana && srcIsCosmos ? 'terra-to-solana'
+    : destIsSolana ? 'evm-to-solana'
+    : srcIsCosmos ? 'terra-to-evm'
+    : destIsCosmos ? 'evm-to-terra'
+    : 'evm-to-evm'
 
   return {
     id: hash,
@@ -376,7 +403,21 @@ function buildCanonicalTransferUpdatesFromSource(
 
   const srcIsCosmos = sourceChain?.type === 'cosmos' || sourceKey.includes('terra')
   const destIsCosmos = destChain?.type === 'cosmos' || destKey.includes('terra')
-  const direction: TransferRecord['direction'] = srcIsCosmos ? 'terra-to-evm' : destIsCosmos ? 'evm-to-terra' : 'evm-to-evm'
+  const srcIsSolana = sourceChain?.type === 'solana' || sourceKey.includes('solana')
+  const destIsSolana = destChain?.type === 'solana' || destKey.includes('solana')
+  const direction: TransferRecord['direction'] = srcIsSolana && destIsCosmos
+    ? 'solana-to-terra'
+    : srcIsSolana
+      ? 'solana-to-evm'
+      : destIsSolana && srcIsCosmos
+        ? 'terra-to-solana'
+        : destIsSolana
+          ? 'evm-to-solana'
+          : srcIsCosmos
+            ? 'terra-to-evm'
+            : destIsCosmos
+              ? 'evm-to-terra'
+              : 'evm-to-evm'
 
   const candidate: Partial<TransferRecord> = {
     sourceChain: sourceKey,
@@ -484,9 +525,8 @@ export default function TransferStatusPage() {
 
     if (!onChainLifecycle) return
 
-    const ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
-    const storedIdx = ORDER.indexOf(stored.lifecycle || 'deposited')
-    const chainIdx = ORDER.indexOf(onChainLifecycle)
+    const storedIdx = LIFECYCLE_ORDER.indexOf(stored.lifecycle || 'deposited')
+    const chainIdx = LIFECYCLE_ORDER.indexOf(onChainLifecycle)
 
     if (chainIdx > storedIdx) {
       updateTransferRecord(stored.id, { lifecycle: onChainLifecycle })
@@ -598,8 +638,8 @@ export default function TransferStatusPage() {
             srcAccB32 as `0x${string}`,
             destAccB32 as `0x${string}`,
             tokenB32 as `0x${string}`,
-            BigInt(parsed.amount || transfer.amount || '0'),
-            BigInt(parsed.nonce)
+            bigintFromBaseUnitsString(parsed.amount || transfer.amount || '0'),
+            bigintFromBaseUnitsString(parsed.nonce)
           )
         }
       } catch (err) {
@@ -694,15 +734,15 @@ export default function TransferStatusPage() {
     }
 
     resetForRetry()
-    updateTransferRecord(transfer.id, { lifecycle: 'deposited' })
-    setTransfer((prev) => prev ? { ...prev, lifecycle: 'deposited' } : null)
+    // Keep lifecycle (e.g. hash-submitted): deposit is already confirmed; re-run submit without regressing the stepper (#86).
+    void triggerSubmit()
     setTimeout(() => {
       setRetryingHash(false)
       if (xchainHashId && isValidXchainHashId(xchainHashId)) {
         lookup(normalizeXchainHashId(xchainHashId) as `0x${string}`)
       }
     }, 3000)
-  }, [transfer, resetForRetry, updateTransferRecord, xchainHashId, lookup])
+  }, [transfer, resetForRetry, updateTransferRecord, xchainHashId, lookup, triggerSubmit])
 
   // --- Broken transfer detection (dest exists, source null → wrong chain submitted) ---
   const normalizedHash = xchainHashId && isValidXchainHashId(xchainHashId)
@@ -764,11 +804,19 @@ export default function TransferStatusPage() {
             lifecycle: 'hash-submitted' as const,
             sourceChain: fix.wrongChainKey,
             destChain: fix.correctDestChainKey,
-            direction: (fix.correctDestChain.type === 'cosmos' ? 'evm-to-terra' : 'evm-to-evm') as TransferRecord['direction'],
+            direction: (
+              fix.correctDestChain.type === 'cosmos'
+                ? 'evm-to-terra'
+                : fix.correctDestChain.type === 'solana'
+                  ? 'evm-to-solana'
+                  : 'evm-to-evm'
+            ) as TransferRecord['direction'],
           }
           updateTransferRecord(transfer.id, updates)
           setTransfer((prev) => (prev ? { ...prev, ...updates } : null))
         }
+      } else if (fixParams.destType === 'solana') {
+        setFixSubmitError('Solana broken-transfer fix is not yet supported. Please contact support.')
       } else {
         // Terra destination
         const srcChainBytes4 = hexToUint8Array(fixParams.srcChainBytes4)
@@ -811,8 +859,21 @@ export default function TransferStatusPage() {
     const baseIdx = getStepIndex(transfer?.lifecycle)
     // If deposit succeeded but hash submission failed, show step 1 (hash-submitted) not step 0 (deposit)
     if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
+    // Stay on Submit Hash during explicit retry or in-flight submit (#86)
+    if (retryingHash) return 1
+    // Only while still `deposited`; once lifecycle advances, show Approval (#hash-submitted UX)
+    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
+    // Lookup-only / synthetic: source deposit confirmed, no dest withdraw yet — not still "confirming deposit"
+    if (
+      transfer?.lifecycle === 'deposited' &&
+      source != null &&
+      dest == null &&
+      !lookupLoading
+    ) {
+      return 1
+    }
     return baseIdx
-  }, [transfer?.lifecycle, autoPhase])
+  }, [transfer?.lifecycle, autoPhase, retryingHash, source, dest, lookupLoading])
 
   const submitDiagnostics = useMemo(() => {
     if (!transfer) return null
@@ -824,10 +885,28 @@ export default function TransferStatusPage() {
 
     const canonicalToken = source?.token
     const resolvedToken = canonicalToken ?? transfer.destToken ?? ''
-    const tokenAsAddress = resolvedToken.length === 66 ? bytes32ToEvmAddress(resolvedToken) : resolvedToken
-
     const canonicalDestAccount = source?.destAccount
     const resolvedDestAccount = canonicalDestAccount ?? transfer.destAccount ?? ''
+    const destIsSolana = resolvedDestEntry?.[1]?.type === 'solana'
+
+    let tokenSplMint: string | undefined
+    let destAccountSolana: string | undefined
+    if (destIsSolana && resolvedToken.startsWith('0x') && resolvedToken.length === 66) {
+      try {
+        tokenSplMint = bytes32ToSolanaAddress(resolvedToken as Hex)
+      } catch {
+        tokenSplMint = undefined
+      }
+    }
+    if (destIsSolana && resolvedDestAccount.startsWith('0x') && resolvedDestAccount.length === 66) {
+      try {
+        destAccountSolana = bytes32ToSolanaAddress(resolvedDestAccount as Hex)
+      } catch {
+        destAccountSolana = undefined
+      }
+    }
+
+    const tokenAsAddress = resolvedToken.length === 66 ? bytes32ToEvmAddress(resolvedToken) : resolvedToken
     const destAccountAsAddress =
       resolvedDestAccount.length === 66 ? bytes32ToEvmAddress(resolvedDestAccount) : resolvedDestAccount
 
@@ -846,8 +925,11 @@ export default function TransferStatusPage() {
       amount: source ? source.amount.toString() : transfer.amount,
       tokenBytes32: resolvedToken || 'unknown',
       tokenAddress: tokenAsAddress || 'unknown',
+      tokenSplMint,
+      destIsSolana,
       destAccountBytes32: resolvedDestAccount || 'unknown',
       destAccountAddress: destAccountAsAddress || 'unknown',
+      destAccountSolana,
       sourceOfTruth: source ? 'on-chain source deposit' : 'local transfer record',
     }
   }, [transfer, source])
@@ -981,6 +1063,7 @@ export default function TransferStatusPage() {
                 currentIdx={currentStepIdx}
                 idx={idx}
                 isFailed={isFailed}
+                transferLifecycle={transfer.lifecycle}
               />
             ))}
           </div>
@@ -995,8 +1078,9 @@ export default function TransferStatusPage() {
                 {autoError || 'The withdrawSubmit transaction was rejected.'}
               </p>
               <p className="text-red-400/60 text-xs mt-1">
-                This usually means the XChain Hash ID is invalid or was computed with incorrect parameters.
-                The hash may need to be recomputed from the original deposit receipt.
+                {submitDiagnostics?.destIsSolana
+                  ? 'Often TokenMappingMismatch: EVM TokenRegistry dest token must equal raw SPL mint bytes on Solana. withdraw_submit can use a different fee payer than destAccount; withdraw_execute still requires the recipient wallet to match destAccount.'
+                  : 'This usually means the XChain Hash ID is invalid or was computed with incorrect parameters. The hash may need to be recomputed from the original deposit receipt.'}
               </p>
               {submitDiagnostics && (
                 <div className="mt-2 border border-red-700/70 bg-black/30 p-2 font-mono text-[10px] text-red-200/90">
@@ -1008,9 +1092,17 @@ export default function TransferStatusPage() {
                   <p>nonce: {submitDiagnostics.nonce}</p>
                   <p>amount: {submitDiagnostics.amount}</p>
                   <p>token(bytes32): {submitDiagnostics.tokenBytes32}</p>
-                  <p>token(address): {submitDiagnostics.tokenAddress}</p>
+                  {submitDiagnostics.destIsSolana && submitDiagnostics.tokenSplMint ? (
+                    <p>token (SPL mint base58): {submitDiagnostics.tokenSplMint}</p>
+                  ) : (
+                    <p>token(address): {submitDiagnostics.tokenAddress}</p>
+                  )}
                   <p>destAccount(bytes32): {submitDiagnostics.destAccountBytes32}</p>
-                  <p>destAccount(address): {submitDiagnostics.destAccountAddress}</p>
+                  {submitDiagnostics.destIsSolana && submitDiagnostics.destAccountSolana ? (
+                    <p>destAccount (Solana): {submitDiagnostics.destAccountSolana}</p>
+                  ) : (
+                    <p>destAccount(address): {submitDiagnostics.destAccountAddress}</p>
+                  )}
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -1199,7 +1291,7 @@ export default function TransferStatusPage() {
                     <p className="text-amber-400/70 text-xs mt-1">Checking for fix option…</p>
                   )}
                   {isBroken && fixError && (
-                    <p className="text-amber-400/70 text-xs mt-1">Could not find a fix: {fixError}</p>
+                    <p className="text-amber-400/70 text-xs mt-1">{fixError}</p>
                   )}
                 </div>
               )}

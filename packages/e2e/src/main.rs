@@ -478,6 +478,17 @@ async fn run_single_test(config: &E2eConfig, test_name: &str, skip_terra: bool) 
         "operator_terra_to_evm_withdrawal" => {
             test_operator_terra_to_evm_withdrawal(config, token_address).await
         }
+        "canceler_solana_source_fraud" => test_canceler_solana_source_fraud_detection(config).await,
+        "operator_rejects_unverified_solana" => {
+            test_operator_rejects_unverified_solana_source(config).await
+        }
+        "operator_no_approve_solana" => {
+            test_operator_does_not_approve_unverified_solana_source(config).await
+        }
+        "canceler_solana_destination_fraud" => {
+            test_canceler_detects_fraud_on_solana_destination(config).await
+        }
+        "xchain_hash_validity_solana" => test_xchain_hash_id_validity_solana_source(config).await,
         _ => {
             let start = Instant::now();
             TestResult::fail(

@@ -423,7 +423,7 @@ make deploy-evm-opbnb-mainnet
 make deploy-terra-mainnet
 
 # Monitoring
-make start-monitoring  # Prometheus: :9091, Grafana: :3000
+make start-monitoring  # Prometheus: :9092, Grafana: :3000
 make stop-monitoring
 ```
 

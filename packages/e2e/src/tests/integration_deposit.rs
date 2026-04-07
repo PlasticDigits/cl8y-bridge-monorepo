@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use super::helpers::{
-    encode_terra_address, execute_deposit, get_erc20_balance, get_terra_chain_key,
-    query_deposit_nonce,
+    encode_terra_address, ensure_test_token_balance, execute_deposit, get_erc20_balance,
+    get_terra_chain_key, query_deposit_nonce,
 };
 
 /// Execute a real EVM → Terra transfer with balance verification
@@ -51,6 +51,14 @@ pub async fn test_real_evm_to_terra_transfer(
         "Testing EVM → Terra transfer: {} tokens from {} to {}",
         amount, test_account, terra_recipient
     );
+
+    if let Err(e) = ensure_test_token_balance(config, token, amount).await {
+        return TestResult::fail(
+            name,
+            format!("Could not ensure token balance for transfer: {}", e),
+            start.elapsed(),
+        );
+    }
 
     // Step 1: Get initial ERC20 balance
     let balance_before = match get_erc20_balance(config, token, test_account).await {

@@ -9,7 +9,7 @@ export function ChainsPanel() {
   const chainsWithExplorer = bridgeChains.map((chain) => {
     const info = getChainByChainId(chain.chainId)
     const rpcUrls =
-      chain.type === 'evm'
+      chain.type === 'evm' || chain.type === 'solana'
         ? [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])].filter(Boolean)
         : undefined
     const lcdUrls =

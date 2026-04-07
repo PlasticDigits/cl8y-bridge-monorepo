@@ -33,12 +33,13 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
-import { readFileSync, existsSync } from 'fs'
+import { existsSync } from 'fs'
 import { resolve } from 'path'
+import { loadE2eEnvFile } from '../../utils/loadE2eEnvFile'
 import { getErc20Balance, skipAnvilTime } from '../../../e2e/fixtures/chain-helpers'
 import {
   depositErc20ViaCast,
-  getDepositNonceFromReceipt,
+  parseDepositEvent,
   withdrawSubmitViaCast,
   withdrawExecuteViaCast,
   pollForApproval,
@@ -50,11 +51,10 @@ import {
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 
-const envVars: Record<string, string> = {}
 const ANVIL_RPC = 'http://localhost:8545'
 const ANVIL1_RPC = 'http://localhost:8546'
 
-function loadEnv() {
+function loadE2eBridgeEnv(): void {
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       '\n' +
@@ -70,15 +70,7 @@ function loadEnv() {
       '╚══════════════════════════════════════════════════════════════════╝\n'
     )
   }
-  const content = readFileSync(ENV_FILE, 'utf8')
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
-    if (eq > 0) {
-      envVars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1)
-    }
-  }
+  loadE2eEnvFile(ENV_FILE)
 }
 
 describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
@@ -90,13 +82,15 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
   let token1A: string        // corresponding token on anvil1
 
   beforeAll(() => {
-    loadEnv()
-    bridgeAddress = envVars['VITE_EVM_BRIDGE_ADDRESS'] || ''
-    bridge1Address = envVars['VITE_EVM1_BRIDGE_ADDRESS'] || ''
-    lockUnlockAddress = envVars['EVM_LOCK_UNLOCK_ADDRESS'] || ''
-    lockUnlock1Address = envVars['EVM1_LOCK_UNLOCK_ADDRESS'] || ''
-    tokenA = envVars['ANVIL_TOKEN_A'] || ''
-    token1A = envVars['ANVIL1_TOKEN_A'] || ''
+    loadE2eBridgeEnv()
+    bridgeAddress = process.env.VITE_EVM_BRIDGE_ADDRESS || ''
+    bridge1Address = process.env.VITE_EVM1_BRIDGE_ADDRESS || ''
+    lockUnlockAddress =
+      process.env.EVM_LOCK_UNLOCK_ADDRESS || process.env.VITE_LOCK_UNLOCK_ADDRESS || ''
+    lockUnlock1Address =
+      process.env.EVM1_LOCK_UNLOCK_ADDRESS || process.env.VITE_EVM1_LOCK_UNLOCK_ADDRESS || ''
+    tokenA = process.env.ANVIL_TOKEN_A || process.env.VITE_ANVIL_TOKEN_A || ''
+    token1A = process.env.ANVIL1_TOKEN_A || process.env.VITE_ANVIL1_TOKEN_A || ''
 
     if (!bridgeAddress || !bridge1Address) {
       throw new Error('Missing bridge addresses in .env.e2e.local')
@@ -167,9 +161,9 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
     })
     console.log(`[test] Deposit tx on anvil: ${txHash}`)
 
-    // Extract nonce
-    const nonce = getDepositNonceFromReceipt(ANVIL_RPC, txHash)
-    console.log(`[test] Deposit nonce: ${nonce}`)
+    // V2 hash uses post-fee net amount (same as on-chain Deposit event and operator verification).
+    const { nonce, netAmount } = parseDepositEvent(ANVIL_RPC, txHash)
+    console.log(`[test] Deposit nonce: ${nonce}, netAmount: ${netAmount}`)
 
     // 3. Call withdrawSubmit on anvil1 bridge
     // V2 chain ID: Anvil = 0x00000001 globally
@@ -184,7 +178,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       srcAccount,
       destAccount,
       token: token1A,
-      amount,
+      amount: netAmount,
       nonce: String(nonce),
     })
     console.log(`[test] WithdrawSubmit tx on anvil1: ${wsTxHash}`)
@@ -196,7 +190,7 @@ describe('EVM → EVM Bridge Transfer (anvil → anvil1)', () => {
       srcAccount,
       destAccount,
       token: token1A,
-      amount,
+      amount: netAmount,
       nonce: String(nonce),
     })
     console.log(`[test] Xchain hash id: ${xchainHashId}`)

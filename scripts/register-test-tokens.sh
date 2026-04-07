@@ -26,6 +26,14 @@ if [ -f "$PROJECT_ROOT/.env.e2e" ]; then
     set +a
 fi
 
+if [ ! -f "$PROJECT_ROOT/scripts/lib-local-deploy-env.sh" ]; then
+    echo "[ERROR] Missing $PROJECT_ROOT/scripts/lib-local-deploy-env.sh" >&2
+    exit 1
+fi
+# shellcheck source=lib-local-deploy-env.sh
+source "$PROJECT_ROOT/scripts/lib-local-deploy-env.sh"
+load_local_deploy_env
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -113,9 +121,12 @@ check_prereqs() {
     fi
     
     if [ $failed -eq 1 ]; then
+        if [ -z "${EVM_BRIDGE_ADDRESS:-}" ]; then
+            qa_hint_evm_bridge_missing
+        fi
         exit 1
     fi
-    
+
     log_info "Prerequisites OK"
 }
 

@@ -1,9 +1,39 @@
 //! Canceler configuration
 
-use eyre::{eyre, Result};
+use eyre::{eyre, Result, WrapErr};
 use std::env;
 use std::fmt;
 use url::Url;
+
+fn parse_one_u32_chain_bytes(s: &str) -> Result<[u8; 4]> {
+    let s = s.trim().trim_start_matches("0x");
+    let n: u32 = u32::from_str_radix(s, 16)
+        .or_else(|_| s.parse::<u32>())
+        .wrap_err_with(|| format!("invalid V2 chain id segment: {s}"))?;
+    Ok(n.to_be_bytes())
+}
+
+/// `SOLANA_V2_CHAIN_IDS` (comma-separated) or single `SOLANA_V2_CHAIN_ID`, else default dev id 5.
+pub fn parse_solana_v2_chain_ids_from_env() -> Result<Vec<[u8; 4]>> {
+    if let Ok(raw) = env::var("SOLANA_V2_CHAIN_IDS") {
+        let mut out = Vec::new();
+        for part in raw.split(',') {
+            let p = part.trim();
+            if p.is_empty() {
+                continue;
+            }
+            out.push(parse_one_u32_chain_bytes(p)?);
+        }
+        if out.is_empty() {
+            return Err(eyre!("SOLANA_V2_CHAIN_IDS produced no chain IDs"));
+        }
+        return Ok(out);
+    }
+    if let Ok(v) = env::var("SOLANA_V2_CHAIN_ID") {
+        return Ok(vec![parse_one_u32_chain_bytes(&v)?]);
+    }
+    Ok(vec![[0x00, 0x00, 0x00, 0x05]])
+}
 
 /// Canceler configuration
 ///
@@ -92,6 +122,41 @@ pub struct Config {
     /// and can verify deposits on any known source chain.
     /// Loaded from EVM_CHAINS_COUNT / EVM_CHAIN_{N}_* env vars.
     pub multi_evm: Option<multichain_rs::MultiEvmConfig>,
+
+    /// Optional Solana chain configuration for monitoring Solana bridge approvals.
+    pub solana: Option<SolanaConfig>,
+}
+
+/// Solana chain configuration for the canceler.
+///
+/// NOTE: `Debug` is manually implemented to redact the keypair path.
+#[derive(Clone)]
+pub struct SolanaConfig {
+    pub rpc_url: String,
+    pub program_id: String,
+    pub keypair_path: String,
+    pub commitment: String,
+    pub poll_interval_ms: u64,
+    /// All SVM V2 chain IDs this deployment treats as Solana-family (mainnet, testnets, future SVM).
+    pub chain_ids: Vec<[u8; 4]>,
+    pub enabled: bool,
+}
+
+impl fmt::Debug for SolanaConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SolanaConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("program_id", &self.program_id)
+            .field("keypair_path", &"<redacted>")
+            .field("commitment", &self.commitment)
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field(
+                "chain_ids",
+                &self.chain_ids.iter().map(hex::encode).collect::<Vec<_>>(),
+            )
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 /// Custom Debug impl that redacts sensitive fields (evm_private_key, terra_mnemonic)
@@ -129,6 +194,7 @@ impl fmt::Debug for Config {
             .field("evm_poll_lookback_blocks", &self.evm_poll_lookback_blocks)
             .field("evm_poll_chunk_size", &self.evm_poll_chunk_size)
             .field("multi_evm", &self.multi_evm)
+            .field("solana", &self.solana)
             .finish()
     }
 }
@@ -222,6 +288,47 @@ impl Config {
         // Load optional multi-EVM configuration (for cross-EVM fraud detection)
         let multi_evm = multichain_rs::multi_evm::load_from_env()?;
 
+        // Load optional Solana configuration
+        let solana = {
+            let enabled = env::var("SOLANA_ENABLED")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+
+            if enabled {
+                let rpc_url = env::var("SOLANA_RPC_URL")
+                    .map_err(|_| eyre!("SOLANA_RPC_URL required when SOLANA_ENABLED=true"))?;
+                validate_rpc_url(&rpc_url, "SOLANA_RPC_URL")?;
+
+                let program_id = env::var("SOLANA_PROGRAM_ID")
+                    .map_err(|_| eyre!("SOLANA_PROGRAM_ID required when SOLANA_ENABLED=true"))?;
+
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
+                    .map_err(|_| eyre!("SOLANA_KEYPAIR_PATH required when SOLANA_ENABLED=true"))?;
+
+                let commitment =
+                    env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
+
+                let poll_interval_ms: u64 = env::var("SOLANA_POLL_INTERVAL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(2000);
+
+                let chain_ids = parse_solana_v2_chain_ids_from_env()?;
+
+                Some(SolanaConfig {
+                    rpc_url,
+                    program_id,
+                    keypair_path,
+                    commitment,
+                    poll_interval_ms,
+                    chain_ids,
+                    enabled,
+                })
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
@@ -310,6 +417,8 @@ impl Config {
                 .unwrap_or(5_000),
 
             multi_evm,
+
+            solana,
         })
     }
 }
@@ -471,11 +580,12 @@ mod tests {
             ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
             ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
         ];
-        // Make sure multi-EVM is NOT set
-        std::env::remove_var("EVM_CHAINS_COUNT");
         for (k, v) in &required {
             std::env::set_var(k, v);
         }
+        // Repo-root .env often sets EVM_CHAINS_COUNT=1 for QA. Config::load() runs dotenv first,
+        // which would re-inject that after a bare remove_var — force multi-EVM off (same as unset).
+        std::env::set_var("EVM_CHAINS_COUNT", "0");
 
         let config = Config::load().expect("Config should load");
         assert!(config.multi_evm.is_none());
@@ -483,5 +593,6 @@ mod tests {
         for (k, _) in &required {
             std::env::remove_var(k);
         }
+        std::env::remove_var("EVM_CHAINS_COUNT");
     }
 }

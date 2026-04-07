@@ -8,10 +8,13 @@
  * 3. Instantiate (3x for TokenA/B/C), query list-contract-by-code for addresses
  */
 
-import { execSync, execFileSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
+
+import { resolveLocalterraDockerExecTarget } from './localterra-docker'
+import { resolveCw20InstantiateAttempts } from '../../utils/terraCw20InstantiateAttempts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, '../../../../..')
@@ -19,7 +22,13 @@ const SCRIPTS_DIR = resolve(ROOT_DIR, 'scripts')
 const CW20_WASM_PATH = resolve(ROOT_DIR, 'packages/contracts-terraclassic/artifacts/cw20_mintable.wasm')
 const TERRA_LCD = 'http://localhost:1317'
 
-const CONTAINER_NAME = 'cl8y-bridge-monorepo-localterra-1'
+let _localterraDockerTarget: string | null = null
+function localterraDockerTarget(): string {
+  if (!_localterraDockerTarget) {
+    _localterraDockerTarget = resolveLocalterraDockerExecTarget(ROOT_DIR)
+  }
+  return _localterraDockerTarget
+}
 const TEST_ADDRESS = 'terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v'
 const KEY_NAME = 'test1'
 
@@ -28,6 +37,13 @@ export const CANCELER_TERRA_ADDRESS = TEST_ADDRESS
 
 /** Sentinel for tokens that could not be deployed (skip from registration and env). */
 export const PLACEHOLDER_PREFIX = 'terra1placeholder_'
+
+/**
+ * QA Token-2022 row: on-chain ticker for EVM ERC20 + Terra CW20 (and docs).
+ * CW20 instantiate rejects symbols outside `[a-zA-Z\\-]{3,12}` (no digits) — `T2022` fails.
+ * Keep in sync with `packages/contracts-evm/script/DeployT2022TestToken.s.sol`.
+ */
+export const QA_TOKEN2022_TICKER = 'TTWT'
 
 export function isPlaceholderAddress(addr: string): boolean {
   return addr.startsWith(PLACEHOLDER_PREFIX)
@@ -95,11 +111,24 @@ interface Cw20DeployResult {
 }
 
 function dockerExec(args: string[]): string {
-  const out = execFileSync('docker', ['exec', CONTAINER_NAME, ...args], {
+  const container = localterraDockerTarget()
+  const r = spawnSync('docker', ['exec', container, ...args], {
     encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
+    maxBuffer: 32 * 1024 * 1024,
   })
-  return typeof out === 'string' ? out.trim() : String(out).trim()
+  if (r.error) {
+    console.error(`[deploy-terra] docker exec spawn error (container=${container}):`, r.error.message)
+    throw r.error
+  }
+  if (r.status !== 0) {
+    console.error(`[deploy-terra] docker exec failed (container=${container}) exit=${r.status}`)
+    const errOut = (r.stderr || '').trim()
+    const stdOut = (r.stdout || '').trim()
+    if (errOut) console.error('[deploy-terra] stderr:\n', errOut)
+    if (stdOut && !errOut) console.error('[deploy-terra] stdout:\n', stdOut)
+    throw new Error(`docker exec failed (exit ${r.status})`)
+  }
+  return (r.stdout || '').trim()
 }
 
 function terradQuery(...args: string[]): string {
@@ -112,9 +141,9 @@ function terradTx(...args: string[]): void {
 
 function ensureCw20Wasm(): boolean {
   if (existsSync(CW20_WASM_PATH)) return true
-  console.log('[deploy-terra] CW20 WASM not found, running download script...')
+  console.log('[deploy-terra] CW20 WASM not found, running ensure-cw20-mintable-wasm.sh...')
   try {
-    execSync(`bash ${SCRIPTS_DIR}/download-cw20-wasm.sh`, {
+    execSync(`bash ${SCRIPTS_DIR}/ensure-cw20-mintable-wasm.sh`, {
       cwd: ROOT_DIR,
       encoding: 'utf8',
       stdio: 'inherit',
@@ -163,27 +192,55 @@ function instantiateCw20Token(
     mint: { minter: TEST_ADDRESS },
   })
 
-  try {
-    terradTx(
-      'wasm', 'instantiate', String(codeId), initMsg,
-      '--label', `${symbol.toLowerCase()}-e2e`,
-      '--admin', TEST_ADDRESS,
-      '--from', KEY_NAME,
-      '--chain-id', 'localterra',
-      '--gas', 'auto', '--gas-adjustment', '1.5',
-      '--fees', '10000000uluna',
-      '--broadcast-mode', 'sync',
-      '-y'
-    )
-  } catch (err) {
-    console.warn(`[deploy-terra] Instantiate failed for ${symbol}:`, (err as Error).message?.slice(0, 80))
+  const attempts = resolveCw20InstantiateAttempts()
+  let lastErr: unknown
+  let succeeded = false
+  for (let i = 0; i < attempts.length; i++) {
+    const { gasAdjustment, fees } = attempts[i]!
+    try {
+      console.log(
+        `[deploy-terra] wasm instantiate ${symbol} attempt ${i + 1}/${attempts.length} gas-adjustment=${gasAdjustment} fees=${fees}`
+      )
+      terradTx(
+        'wasm', 'instantiate', String(codeId), initMsg,
+        '--label', `${symbol.toLowerCase()}-e2e`,
+        '--admin', TEST_ADDRESS,
+        '--from', KEY_NAME,
+        '--chain-id', 'localterra',
+        '--gas', 'auto', '--gas-adjustment', gasAdjustment,
+        '--fees', fees,
+        '--broadcast-mode', 'sync',
+        '-y'
+      )
+      succeeded = true
+      break
+    } catch (err) {
+      lastErr = err
+      console.warn(
+        `[deploy-terra] Instantiate attempt ${i + 1} failed for ${symbol}:`,
+        err instanceof Error ? err.message : err
+      )
+    }
+  }
+  if (!succeeded) {
+    console.warn(`[deploy-terra] All instantiate attempts failed for ${symbol}`, lastErr)
     return null
   }
 
-  // Wait for block inclusion (~6s on LocalTerra)
-  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
-
-  return getContractByCodeId(codeId)
+  // Poll for new contract on this code_id (LCD can lag; avoids false placeholder).
+  const deadline = Date.now() + 30_000
+  let last: string | null = null
+  while (Date.now() < deadline) {
+    try {
+      execSync('sleep 2', { encoding: 'utf8' })
+    } catch {
+      /* ignore */
+    }
+    last = getContractByCodeId(codeId)
+    if (last) return last
+  }
+  console.warn(`[deploy-terra] Instantiate tx ok but no contract in list-contract-by-code for code_id=${codeId} (${symbol})`)
+  return null
 }
 
 /**
@@ -214,8 +271,13 @@ export function deployThreeCw20Tokens(_bridgeAddress: string): {
   console.log('[deploy-terra] Deploying 3 CW20 tokens...')
 
   // Copy WASM to container (mirrors Rust cw20_deploy)
-  execSync(`docker exec ${CONTAINER_NAME} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
-  execSync(`docker cp ${CW20_WASM_PATH} ${CONTAINER_NAME}:/tmp/wasm/cw20_mintable.wasm`, {
+  execSync(`docker exec ${localterraDockerTarget()} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+  execSync(`docker cp ${CW20_WASM_PATH} ${localterraDockerTarget()}:/tmp/wasm/cw20_mintable.wasm`, {
+    encoding: 'utf8',
+    cwd: ROOT_DIR,
+  })
+  // docker cp preserves host mode (often 0600); terrad may run as another UID — chmod as root (see deploy-terra-local.sh).
+  execSync(`docker exec -u 0 ${localterraDockerTarget()} chmod 0644 /tmp/wasm/cw20_mintable.wasm`, {
     encoding: 'utf8',
     cwd: ROOT_DIR,
   })
@@ -290,4 +352,190 @@ export function deployCw20KdecToken(): string {
   }
   console.log(`[deploy-terra] CW20 KDEC deployed at: ${addr}`)
   return addr
+}
+
+/**
+ * Deploy CW20 Token-2022 QA row (6 decimals) — pairs with EVM + Token-2022 SPL on Solana.
+ * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
+ * Symbol {@link QA_TOKEN2022_TICKER} — CW20 mintable allows `[a-zA-Z\\-]{3,12}` only (no `T2022`).
+ */
+export function deployCw20T2022Token(): string {
+  const codeId = getLatestCodeId()
+  if (!codeId) {
+    console.warn('[deploy-terra] No CW20 code_id available for T2022; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}t2022`
+  }
+  console.log(
+    `[deploy-terra] Deploying CW20 Token-2022 QA (${QA_TOKEN2022_TICKER}, 6 decimals, code_id=${codeId})...`
+  )
+  const addr = instantiateCw20Token(codeId, 'Token-2022 QA', QA_TOKEN2022_TICKER, 6, '1000000000000')
+  if (!addr) {
+    console.warn('[deploy-terra] Failed to deploy CW20 T2022; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}t2022`
+  }
+  console.log(`[deploy-terra] CW20 T2022 deployed at: ${addr}`)
+  return addr
+}
+
+/**
+ * Deploy CW20 synthetic SOL (9 decimals) for QA — pairs with EVM SOL + WSOL on Solana.
+ * Reuses the latest stored CW20 code_id (call after deployThreeCw20Tokens).
+ */
+export function deployCw20SolToken(): string {
+  const codeId = getLatestCodeId()
+  if (!codeId) {
+    console.warn('[deploy-terra] No CW20 code_id available for SOL; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}sol`
+  }
+
+  console.log(`[deploy-terra] Deploying CW20 SOL token (9 decimals, code_id=${codeId})...`)
+  const addr = instantiateCw20Token(codeId, 'Synthetic SOL', 'SOL', 9, '1000000000000000')
+  if (!addr) {
+    console.warn('[deploy-terra] Failed to deploy CW20 SOL; returning placeholder')
+    return `${PLACEHOLDER_PREFIX}sol`
+  }
+  console.log(`[deploy-terra] CW20 SOL deployed at: ${addr}`)
+  return addr
+}
+
+export interface TerraFaucetTokenRow {
+  address: string
+  decimals: number
+}
+
+/**
+ * Build + deploy the Terra `faucet` CW20 helper on LocalTerra (docker `terrad`).
+ * Adds the faucet as minter on each listed CW20 so Settings → Faucet can claim.
+ * Returns `null` if WASM is missing / build fails / docker unavailable.
+ */
+export function deployLocalTerraFaucet(rows: TerraFaucetTokenRow[]): string | null {
+  if (rows.length === 0) {
+    console.warn('[deploy-terra] deployLocalTerraFaucet: no tokens, skipping')
+    return null
+  }
+
+  const FAUCET_ARTIFACTS = resolve(ROOT_DIR, 'packages/contracts-terraclassic/artifacts/faucet.wasm')
+  const FAUCET_TARGET = resolve(ROOT_DIR, 'packages/contracts-terraclassic/target/wasm32-unknown-unknown/release/faucet.wasm')
+  const resolveFaucetWasm = (): string | null => {
+    if (existsSync(FAUCET_ARTIFACTS)) return FAUCET_ARTIFACTS
+    if (existsSync(FAUCET_TARGET)) return FAUCET_TARGET
+    return null
+  }
+
+  let wasmPath = resolveFaucetWasm()
+  if (!wasmPath) {
+    console.log('[deploy-terra] Building faucet.wasm (release)...')
+    try {
+      execSync('cargo build --release -p faucet --target wasm32-unknown-unknown', {
+        cwd: resolve(ROOT_DIR, 'packages/contracts-terraclassic'),
+        encoding: 'utf8',
+        stdio: 'inherit',
+      })
+    } catch (e) {
+      console.warn('[deploy-terra] cargo build faucet failed:', (e as Error).message?.slice(0, 200))
+      return null
+    }
+    wasmPath = resolveFaucetWasm()
+  }
+  if (!wasmPath) {
+    console.warn('[deploy-terra] faucet.wasm missing (expected artifacts/faucet.wasm or target/.../faucet.wasm)')
+    return null
+  }
+
+  const container = localterraDockerTarget()
+  try {
+    execSync(`docker exec ${container} mkdir -p /tmp/wasm`, { encoding: 'utf8' })
+    execSync(`docker cp ${wasmPath} ${container}:/tmp/wasm/faucet.wasm`, {
+      encoding: 'utf8',
+      cwd: ROOT_DIR,
+    })
+    execSync(`docker exec -u 0 ${container} chmod 0644 /tmp/wasm/faucet.wasm`, { encoding: 'utf8', cwd: ROOT_DIR })
+  } catch (e) {
+    console.warn('[deploy-terra] docker cp faucet wasm failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  const prevCodeId = getLatestCodeId()
+  try {
+    terradTx(
+      'wasm', 'store', '/tmp/wasm/faucet.wasm',
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '150000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (e) {
+    console.warn('[deploy-terra] store faucet wasm failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  let codeId = 0
+  for (let i = 0; i < 10; i++) {
+    try { execSync('sleep 3', { encoding: 'utf8' }) } catch { /* ignore */ }
+    const current = getLatestCodeId()
+    if (current > prevCodeId) {
+      codeId = current
+      break
+    }
+  }
+  if (!codeId) {
+    console.warn('[deploy-terra] Could not read faucet code_id after store')
+    return null
+  }
+
+  const initMsg = JSON.stringify({
+    admin: TEST_ADDRESS,
+    tokens: rows.map((r) => ({ address: r.address, decimals: r.decimals })),
+  })
+
+  try {
+    terradTx(
+      'wasm', 'instantiate', String(codeId), initMsg,
+      '--label', 'cl8y-faucet-qa',
+      '--admin', TEST_ADDRESS,
+      '--from', KEY_NAME,
+      '--chain-id', 'localterra',
+      '--gas', 'auto', '--gas-adjustment', '1.5',
+      '--fees', '100000000uluna',
+      '--broadcast-mode', 'sync',
+      '-y'
+    )
+  } catch (e) {
+    console.warn('[deploy-terra] instantiate faucet failed:', (e as Error).message?.slice(0, 120))
+    return null
+  }
+
+  try { execSync('sleep 6', { encoding: 'utf8' }) } catch { /* ignore */ }
+
+  const faucetAddr = getContractByCodeId(codeId)
+  if (!faucetAddr) {
+    console.warn('[deploy-terra] Could not resolve faucet contract address')
+    return null
+  }
+
+  console.log(`[deploy-terra] Terra faucet deployed at: ${faucetAddr}`)
+
+  for (const r of rows) {
+    if (isPlaceholderAddress(r.address)) continue
+    const msg = JSON.stringify({ add_minter: { minter: faucetAddr } })
+    try {
+      terradTx(
+        'wasm', 'execute', r.address, msg,
+        '--from', KEY_NAME,
+        '--chain-id', 'localterra',
+        '--gas', 'auto', '--gas-adjustment', '1.5',
+        '--fees', '10000000uluna',
+        '--broadcast-mode', 'sync',
+        '-y'
+      )
+      console.log(`[deploy-terra] Faucet added as minter on ${r.address.slice(0, 12)}...`)
+    } catch (e) {
+      console.warn(`[deploy-terra] add_minter for ${r.address}:`, (e as Error).message?.slice(0, 80))
+    }
+    try { execSync('sleep 3', { encoding: 'utf8' }) } catch { /* ignore */ }
+  }
+
+  return faucetAddr
 }

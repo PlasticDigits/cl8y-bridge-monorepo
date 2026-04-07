@@ -760,9 +760,10 @@ pub async fn test_cw20_operator_mintburn_execution(
         .ok()
         .and_then(|v| v.get("cancel_window").and_then(|w| w.as_u64()))
         .unwrap_or(30);
-    let execution_wait = cancel_window_secs + 30; // cancel window + buffer for operator poll
+    // Extra buffer: operator polls Terra on an interval; MintBurn path depends on token_type LCD query.
+    let execution_wait = cancel_window_secs + 90;
     info!(
-        "Waiting {}s for operator execution (cancel_window={}s + 30s buffer)...",
+        "Waiting {}s for operator execution (cancel_window={}s + 90s buffer)...",
         execution_wait, cancel_window_secs
     );
     tokio::time::sleep(Duration::from_secs(execution_wait)).await;
@@ -775,7 +776,7 @@ pub async fn test_cw20_operator_mintburn_execution(
         "pending_withdraw": { "xchain_hash_id": xchain_hash_b64 }
     });
 
-    let max_poll_attempts = 10;
+    let max_poll_attempts = 18;
     let mut executed = false;
     for attempt in 0..max_poll_attempts {
         match terra_client

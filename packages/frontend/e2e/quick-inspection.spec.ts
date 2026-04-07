@@ -2,7 +2,7 @@
  * Quick inspection test - just checks the page without full E2E setup
  * Run with: npx playwright test quick-inspection.spec.ts --project=chromium
  */
-import { test, expect } from '@playwright/test'
+import { test } from '@playwright/test'
 
 test.describe('Bridge DApp Quick Inspection', () => {
   test('should load page and show chain information', async ({ page }) => {

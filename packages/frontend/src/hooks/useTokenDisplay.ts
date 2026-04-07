@@ -10,6 +10,7 @@ import { DEFAULT_NETWORK } from '../utils/constants'
 import type { NetworkTier } from '../utils/bridgeChains'
 import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from './useTokenDisplayInfo'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
+import { isValidSolanaAddress } from '../services/solana/address'
 import { isAddressLike, shortenAddress } from '../utils/shortenAddress'
 
 export interface TokenDisplayProps {
@@ -49,6 +50,10 @@ export function useTokenDisplay({
     [tokenId]
   )
   const isEvm = useMemo(() => !!tokenId?.startsWith('0x'), [tokenId])
+  const isSolanaMint = useMemo(
+    () => !!tokenId && !tokenId.startsWith('0x') && isValidSolanaAddress(tokenId),
+    [tokenId]
+  )
   const evmChainConfig = useMemo(() => {
     if (!sourceChain) return undefined
     const tier = DEFAULT_NETWORK as NetworkTier
@@ -97,6 +102,15 @@ export function useTokenDisplay({
       }
     }
 
+    if (isSolanaMint && tokenId) {
+      const short = shortenAddress(tokenId)
+      return {
+        displayLabel: short,
+        addressForBlockie: tokenId,
+        symbol: short,
+      }
+    }
+
     // Unknown format
     const fallback = tokenId ? getTokenDisplaySymbol(tokenId) : ''
     const displayLabel =
@@ -116,6 +130,7 @@ export function useTokenDisplay({
     symbolProp,
     isTerra,
     isEvm,
+    isSolanaMint,
     terraInfo,
     evmInfo,
   ])

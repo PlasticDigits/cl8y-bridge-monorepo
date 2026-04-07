@@ -378,6 +378,27 @@ pub(crate) async fn get_erc20_balance(
     Ok(balance)
 }
 
+/// Ensure the EVM test account holds at least `min_amount` of `token` (mints via deployer key if low).
+pub(crate) async fn ensure_test_token_balance(
+    config: &E2eConfig,
+    token: Address,
+    min_amount: u128,
+) -> Result<()> {
+    let test_account = config.test_accounts.evm_address;
+    let bal = get_erc20_balance(config, token, test_account).await?;
+    if bal >= U256::from(min_amount) {
+        return Ok(());
+    }
+    let mint_amount = min_amount
+        .saturating_mul(100)
+        .max(10_000_000_000_000_000_000u128);
+    let rpc = config.evm.rpc_url.as_str();
+    let pk = format!("0x{:x}", config.test_accounts.evm_private_key);
+    crate::deploy::mint_test_tokens(rpc, &pk, token, mint_amount).await?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
 /// Get Terra chain ID (bytes4) from ChainRegistry using identifier "terraclassic_{chain_id}"
 pub(crate) async fn get_terra_chain_key(config: &E2eConfig) -> Result<[u8; 4]> {
     let identifier = format!("terraclassic_{}", config.terra.chain_id);

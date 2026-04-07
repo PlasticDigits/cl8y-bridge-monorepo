@@ -12,12 +12,14 @@ backend/contract-related privately.
 
 Before cloning, make sure you have the following installed:
 
-| Tool | Install | Verify |
-|------|---------|--------|
-| **Node.js 18+** | [nodejs.org](https://nodejs.org/) or `nvm install 18` | `node -v` |
-| **npm** | Ships with Node.js | `npm -v` |
-| **Git** | `sudo apt install git` (Linux) / `brew install git` (macOS) | `git -v` |
+
+| Tool                    | Install                                                                               | Verify           |
+| ----------------------- | ------------------------------------------------------------------------------------- | ---------------- |
+| **Node.js 18+**         | [nodejs.org](https://nodejs.org/) or `nvm install 18`                                 | `node -v`        |
+| **npm**                 | Ships with Node.js                                                                    | `npm -v`         |
+| **Git**                 | `sudo apt install git` (Linux) / `brew install git` (macOS)                           | `git -v`         |
 | **GitLab CLI (`glab`)** | [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli) or `brew install glab` | `glab --version` |
+
 
 ### Authenticate `glab`
 
@@ -45,6 +47,15 @@ git clone https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-b
 cd packages/frontend
 npm ci
 
+# Start local infrastructure (Anvil, LocalTerra, Solana, PostgreSQL)
+make start         # from repo root
+
+# Check all services are healthy
+make status
+
+# Deploy contracts to all local chains (EVM, Terra, Solana)
+make deploy
+
 # Set up local environment
 cp .env.example .env.local
 # Edit .env.local — see "Environment Setup" below
@@ -58,10 +69,18 @@ npm run test:unit
 
 # Lint
 npm run lint
+
+# When you're done, stop everything
+make stop          # from repo root
 ```
 
-You only need to work inside `packages/frontend/`. The backend services (operator,
-canceler) and smart contracts are managed separately and deployed independently.
+`make start` spins up all local chain infrastructure via Docker Compose in one
+command: Anvil (EVM), LocalTerra (Cosmos), Solana test validator, and PostgreSQL.
+`make stop` tears it all down. `make status` shows the health of every service
+including Solana.
+
+For frontend-only work, you only need `packages/frontend/`. The backend services
+(operator, canceler) and smart contracts are managed separately.
 
 ---
 
@@ -108,9 +127,41 @@ VITE_DEV_MODE=false
 
 ### Local dev values
 
-When `VITE_NETWORK=local`, run `make deploy` from the repo root first, then
-copy the deployed addresses from the terminal output into `.env.local`. The RPC
-defaults (`localhost:8545`, `localhost:1317`) work out of the box.
+When `VITE_NETWORK=local`, run `make start && make deploy` from the repo root
+first, then copy the deployed addresses from the terminal output into
+`.env.local`. The RPC defaults work out of the box for all chains.
+
+Example local `.env.local`:
+
+```env
+VITE_NETWORK=local
+VITE_TERRA_BRIDGE_ADDRESS=<from deploy output>
+VITE_EVM_BRIDGE_ADDRESS=<from deploy output>
+VITE_EVM_ROUTER_ADDRESS=
+VITE_BRIDGE_TOKEN_ADDRESS=
+VITE_LOCK_UNLOCK_ADDRESS=<from deploy output>
+VITE_EVM_RPC_URL=http://localhost:8545
+VITE_TERRA_LCD_URL=http://localhost:1317
+VITE_TERRA_RPC_URL=http://localhost:26657
+VITE_SOLANA_RPC_URL=http://localhost:8899
+VITE_SOLANA_PROGRAM_ID=<solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json>
+VITE_DEV_MODE=true
+```
+
+### Solana environment variables
+
+Add these when testing Solana integration (on the `feat/solana-integration` branch):
+
+
+| Variable                     | Description                     | Example                                                                     |
+| ---------------------------- | ------------------------------- | --------------------------------------------------------------------------- |
+| `VITE_SOLANA_RPC_URL`        | Solana RPC endpoint             | `https://api.devnet.solana.com` (devnet) or `http://localhost:8899` (local) |
+| `VITE_SOLANA_PROGRAM_ID`     | Deployed bridge program address | Output of `solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` after `make deploy-solana` (same value `setup-bridge.sh` auto-detects) |
+| `VITE_SOLANA_FAUCET_ADDRESS` | Faucet for devnet testing       | *(optional)*                                                                |
+
+
+For local dev, the Solana test validator runs at `http://localhost:8899`
+(started automatically by `make start`).
 
 ### `VITE_WC_PROJECT_ID`
 
@@ -123,29 +174,33 @@ work without it.
 
 ## What You're Testing
 
-The CL8Y Bridge is a cross-chain bridge between **Terra Classic** and **EVM chains**
-(BSC, opBNB). Users connect wallets, initiate transfers, monitor status, and verify
-transaction hashes.
+The CL8Y Bridge is a cross-chain bridge between **Terra Classic**, **EVM chains**
+(BSC, opBNB), and **Solana**. Users connect wallets, initiate transfers, monitor
+status, and verify transaction hashes.
 
 ### Pages
 
-| Page | Route | What to test |
-|------|-------|-------------|
-| **Transfer** | `/` | Bridge form, wallet connect, chain/token select, amount input, fee display, submit |
-| **Transfer Status** | `/transfer/:xchainHashId` | Real-time status updates, auto-submit withdrawal, manual withdrawal fallback |
-| **Hash Verification** | `/verify` | Hash search, source/dest comparison, fraud alerts, recent verifications |
-| **Settings** | `/settings` | Chain connection status, token list, bridge config, faucet (mainnet test tokens) |
-| **History** | `/history` | Past transfers list, status badges |
+
+| Page                  | Route                     | What to test                                                                       |
+| --------------------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| **Transfer**          | `/`                       | Bridge form, wallet connect, chain/token select, amount input, fee display, submit |
+| **Transfer Status**   | `/transfer/:xchainHashId` | Real-time status updates, auto-submit withdrawal, manual withdrawal fallback       |
+| **Hash Verification** | `/verify`                 | Hash search, source/dest comparison, fraud alerts, recent verifications            |
+| **Settings**          | `/settings`               | Chain connection status, token list, bridge config, faucet (mainnet test tokens)   |
+| **History**           | `/history`                | Past transfers list, status badges                                                 |
+
 
 ### Wallets to Test
 
 **EVM wallets:**
+
 - MetaMask (browser extension + mobile in-app browser)
 - Rabby (browser extension)
 - Coinbase Wallet
 - WalletConnect (QR code flow)
 
 **Terra wallets:**
+
 - Station (browser extension + mobile via WalletConnect)
 - Keplr (browser extension)
 - Leap (browser extension)
@@ -153,17 +208,24 @@ transaction hashes.
 - LuncDash (via WalletConnect)
 - GalaxyStation (via WalletConnect)
 
+**Solana wallets:**
+
+- Phantom (browser extension + mobile)
+- Solflare (browser extension + mobile)
+
 ### Key Flows
 
-1. **Connect wallet** — both EVM and Terra sides, verify address displays
+1. **Connect wallet** — EVM, Terra, and Solana sides, verify address displays
 2. **EVM → Terra transfer** — full lifecycle: form → sign → pending → complete
 3. **Terra → EVM transfer** — full lifecycle
-4. **Auto-submit withdrawal** — status page should auto-submit when wallet connected
-5. **Manual withdrawal** — fallback when auto-submit doesn't fire
-6. **Hash verification** — search a tx hash, compare source/dest
-7. **Faucet claim** — claim test tokens on mainnet
-8. **Responsive layout** — every page on phones, tablets, desktops
-9. **Error states** — disconnect mid-transfer, reject signing, invalid inputs
+4. **Solana → EVM transfer** — full lifecycle (requires deployed Solana program)
+5. **EVM → Solana transfer** — full lifecycle (requires deployed Solana program)
+6. **Auto-submit withdrawal** — status page should auto-submit when wallet connected
+7. **Manual withdrawal** — fallback when auto-submit doesn't fire
+8. **Hash verification** — search a tx hash, compare source/dest
+9. **Faucet claim** — claim test tokens on mainnet
+10. **Responsive layout** — every page on phones, tablets, desktops
+11. **Error states** — disconnect mid-transfer, reject signing, invalid inputs
 
 ---
 
@@ -248,6 +310,7 @@ Use this template every time. It captures device, wallet, network, repro steps,
 severity, tx hash, and evidence links.
 
 Expected flow:
+
 1. Run `./scripts/qa/new-bug.sh ...`
 2. Your editor opens a temp file like `/tmp/cl8y-bug-XXXXXX.md`
 3. Fill the report and save
@@ -261,6 +324,7 @@ Expected flow:
 ```
 
 Expected flow:
+
 1. Run `./scripts/qa/new-bug-cursor.sh ...`
 2. Cursor opens a temp file like `/tmp/cl8y-bug-XXXXXX.md`
 3. Fill the report in Cursor and save
@@ -274,6 +338,7 @@ Expected flow:
 ```
 
 Expected flow:
+
 1. Run `./scripts/qa/new-test-pass.sh ...`
 2. Your editor opens a temp file like `/tmp/cl8y-test-pass-XXXXXX.md`
 3. Fill the report and save
@@ -287,6 +352,7 @@ Expected flow:
 ```
 
 Expected flow:
+
 1. Run `./scripts/qa/new-test-pass-cursors.sh ...`
 2. Cursor opens a temp file like `/tmp/cl8y-test-pass-XXXXXX.md`
 3. Fill the report in Cursor and save
@@ -306,20 +372,20 @@ In terminal-only flow, attach evidence as links. The easiest way is using
 ./scripts/qa/new-bug.sh --evidence /path/to/screenshot.png "bug: title"
 ```
 
-2. Or upload manually and print the URL:
+1. Or upload manually and print the URL:
 
 ```bash
 ./scripts/qa/upload-evidence.sh /path/to/screenshot.png
 ```
 
-3. Add URL to issue body under "Evidence"
-4. Use markdown image syntax for screenshots:
+1. Add URL to issue body under "Evidence"
+2. Use markdown image syntax for screenshots:
 
 ```markdown
 ![transfer-form-overlap](https://example.com/path/screenshot.png)
 ```
 
-5. If needed after issue creation, append more evidence:
+1. If needed after issue creation, append more evidence:
 
 ```bash
 glab issue note <issue-number> --message "More evidence: https://example.com/video.mp4"
@@ -391,10 +457,10 @@ state, or fund safety:
 1. **Stop testing that flow immediately**
 2. **Do not file a public issue**
 3. **Message the maintainer privately** with:
-   - What you observed
-   - Steps to reproduce
-   - Which chain/network
-   - Any tx hashes involved
+  - What you observed
+  - Steps to reproduce
+  - Which chain/network
+  - Any tx hashes involved
 4. **Do not discuss it** in PRs, issues, or any public channel
 
 Frontend-only bugs (CSS, layout, wallet UX glitches, form validation) are safe
@@ -410,14 +476,16 @@ to file as public issues.
 
 `main` is protected. You **cannot** push directly to it or merge without approval.
 
-| Rule | Effect |
-|------|--------|
-| **MRs required** | All changes to `main` must go through a merge request |
-| **1 approving review** | The maintainer (`@PlasticDigits`) must approve before merge |
-| **CODEOWNERS enforced** | `@PlasticDigits` is auto-requested as reviewer on every MR |
-| **Stale reviews dismissed** | If you push new commits after approval, the review resets |
-| **No force pushes** | Force-pushing to `main` is blocked |
-| **No branch deletion** | `main` cannot be deleted |
+
+| Rule                        | Effect                                                      |
+| --------------------------- | ----------------------------------------------------------- |
+| **MRs required**            | All changes to `main` must go through a merge request       |
+| **1 approving review**      | The maintainer (`@PlasticDigits`) must approve before merge |
+| **CODEOWNERS enforced**     | `@PlasticDigits` is auto-requested as reviewer on every MR  |
+| **Stale reviews dismissed** | If you push new commits after approval, the review resets   |
+| **No force pushes**         | Force-pushing to `main` is blocked                          |
+| **No branch deletion**      | `main` cannot be deleted                                    |
+
 
 **What this means for you:** create a branch, push it, open an MR, and wait for
 review. You should **never** merge your own MRs — the maintainer reviews and
@@ -427,13 +495,15 @@ merges them.
 
 ## Branch & MR Conventions
 
-| Convention | Rule |
-|-----------|------|
-| Branch naming | `fix/issue-NUMBER-short-description` or `qa/test-pass-DATE` |
-| Commit messages | `fix: description (#NUMBER)` or `test: description` |
-| MR scope | One issue per MR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one MR and list both with `Fixes #A, Fixes #B` |
-| MR checklist | Fill out the MR template (see below) |
-| Reviews | Maintainer (`@PlasticDigits`) reviews and merges all MRs |
+
+| Convention      | Rule                                                                                                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch naming   | `fix/issue-NUMBER-short-description` or `qa/test-pass-DATE`                                                                                                          |
+| Commit messages | `fix: description (#NUMBER)` or `test: description`                                                                                                                  |
+| MR scope        | One issue per MR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one MR and list both with `Fixes #A, Fixes #B` |
+| MR checklist    | Fill out the MR template (see below)                                                                                                                                 |
+| Reviews         | Maintainer (`@PlasticDigits`) reviews and merges all MRs                                                                                                             |
+
 
 ### MR Template
 
@@ -471,15 +541,37 @@ If you need the full bridge running locally (for testing real transfers against
 local chains), you'll need Docker:
 
 ```bash
-# From repo root
-make start          # Starts Anvil, LocalTerra, Postgres
-make deploy         # Deploys contracts to local chains
+# From repo root — one command to start everything
+make start          # Starts Anvil, LocalTerra, Solana validator, PostgreSQL
+make status         # Verify all services are healthy
+
+# Deploy contracts to ALL local chains (EVM, Terra, Solana)
+make deploy         # Builds + deploys EVM, Terra, and Solana contracts, then configures cross-chain registration
+
 make operator       # Runs the bridge operator
 
 # In another terminal
 cd packages/frontend
 npm run dev
+
+# When done
+make stop           # Stops all Docker services
 ```
+
+`make deploy` handles everything: EVM contracts to Anvil, Terra contracts to
+LocalTerra, Solana program to the local validator, and cross-chain bridge
+registration (`setup-bridge.sh`). Deployed EVM and Terra bridge addresses are
+written to **`.deploy/local.env`** (gitignored) by `deploy-evm-local.sh` and
+`deploy-terra-local.sh`; `setup-bridge.sh` loads them automatically when those
+variables are not already exported. For Solana, `setup-bridge.sh` sets the
+program id from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json`
+when `SOLANA_PROGRAM_ID` is not exported. Copy addresses from the terminal output
+or from `.deploy/local.env` into `packages/frontend/.env.local` as needed.
+
+> **Note:** The Solana test validator requires high file descriptor limits.
+> This is handled automatically via `ulimits` in `docker-compose.yml`. If you
+> see `UnableToSetOpenFileDescriptorLimit` errors, ensure your Docker host
+> allows `nofile` limits of at least 1000000.
 
 For most QA work, you'll test against the deployed staging/production site
 rather than running the full stack locally.
@@ -489,6 +581,13 @@ rather than running the full stack locally.
 ## Useful Commands Reference
 
 ```bash
+# Infrastructure (from repo root)
+make start               # Start Anvil, LocalTerra, Solana, PostgreSQL
+make stop                # Stop all services
+make status              # Health check all chains + services
+make deploy              # Deploy contracts to all local chains (EVM, Terra, Solana)
+make logs                # Follow all service logs
+
 # Frontend dev
 cd packages/frontend
 npm run dev              # Start dev server
@@ -534,17 +633,145 @@ real wallet signing flows. Your manual testing covers what automation cannot.
 
 ---
 
+## Solana Integration (`feat/solana-integration`)
+
+The Solana integration is under active development on the `feat/solana-integration`
+branch. This section covers what's been implemented, what's pending, and how to
+test it.
+
+> **Do NOT merge this branch to `main`** until all Solana QA checklist items
+> pass. The main branch serves live EVM + Terra production.
+
+### Branch setup
+
+```bash
+git checkout feat/solana-integration
+git pull origin feat/solana-integration
+
+# Start everything (including Solana validator)
+make start
+make status    # Confirm Solana shows "running"
+make deploy    # Deploys to EVM, Terra, and Solana
+```
+
+Then follow the normal Quick Start / Full Dev Stack setup above.
+
+### Infrastructure fixes already applied
+
+These issues were discovered and fixed in commit `1f01c90`:
+
+
+| Issue                                                 | Fix                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------- |
+| `docker-compose` not found                            | Replaced with `docker compose` (v2 syntax) in Makefile              |
+| `solanalabs/solana:v2.2` doesn't exist                | Changed to `solanalabs/solana:v1.18.26` in docker-compose.yml       |
+| Solana validator `UnableToSetOpenFileDescriptorLimit` | Added `ulimits.nofile: 1000000` to solana service                   |
+| `forge script` "default sender" error                 | Added `--sender` / `--private-key` to Makefile `deploy-evm` target  |
+| Browser: `Module "buffer" has been externalized`      | Added `buffer` to Vite `resolve.alias` and `optimizeDeps.include`   |
+| Solana chains missing from frontend dropdowns         | Fixed `useDiscoveredChains.ts` to pass `solana` type through filter |
+
+
+### What's working in the frontend
+
+- **CONNECT SOL** button in the navbar (alongside TC and EVM buttons)
+- `SolanaWalletModal` for Phantom / Solflare wallet connection
+- Solana wallet status in the `WalletStatusBar` (purple accent row)
+- Solana Localnet in FROM/TO chain selectors (local tier)
+- Solana mainnet and Solana Devnet in chain selectors (mainnet/testnet tiers)
+- Chain icons (`localsolana-icon.png`, `solana-icon.png`) display correctly
+- Transfer direction logic for all 4 Solana routes: `solana↔evm`, `solana↔terra`
+- Swap button correctly disabled for `solana→solana`
+- Recipient autofill from connected Solana wallet
+- No browser console errors (Buffer polyfill fixed)
+
+### What's pending (requires deployed Solana program)
+
+- Actual Solana deposit execution (placeholder: "Solana deposits are not yet available")
+- Actual Solana withdraw execution (placeholder: "Solana withdrawals are not yet available")
+- `useSolanaDeposit` hook wired into `handleSubmit` (needs program ID)
+- Solana withdraw flow in `useWithdrawSubmit`
+- Solana RPC health check in Settings → ChainCard
+- Bridge config panel for Solana (admin, feeBps, withdrawDelay)
+
+### QA checklist for Solana
+
+When the Solana program is deployed to devnet, verify:
+
+**Wallet:**
+
+- Phantom connects and shows SOL balance
+- Solflare connects and shows SOL balance
+- Disconnect works cleanly for both wallets
+- Address displays correctly in navbar and WalletStatusBar
+
+**Chain selector:**
+
+- Solana appears in FROM dropdown with correct icon
+- Solana appears in TO dropdown with correct icon
+- Selecting Solana as source hides Solana from TO (no same-chain bridge)
+- Chain swap button works for Solana routes
+
+**Transfer form:**
+
+- SOL balance loads when Solana is the source chain
+- Recipient autofills with connected destination wallet address
+- Fee display works for Solana routes
+- Amount validation works (insufficient balance, zero, negative)
+
+**Transfer execution (after program deploy):**
+
+- Solana → EVM deposit: form → sign → pending → operator picks up → complete
+- EVM → Solana withdraw: operator approves → wait delay → execute withdraw
+- Cancel flow: withdraw submitted → canceler cancels before execution
+- Hash parity: Solana transfer hash matches EVM keccak256 output
+
+**Operator & canceler:**
+
+- Operator watches Solana deposit events (`solana_deposits` table)
+- Operator submits `withdraw_approve` on Solana
+- Canceler polls `WithdrawApprove` events from Solana
+- Canceler submits `withdraw_cancel` for fraudulent approvals
+
+**Security:**
+
+- `ExecutedHash` PDA prevents replay (double-spend)
+- Close-reinit attack blocked (`AlreadyExecutedHash` error)
+- Only admin can call `set_config`, `register_chain`, `register_token`
+- Only registered cancelers can call `withdraw_cancel`
+
+### Operator/canceler env vars for Solana
+
+When running the operator or canceler with Solana enabled, add to the  
+service's environment:
+
+```env
+SOLANA_ENABLED=true
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_PROGRAM_ID=<program-id-from-deploy>
+SOLANA_KEYPAIR_PATH=~/.config/solana/devnet-deployer.json
+SOLANA_V2_CHAIN_ID=0x736f6c00
+SOLANA_POLL_INTERVAL_MS=5000
+SOLANA_COMMITMENT=finalized
+```
+
+For full details, see [issue #60](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/60)
+and `docs/SOLANA_INTEGRATION_PLAN.md`.
+
+---
+
 ## Device Testing Checklist
 
 When doing a test pass, aim to cover this matrix:
 
-| Category | Targets |
-|----------|---------|
-| **iOS** | iPhone SE (small), iPhone 15 (medium), iPad |
-| **Android** | Small phone (< 375px), mid-range, tablet |
-| **Desktop** | Chrome, Firefox, Safari (macOS), Edge |
-| **Wallets** | At least MetaMask + Station per pass, rotate others |
-| **Networks** | Mainnet (with test tokens) for full flows and checks |
+
+| Category     | Targets                                                                   |
+| ------------ | ------------------------------------------------------------------------- |
+| **iOS**      | iPhone SE (small), iPhone 15 (medium), iPad                               |
+| **Android**  | Small phone (< 375px), mid-range, tablet                                  |
+| **Desktop**  | Chrome, Firefox, Safari (macOS), Edge                                     |
+| **Wallets**  | At least MetaMask + Station + Phantom per pass, rotate others             |
+| **Networks** | Mainnet (with test tokens) for full flows; Solana devnet for Solana flows |
+
 
 You don't need to test every combination every time. Rotate coverage across
 test passes and note what was tested in the QA Test Pass issue.

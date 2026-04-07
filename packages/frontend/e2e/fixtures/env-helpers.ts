@@ -40,7 +40,11 @@ export function getAnvil1RpcUrl(env?: Record<string, string>): string {
   return (env ?? loadEnv())['ANVIL1_RPC_URL'] || 'http://localhost:8546'
 }
 
-/** Terra LCD URL (default: http://localhost:1317). Override via TERRA_LCD_URL in env. */
+/** Terra LCD URL (default: http://localhost:1317). Override via TERRA_LCD_URL in .env.e2e.local or process.env. */
 export function getTerraLcdUrl(env?: Record<string, string>): string {
-  return (env ?? loadEnv())['TERRA_LCD_URL'] || 'http://localhost:1317'
+  const fromFile = (env ?? loadEnv())['TERRA_LCD_URL']?.trim()
+  if (fromFile) return fromFile
+  const fromShell = process.env.TERRA_LCD_URL?.trim()
+  if (fromShell) return fromShell
+  return 'http://localhost:1317'
 }

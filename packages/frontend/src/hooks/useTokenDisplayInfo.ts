@@ -10,6 +10,7 @@ import { useTokenList } from './useTokenList'
 import { useCw20TokenInfo, useEvmTokenInfo, fetchEvmTokenInfo, fetchCw20TokenInfo, getCachedTokenInfo } from './useTokenOnchainInfo'
 import { getTokenFromList } from '../services/tokenlist'
 import type { BridgeChainConfig } from '../types/chain'
+import type { TokenOption } from '../types/tokenOption'
 import { isAddressLike, shortenAddress } from '../utils/shortenAddress'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
 
@@ -95,7 +96,7 @@ export function useEvmTokenDisplayInfo(
  * Prefer sourceChainConfig (enables RPC fallbacks) over sourceChainRpcUrl.
  */
 export function useTokenOptionsDisplayMap(
-  tokens: Array<{ id: string; symbol: string; tokenId: string; evmTokenAddress?: string }>,
+  tokens: TokenOption[],
   /** Chain config (enables RPC fallbacks) or single rpcUrl for backward compat */
   sourceChainConfigOrRpcUrl?: BridgeChainConfig | string
 ): Record<string, string> {

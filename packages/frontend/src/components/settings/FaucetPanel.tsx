@@ -8,12 +8,16 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, Spinner } from '../ui'
 import { useWalletStore } from '../../stores/wallet'
+import { useSolanaWalletStore } from '../../stores/solanaWallet'
 import { executeContractWithCoins } from '../../services/terra'
 import { queryContract } from '../../services/lcdClient'
 import { getEvmClient } from '../../services/evmClient'
 import { BRIDGE_CHAINS } from '../../utils/bridgeChains'
 import { DEFAULT_NETWORK, NETWORKS } from '../../utils/constants'
+import { pow10BigInt } from '../../utils/pow10'
+import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { sounds } from '../../lib/sounds'
+import { anchorDiscriminator } from '../../utils/anchorDiscriminator'
 import type { NetworkTier } from '../../utils/bridgeChains'
 
 // ---------------------------------------------------------------------------
@@ -48,7 +52,7 @@ interface ChainConfig {
   key: string
   name: string
   chainId: number | string
-  type: 'evm' | 'cosmos'
+  type: 'evm' | 'cosmos' | 'solana'
   faucetAddress: string
   explorerTxUrl: string
 }
@@ -88,9 +92,73 @@ const TERRA_CHAIN: ChainConfig = {
   explorerTxUrl: 'https://finder.terraclassic.community/mainnet/tx/',
 }
 
-const ALL_CHAINS: ChainConfig[] = [...EVM_CHAINS, ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : [])]
+const SOLANA_CHAIN: ChainConfig = {
+  key: 'solana',
+  name: 'Solana',
+  chainId: 'solana-devnet',
+  type: 'solana',
+  faucetAddress: import.meta.env.VITE_SOLANA_FAUCET_ADDRESS || '',
+  explorerTxUrl: 'https://explorer.solana.com/tx/',
+}
 
-const TOKENS: TokenConfig[] = [
+/** Show Solana faucet row when SPL faucet is deployed *or* RPC is set (local validator / devnet) so balances and SPL claims work. */
+const SOLANA_RPC_OR_FAUCET =
+  !!import.meta.env.VITE_SOLANA_FAUCET_ADDRESS ||
+  !!import.meta.env.VITE_SOLANA_RPC_URL ||
+  import.meta.env.DEV
+
+const IS_LOCAL_NETWORK = DEFAULT_NETWORK === 'local'
+
+/** Local QA (`make deploy` + `qa:full-token-setup`): chain keys must match `BRIDGE_CHAINS.local` (anvil, anvil1, localterra, solana-localnet). */
+const LOCAL_EVM_FAUCET_CHAINS: ChainConfig[] = [
+  {
+    key: 'anvil',
+    name: 'Anvil',
+    chainId: 31337,
+    type: 'evm',
+    faucetAddress: import.meta.env.VITE_ANVIL_FAUCET_ADDRESS || '',
+    explorerTxUrl: '',
+  },
+  {
+    key: 'anvil1',
+    name: 'Anvil1',
+    chainId: 31338,
+    type: 'evm',
+    faucetAddress: import.meta.env.VITE_ANVIL1_FAUCET_ADDRESS || '',
+    explorerTxUrl: '',
+  },
+]
+
+const LOCAL_TERRA_FAUCET_CHAIN: ChainConfig = {
+  key: 'localterra',
+  name: 'LocalTerra',
+  chainId: 'localterra',
+  type: 'cosmos',
+  faucetAddress: import.meta.env.VITE_TERRA_FAUCET_ADDRESS || '',
+  explorerTxUrl: '',
+}
+
+const LOCAL_SOLANA_FAUCET_CHAIN: ChainConfig = {
+  key: 'solana-localnet',
+  name: 'Solana Localnet',
+  chainId: 'solana-localnet',
+  type: 'solana',
+  faucetAddress: import.meta.env.VITE_SOLANA_FAUCET_ADDRESS || '',
+  explorerTxUrl: 'https://explorer.solana.com/tx/',
+}
+
+const LOCAL_SOLANA_RPC_OR_FAUCET =
+  !!import.meta.env.VITE_SOLANA_FAUCET_ADDRESS ||
+  !!import.meta.env.VITE_SOLANA_RPC_URL ||
+  import.meta.env.DEV
+
+const MAINNET_ALL_CHAINS: ChainConfig[] = [
+  ...EVM_CHAINS,
+  ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : []),
+  ...(SOLANA_RPC_OR_FAUCET ? [SOLANA_CHAIN] : []),
+]
+
+const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
   {
     symbol: 'testa',
     label: 'Test A (testa-cb)',
@@ -98,8 +166,9 @@ const TOKENS: TokenConfig[] = [
       bsc: '0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c',
       opbnb: '0xF073d5685594F465a66EA54516f0D2f76b6cc6F3',
       terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
+      solana: import.meta.env.VITE_SOLANA_TESTA_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18 },
+    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'testb',
@@ -108,8 +177,9 @@ const TOKENS: TokenConfig[] = [
       bsc: '0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52',
       opbnb: '0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e',
       terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
+      solana: import.meta.env.VITE_SOLANA_TESTB_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18 },
+    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'tdec',
@@ -118,9 +188,85 @@ const TOKENS: TokenConfig[] = [
       bsc: '0xe159c7a58d694fafba82221905d5a49e7f314330',
       opbnb: '0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd',
       terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
+      solana: import.meta.env.VITE_SOLANA_TDEC_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 12, terra: 6 },
+    decimals: { bsc: 18, opbnb: 12, terra: 6, solana: 6 },
   },
+]
+
+const LOCAL_FAUCET_TOKENS: TokenConfig[] = [
+  {
+    symbol: 'tkna',
+    label: 'Token A (TKNA)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_A || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_A || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_A || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_A || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tknb',
+    label: 'Token B (TKNB)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_B || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_B || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_B || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_B || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tknc',
+    label: 'Token C (TKNC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_TOKEN_C || '',
+      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_C || '',
+      localterra: import.meta.env.VITE_TERRA_TOKEN_C || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_C || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'tdec',
+    label: 'Test Dec (KDEC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_KDEC || '',
+      anvil1: import.meta.env.VITE_ANVIL1_KDEC || '',
+      localterra: import.meta.env.VITE_TERRA_KDEC || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_KDEC || '',
+    },
+    decimals: { anvil: 18, anvil1: 12, localterra: 6, 'solana-localnet': 9 },
+  },
+  {
+    symbol: 'lunc',
+    label: 'LUNC (tLUNC)',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_LUNC || '',
+      anvil1: import.meta.env.VITE_ANVIL1_LUNC || '',
+      localterra: '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_LUNC || '',
+    },
+    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 6 },
+  },
+  {
+    symbol: 'sol',
+    label: 'Synthetic SOL',
+    addresses: {
+      anvil: import.meta.env.VITE_ANVIL_SOL || '',
+      anvil1: import.meta.env.VITE_ANVIL1_SOL || '',
+      localterra: import.meta.env.VITE_TERRA_SOL || '',
+      'solana-localnet': import.meta.env.VITE_SOLANA_WSOL || '',
+    },
+    decimals: { anvil: 9, anvil1: 9, localterra: 9, 'solana-localnet': 9 },
+  },
+]
+
+const LOCAL_ALL_CHAINS: ChainConfig[] = [
+  ...LOCAL_EVM_FAUCET_CHAINS,
+  LOCAL_TERRA_FAUCET_CHAIN,
+  ...(LOCAL_SOLANA_RPC_OR_FAUCET ? [LOCAL_SOLANA_FAUCET_CHAIN] : []),
 ]
 
 // ---------------------------------------------------------------------------
@@ -129,9 +275,9 @@ const TOKENS: TokenConfig[] = [
 
 /** Format raw token amount (bigint string) to human-readable with 3 significant figures */
 function formatBalanceSigFigs(raw: string, decimals: number): string {
-  const n = BigInt(raw)
+  const n = bigintFromBaseUnitsString(raw)
   if (n === 0n) return '0'
-  const divisor = 10n ** BigInt(decimals)
+  const divisor = pow10BigInt(decimals)
   const whole = n / divisor
   const frac = n % divisor
   const fracStr = frac.toString().padStart(decimals, '0').slice(0, decimals)
@@ -151,6 +297,55 @@ function formatCountdown(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
+}
+
+/** Readable faucet / wallet error (Solana RPC often nests simulation + log lines). */
+function formatFaucetError(err: unknown, depth = 0): string {
+  if (depth > 4) return '…'
+  if (err == null) return 'Unknown error'
+  if (typeof err === 'string') return err
+  if (err instanceof Error) {
+    const parts: string[] = [err.message]
+    const anyErr = err as Error & {
+      cause?: unknown
+      logs?: string[]
+      getLogs?: () => string[]
+    }
+    if (typeof anyErr.getLogs === 'function') {
+      try {
+        const logs = anyErr.getLogs()
+        if (logs?.length) parts.push(...logs.filter(Boolean).slice(-8))
+      } catch {
+        /* ignore */
+      }
+    } else if (Array.isArray(anyErr.logs) && anyErr.logs.length) {
+      parts.push(...anyErr.logs.filter(Boolean).slice(-8))
+    }
+    if (anyErr.cause) {
+      const c = formatFaucetError(anyErr.cause, depth + 1)
+      if (c && !parts.some((p) => p.includes(c) || c.includes(p))) parts.push(c)
+    }
+    return parts.join('\n').trim() || err.message
+  }
+  if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
+function ClaimErrorNote({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mt-1 w-full min-w-0 rounded border border-red-800/60 bg-red-950/50 px-2 py-1.5 text-left text-[10px] leading-snug text-red-200 whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-h-40 overflow-y-auto"
+    >
+      {message}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +415,185 @@ function TerraBalanceCell({
 
   if (!terraAddress) return <span className="text-xs text-gray-500">—</span>
   return <span className="text-xs text-slate-300 tabular-nums">{formatBalanceSigFigs(balance ?? '0', decimals)}</span>
+}
+
+function SolanaBalanceCell({
+  tokenAddress,
+  decimals,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+  decimals: number
+}) {
+  const { address } = useSolanaWalletStore()
+  const [balance, setBalance] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!address || !tokenAddress) {
+      setBalance(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { Connection, PublicKey } = await import('@solana/web3.js')
+        const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+        const connection = new Connection(
+          import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899',
+          'confirmed',
+        )
+        const mint = new PublicKey(tokenAddress)
+        const owner = new PublicKey(address)
+        const ata = await getAssociatedTokenAddress(mint, owner)
+        const info = await connection.getTokenAccountBalance(ata)
+        if (!cancelled) setBalance(info.value.amount)
+      } catch {
+        if (!cancelled) setBalance('0')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [address, tokenAddress])
+
+  if (!address) return <span className="text-xs text-gray-500">—</span>
+  if (balance === null) return <span className="text-xs text-gray-500 animate-pulse">...</span>
+  return <span className="text-xs text-slate-300 tabular-nums">{formatBalanceSigFigs(balance, decimals)}</span>
+}
+
+function SolanaClaimButton({
+  chain,
+  tokenAddress,
+}: {
+  chain: ChainConfig
+  tokenAddress: string
+}) {
+  const { address, walletType } = useSolanaWalletStore()
+  const [claiming, setClaiming] = useState(false)
+  const [claimTx, setClaimTx] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleClaim = async () => {
+    if (!address || !walletType || !chain.faucetAddress) return
+    setClaiming(true)
+    setError(null)
+    setClaimTx(null)
+    try {
+      const { Connection, PublicKey, Transaction } = await import('@solana/web3.js')
+      const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token')
+      const { sendSolanaTransaction } = await import('../../services/solana/transaction')
+
+      const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+      const connection = new Connection(rpcUrl, 'confirmed')
+      const programId = new PublicKey(chain.faucetAddress)
+      const mint = new PublicKey(tokenAddress)
+      const claimer = new PublicKey(address)
+
+      const [faucetPda] = PublicKey.findProgramAddressSync([Buffer.from('faucet')], programId)
+      const [claimRecordPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('claim'), claimer.toBuffer(), mint.toBuffer()],
+        programId,
+      )
+      const ata = await getAssociatedTokenAddress(mint, claimer)
+
+      const ataInfo = await connection.getAccountInfo(ata)
+      const tx = new Transaction()
+      if (!ataInfo) {
+        tx.add(createAssociatedTokenAccountInstruction(claimer, ata, claimer, mint))
+      }
+
+      const disc = anchorDiscriminator('claim')
+      const { TransactionInstruction } = await import('@solana/web3.js')
+      const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+      const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111')
+
+      tx.add(new TransactionInstruction({
+        programId,
+        keys: [
+          { pubkey: faucetPda, isSigner: false, isWritable: false },
+          { pubkey: claimRecordPda, isSigner: false, isWritable: true },
+          { pubkey: mint, isSigner: false, isWritable: true },
+          { pubkey: ata, isSigner: false, isWritable: true },
+          { pubkey: claimer, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.from(disc),
+      }))
+
+      const sig = await sendSolanaTransaction(connection, tx, walletType)
+      setClaimTx(sig)
+      sounds.playSuccess()
+    } catch (err) {
+      setError(formatFaucetError(err))
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  if (!chain.faucetAddress) {
+    return <span className="text-xs text-gray-500">Not deployed</span>
+  }
+
+  if (!address) {
+    return <span className="text-xs text-gray-500">Connect Solana</span>
+  }
+
+  const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+  const isLocalRpc = /localhost|127\.0\.0\.1/.test(rpcUrl)
+  const explorerHref =
+    claimTx &&
+    (isLocalRpc
+      ? `${chain.explorerTxUrl}${claimTx}?cluster=custom&customUrl=${encodeURIComponent(rpcUrl)}`
+      : `${chain.explorerTxUrl}${claimTx}?cluster=devnet`)
+
+  const isBusy = claiming
+  const title = isBusy ? 'Signing...' : claimTx ? 'Claimed!' : 'Claim tokens'
+
+  return (
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
+      <button
+        type="button"
+        disabled={isBusy}
+        onClick={() => {
+          sounds.playButtonPress()
+          void handleClaim()
+        }}
+        title={title}
+        aria-label={title}
+        className={`inline-flex h-8 w-8 items-center justify-center rounded border transition-colors ${
+          isBusy
+            ? 'border-yellow-500/40 bg-yellow-900/20 text-yellow-300 cursor-wait'
+            : claimTx
+              ? 'border-green-500/40 bg-green-900/20 text-green-300'
+              : 'border-white/20 bg-[#161616] text-slate-300 hover:border-[#b8ff3d]/60 hover:text-white'
+        }`}
+      >
+        {isBusy ? (
+          <Spinner className="h-4 w-4" />
+        ) : claimTx ? (
+          <span className="text-base font-bold" aria-hidden title="Already claimed">
+            ✓
+          </span>
+        ) : (
+          <span className="text-base" aria-hidden>
+            💧
+          </span>
+        )}
+      </button>
+      </div>
+      {explorerHref && (
+        <a
+          href={explorerHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
+        >
+          tx ↗
+        </a>
+      )}
+      {error && <ClaimErrorNote message={error} />}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -335,13 +709,13 @@ function EvmClaimButton({
       setTxHash(hash)
       setStatus('waiting')
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Claim failed'
+      const msg = formatFaucetError(e)
       if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
         setStatus('idle')
         return
       }
       setStatus('error')
-      setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
+      setError(msg)
     }
   }, [isConnected, userAddress, chain.chainId, chainId, faucetAddr, tokenAddr, switchChainAsync, writeContractAsync])
 
@@ -368,7 +742,8 @@ function EvmClaimButton({
         : 'Claim tokens'
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -396,17 +771,18 @@ function EvmClaimButton({
           <span className="text-base" aria-hidden>💧</span>
         )}
       </button>
+      </div>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
         >
           tx ↗
         </a>
       )}
-      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+      {status === 'error' && error && <ClaimErrorNote message={error} />}
     </div>
   )
 }
@@ -479,13 +855,13 @@ function TerraClaimButton({
       sounds.playSuccess()
       void queryClient.invalidateQueries({ queryKey: ['faucetBalance', chain.key, tokenAddress] })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Claim failed'
+      const msg = formatFaucetError(e)
       if (msg.toLowerCase().includes('rejected') || msg.toLowerCase().includes('denied')) {
         setStatus('idle')
         return
       }
       setStatus('error')
-      setError(msg.length > 120 ? msg.slice(0, 120) + '...' : msg)
+      setError(msg)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terraConnected, terraAddress, chain.faucetAddress, tokenAddress])
@@ -521,7 +897,8 @@ function TerraClaimButton({
         : 'Claim tokens'
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex min-w-0 w-full flex-col items-stretch gap-0.5">
+      <div className="flex justify-end">
       <button
         type="button"
         disabled={isBusy || isOnCooldown}
@@ -549,17 +926,18 @@ function TerraClaimButton({
           <span className="text-base" aria-hidden>💧</span>
         )}
       </button>
+      </div>
       {status === 'success' && txHash && (
         <a
           href={`${chain.explorerTxUrl}${txHash}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[10px] text-cyan-300 hover:text-cyan-200"
+          className="self-end text-[10px] text-cyan-300 hover:text-cyan-200"
         >
           tx ↗
         </a>
       )}
-      {status === 'error' && error && <p className="text-[10px] text-red-400 max-w-[120px] truncate" title={error}>{error}</p>}
+      {status === 'error' && error && <ClaimErrorNote message={error} />}
     </div>
   )
 }
@@ -569,15 +947,39 @@ function TerraClaimButton({
 // ---------------------------------------------------------------------------
 
 export function FaucetPanel() {
-  const hasAnyFaucet = ALL_CHAINS.some((c) => !!c.faucetAddress)
+  const allChains = IS_LOCAL_NETWORK ? LOCAL_ALL_CHAINS : MAINNET_ALL_CHAINS
+  const tokens = IS_LOCAL_NETWORK ? LOCAL_FAUCET_TOKENS : MAINNET_FAUCET_TOKENS
 
-  if (!hasAnyFaucet) {
+  const hasEvmOrTerraFaucet = IS_LOCAL_NETWORK
+    ? LOCAL_EVM_FAUCET_CHAINS.some((c) => !!c.faucetAddress) || !!LOCAL_TERRA_FAUCET_CHAIN.faucetAddress
+    : EVM_CHAINS.some((c) => !!c.faucetAddress) || !!TERRA_CHAIN.faucetAddress
+
+  const hasSolanaPanel = IS_LOCAL_NETWORK ? LOCAL_SOLANA_RPC_OR_FAUCET : SOLANA_RPC_OR_FAUCET
+  const hasAnyFaucet = hasEvmOrTerraFaucet || hasSolanaPanel
+
+  if (IS_LOCAL_NETWORK && !import.meta.env.VITE_ANVIL_TOKEN_A) {
+    return (
+      <div className="space-y-4">
+        <div className="border-2 border-yellow-700/50 bg-yellow-900/15 p-4">
+          <p className="text-sm text-yellow-300">
+            Local QA token matrix is not in the frontend env yet. After <code className="text-xs">make deploy</code>, run{' '}
+            <code className="text-xs">npm run qa:full-token-setup</code> from <code className="text-xs">packages/frontend</code>, then refresh{' '}
+            <code className="text-xs">packages/frontend/.env.local</code> (e.g. <code className="text-xs">./scripts/qa/write-frontend-env-local.sh</code> or your <code className="text-xs">make start-qa</code> step).
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!IS_LOCAL_NETWORK && !hasAnyFaucet) {
     return (
       <div className="border-2 border-yellow-700/50 bg-yellow-900/15 p-4">
         <p className="text-sm text-yellow-300">
           No faucet contracts configured. Set <code className="text-xs">VITE_BSC_FAUCET_ADDRESS</code>,{' '}
-          <code className="text-xs">VITE_OPBNB_FAUCET_ADDRESS</code>, or{' '}
-          <code className="text-xs">VITE_TERRA_FAUCET_ADDRESS</code> in your environment.
+          <code className="text-xs">VITE_OPBNB_FAUCET_ADDRESS</code>,{' '}
+          <code className="text-xs">VITE_TERRA_FAUCET_ADDRESS</code>, or enable Solana with{' '}
+          <code className="text-xs">VITE_SOLANA_RPC_URL</code> / <code className="text-xs">VITE_SOLANA_FAUCET_ADDRESS</code>{' '}
+          in your environment.
         </p>
       </div>
     )
@@ -594,37 +996,41 @@ export function FaucetPanel() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
-        {TOKENS.map((token) => (
-          <Card key={token.symbol} className="p-4 overflow-hidden">
+      <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-3">
+        {tokens.map((token) => (
+          <Card key={token.symbol} className="min-w-0 overflow-hidden p-4">
             <h4 className="mb-3 font-medium text-white">{token.label}</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[200px] text-left text-xs">
+            <div className="min-w-0 max-w-full overflow-x-auto">
+              <table className="w-full min-w-0 table-fixed text-left text-xs">
                 <thead>
                   <tr className="border-b border-white/10 text-gray-400">
-                    <th className="py-1.5 pr-3 font-medium">Chain</th>
-                    <th className="py-1.5 pr-3 font-medium text-right">Balance</th>
-                    <th className="py-1.5 pl-3 font-medium text-right">Claim</th>
+                    <th className="w-[30%] py-1.5 pr-2 font-medium">Chain</th>
+                    <th className="w-[28%] py-1.5 pr-2 font-medium text-right">Balance</th>
+                    <th className="min-w-0 w-[42%] py-1.5 pl-2 font-medium text-right">Claim</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ALL_CHAINS.map((chain) => {
+                  {allChains.map((chain) => {
                     const addr = token.addresses[chain.key]
                     const decimals = token.decimals[chain.key] ?? 18
                     if (!addr) return null
                     return (
                       <tr key={chain.key} className="border-b border-white/5 last:border-0">
-                        <td className="py-2 pr-3 text-gray-300">{chain.name}</td>
-                        <td className="py-2 pr-3 text-right">
+                        <td className="py-2 pr-2 align-top text-gray-300 break-words">{chain.name}</td>
+                        <td className="py-2 pr-2 text-right align-top">
                           {chain.type === 'evm' ? (
                             <EvmBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
+                          ) : chain.type === 'solana' ? (
+                            <SolanaBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           ) : (
                             <TerraBalanceCell chain={chain} tokenAddress={addr} decimals={decimals} />
                           )}
                         </td>
-                        <td className="py-2 pl-3 text-right">
+                        <td className="min-w-0 py-2 pl-2 text-right align-top">
                           {chain.type === 'evm' ? (
                             <EvmClaimButton chain={chain} tokenAddress={addr} />
+                          ) : chain.type === 'solana' ? (
+                            <SolanaClaimButton chain={chain} tokenAddress={addr} />
                           ) : (
                             <TerraClaimButton chain={chain} tokenAddress={addr} />
                           )}

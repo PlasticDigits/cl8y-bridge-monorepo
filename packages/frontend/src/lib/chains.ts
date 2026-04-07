@@ -87,6 +87,34 @@ export const supportedChains: ChainInfo[] = [
       decimals: 6,
     },
   },
+  {
+    id: 'solana',
+    name: 'Solana',
+    chainId: 'solana',
+    type: 'solana',
+    icon: '◎',
+    rpcUrl: 'https://api.mainnet-beta.solana.com',
+    explorerUrl: 'https://explorer.solana.com',
+    nativeCurrency: {
+      name: 'SOL',
+      symbol: 'SOL',
+      decimals: 9,
+    },
+  },
+  {
+    id: 'solana-localnet',
+    name: 'Solana Localnet',
+    chainId: 'solana-localnet',
+    type: 'solana',
+    icon: '◎',
+    rpcUrl: 'http://localhost:8899',
+    explorerUrl: '',
+    nativeCurrency: {
+      name: 'SOL',
+      symbol: 'SOL',
+      decimals: 9,
+    },
+  },
 ]
 
 export function getChainById(id: string): ChainInfo | undefined {

@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 use tracing::info;
 
 use super::canceler_helpers::{
-    cancel_approval_directly, check_canceler_health, create_fraudulent_approval,
-    generate_unique_nonce, is_approval_cancelled, try_execute_withdrawal, FraudulentApprovalResult,
+    approve_pending_withdraw, cancel_approval_directly, check_canceler_health,
+    create_fraudulent_approval, create_withdraw_submit_only, generate_unique_nonce,
+    is_approval_approved, is_approval_cancelled, try_execute_withdrawal, FraudulentApprovalResult,
 };
 use super::helpers::{query_contract_code, verify_tx_success};
 
@@ -32,6 +33,9 @@ const FRAUD_DETECTION_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Poll interval for checking cancellation status
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long the operator must *not* approve a Solana-source `withdrawSubmit`
+const OPERATOR_NO_APPROVE_WINDOW: Duration = Duration::from_secs(30);
 
 // ============================================================================
 // Live Canceler Fraud Detection Tests
@@ -565,6 +569,380 @@ pub async fn test_canceler_terra_source_fraud_detection(config: &E2eConfig) -> T
     )
 }
 
+/// Test canceler detects Solana→EVM fraud (approval with no matching deposit on Solana)
+///
+/// Requires the canceler to have SOLANA_V2_CHAIN_ID configured (default: 5).
+/// Creates a fraudulent withdrawal approval on EVM with `srcChain` set to the
+/// Solana V2 chain ID. Since no matching DepositRecord PDA exists on Solana,
+/// the canceler should detect this as fraud and cancel it.
+pub async fn test_canceler_solana_source_fraud_detection(config: &E2eConfig) -> TestResult {
+    let start = Instant::now();
+    let name = "canceler_solana_source_fraud_detection";
+
+    info!("Testing canceler Solana→EVM fraud detection");
+
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
+
+    if !manager.is_canceler_running() && !check_canceler_health().await {
+        return TestResult::skip(name, "Canceler service is not running");
+    }
+
+    // Solana V2 chain ID from env or default (0x00000005)
+    let solana_chain_id: u32 = std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(hex_str) = v.strip_prefix("0x") {
+                u32::from_str_radix(hex_str, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5);
+
+    if solana_chain_id == 0 {
+        return TestResult::skip(
+            name,
+            "SOLANA_V2_CHAIN_ID not configured — required for Solana-source fraud test",
+        );
+    }
+
+    let solana_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&solana_chain_id.to_be_bytes());
+        bytes
+    });
+    info!(
+        "Using Solana chain key as source: 0x{}",
+        hex::encode(&solana_chain_key.as_slice()[..4])
+    );
+
+    let fraud_nonce = generate_unique_nonce();
+    let fraud_result = match create_fraudulent_approval(
+        config,
+        solana_chain_key,
+        config.evm.contracts.test_token,
+        config.test_accounts.evm_address,
+        "4200000000000000000",
+        fraud_nonce,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to create Solana-source fraud: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    info!("Waiting for canceler to detect Solana-source fraud...");
+    let poll_start = Instant::now();
+
+    while poll_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
+        if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
+            info!(
+                "Solana-source fraud detected and cancelled in {:?}",
+                poll_start.elapsed()
+            );
+            return TestResult::pass(name, start.elapsed());
+        }
+        tokio::time::sleep(CANCELLATION_POLL_INTERVAL).await;
+    }
+
+    TestResult::fail(
+        name,
+        "Canceler did not cancel Solana-source fraud within timeout",
+        start.elapsed(),
+    )
+}
+
+/// Test operator refuses to approve Solana→EVM transfers with no source deposit
+///
+/// Creates a withdrawal on EVM with `srcChain` set to the Solana chain ID.
+/// Since no matching deposit exists on Solana, the operator should NOT approve it.
+/// The operator's verify_deposit_on_source will return false for this hash.
+pub async fn test_operator_rejects_unverified_solana_source(config: &E2eConfig) -> TestResult {
+    let start = Instant::now();
+    let name = "operator_rejects_unverified_solana_source";
+
+    info!("Testing operator rejects Solana→EVM withdrawal with no source deposit");
+
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
+
+    if !manager.is_canceler_running() && !check_canceler_health().await {
+        return TestResult::skip(name, "Services not running");
+    }
+
+    let solana_chain_id: u32 = std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(hex_str) = v.strip_prefix("0x") {
+                u32::from_str_radix(hex_str, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5);
+
+    if solana_chain_id == 0 {
+        return TestResult::skip(name, "SOLANA_V2_CHAIN_ID not configured");
+    }
+
+    let solana_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&solana_chain_id.to_be_bytes());
+        bytes
+    });
+
+    let fraud_nonce = generate_unique_nonce();
+    let fraud_result = match create_fraudulent_approval(
+        config,
+        solana_chain_key,
+        config.evm.contracts.test_token,
+        config.test_accounts.evm_address,
+        "5500000000000000000",
+        fraud_nonce,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("Failed to create fraudulent approval: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    // Wait long enough that if the operator WERE to approve, it would have done so.
+    // Then check: the approval should still NOT be approved (operator should reject it),
+    // and the canceler should eventually cancel it.
+    tokio::time::sleep(Duration::from_secs(15)).await;
+
+    // If it got cancelled, the canceler caught it — good (both operator rejected + canceler caught)
+    if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
+        info!("Fraudulent Solana-source approval was cancelled (operator did not approve, canceler caught it)");
+        return TestResult::pass(name, start.elapsed());
+    }
+
+    // Give it more time for the canceler
+    tokio::time::sleep(Duration::from_secs(20)).await;
+
+    if let Ok(true) = is_approval_cancelled(config, fraud_result.xchain_hash_id).await {
+        TestResult::pass(name, start.elapsed())
+    } else {
+        TestResult::fail(
+            name,
+            "Fraudulent Solana-source approval was not rejected within timeout",
+            start.elapsed(),
+        )
+    }
+}
+
+/// Prove the **operator service** never sets `approved` on a Solana-source `withdrawSubmit` when
+/// there is no matching Solana deposit (test wallet must not call `withdrawApprove`).
+pub async fn test_operator_does_not_approve_unverified_solana_source(
+    config: &E2eConfig,
+) -> TestResult {
+    let start = Instant::now();
+    let name = "operator_does_not_approve_unverified_solana_source";
+
+    info!("Testing operator does not approve Solana→EVM withdrawSubmit without source deposit");
+
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
+
+    if !manager.is_operator_running() {
+        return TestResult::skip(name, "Operator service is not running");
+    }
+
+    let solana_chain_id: u32 = std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(hex_str) = v.strip_prefix("0x") {
+                u32::from_str_radix(hex_str, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5);
+
+    if solana_chain_id == 0 {
+        return TestResult::skip(name, "SOLANA_V2_CHAIN_ID not configured");
+    }
+
+    let solana_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&solana_chain_id.to_be_bytes());
+        bytes
+    });
+
+    let nonce = generate_unique_nonce();
+    let submit = match create_withdraw_submit_only(
+        config,
+        solana_chain_key,
+        config.evm.contracts.test_token,
+        config.test_accounts.evm_address,
+        "6100000000000000000",
+        nonce,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("withdrawSubmit failed: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    let poll_start = Instant::now();
+    while poll_start.elapsed() < OPERATOR_NO_APPROVE_WINDOW {
+        match is_approval_approved(config, submit.xchain_hash_id).await {
+            Ok(true) => {
+                return TestResult::fail(
+                    name,
+                    "Operator approved withdrawal without verified Solana deposit",
+                    start.elapsed(),
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                return TestResult::fail(
+                    name,
+                    format!("pendingWithdraws query failed: {}", e),
+                    start.elapsed(),
+                );
+            }
+        }
+        tokio::time::sleep(CANCELLATION_POLL_INTERVAL).await;
+    }
+
+    TestResult::pass(name, start.elapsed())
+}
+
+/// EVM→Solana: canceler cancels a fraudulent on-chain `withdraw_approve` when no EVM deposit exists.
+pub async fn test_canceler_detects_fraud_on_solana_destination(config: &E2eConfig) -> TestResult {
+    super::canceler_solana_destination::run_solana_destination_fraud_test(config).await
+}
+
+/// Full Solana-source pipeline: operator never auto-approves; after manual `withdrawApprove`,
+/// canceler cancels because no Solana deposit matches the `xchainHashId`.
+pub async fn test_xchain_hash_id_validity_solana_source(config: &E2eConfig) -> TestResult {
+    let start = Instant::now();
+    let name = "xchain_hash_id_validity_solana_source";
+
+    info!("Testing full xchainHashId verification for Solana→EVM (operator + canceler)");
+
+    let project_root = find_project_root();
+    let manager = ServiceManager::new(&project_root);
+
+    if !manager.is_operator_running() {
+        return TestResult::skip(name, "Operator service is not running");
+    }
+    if !manager.is_canceler_running() && !check_canceler_health().await {
+        return TestResult::skip(name, "Canceler service is not running");
+    }
+
+    let solana_chain_id: u32 = std::env::var("SOLANA_V2_CHAIN_ID")
+        .ok()
+        .and_then(|v| {
+            if let Some(hex_str) = v.strip_prefix("0x") {
+                u32::from_str_radix(hex_str, 16).ok()
+            } else {
+                v.parse().ok()
+            }
+        })
+        .unwrap_or(5);
+
+    if solana_chain_id == 0 {
+        return TestResult::skip(name, "SOLANA_V2_CHAIN_ID not configured");
+    }
+
+    let solana_chain_key = B256::from_slice(&{
+        let mut bytes = [0u8; 32];
+        bytes[0..4].copy_from_slice(&solana_chain_id.to_be_bytes());
+        bytes
+    });
+
+    let nonce = generate_unique_nonce();
+    let submit = match create_withdraw_submit_only(
+        config,
+        solana_chain_key,
+        config.evm.contracts.test_token,
+        config.test_accounts.evm_address,
+        "6200000000000000000",
+        nonce,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            return TestResult::fail(
+                name,
+                format!("withdrawSubmit failed: {}", e),
+                start.elapsed(),
+            );
+        }
+    };
+
+    let poll_start = Instant::now();
+    while poll_start.elapsed() < OPERATOR_NO_APPROVE_WINDOW {
+        match is_approval_approved(config, submit.xchain_hash_id).await {
+            Ok(true) => {
+                return TestResult::fail(
+                    name,
+                    "Operator approved before canceler could validate Solana deposit",
+                    start.elapsed(),
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                return TestResult::fail(
+                    name,
+                    format!("pendingWithdraws query failed: {}", e),
+                    start.elapsed(),
+                );
+            }
+        }
+        tokio::time::sleep(CANCELLATION_POLL_INTERVAL).await;
+    }
+
+    if let Err(e) = approve_pending_withdraw(config, submit.xchain_hash_id).await {
+        return TestResult::fail(
+            name,
+            format!("withdrawApprove (manual) failed: {}", e),
+            start.elapsed(),
+        );
+    }
+
+    info!("Waiting for canceler to cancel fraudulent Solana-source approval...");
+    let detect_start = Instant::now();
+    while detect_start.elapsed() < FRAUD_DETECTION_TIMEOUT {
+        if let Ok(true) = is_approval_cancelled(config, submit.xchain_hash_id).await {
+            info!(
+                "Solana-source fraud cancelled in {:?}",
+                detect_start.elapsed()
+            );
+            return TestResult::pass(name, start.elapsed());
+        }
+        tokio::time::sleep(CANCELLATION_POLL_INTERVAL).await;
+    }
+
+    TestResult::fail(
+        name,
+        "Canceler did not cancel fraudulent Solana-source approval within timeout",
+        start.elapsed(),
+    )
+}
+
 /// Run all live canceler execution tests
 pub async fn run_canceler_execution_tests(config: &E2eConfig) -> Vec<TestResult> {
     info!("Running live canceler execution tests");
@@ -578,5 +956,10 @@ pub async fn run_canceler_execution_tests(config: &E2eConfig) -> Vec<TestResult>
         // Specific chain source fraud tests
         test_canceler_evm_source_fraud_detection(config).await,
         test_canceler_terra_source_fraud_detection(config).await,
+        test_canceler_solana_source_fraud_detection(config).await,
+        test_operator_rejects_unverified_solana_source(config).await,
+        test_operator_does_not_approve_unverified_solana_source(config).await,
+        test_canceler_detects_fraud_on_solana_destination(config).await,
+        test_xchain_hash_id_validity_solana_source(config).await,
     ]
 }

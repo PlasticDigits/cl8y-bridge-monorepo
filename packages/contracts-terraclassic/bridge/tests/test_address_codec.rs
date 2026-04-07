@@ -124,7 +124,7 @@ fn test_evm_address_roundtrip() {
 
     let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
     assert_eq!(parsed.chain_type, CHAIN_TYPE_EVM);
-    assert_eq!(parsed.raw_address, universal.raw_address);
+    assert_eq!(parsed.raw_address_bytes(), universal.raw_address_bytes());
 
     let recovered = parsed.to_evm_string().unwrap();
     assert_eq!(recovered.to_lowercase(), addr.to_lowercase());
@@ -182,7 +182,7 @@ fn test_cosmos_address_roundtrip() {
 
     let parsed = UniversalAddress::from_bytes32(&bytes32).unwrap();
     assert_eq!(parsed.chain_type, CHAIN_TYPE_COSMOS);
-    assert_eq!(parsed.raw_address, universal.raw_address);
+    assert_eq!(parsed.raw_address_bytes(), universal.raw_address_bytes());
 
     let recovered = parsed.to_terra_string().unwrap();
     assert_eq!(recovered.to_lowercase(), terra_addr.to_lowercase());
@@ -444,4 +444,140 @@ fn test_same_raw_different_chain_type() {
     // Same raw address but different chain types should produce different bytes32
     assert_ne!(evm.to_bytes32(), cosmos.to_bytes32());
     assert_ne!(evm, cosmos);
+}
+
+// ============================================================================
+// Solana Address Tests — Regression for Phase 2a
+// ============================================================================
+
+#[test]
+fn test_solana_chain_type_constant() {
+    assert_eq!(CHAIN_TYPE_SOLANA, 3);
+}
+
+#[test]
+fn test_solana_from_pubkey() {
+    let mut pubkey = [0u8; 32];
+    for i in 0..32 {
+        pubkey[i] = i as u8;
+    }
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    assert_eq!(addr.chain_type, CHAIN_TYPE_SOLANA);
+    assert!(addr.is_solana());
+    assert!(!addr.is_evm());
+    assert!(!addr.is_cosmos());
+    assert!(addr.is_valid_chain_type());
+}
+
+#[test]
+fn test_solana_base58_roundtrip() {
+    let mut pubkey = [0u8; 32];
+    for i in 0..32 {
+        pubkey[i] = (i + 1) as u8;
+    }
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    let base58_str = addr.to_solana_string().unwrap();
+    let recovered = UniversalAddress::from_solana_base58(&base58_str).unwrap();
+    assert_eq!(recovered.raw_address_bytes(), addr.raw_address_bytes());
+    assert_eq!(recovered.chain_type, CHAIN_TYPE_SOLANA);
+}
+
+#[test]
+fn test_solana_to_hash_bytes_is_full_pubkey() {
+    let mut pubkey = [0u8; 32];
+    for i in 0..32 {
+        pubkey[i] = i as u8;
+    }
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    let hash_bytes = addr.to_hash_bytes();
+    assert_eq!(hash_bytes, pubkey, "Solana hash_bytes must be full pubkey");
+}
+
+#[test]
+fn test_solana_lossless_roundtrip() {
+    let mut pubkey = [0u8; 32];
+    for i in 0..32 {
+        pubkey[i] = (i as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    let bytes = addr.to_bytes();
+    assert_eq!(bytes.len(), 36, "Solana lossless encoding must be 36 bytes");
+    let recovered = UniversalAddress::from_bytes(&bytes).unwrap();
+    assert_eq!(recovered.chain_type, CHAIN_TYPE_SOLANA);
+    assert_eq!(recovered.raw_address_bytes(), &pubkey[..]);
+}
+
+#[test]
+fn test_solana_to_evm_string_fails() {
+    let pubkey = [42u8; 32];
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    assert!(addr.to_evm_string().is_err());
+}
+
+#[test]
+fn test_solana_to_terra_string_fails() {
+    let pubkey = [42u8; 32];
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    assert!(addr.to_terra_string().is_err());
+}
+
+#[test]
+fn test_solana_raw_address_20_fails() {
+    let pubkey = [42u8; 32];
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    assert!(addr.raw_address_20().is_err());
+}
+
+#[test]
+fn test_solana_different_from_evm_and_cosmos() {
+    let raw20 = [0xAB; 20];
+    let evm_addr = UniversalAddress::new(CHAIN_TYPE_EVM, raw20).unwrap();
+    let cosmos_addr = UniversalAddress::new(CHAIN_TYPE_COSMOS, raw20).unwrap();
+
+    let mut pubkey = [0u8; 32];
+    pubkey[12..32].copy_from_slice(&raw20);
+    let solana_addr = UniversalAddress::from_solana(&pubkey).unwrap();
+
+    assert_ne!(evm_addr.to_bytes32(), solana_addr.to_bytes32());
+    assert_ne!(cosmos_addr.to_bytes32(), solana_addr.to_bytes32());
+}
+
+#[test]
+fn test_solana_invalid_base58() {
+    let result = UniversalAddress::from_solana_base58("not_a_valid_base58_00OIl");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_solana_base58_wrong_length() {
+    // base58 encoding of 20 bytes, not 32
+    let short = bs58::encode(&[0xAAu8; 20]).into_string();
+    let result = UniversalAddress::from_solana_base58(&short);
+    assert!(result.is_err());
+}
+
+#[test]
+fn regression_solana_bytes32_layout() {
+    let mut pubkey = [0u8; 32];
+    for i in 0..32 {
+        pubkey[i] = i as u8;
+    }
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    let b = addr.to_bytes32();
+
+    // chain_type = 3 (Solana) in first 4 bytes
+    assert_eq!(&b[0..4], &[0x00, 0x00, 0x00, 0x03]);
+    // bytes 4..32 = first 28 bytes of pubkey (lossy in bytes32 form)
+    assert_eq!(&b[4..32], &pubkey[0..28]);
+}
+
+#[test]
+fn regression_solana_display() {
+    let pubkey = [42u8; 32];
+    let addr = UniversalAddress::from_solana(&pubkey).unwrap();
+    let display = format!("{}", addr);
+    assert!(
+        display.starts_with("SOLANA:"),
+        "Solana display must start with 'SOLANA:'"
+    );
 }

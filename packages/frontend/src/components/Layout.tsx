@@ -1,9 +1,11 @@
 import { Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { NavBar } from './NavBar'
-import { EvmWalletModal, TerraWalletModal } from './wallet'
+import { EvmWalletModal, TerraWalletModal, SolanaWalletModal } from './wallet'
 import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
+import { useSolanaWalletStore } from '../stores/solanaWallet'
+import { SolanaWalletBalanceSync } from './SolanaWalletBalanceSync'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -23,6 +25,7 @@ function getInitialTheme(): ThemeMode {
 export function Layout() {
   const { showEvmWalletModal, setShowEvmWalletModal } = useUIStore()
   const { showWalletModal, setShowWalletModal } = useWalletStore()
+  const { showWalletModal: showSolanaModal, setShowWalletModal: setShowSolanaModal } = useSolanaWalletStore()
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
 
   useEffect(() => {
@@ -47,6 +50,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen overflow-x-hidden">
+      <SolanaWalletBalanceSync />
       <header className="sticky top-0 z-30 border-b-2 border-white/40 bg-black/90 overflow-x-clip">
         <NavBar />
       </header>
@@ -95,6 +99,7 @@ export function Layout() {
 
       <EvmWalletModal isOpen={showEvmWalletModal} onClose={() => setShowEvmWalletModal(false)} />
       <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
+      <SolanaWalletModal isOpen={showSolanaModal} onClose={() => setShowSolanaModal(false)} />
     </div>
   )
 }

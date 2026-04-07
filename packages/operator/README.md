@@ -31,6 +31,19 @@ cargo build --release
 cargo run --release
 ```
 
+### Backfill `evm_deposits.transfer_hash` (QA / prod VPS)
+
+If migration `011_evm_transfer_hash.sql` was applied after V2 EVM deposits were already stored, those rows may have `transfer_hash` unset. Run this **on the host that can reach Postgres** (for example the QA dev VPS), after pulling a revision that includes the binary:
+
+```bash
+cd packages/operator
+export DATABASE_URL="postgres://user:pass@host:5432/dbname"   # match operator .env
+export RUST_LOG=info
+cargo run --release --bin backfill-evm-transfer-hashes
+```
+
+The tool only fills rows where V2 columns are present (`src_account`, `src_v2_chain_id`, 32-byte token and accounts); legacy V1 rows are skipped. Safe to run more than once.
+
 ## Configuration
 
 See `.env.example` for all configuration options.

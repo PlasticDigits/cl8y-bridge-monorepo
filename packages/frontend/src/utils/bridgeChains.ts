@@ -7,14 +7,14 @@
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
-import { DEFAULT_NETWORK } from './constants'
+import { DEFAULT_NETWORK, LOCAL_TERRA_LCD_URL, LOCAL_TERRA_RPC_URL } from './constants'
 import { getChainlist, getChainlistEntry } from './chainlist'
 
 export type NetworkTier = 'local' | 'testnet' | 'mainnet'
 
 /**
  * Bridge chain configurations per network tier.
- * Each tier contains configs for all supported chains (EVM + Terra).
+ * Each tier contains configs for all supported chains (EVM + Terra + Solana).
  */
 export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig>> = {
   local: {
@@ -38,11 +38,21 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       chainId: 'localterra',
       type: 'cosmos',
       name: 'LocalTerra',
-      rpcUrl: 'http://localhost:26657',
-      lcdUrl: 'http://localhost:1317',
-      lcdFallbacks: ['http://localhost:1317'],
+      rpcUrl: LOCAL_TERRA_RPC_URL,
+      lcdUrl: LOCAL_TERRA_LCD_URL,
+      lcdFallbacks: [LOCAL_TERRA_LCD_URL],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000002', // V2 chain ID 2 (local Terra)
+    },
+    'solana-localnet': {
+      chainId: 'solana-localnet',
+      type: 'solana',
+      name: 'Solana Localnet',
+      rpcUrl: 'http://localhost:8899',
+      // No default: must match deployed program (same as EVM/Terra — avoids "only Solana" when env is incomplete)
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bytes4ChainId: '0x00000005',
     },
   },
   testnet: {
@@ -84,6 +94,15 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       ],
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000002',
+    },
+    'solana-devnet': {
+      chainId: 'solana-devnet',
+      type: 'solana',
+      name: 'Solana Devnet',
+      rpcUrl: 'https://api.devnet.solana.com',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bytes4ChainId: '0x00000005',
     },
   },
   mainnet: {
@@ -131,6 +150,15 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       bridgeAddress: import.meta.env.VITE_TERRA_BRIDGE_ADDRESS || '',
       bytes4ChainId: '0x00000001',
     },
+    solana: {
+      chainId: 'solana',
+      type: 'solana',
+      name: 'Solana',
+      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bytes4ChainId: '0x00000005',
+    },
   },
 }
 
@@ -143,6 +171,9 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
   anvil: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
   anvil1: { icon: '🔨', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
   localterra: { icon: '🌙', explorerUrl: '', nativeCurrency: { name: 'Luna', symbol: 'LUNA', decimals: 6 } },
+  solana: { icon: '◎', explorerUrl: 'https://explorer.solana.com', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
+  'solana-devnet': { icon: '◎', explorerUrl: 'https://explorer.solana.com/?cluster=devnet', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
+  'solana-localnet': { icon: '◎', explorerUrl: '', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
 }
 
 /**
@@ -300,4 +331,11 @@ export function getDeployedEvmBridgeChainEntries(): Array<{ chainKey: string; co
  */
 export function getCosmosBridgeChains(): BridgeChainConfig[] {
   return getAllBridgeChains().filter((c) => c.type === 'cosmos')
+}
+
+/**
+ * Get Solana bridge chains only (program id + bytes4 chain key for LCD mappings).
+ */
+export function getSolanaBridgeChains(): BridgeChainConfig[] {
+  return getAllBridgeChains().filter((c) => c.type === 'solana')
 }

@@ -1,6 +1,9 @@
 # ===================
 # Shared
 # ===================
+# Track .deploy/ for clone layout; ignore generated local.env (see .deploy/.gitkeep)
+.deploy/*
+!.deploy/.gitkeep
 .env
 .env.*
 !.env.example
@@ -31,6 +34,11 @@ dist/
 .next/
 .nuxt/
 .output/
+
+# ===================
+# Solana (local validator / anchor test)
+# ===================
+test-ledger/
 
 # ===================
 # Terra Contracts (Rust/CosmWasm)

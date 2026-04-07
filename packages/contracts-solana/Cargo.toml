@@ -1,0 +1,27 @@
+[workspace]
+members = ["programs/*"]
+resolver = "2"
+
+# Anchor/solana_program_entrypoint macros use cfg flags Rust 1.80+ does not know about;
+# silence until upstream declares them (removes hundreds of lines of noise in CI).
+# Instruction modules each export `handler` but only account types are needed at crate root.
+[workspace.lints.rust]
+unexpected_cfgs = "allow"
+ambiguous_glob_reexports = "allow"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
+
+# Use `sort_unstable_by` in `SlotHashes::new` so SBF builds do not emit driftsort stack
+# warnings (see GitLab issue #69). Remove when upstream matches or toolchain drops the check.
+[patch.crates-io]
+solana-slot-hashes = { path = "patches/solana-slot-hashes" }

@@ -1,42 +1,66 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAccount, usePublicClient } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { Address, getAddress, type Hex } from 'viem'
+import { Address, getAddress, type Hex, hexToBytes } from 'viem'
 import { useWallet } from '../../hooks/useWallet'
 import { useTokenRegistry } from '../../hooks/useTokenRegistry'
 import { useTokenList } from '../../hooks/useTokenList'
-import { useTokenDestMapping } from '../../hooks/useTokenDestMapping'
+import { useTokenDestMapping, useTokenDestMappingRaw } from '../../hooks/useTokenDestMapping'
 import { useSourceChainTokenMappings } from '../../hooks/useSourceChainTokenMappings'
 import { useBridgeConfig, useTokenDetails } from '../../hooks/useBridgeConfig'
 import { useCw20Balance } from '../../hooks/useContract'
 import { useTerraTokenDisplayInfo, useEvmTokenDisplayInfo } from '../../hooks/useTokenDisplayInfo'
-import {
-  useBridgeDeposit,
-  computeTerraChainBytes4,
-  encodeTerraAddress,
-  encodeEvmAddress,
-} from '../../hooks/useBridgeDeposit'
+import { useBridgeDeposit, encodeTerraAddress, encodeEvmAddress } from '../../hooks/useBridgeDeposit'
 import { useTransferRouteValidation } from '../../hooks/useTransferRouteValidation'
 import { useTerraDeposit } from '../../hooks/useTerraDeposit'
+import { useSolanaWallet } from '../../hooks/useSolanaWallet'
+import { useSolanaDeposit } from '../../hooks/useSolanaDeposit'
+import {
+  WSOL_MINT,
+  bytes4HexToUint8Array,
+  fetchDepositNonce,
+  fetchSplMintDecimals,
+  fetchTokenMappingLocalMint,
+  formatSolanaWalletError,
+} from '../../services/solana/transaction'
+import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
+import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
+import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
 import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
-import { getTokenFromList, getTerraAddressFromList, type TokenlistData } from '../../services/tokenlist'
+import { getTokenFromList, getTerraAddressFromList } from '../../services/tokenlist'
+import { buildTransferTokens } from '../../services/transfer/buildTransferTokens'
 import { shortenAddress } from '../../utils/shortenAddress'
 import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
 import { parseTerraLockReceipt } from '../../services/terra/depositReceipt'
 import { getDestToken } from '../../services/evm/tokenRegistry'
 import { getEvmClient } from '../../services/evmClient'
-import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../../services/hashVerification'
+import {
+  computeXchainHashId,
+  chainIdToBytes32,
+  computeXchainHashIdFromBytes,
+  evmAddressToBytes32,
+  terraAddressToBytes32,
+} from '../../services/hashVerification'
 import type { ChainInfo } from '../../lib/chains'
 import type { TransferDirection } from '../../types/transfer'
-import type { TokenOption } from './TokenSelect'
 import { DEFAULT_NETWORK, BRIDGE_CONFIG, DECIMALS } from '../../utils/constants'
-import { parseAmount, formatAmount, formatCompact } from '../../utils/format'
+import {
+  parseAmount,
+  parseAmountAsBigInt,
+  formatAmount,
+  formatAmountForNumberInput,
+  formatCompact,
+} from '../../utils/format'
+import { pow10BigInt } from '../../utils/pow10'
+import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { isValidAmount } from '../../utils/validation'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -76,6 +100,10 @@ const TOKEN_CONFIGS: Record<string, { address: Address; lockUnlockAddress: Addre
 /** Derive the transfer direction from the selected source and dest chain types */
 function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefined): TransferDirection {
   if (!source || !dest) return 'terra-to-evm'
+  if (source.type === 'solana' && dest.type === 'evm') return 'solana-to-evm'
+  if (source.type === 'evm' && dest.type === 'solana') return 'evm-to-solana'
+  if (source.type === 'solana' && dest.type === 'cosmos') return 'solana-to-terra'
+  if (source.type === 'cosmos' && dest.type === 'solana') return 'terra-to-solana'
   if (source.type === 'cosmos' && dest.type === 'evm') return 'terra-to-evm'
   if (source.type === 'evm' && dest.type === 'cosmos') return 'evm-to-terra'
   return 'evm-to-evm'
@@ -85,75 +113,16 @@ function deriveDirection(source: ChainInfo | undefined, dest: ChainInfo | undefi
 function getValidDestChains(allChains: ChainInfo[], sourceChainId: string): ChainInfo[] {
   const source = allChains.find((c) => c.id === sourceChainId)
   return allChains.filter((c) => {
-    // Can't bridge to the same chain
     if (c.id === sourceChainId) return false
     // Cosmos → Cosmos not supported
     if (source?.type === 'cosmos' && c.type === 'cosmos') return false
+    // Solana → Solana not supported (same chain type bridge)
+    if (source?.type === 'solana' && c.type === 'solana') return false
     return true
   })
 }
 
-const LOCK_UNLOCK_ADDRESS = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || '0x0000000000000000000000000000000000000000') as Address
-
-/** Build selectable token options from registry for the given direction */
-function buildTransferTokens(
-  registryTokens: { token: string; is_native: boolean; evm_token_address?: string; terra_decimals: number; evm_decimals?: number; enabled: boolean }[] | undefined,
-  isSourceTerra: boolean,
-  fallbackConfig: { address: Address; symbol: string; decimals: number } | undefined,
-  tokenlist: TokenlistData | null,
-  /** When source is EVM: per-chain token address from Terra token_dest_mapping */
-  sourceChainMappings?: Record<string, string>,
-  /** When source is Terra and dest is EVM: only show tokens with a dest mapping */
-  destChainMappings?: Record<string, string>
-): TokenOption[] {
-  const symbolFromList = (token: string) =>
-    tokenlist ? getTokenFromList(tokenlist, token)?.symbol : null
-  if (isSourceTerra) {
-    // Wait for tokenlist to load so we never flash raw addresses as symbols
-    if (!tokenlist) return []
-    let enabledTokens = (registryTokens ?? []).filter((t) => t.enabled)
-    // Filter to tokens that have a destination mapping on the selected EVM chain
-    if (destChainMappings && Object.keys(destChainMappings).length > 0) {
-      enabledTokens = enabledTokens.filter((t) => t.token in destChainMappings)
-    }
-    const fromRegistry = enabledTokens.map((t) => ({
-      id: t.token,
-      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-      tokenId: t.token,
-    }))
-    if (fromRegistry.length > 0) return fromRegistry
-    return []
-  }
-  // Wait for tokenlist so we never flash raw addresses as symbols
-  if (!tokenlist) return []
-  // EVM source: use per-chain token_dest_mapping to determine which tokens
-  // exist on the selected source chain. Only show tokens with a mapping.
-  if (sourceChainMappings && Object.keys(sourceChainMappings).length > 0) {
-    return Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
-      const reg = registryTokens?.find((t) => t.token === terraToken)
-      return {
-        id: terraToken,
-        symbol: symbolFromList(terraToken) ?? getTokenDisplaySymbol(reg?.token ?? terraToken),
-        tokenId: terraToken,
-        evmTokenAddress: evmAddr,
-      }
-    })
-  }
-  // Fallback: try legacy evm_token_address from registry (for older contracts)
-  const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
-  if (baseRegistry.length > 0) {
-    return baseRegistry.map((t) => ({
-      id: t.token,
-      symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
-      tokenId: t.token,
-      evmTokenAddress: bytes32ToAddress(t.evm_token_address!),
-    }))
-  }
-  if (fallbackConfig && !sourceChainMappings) {
-    return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
-  }
-  return []
-}
+const ZERO_LOCK = '0x0000000000000000000000000000000000000000' as Address
 
 /**
  * Convert a bytes32 hex string (64 chars) or 20-byte address to a checksummed EVM address.
@@ -178,10 +147,12 @@ function getEvmTokenConfig(
   selectedTokenId: string,
   registryTokens: { token: string; evm_token_address?: string; evm_decimals?: number }[] | undefined,
   fallbackConfig: { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined,
+  /** LockUnlock on the selected source EVM chain (Anvil vs Anvil1 differ). */
+  lockUnlockAddress: Address,
   /** When source is EVM: use per-chain address from token_dest_mapping */
   sourceChainMappings?: Record<string, string>,
   /** Per-chain decimals from token_dest_mapping */
-  sourceChainDecimals?: Record<string, number>
+  sourceChainDecimals?: Record<string, number>,
 ): { address: Address; lockUnlockAddress: Address; symbol: string; decimals: number } | undefined {
   const fromRegistry = registryTokens?.find((t) => t.token === selectedTokenId)
   const mappedAddr = sourceChainMappings?.[selectedTokenId]
@@ -189,7 +160,7 @@ function getEvmTokenConfig(
   if (evmAddr) {
     return {
       address: (mappedAddr ?? bytes32ToAddress(evmAddr)) as Address,
-      lockUnlockAddress: LOCK_UNLOCK_ADDRESS,
+      lockUnlockAddress,
       symbol: getTokenDisplaySymbol(fromRegistry?.token ?? selectedTokenId),
       decimals: sourceChainDecimals?.[selectedTokenId] ?? fromRegistry?.evm_decimals ?? 18,
     }
@@ -212,6 +183,19 @@ function getTerraTokenDecimals(
 export function TransferForm() {
   const { isConnected: isEvmConnected, address: evmAddress } = useAccount()
   const { connected: isTerraConnected, address: terraAddress, luncBalance, setShowWalletModal } = useWallet()
+  const {
+    connected: isSolanaConnected,
+    address: solanaAddress,
+    walletType: solanaWalletType,
+    setShowWalletModal: setShowSolanaModal,
+  } = useSolanaWallet()
+  const {
+    step: solanaStep,
+    txSignature: solanaTxSig,
+    confirmedDepositNonce,
+    deposit: solanaDeposit,
+    reset: resetSolana,
+  } = useSolanaDeposit()
   const { data: registryTokens, isLoading: isRegistryLoading } = useTokenRegistry()
   const { data: tokenlist } = useTokenList()
   const { setShowEvmWalletModal } = useUIStore()
@@ -272,8 +256,10 @@ export function TransferForm() {
     }
   }, [destChains, destChain])
 
-  const isSourceTerra = direction === 'terra-to-evm'
-  const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm'
+  const isSourceTerra = direction === 'terra-to-evm' || direction === 'terra-to-solana'
+  const isSourceSolana = direction === 'solana-to-evm' || direction === 'solana-to-terra'
+  const isDestEvm = direction === 'terra-to-evm' || direction === 'evm-to-evm' || direction === 'solana-to-evm'
+  const isDestSolana = direction === 'evm-to-solana' || direction === 'terra-to-solana'
 
   const sourceChainConfig = useMemo(
     () => BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier]?.[sourceChain],
@@ -293,29 +279,65 @@ export function TransferForm() {
     sourceChainBytes4,
     !!isSourceEvm && !!sourceChainBytes4
   )
-  // Query dest chain mappings for token filtering (Terra→EVM) and dest decimals (all→EVM).
+  // Query dest chain mappings for token filtering (Terra→EVM / Solana→* ) and dest decimals (all→EVM).
+  const isDestSolanaChain = destChainConfig?.type === 'solana'
+  const isDestCosmosChain = destChainConfig?.type === 'cosmos'
+  const destMappingsQueryEnabled =
+    !!destChainBytes4 &&
+    (isDestEvmChain || isDestSolanaChain || (isSourceSolana && isDestCosmosChain))
   const { mappings: destChainMappings, decimalsMap: destChainDecimals, isLoading: isDestMappingsLoading } = useSourceChainTokenMappings(
     registryTokens,
     destChainBytes4,
-    !!isDestEvmChain && !!destChainBytes4
+    destMappingsQueryEnabled
   )
 
   const fallbackTokenConfig = TOKEN_CONFIGS[DEFAULT_NETWORK]
+
+  /** Primary Anvil LockUnlock; Anvil1 uses VITE_EVM1_LOCK_UNLOCK_ADDRESS when set (QA / multi-EVM). */
+  const evmLockForSource = useMemo((): Address => {
+    const primary = (import.meta.env.VITE_LOCK_UNLOCK_ADDRESS || ZERO_LOCK) as Address
+    const anvil1Lu = (import.meta.env.VITE_EVM1_LOCK_UNLOCK_ADDRESS || primary) as Address
+    if (sourceChain === 'anvil1') return anvil1Lu
+    return primary
+  }, [sourceChain])
+
+  const mergedFallbackTokenConfig = useMemo(() => {
+    if (!fallbackTokenConfig) return undefined
+    return { ...fallbackTokenConfig, lockUnlockAddress: evmLockForSource }
+  }, [fallbackTokenConfig, evmLockForSource])
+
   // Only apply chain mapping filters once ALL queries are done.
   // Partial results would exclude tokens whose queries are still in flight.
   const readySourceMappings = isSourceEvm && !isSourceMappingsLoading ? sourceChainMappings : undefined
-  const readyDestMappings = isSourceTerra && isDestEvmChain && !isDestMappingsLoading ? destChainMappings : undefined
+  const readyDestMappings =
+    (isSourceTerra || isSourceSolana) &&
+    (isDestEvmChain || isDestSolanaChain || (isSourceSolana && isDestCosmosChain)) &&
+    !isDestMappingsLoading
+      ? destChainMappings
+      : undefined
   const transferTokens = useMemo(
     () =>
       buildTransferTokens(
         registryTokens,
         isSourceTerra,
-        fallbackTokenConfig,
+        isSourceSolana,
+        mergedFallbackTokenConfig,
         tokenlist ?? null,
         readySourceMappings,
-        readyDestMappings
+        readyDestMappings,
+        isSourceEvm && isSourceMappingsLoading,
       ),
-    [registryTokens, isSourceTerra, fallbackTokenConfig, tokenlist, readySourceMappings, readyDestMappings]
+    [
+      registryTokens,
+      isSourceTerra,
+      isSourceSolana,
+      mergedFallbackTokenConfig,
+      tokenlist,
+      readySourceMappings,
+      readyDestMappings,
+      isSourceEvm,
+      isSourceMappingsLoading,
+    ]
   )
 
   const readySourceDecimals = isSourceEvm && !isSourceMappingsLoading ? sourceChainDecimals : undefined
@@ -324,13 +346,14 @@ export function TransferForm() {
       getEvmTokenConfig(
         selectedTokenId,
         registryTokens,
-        fallbackTokenConfig,
+        mergedFallbackTokenConfig,
+        evmLockForSource,
         readySourceMappings,
-        readySourceDecimals
+        readySourceDecimals,
       ),
-    [selectedTokenId, registryTokens, fallbackTokenConfig, readySourceMappings, readySourceDecimals]
+    [selectedTokenId, registryTokens, mergedFallbackTokenConfig, readySourceMappings, readySourceDecimals, evmLockForSource]
   )
-  const tokenConfig = isSourceTerra ? undefined : evmTokenConfig
+  const tokenConfig = isSourceTerra || isSourceSolana ? undefined : evmTokenConfig
   const terraDecimals = useMemo(
     () => getTerraTokenDecimals(selectedTokenId, registryTokens),
     [selectedTokenId, registryTokens]
@@ -348,7 +371,7 @@ export function TransferForm() {
   const { data: tokenDestMappingAddr } = useTokenDestMapping(
     selectedTokenId || undefined,
     destChainBytes4,
-    !!destChainBytes4 && !!isDestEvmChain
+    !!destChainBytes4 && (!!isDestEvmChain || isDestSolanaChain)
   )
 
   const destTokenAddr = useMemo(() => {
@@ -357,6 +380,111 @@ export function TransferForm() {
     const reg = registryTokens?.find((t) => t.token === selectedTokenId)
     return reg?.evm_token_address ? bytes32ToAddress(reg.evm_token_address) : ''
   }, [destChainConfig?.type, tokenDestMappingAddr, registryTokens, selectedTokenId])
+
+  /** Same cache as useTokenDestMapping — raw bytes32 for Solana TokenMapping PDA (incl. Solana→Terra). */
+  const { data: solanaTokenDestMappingRaw } = useTokenDestMappingRaw(
+    selectedTokenId || undefined,
+    destChainBytes4,
+    !!isSourceSolana && !!selectedTokenId && !!destChainBytes4,
+  )
+
+  /** 32-byte dest-chain token id for Solana `deposit_*` TokenMapping PDA (matches on-chain registry). */
+  const solanaTokenMappingDest32 = useMemo(() => {
+    if (!isSourceSolana) return null
+    if (solanaTokenDestMappingRaw?.hex) {
+      return hexToUint8Array(solanaTokenDestMappingRaw.hex)
+    }
+    if (destChainConfig?.type === 'evm' && destTokenAddr) {
+      return hexToUint8Array(evmAddressToBytes32(destTokenAddr as `0x${string}`))
+    }
+    return null
+  }, [isSourceSolana, solanaTokenDestMappingRaw, destChainConfig?.type, destTokenAddr])
+
+  const solanaProgramIdStr = sourceChainConfig?.programId ?? sourceChainConfig?.bridgeAddress
+  const destChainBytesUint8 = useMemo(() => {
+    if (!destChainBytes4) return null
+    return bytes4HexToUint8Array(destChainBytes4)
+  }, [destChainBytes4])
+
+  const solanaMappingQueryEnabled =
+    isSourceSolana &&
+    !!sourceChainConfig?.rpcUrl &&
+    !!solanaProgramIdStr &&
+    !!destChainBytesUint8 &&
+    !!solanaTokenMappingDest32
+
+  const { data: solanaLocalMint, isLoading: isSolanaLocalMintLoading } = useQuery({
+    queryKey: [
+      'solanaDepositLocalMint',
+      sourceChainConfig?.rpcUrl,
+      solanaProgramIdStr,
+      destChainBytes4,
+      solanaTokenMappingDest32,
+    ],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      const programId = new PublicKey(solanaProgramIdStr!)
+      return fetchTokenMappingLocalMint(
+        connection,
+        programId,
+        destChainBytesUint8!,
+        solanaTokenMappingDest32!,
+      )
+    },
+    enabled: solanaMappingQueryEnabled,
+  })
+
+  const solanaDepositNative = useMemo(
+    () => Boolean(solanaLocalMint && solanaLocalMint.equals(WSOL_MINT)),
+    [solanaLocalMint],
+  )
+  const solanaDepositSpl = useMemo(
+    () => Boolean(solanaLocalMint && !solanaLocalMint.equals(WSOL_MINT)),
+    [solanaLocalMint],
+  )
+
+  const { data: solanaSplDecimals, isLoading: isSolanaSplDecimalsLoading } = useQuery({
+    queryKey: ['solanaSplDecimals', sourceChainConfig?.rpcUrl, solanaLocalMint?.toBase58()],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      return fetchSplMintDecimals(connection, solanaLocalMint!)
+    },
+    enabled: !!solanaDepositSpl && !!sourceChainConfig?.rpcUrl && !!solanaLocalMint,
+  })
+
+  const { data: solanaSourceBalance } = useQuery({
+    queryKey: [
+      'solanaSourceBalance',
+      sourceChainConfig?.rpcUrl,
+      solanaAddress,
+      solanaDepositNative,
+      solanaLocalMint?.toBase58(),
+    ],
+    queryFn: async () => {
+      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
+      const addr = new PublicKey(solanaAddress!)
+      if (solanaDepositNative) {
+        return bigintFromBaseUnitsString(await connection.getBalance(addr))
+      }
+      const mint = solanaLocalMint!
+      const mintInfo = await connection.getAccountInfo(mint)
+      if (!mintInfo) return 0n
+      const { getAssociatedTokenAddressSync } = await import('@solana/spl-token')
+      const ata = getAssociatedTokenAddressSync(mint, addr, false, mintInfo.owner)
+      try {
+        const bal = await connection.getTokenAccountBalance(ata)
+        return bigintFromBaseUnitsString(bal.value.amount)
+      } catch {
+        return 0n
+      }
+    },
+    enabled:
+      !!isSourceSolana &&
+      !!sourceChainConfig?.rpcUrl &&
+      !!solanaAddress &&
+      !!solanaLocalMint &&
+      (solanaDepositNative || solanaDepositSpl),
+  })
 
   // Destination chain limits (max transfer, withdraw rate limit) cap the MAX amount
   const destChainUnifiedConfig = useMemo(
@@ -396,7 +524,7 @@ export function TransferForm() {
   const evmSourceDisplay = useEvmTokenDisplayInfo(
     tokenConfig?.address,
     sourceChainConfig?.type === 'evm' ? sourceChainConfig.rpcUrl : undefined,
-    !isSourceTerra && !!tokenConfig
+    !isSourceTerra && !isSourceSolana && !!tokenConfig
   )
   const evmDestDisplay = useEvmTokenDisplayInfo(
     destTokenAddr,
@@ -419,6 +547,35 @@ export function TransferForm() {
     }
   }, [sourceChain])
 
+  /** EVM → Solana: TokenRegistry stores SPL mint as bytes32; validators need base58 mint. */
+  const { data: evmToSolanaDestMint, isLoading: isEvmToSolanaDestLoading } = useQuery({
+    queryKey: ['evmToSolanaDestMint', sourceBridgeConfig?.bridgeAddress, tokenConfig?.address, destChainBytes4],
+    queryFn: async () => {
+      if (!sourceBridgeConfig || !tokenConfig?.address || !destChainBytes4) return null
+      const client = getEvmClient(sourceBridgeConfig.sourceChainConfig)
+      const dt = await getDestToken(
+        client,
+        sourceBridgeConfig.bridgeAddress,
+        tokenConfig.address as Address,
+        destChainBytes4 as Hex
+      )
+      if (!dt || dt === ('0x' + '0'.repeat(64))) return null
+      return bytes32ToSolanaAddress(dt as `0x${string}`)
+    },
+    enabled:
+      direction === 'evm-to-solana' &&
+      !!sourceBridgeConfig &&
+      !!tokenConfig?.address &&
+      !!destChainBytes4,
+  })
+
+  const solanaDestTokenIdForRoute = useMemo(() => {
+    if (destChainConfig?.type !== 'solana') return undefined
+    if (direction === 'terra-to-solana') return tokenDestMappingAddr ?? undefined
+    if (direction === 'evm-to-solana') return evmToSolanaDestMint ?? undefined
+    return undefined
+  }, [destChainConfig?.type, direction, tokenDestMappingAddr, evmToSolanaDestMint])
+
   const {
     deposit: evmDeposit,
     status: evmStatus,
@@ -427,7 +584,7 @@ export function TransferForm() {
     reset: resetEvm,
     tokenBalance,
   } = useBridgeDeposit(
-    tokenConfig
+    tokenConfig && !isSourceSolana
       ? {
           tokenAddress: tokenConfig.address,
           lockUnlockAddress: tokenConfig.lockUnlockAddress,
@@ -438,23 +595,20 @@ export function TransferForm() {
         }
       : undefined
   )
+
+  const effectiveTokenBalance = isSourceSolana ? solanaSourceBalance : tokenBalance
+
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
-  const isWalletConnected = isSourceTerra ? isTerraConnected : isEvmConnected
+  const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
 
   // Auto-fill recipient from connected wallet on the destination side
   const recipientAddr = useMemo(() => {
     if (recipient) return recipient
+    if (isDestSolana) return solanaAddress ?? ''
     if (isDestEvm) return evmAddress ?? ''
     return terraAddress ?? ''
-  }, [recipient, isDestEvm, evmAddress, terraAddress])
-
-  const receiveAmount = useMemo(() => {
-    if (!amount || !isValidAmount(amount)) return '0'
-    const inputAmount = parseFloat(amount)
-    const feeAmount = inputAmount * (BRIDGE_CONFIG.feePercent / 100)
-    return (inputAmount - feeAmount).toFixed(6)
-  }, [amount])
+  }, [recipient, isDestEvm, isDestSolana, evmAddress, terraAddress, solanaAddress])
 
   const isSubmitting =
     evmStatus === 'switching-chain' ||
@@ -463,9 +617,35 @@ export function TransferForm() {
     evmStatus === 'waiting-approval' ||
     evmStatus === 'depositing' ||
     evmStatus === 'waiting-deposit' ||
-    terraStatus === 'locking'
+    terraStatus === 'locking' ||
+    solanaStep === 'building' ||
+    solanaStep === 'signing' ||
+    solanaStep === 'confirming'
 
-  const amountDecimals = isSourceTerra ? terraDecimals : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+  const registryDecimalsFallback = useMemo(
+    () => getTerraTokenDecimals(selectedTokenId, registryTokens),
+    [selectedTokenId, registryTokens]
+  )
+  const amountDecimals = isSourceTerra
+    ? terraDecimals
+    : isSourceSolana
+      ? solanaDepositSpl
+        ? (solanaSplDecimals ?? registryDecimalsFallback)
+        : 9
+      : (tokenConfig?.decimals ?? DECIMALS.LUNC)
+
+  const receiveAmount = useMemo(() => {
+    if (!amount || !isValidAmount(amount)) return '0'
+    try {
+      const gross = parseAmountAsBigInt(amount, amountDecimals)
+      const feeBps = BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100))
+      const net = gross - (gross * feeBps) / 10000n
+      return formatAmount(net, amountDecimals, 6)
+    } catch {
+      return '0'
+    }
+  }, [amount, amountDecimals])
+
   const destDecimals = isDestEvmChain
     ? (destChainDecimals?.[selectedTokenId]
         ?? registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals
@@ -476,10 +656,10 @@ export function TransferForm() {
     (destBaseUnits: bigint) => {
       if (amountDecimals >= destDecimals) {
         const exp = amountDecimals - destDecimals
-        return destBaseUnits * BigInt(10 ** exp)
+        return destBaseUnits * pow10BigInt(exp)
       }
       const exp = destDecimals - amountDecimals
-      const result = destBaseUnits / BigInt(10 ** exp)
+      const result = destBaseUnits / pow10BigInt(exp)
       if (result === 0n && destBaseUnits > 0n) return 1n
       return result
     },
@@ -491,19 +671,21 @@ export function TransferForm() {
     let balanceStr: string | undefined
     if (isSourceTerra) {
       balanceStr = terraSourceBalance
+    } else if (isSourceSolana && effectiveTokenBalance !== undefined) {
+      balanceStr = effectiveTokenBalance.toString()
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     }
-    const balance = balanceStr ? BigInt(balanceStr) : 0n
+    const balance = balanceStr ? bigintFromBaseUnitsString(balanceStr) : 0n
 
     let maxTransferInSrc: bigint | null = null
     if (destTokenDetails?.maxTransfer) {
-      const raw = BigInt(destTokenDetails.maxTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.maxTransfer)
       if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
     }
     let bridgeRemainingInSrc: bigint | null = null
     if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
-      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.withdrawRateLimit.remainingAmount)
       if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
     }
 
@@ -515,7 +697,7 @@ export function TransferForm() {
 
     let effectiveMin: bigint | null = null
     if (destTokenDetails?.minTransfer) {
-      const raw = BigInt(destTokenDetails.minTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.minTransfer)
       if (raw > 0n) effectiveMin = toSourceUnits(raw)
     }
 
@@ -534,7 +716,9 @@ export function TransferForm() {
     }
   }, [
     isSourceTerra,
+    isSourceSolana,
     terraSourceBalance,
+    effectiveTokenBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -546,7 +730,7 @@ export function TransferForm() {
 
   const isBelowMin = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
-    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    const parsed = parseAmountAsBigInt(amount, amountDecimals)
     if (effectiveMinInSrc != null && effectiveMinInSrc > 0n) {
       return parsed < effectiveMinInSrc
     }
@@ -557,32 +741,47 @@ export function TransferForm() {
     if (!amount || !isValidAmount(amount)) return false
     if (effectiveMaxInSrc <= 0n) {
       // Distinguish "balance not loaded" (don't block) from "balance is 0" (block)
-      return isSourceTerra || (tokenBalance !== undefined && !!tokenConfig)
+      return (
+        isSourceTerra ||
+        (isSourceSolana && effectiveTokenBalance !== undefined) ||
+        (tokenBalance !== undefined && !!tokenConfig)
+      )
     }
-    const parsed = BigInt(parseAmount(amount, amountDecimals))
+    const parsed = parseAmountAsBigInt(amount, amountDecimals)
     return parsed > effectiveMaxInSrc
-  }, [amount, amountDecimals, effectiveMaxInSrc, isSourceTerra, tokenBalance, tokenConfig])
+  }, [
+    amount,
+    amountDecimals,
+    effectiveMaxInSrc,
+    isSourceTerra,
+    isSourceSolana,
+    effectiveTokenBalance,
+    tokenBalance,
+    tokenConfig,
+  ])
 
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string
     if (isSourceTerra) {
       balanceStr = terraSourceBalance
+    } else if (isSourceSolana && effectiveTokenBalance !== undefined) {
+      balanceStr = effectiveTokenBalance.toString()
     } else if (tokenBalance !== undefined && tokenConfig) {
       balanceStr = tokenBalance.toString()
     } else {
       return
     }
-    const balance = BigInt(balanceStr)
+    const balance = bigintFromBaseUnitsString(balanceStr)
 
     let maxTransferInSrc: bigint | null = null
     if (destTokenDetails?.maxTransfer) {
-      const raw = BigInt(destTokenDetails.maxTransfer)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.maxTransfer)
       if (raw > 0n) maxTransferInSrc = toSourceUnits(raw)
     }
     let bridgeRemainingInSrc: bigint | null = null
     if (destTokenDetails?.withdrawRateLimit?.remainingAmount) {
-      const raw = BigInt(destTokenDetails.withdrawRateLimit.remainingAmount)
+      const raw = bigintFromBaseUnitsString(destTokenDetails.withdrawRateLimit.remainingAmount)
       if (raw > 0n) bridgeRemainingInSrc = toSourceUnits(raw)
     }
 
@@ -591,10 +790,12 @@ export function TransferForm() {
       effectiveMax = effectiveMax < maxTransferInSrc ? effectiveMax : maxTransferInSrc
     if (bridgeRemainingInSrc != null && bridgeRemainingInSrc > 0n)
       effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
-    setAmount(formatAmount(effectiveMax.toString(), srcDecimals))
+    setAmount(formatAmountForNumberInput(effectiveMax, srcDecimals))
   }, [
     isSourceTerra,
+    isSourceSolana,
     terraSourceBalance,
+    effectiveTokenBalance,
     tokenBalance,
     tokenConfig,
     destTokenDetails?.maxTransfer,
@@ -698,8 +899,8 @@ export function TransferForm() {
                 srcAccB32 as `0x${string}`,
                 destAccB32 as `0x${string}`,
                 tokenB32 as `0x${string}`,
-                BigInt(depositAmount),
-                BigInt(depositNonce)
+                bigintFromBaseUnitsString(depositAmount),
+                bigintFromBaseUnitsString(depositNonce)
               )
             }
           } catch (err) {
@@ -724,10 +925,13 @@ export function TransferForm() {
           tokenSymbol: tokenConfig?.symbol || getTokenDisplaySymbol(selectedTokenId),
           srcDecimals: amountDecimals,
           destToken: destTokenBytes32 || tokenAddr,
-          // For EVM->Terra: store the raw Terra denom so auto-submit can pass it to the Terra contract.
+          // For EVM->Terra: store Terra denom/CW20 bech32 — never an 0x EVM address (fallback row
+          // while mappings load), or withdraw_submit hashes keccak(ascii "0x...") and mismatches EVM.
           // For other directions: store the dest token address as-is.
           destTokenId: frozenDirection === 'evm-to-terra'
-            ? (selectedTokenId || 'uluna')
+            ? (resolveTerraDestTokenIdForRecord(selectedTokenId, destTokenBytes32, tokenlist ?? null) ||
+              (selectedTokenId && !selectedTokenId.startsWith('0x') ? selectedTokenId : '') ||
+              'uluna')
             : (destTokenBytes32 ? undefined : tokenAddr),
           destBridgeAddress: destChainConfig?.bridgeAddress,
           sourceChainIdBytes4: frozenSrcBytes4 ?? srcChainConfig?.bytes4ChainId,
@@ -749,7 +953,25 @@ export function TransferForm() {
       frozenChainsRef.current = null
       resetEvm()
     }
-  }, [evmStatus, depositTxHash, evmError, resetEvm, sourceChain, destChain, amount, amountDecimals, recordTransfer, direction, navigate, publicClient, evmAddress, tokenConfig, recipientAddr, selectedTokenId])
+  }, [
+    evmStatus,
+    depositTxHash,
+    evmError,
+    resetEvm,
+    sourceChain,
+    destChain,
+    amount,
+    amountDecimals,
+    recordTransfer,
+    direction,
+    navigate,
+    publicClient,
+    evmAddress,
+    tokenConfig,
+    recipientAddr,
+    selectedTokenId,
+    tokenlist,
+  ])
 
   // Terra deposit success: parse receipt for nonce, use canonical xchain_hash_id + dest_token_address
   // from the Terra contract's own event attributes (not recomputed by the frontend).
@@ -758,11 +980,10 @@ export function TransferForm() {
     if (terraStatus === 'success' && terraTxHash) {
       setTxHash(terraTxHash)
 
-      // Read frozen chains — for Terra deposits, direction is always terra-to-evm
-      // but destChain could have been swapped.
       const frozen = frozenChainsRef.current
       const frozenDest = frozen?.destChain ?? destChain
       const frozenSource = frozen?.sourceChain ?? sourceChain
+      const recordDirection = frozen?.direction ?? direction
 
       const run = async () => {
         console.info(`[TransferForm:terra] Deposit success, txHash=${terraTxHash}`)
@@ -780,9 +1001,18 @@ export function TransferForm() {
           }
         }
 
-        const destAccountHex = recipientAddr.startsWith('0x')
-          ? evmAddressToBytes32(recipientAddr as `0x${string}`)
-          : recipientAddr
+        let destAccountHex: string
+        if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+          destAccountHex = evmAddressToBytes32(recipientAddr as `0x${string}`)
+        } else if (recordDirection === 'terra-to-solana') {
+          try {
+            destAccountHex = solanaAddressToBytes32(recipientAddr)
+          } catch {
+            destAccountHex = recipientAddr
+          }
+        } else {
+          destAccountHex = recipientAddr
+        }
 
         // Parse Terra receipt -- extract nonce, amount, and critically the canonical
         // dest_token_address and xchain_hash_id that the Terra contract computed.
@@ -813,8 +1043,14 @@ export function TransferForm() {
         let destTokenB32: string | undefined = parsed?.destTokenAddress
         if (!destTokenB32) {
           // Fallback for older contracts that don't emit dest_token_address:
-          // try destTokenAddr from useTokenDestMapping, then registry
-          if (destTokenAddr) {
+          // try destTokenAddr / mapping from useTokenDestMapping, then registry
+          if (recordDirection === 'terra-to-solana' && tokenDestMappingAddr) {
+            try {
+              destTokenB32 = solanaAddressToBytes32(tokenDestMappingAddr)
+            } catch {
+              /* keep undefined */
+            }
+          } else if (destTokenAddr) {
             destTokenB32 =
               destTokenAddr.length === 66
                 ? destTokenAddr
@@ -841,20 +1077,28 @@ export function TransferForm() {
             const srcAccB32 = (srcAccountHex?.startsWith('0x') && srcAccountHex.length === 66)
               ? srcAccountHex
               : (terraAddress ? terraAddressToBytes32(terraAddress) : '0x' + '0'.repeat(64))
-            const destAccB32 = destAccountHex.startsWith('0x') && destAccountHex.length === 66
-              ? destAccountHex
-              : evmAddressToBytes32(recipientAddr as `0x${string}`)
-            const tokenB32 = destTokenB32 && destTokenB32.length === 66
-              ? destTokenB32
-              : (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : '0x' + '0'.repeat(64))
+            const destAccB32 =
+              destAccountHex.startsWith('0x') && destAccountHex.length === 66
+                ? destAccountHex
+                : recordDirection === 'terra-to-solana'
+                  ? solanaAddressToBytes32(recipientAddr)
+                  : evmAddressToBytes32(recipientAddr as `0x${string}`)
+            const tokenB32 =
+              destTokenB32 && destTokenB32.length === 66
+                ? destTokenB32
+                : recordDirection === 'terra-to-solana' && tokenDestMappingAddr
+                  ? solanaAddressToBytes32(tokenDestMappingAddr)
+                  : destTokenAddr
+                    ? evmAddressToBytes32(destTokenAddr as `0x${string}`)
+                    : '0x' + '0'.repeat(64)
             xchainHashId = computeXchainHashId(
               srcChainB32 as `0x${string}`,
               destChainB32 as `0x${string}`,
               srcAccB32 as `0x${string}`,
               destAccB32 as `0x${string}`,
               tokenB32 as `0x${string}`,
-              BigInt(netAmount),
-              BigInt(depositNonce)
+              bigintFromBaseUnitsString(netAmount),
+              bigintFromBaseUnitsString(depositNonce)
             )
           } catch (err) {
             console.warn('[TransferForm:terra] Failed to compute Terra transfer hash:', err)
@@ -878,7 +1122,7 @@ export function TransferForm() {
 
         recordTransfer({
           type: 'withdrawal',
-          direction: 'terra-to-evm',
+          direction: recordDirection === 'terra-to-solana' ? 'terra-to-solana' : 'terra-to-evm',
           sourceChain: frozenSource.includes('terra') || frozenSource.includes('local') ? frozenSource : 'localterra',
           destChain: frozenDest,
           amount: netAmount,
@@ -889,7 +1133,7 @@ export function TransferForm() {
           depositNonce,
           srcAccount: srcAccountHex,
           destAccount: destAccountHex,
-          token: selectedTokenId || 'uluna',
+          token: (parsed?.token ?? selectedTokenId) || 'uluna',
           tokenSymbol: getTokenDisplaySymbol(selectedTokenId || 'uluna'),
           destToken: destTokenB32,
           srcDecimals: terraDecimals,
@@ -912,7 +1156,151 @@ export function TransferForm() {
       frozenChainsRef.current = null
       resetTerra()
     }
-  }, [terraStatus, terraTxHash, terraError, resetTerra, navigate, destChain, sourceChain, amount, terraDecimals, recordTransfer, terraAddress, recipientAddr, selectedTokenId, registryTokens, destTokenAddr])
+  }, [
+    terraStatus,
+    terraTxHash,
+    terraError,
+    resetTerra,
+    navigate,
+    destChain,
+    sourceChain,
+    amount,
+    terraDecimals,
+    recordTransfer,
+    terraAddress,
+    recipientAddr,
+    selectedTokenId,
+    registryTokens,
+    destTokenAddr,
+    direction,
+    tokenDestMappingAddr,
+  ])
+
+  // Solana deposit success: V2 xchain hash in URL + store (status page expects 0x…, not Solana tx sig)
+  useEffect(() => {
+    if (solanaStep !== 'confirmed' || !solanaTxSig || confirmedDepositNonce == null) return
+
+    const frozen = frozenChainsRef.current
+    if (!frozen) return
+
+    const destTokHex =
+      solanaTokenDestMappingRaw?.hex ||
+      (destTokenAddr ? evmAddressToBytes32(destTokenAddr as `0x${string}`) : undefined)
+
+    let destAccStored = recipientAddr
+    if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+      destAccStored = evmAddressToBytes32(recipientAddr as `0x${string}`)
+    } else if (recipientAddr && !recipientAddr.startsWith('0x')) {
+      try {
+        destAccStored = solanaAddressToBytes32(recipientAddr)
+      } catch {
+        /* keep raw */
+      }
+    }
+
+    const gross = parseAmountAsBigInt(amount, amountDecimals)
+    const feeBps = BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100))
+    const fee = (gross * feeBps) / 10000n
+    const netAmount = gross - fee
+    const netAmountStr = netAmount.toString()
+
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const srcCfg = BRIDGE_CHAINS[tier][frozen.sourceChain]
+    const destCfg = BRIDGE_CHAINS[tier][frozen.destChain]
+    const srcBytes4 = frozen.sourceChainIdBytes4 ?? srcCfg?.bytes4ChainId
+    const destBytes4 = destCfg?.bytes4ChainId
+
+    const tokenSymbolRecorded =
+      isSourceSolana || isSourceTerra
+        ? terraDisplay.displayLabel ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          getTokenDisplaySymbol(selectedTokenId || 'uluna')
+        : evmSourceDisplay.displayLabel ||
+          tokenConfig?.symbol ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          '—'
+
+    let xchainHashId: `0x${string}` | undefined
+    try {
+      if (
+        srcBytes4 &&
+        destBytes4 &&
+        destTokHex &&
+        destTokHex.length === 66 &&
+        solanaAddress
+      ) {
+        const srcChainBytes = bytes4HexToUint8Array(srcBytes4)
+        const destChainBytes = bytes4HexToUint8Array(destBytes4)
+        const tokenBytes = hexToBytes(destTokHex as Hex)
+        const srcAccBytes = hexToBytes(solanaAddressToBytes32(solanaAddress) as Hex)
+        let destAccHex: `0x${string}`
+        if (recipientAddr.startsWith('0x') && recipientAddr.length === 42) {
+          destAccHex = evmAddressToBytes32(recipientAddr as `0x${string}`)
+        } else if (recipientAddr.startsWith('terra1')) {
+          destAccHex = terraAddressToBytes32(recipientAddr)
+        } else {
+          destAccHex = solanaAddressToBytes32(recipientAddr)
+        }
+        const destAccBytes = hexToBytes(destAccHex)
+
+        xchainHashId = computeXchainHashIdFromBytes(
+          srcChainBytes,
+          destChainBytes,
+          srcAccBytes,
+          destAccBytes,
+          tokenBytes,
+          netAmount,
+          bigintFromBaseUnitsString(confirmedDepositNonce),
+        )
+      }
+    } catch (e) {
+      console.warn('[TransferForm:solana] Failed to compute xchainHashId:', e)
+    }
+
+    recordTransfer({
+      sourceChain: frozen.sourceChain,
+      destChain: frozen.destChain,
+      direction: frozen.direction,
+      type: 'deposit',
+      token: selectedTokenId || tokenSymbolRecorded || 'SOL',
+      amount: netAmountStr,
+      status: 'confirmed',
+      srcAccount: solanaAddress ? solanaAddressToBytes32(solanaAddress) : '',
+      txHash: solanaTxSig,
+      lifecycle: 'deposited',
+      sourceChainIdBytes4: sourceChainConfig?.bytes4ChainId,
+      depositNonce: confirmedDepositNonce,
+      destAccount: destAccStored,
+      destToken: destTokHex,
+      ...(xchainHashId ? { xchainHashId } : {}),
+      srcDecimals: amountDecimals,
+      tokenSymbol: tokenSymbolRecorded,
+    })
+    frozenChainsRef.current = null
+    resetSolana()
+    navigate(xchainHashId ? `/transfer/${xchainHashId}` : `/transfer/${solanaTxSig}`)
+  }, [
+    solanaStep,
+    solanaTxSig,
+    confirmedDepositNonce,
+    amount,
+    amountDecimals,
+    solanaAddress,
+    sourceChainConfig,
+    recipientAddr,
+    destTokenAddr,
+    solanaTokenDestMappingRaw,
+    recordTransfer,
+    resetSolana,
+    navigate,
+    selectedTokenId,
+    isSourceSolana,
+    isSourceTerra,
+    terraDisplay.displayLabel,
+    evmSourceDisplay.displayLabel,
+    tokenConfig?.symbol,
+    transferTokens,
+  ])
 
   const handleSwap = useCallback(() => {
     const prevSource = sourceChain
@@ -926,8 +1314,9 @@ export function TransferForm() {
   const isSwapDisabled = useMemo(() => {
     const destInfo = getChainById(destChain)
     const sourceInfo = getChainById(sourceChain)
-    // Disable swap if swapping would result in cosmos→cosmos
-    return destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos'
+    if (destInfo?.type === 'cosmos' && sourceInfo?.type === 'cosmos') return true
+    if (destInfo?.type === 'solana' && sourceInfo?.type === 'solana') return true
+    return false
   }, [sourceChain, destChain])
 
   const handleSourceChange = useCallback(
@@ -943,7 +1332,14 @@ export function TransferForm() {
     setError(null)
     setTxHash(null)
 
-    if (!isWalletConnected || !amount || !isValidAmount(amount)) return
+    if (!isWalletConnected) {
+      setError(`Connect your ${walletLabel} wallet to continue`)
+      return
+    }
+    if (!amount || !isValidAmount(amount)) {
+      setError('Enter a valid amount greater than zero')
+      return
+    }
     if (isBelowMin) {
       setError(`Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel})` : ''}`)
       return
@@ -974,15 +1370,148 @@ export function TransferForm() {
     const tier = DEFAULT_NETWORK as NetworkTier
     const destConfig = BRIDGE_CHAINS[tier][destChain]
 
+    if (isSourceSolana) {
+      // Solana → EVM or Solana → Terra: deposit on Solana bridge
+      if (!recipientAddr) {
+        setError('Please provide a recipient address or connect your destination wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      const sourceConfig = sourceChainConfig
+      // BRIDGE_CHAINS stores the Solana program id as bridgeAddress; optional programId overrides (see useAutoWithdrawSubmit).
+      const solanaProgramIdStr = sourceConfig?.programId || sourceConfig?.bridgeAddress
+      if (!sourceConfig?.rpcUrl || !solanaProgramIdStr) {
+        setError(`Missing Solana RPC or program ID config for source chain: ${sourceChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destV2Bytes4 = destConfig?.bytes4ChainId
+      if (!destV2Bytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+
+      try {
+        const connection = new Connection(sourceConfig.rpcUrl, 'confirmed')
+        const programId = new PublicKey(solanaProgramIdStr)
+        const depositNonce = await fetchDepositNonce(connection, programId)
+
+        // Encode destination parameters as bytes
+        const destChainBytes = new Uint8Array(4)
+        const destChainNum = parseInt(destV2Bytes4, 16)
+        destChainBytes[0] = (destChainNum >> 24) & 0xff
+        destChainBytes[1] = (destChainNum >> 16) & 0xff
+        destChainBytes[2] = (destChainNum >> 8) & 0xff
+        destChainBytes[3] = destChainNum & 0xff
+
+        // Encode dest account as 32 bytes
+        const destAccountBytes = new Uint8Array(32)
+        if (recipientAddr.startsWith('0x')) {
+          const hex = recipientAddr.slice(2)
+          for (let i = 0; i < 20 && i * 2 < hex.length; i++) {
+            destAccountBytes[12 + i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+          }
+        } else {
+          // Solana base58 or Terra address — encode as raw bytes
+          try {
+            const pk = new PublicKey(recipientAddr)
+            destAccountBytes.set(pk.toBytes())
+          } catch {
+            setError('Invalid recipient address')
+            frozenChainsRef.current = null
+            return
+          }
+        }
+
+        if (!solanaTokenMappingDest32) {
+          setError(
+            'Could not resolve destination token mapping for this route. Ensure the token is registered for the destination chain (Terra LCD mapping or EVM dest address).'
+          )
+          frozenChainsRef.current = null
+          return
+        }
+
+        if (solanaMappingQueryEnabled && solanaLocalMint === null) {
+          setError(
+            'This token is not registered on the Solana bridge for the selected destination chain.',
+          )
+          frozenChainsRef.current = null
+          return
+        }
+
+        const amountBaseUnits = parseAmountAsBigInt(amount, amountDecimals)
+
+        await solanaDeposit({
+          rpcUrl: sourceConfig.rpcUrl,
+          programId: solanaProgramIdStr,
+          destChain: destChainBytes,
+          destAccount: destAccountBytes,
+          tokenMappingDestToken: solanaTokenMappingDest32,
+          amount: amountBaseUnits,
+          depositNonce,
+          splMint:
+            solanaDepositSpl && solanaLocalMint ? solanaLocalMint.toBase58() : undefined,
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : formatSolanaWalletError(err))
+        frozenChainsRef.current = null
+        resetSolana()
+      }
+      return
+    }
+
+    if (direction === 'terra-to-solana') {
+      if (!recipientAddr?.trim()) {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      try {
+        new PublicKey(recipientAddr)
+      } catch {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      const v2Bytes4Sol = destConfig?.bytes4ChainId
+      if (!v2Bytes4Sol) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destChainIdSol = parseInt(v2Bytes4Sol, 16)
+      const amountMicroSol = parseAmount(amount, terraDecimals)
+      const selectedRegSol = registryTokens?.find((t) => t.token === selectedTokenId)
+      const isNativeSol = selectedRegSol?.is_native ?? (selectedTokenId === 'uluna')
+      await terraLock({
+        amountMicro: amountMicroSol,
+        destChainId: destChainIdSol,
+        recipientSolana: recipientAddr,
+        tokenId: selectedTokenId || 'uluna',
+        isNative: isNativeSol,
+        srcDecimals: terraDecimals,
+        transferDirection: 'terra-to-solana',
+        destChainKey: destChain,
+        tokenSymbol:
+          terraDisplay.displayLabel ||
+          transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+          getTokenDisplaySymbol(selectedTokenId || 'uluna'),
+      })
+      return
+    }
+
     if (direction === 'terra-to-evm') {
       // Terra → EVM: deposit on Terra bridge (V2)
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
         setError('Please provide an EVM recipient address or connect your EVM wallet')
+        frozenChainsRef.current = null
         return
       }
       const v2Bytes4 = destConfig?.bytes4ChainId
       if (!v2Bytes4) {
         setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
         return
       }
       const destChainId = parseInt(v2Bytes4, 16)
@@ -996,6 +1525,7 @@ export function TransferForm() {
         tokenId: selectedTokenId || 'uluna',
         isNative,
         srcDecimals: terraDecimals,
+        destChainKey: destChain,
         tokenSymbol:
           terraDisplay.displayLabel ||
           transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
@@ -1011,9 +1541,41 @@ export function TransferForm() {
         setError('Token configuration not available for this network')
         return
       }
-      const destChainBytes4 = computeTerraChainBytes4()
+      const destChainBytes4 = destConfig?.bytes4ChainId as Hex | undefined
+      if (!destChainBytes4) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
       const destAccount = encodeTerraAddress(recipientAddr)
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
+    } else if (direction === 'evm-to-solana') {
+      // EVM → Solana: same Bridge.depositERC20 path; dest account is pubkey as bytes32
+      if (!recipientAddr?.trim()) {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      try {
+        new PublicKey(recipientAddr)
+      } catch {
+        setError('Please provide a Solana recipient address or connect your Solana wallet')
+        frozenChainsRef.current = null
+        return
+      }
+      if (!tokenConfig) {
+        setError('Token configuration not available for this network')
+        frozenChainsRef.current = null
+        return
+      }
+      const destChainBytes4Sol = destConfig?.bytes4ChainId as Hex | undefined
+      if (!destChainBytes4Sol) {
+        setError(`Missing V2 bytes4 chain ID config for destination chain: ${destChain}`)
+        frozenChainsRef.current = null
+        return
+      }
+      const destAccountSol = solanaAddressToBytes32(recipientAddr) as Hex
+      await evmDeposit(amount, destChainBytes4Sol, destAccountSol, tokenConfig.decimals)
     } else {
       // EVM → EVM: depositERC20 on Bridge (V2) with bytes4 dest chain ID
       if (!recipientAddr || !recipientAddr.startsWith('0x')) {
@@ -1039,16 +1601,23 @@ export function TransferForm() {
 
   const balanceDisplay = isSourceTerra
     ? formatAmount(terraSourceBalance, terraDecimals)
+    : isSourceSolana && effectiveTokenBalance !== undefined
+    ? formatAmount(effectiveTokenBalance.toString(), amountDecimals)
     : tokenBalance !== undefined && tokenConfig
     ? formatAmount(tokenBalance.toString(), tokenConfig.decimals)
     : undefined
 
   // Use onchain/tokenlist display hooks for symbol (not raw address)
   const selectedSymbol =
-    isSourceTerra
-      ? terraDisplay.displayLabel || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || 'LUNC'
-      : (evmSourceDisplay.displayLabel || tokenConfig?.symbol || transferTokens.find((t) => t.id === selectedTokenId)?.symbol || '—')
-  const walletLabel = isSourceTerra ? 'Terra' : 'EVM'
+    isSourceTerra || isSourceSolana
+      ? terraDisplay.displayLabel ||
+        transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+        getTokenDisplaySymbol(selectedTokenId || 'uluna')
+      : evmSourceDisplay.displayLabel ||
+        tokenConfig?.symbol ||
+        transferTokens.find((t) => t.id === selectedTokenId)?.symbol ||
+        '—'
+  const walletLabel = isSourceTerra ? 'Terra' : isSourceSolana ? 'Solana' : 'EVM'
 
   // "You will receive" shows DESTINATION token - use display hooks for symbol, link to dest chain
   const feeBreakdownProps = useMemo(() => {
@@ -1086,7 +1655,11 @@ export function TransferForm() {
 
   const isTokenInfoLoading =
     (isSourceEvm && (isRegistryLoading || isSourceMappingsLoading)) ||
-    (isSourceTerra && (isRegistryLoading || isDestMappingsLoading))
+    (isSourceTerra && (isRegistryLoading || isDestMappingsLoading)) ||
+    (isSourceSolana && (isRegistryLoading || isDestMappingsLoading)) ||
+    (direction === 'evm-to-solana' && isEvmToSolanaDestLoading) ||
+    (isSourceSolana &&
+      (isSolanaLocalMintLoading || (solanaDepositSpl && solanaLocalMint && isSolanaSplDecimalsLoading)))
   const {
     isValid: isRouteValid,
     error: routeValidationError,
@@ -1097,20 +1670,35 @@ export function TransferForm() {
       !!sourceChainConfig &&
       !!destChainConfig &&
       !isChainsLoading &&
-      !isTokenInfoLoading,
+      !isTokenInfoLoading &&
+      (!isSourceSolana || !isSolanaLocalMintLoading),
     tokenLabel: selectedSymbol,
     sourceChainConfig,
     destChainConfig,
-    sourceTokenAddress: tokenConfig?.address,
+    sourceTokenAddress: isSourceSolana ? solanaLocalMint?.toBase58() : tokenConfig?.address,
     sourceMappingAddress: readySourceMappings?.[selectedTokenId],
     destTokenAddress: destChainConfig?.type === 'evm' ? (destTokenAddr || undefined) : undefined,
     destMappingAddress: destChainConfig?.type === 'evm' ? (tokenDestMappingAddr || undefined) : undefined,
-    destTokenId: destChainConfig?.type === 'cosmos' ? ((terraCw20Address ?? selectedTokenId) || undefined) : undefined,
+    destTokenId:
+      destChainConfig?.type === 'cosmos'
+        ? (terraCw20Address ?? selectedTokenId) || undefined
+        : destChainConfig?.type === 'solana'
+          ? solanaDestTokenIdForRoute
+          : undefined,
   })
-  const submitGuardError =
-    !isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid
-      ? routeValidationError
+  const solanaMappingGuardError =
+    isSourceSolana &&
+    !isSolanaLocalMintLoading &&
+    solanaMappingQueryEnabled &&
+    solanaLocalMint === null
+      ? 'This token is not registered on the Solana bridge for the selected destination chain.'
       : null
+
+  const submitGuardError =
+    solanaMappingGuardError ||
+    (!isTokenInfoLoading && !isRouteValidationLoading && !isRouteValid
+      ? routeValidationError
+      : null)
 
   const buttonText = isChainsLoading
     ? 'Discovering chains...'
@@ -1126,10 +1714,14 @@ export function TransferForm() {
     ? `Switching to ${sourceChainConfig?.name ?? 'source chain'}...`
     : isSubmitting
     ? 'Processing...'
-    : direction === 'terra-to-evm'
+    : direction === 'terra-to-evm' || direction === 'terra-to-solana'
     ? 'Bridge from Terra'
+    : direction === 'solana-to-evm' || direction === 'solana-to-terra'
+    ? 'Bridge from Solana'
     : direction === 'evm-to-evm'
     ? 'Bridge EVM to EVM'
+    : direction === 'evm-to-solana'
+    ? 'Bridge EVM to Solana'
     : 'Bridge from EVM'
 
   return (
@@ -1157,6 +1749,20 @@ export function TransferForm() {
           </p>
         </div>
       )}
+      {!error &&
+        !submitGuardError &&
+        isSourceSolana &&
+        sourceChain === 'solana-localnet' &&
+        solanaWalletType?.toLowerCase() === 'phantom' && (
+          <div className="bg-amber-900/30 border-2 border-amber-700 p-3">
+            <p className="text-amber-200 text-sm font-semibold">Phantom and Solana Localnet</p>
+            <p className="text-amber-100/90 text-sm mt-1">
+              Phantom often cannot open a sign popup for a local validator; the extension may report that signing is not
+              supported on local networks. Use Solflare or Backpack for manual UI testing, or rely on automated E2E for
+              Solana Localnet.
+            </p>
+          </div>
+        )}
 
       <SourceChainSelector
         chains={allChains}
@@ -1176,6 +1782,8 @@ export function TransferForm() {
         onMax={
           isSourceTerra && terraSourceBalance
             ? handleMax
+            : isSourceSolana && effectiveTokenBalance !== undefined
+            ? handleMax
             : tokenBalance !== undefined && tokenConfig
             ? handleMax
             : undefined
@@ -1184,7 +1792,9 @@ export function TransferForm() {
         selectedTokenId={selectedTokenId}
         onTokenChange={setSelectedTokenId}
         symbol={selectedSymbol}
-        sourceChainConfigOrRpcUrl={!isSourceTerra && sourceChainConfig?.type === 'evm' ? sourceChainConfig : undefined}
+        sourceChainConfigOrRpcUrl={
+          !isSourceTerra && !isSourceSolana && sourceChainConfig?.type === 'evm' ? sourceChainConfig : undefined
+        }
         maxLabel={displayMaxLabel}
         minLabel={displayMinLabel}
       />
@@ -1195,7 +1805,10 @@ export function TransferForm() {
         onChange={setRecipient}
         direction={direction}
         onAutofill={() => {
-          if (isDestEvm) {
+          if (isDestSolana) {
+            if (solanaAddress) setRecipient(solanaAddress)
+            else setShowSolanaModal(true)
+          } else if (isDestEvm) {
             if (evmAddress) setRecipient(evmAddress)
             else setShowEvmWalletModal(true)
           } else {

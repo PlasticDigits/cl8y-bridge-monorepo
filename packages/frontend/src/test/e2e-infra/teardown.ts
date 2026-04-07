@@ -5,6 +5,10 @@
  * 1. Stop and remove Docker containers and volumes (anvil, anvil1, localterra, postgres)
  * 2. Delete .env.e2e.local
  * 3. Kill any orphaned processes
+ *
+ * Skipped when `E2E_SKIP_TEARDOWN=1` or `E2E_PRESERVE_INFRA=1`.
+ * Playwright defaults local runs to skip teardown (see `playwright.config.ts`); use
+ * `E2E_TEARDOWN=1` for one-shot full cleanup after tests, or `npm run test:e2e:teardown`.
  */
 
 import { execSync } from 'child_process'
@@ -20,6 +24,13 @@ const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
 const VITE_ENV_FILE = resolve(FRONTEND_DIR, '.env.local')
 
 export default async function teardown(): Promise<void> {
+  if (process.env.E2E_PRESERVE_INFRA === '1' || process.env.E2E_SKIP_TEARDOWN === '1') {
+    console.log(
+      '[teardown] E2E_PRESERVE_INFRA/E2E_SKIP_TEARDOWN set — skipping docker/env teardown (operator left running).'
+    )
+    return
+  }
+
   console.log('=== E2E Test Infrastructure Teardown ===\n')
 
   // 0. Stop operator and canceler first (before docker compose down)

@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::contracts::evm_bridge::{Bridge, TokenRegistry};
 use crate::db::models::NewEvmDeposit;
 use crate::db::{get_last_evm_block, update_last_evm_block};
+use crate::hash::compute_xchain_hash_id;
 use crate::types::ChainId;
 
 /// Max blocks to look back on first poll (covers the cancel window).
@@ -446,6 +447,7 @@ impl EvmWatcher {
             dest_chain_type,
             src_account: vec![0u8; 32], // V1 deposits don't include src_account
             src_v2_chain_id: self.this_chain_id.as_bytes().to_vec(),
+            transfer_hash: None,
         })
     }
 
@@ -600,6 +602,25 @@ impl EvmWatcher {
             .log_index
             .ok_or_else(|| eyre::eyre!("Missing log index"))?;
 
+        let amount_u128: u128 = amount.try_into().map_err(|_| {
+            eyre::eyre!("V2 deposit amount does not fit in u128 — cannot compute transfer_hash")
+        })?;
+
+        let mut src_account_arr = [0u8; 32];
+        src_account_arr.copy_from_slice(&src_account[..32]);
+        let mut dest_account_arr = [0u8; 32];
+        dest_account_arr.copy_from_slice(&dest_account[..32]);
+
+        let transfer_hash = compute_xchain_hash_id(
+            self.this_chain_id.as_bytes(),
+            dest_chain_id.as_bytes(),
+            &src_account_arr,
+            &dest_account_arr,
+            &dest_token_address,
+            amount_u128,
+            nonce,
+        );
+
         Ok(NewEvmDeposit {
             chain_id: self.chain_id as i64,
             tx_hash: format!("{:?}", tx_hash),
@@ -615,6 +636,7 @@ impl EvmWatcher {
             dest_chain_type,
             src_account,
             src_v2_chain_id: self.this_chain_id.as_bytes().to_vec(),
+            transfer_hash: Some(transfer_hash.to_vec()),
         })
     }
 

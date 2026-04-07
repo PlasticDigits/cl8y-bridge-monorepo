@@ -1,6 +1,6 @@
 # CL8Y Bridge Monorepo
 
-A cross-chain bridge solution for connecting Terra Classic with EVM-compatible blockchains.
+A cross-chain bridge solution for connecting Terra Classic, EVM-compatible blockchains, and Solana.
 
 ## Documentation
 
@@ -17,6 +17,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
+| [Solana bridge deposits](./docs/SOLANA_BRIDGE_DEPOSITS.md) | Solana source: `deposit_native` (lamports) vs `deposit_spl` (SPL) |
 | [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
 
 ## Live Deployments
@@ -49,6 +50,14 @@ Proxy addresses are identical on BSC and opBNB (same deployer, same nonce order)
 | Create3Deployer | [`0x375401aaab20b0827cfc7dbe822e352738d390a9`](https://bscscan.com/address/0x375401aaab20b0827cfc7dbe822e352738d390a9) | Deterministic CREATE3 deployer |
 | FactoryTokenCl8yBridged (BSC) | [`0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F`](https://bscscan.com/address/0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F) | Bridged token factory |
 | FactoryTokenCl8yBridged (opBNB) | [`0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b`](https://opbnbscan.com/address/0xFDF9555c8168EfEbF9d6130E248fCc7Ba0D3bA8b) | Bridged token factory |
+
+**Guard stack (BSC + opBNB, same addresses — CREATE + aligned nonces):** verified on-chain (code present; matching bytecode across chains; `GuardBridge.DATASTORE_ADDRESS()` and `TokenRateLimit.authority()` match the table). **`Bridge.guardBridge`** must still be set to **`GuardBridge`** via owner after AccessManager roles, module registration, and limits — see [deployment-solana-mainnet.md](./docs/deployment-solana-mainnet.md) §3. **`AccessManager`:** use **role `2`** for guard-stack admin (`grantRole` / `setTargetFunctionRole`); **role `1`** is reserved for MintBurn / minters — see [OPERATIONAL_NOTES.md §8](./packages/contracts-evm/OPERATIONAL_NOTES.md). **Bridge** operators/cancelers are **`Bridge.addOperator` / `addCanceler`**, not `AccessManager` numeric roles. **`getCancelerCount() == 0`** on an EVM Bridge is a **watchtower gap**—register cancelers ([runbook Step 2.5](./docs/deployment-solana-mainnet.md#step-25--register-bridge-cancelers-bsc--opbnb)).
+
+| Contract | Address | Role |
+|----------|---------|------|
+| DatastoreSetAddress | [`0xeafe298387f800101f1b9263208a0bfdc934a63e`](https://bscscan.com/address/0xeafe298387f800101f1b9263208a0bfdc934a63e) ([opBNB](https://opbnbscan.com/address/0xeafe298387f800101f1b9263208a0bfdc934a63e)) | Module allowlists for `GuardBridge` |
+| TokenRateLimit | [`0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c`](https://bscscan.com/address/0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c) ([opBNB](https://opbnbscan.com/address/0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c)) | 24h deposit/withdraw caps (`authority` = AccessManager) |
+| GuardBridge | [`0x12fedd29e71f66157e985aa1aaa434253e39a22`](https://bscscan.com/address/0x12fedd29e71f66157e985aa1aaa434253e39a22) ([opBNB](https://opbnbscan.com/address/0x12fedd29e71f66157e985aa1aaa434253e39a22)) | Guard orchestration |
 
 **BSC Test Tokens:**
 
@@ -118,6 +127,7 @@ See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for t
 |---------|-------------|---------------|
 | [contracts-evm](./packages/contracts-evm) | Solidity smart contracts for EVM chains (BSC, Ethereum, etc.) | [docs](./docs/contracts-evm.md) |
 | [contracts-terraclassic](./packages/contracts-terraclassic) | CosmWasm smart contracts for Terra Classic | [docs](./docs/contracts-terraclassic.md) |
+| [contracts-solana](./packages/contracts-solana) | Anchor/Solana program for Solana bridge | — |
 | [operator](./packages/operator) | Rust-based bridge operator service | [docs](./docs/operator.md) |
 | [canceler](./packages/canceler) | Rust-based canceler node for watchtower security | [docs](./docs/canceler-network.md) |
 | [frontend](./packages/frontend) | Web application for bridge interface | [docs](./docs/frontend.md) |
@@ -129,17 +139,18 @@ See [packages/contracts-evm/README.md](./packages/contracts-evm/README.md) for t
 - Docker and Docker Compose
 - Rust toolchain (1.70+)
 - Foundry (for EVM contracts)
+- Anchor CLI + Solana CLI (for Solana contracts)
 
 ### Local Development
 
 ```bash
-# Start local infrastructure (Anvil, LocalTerra, PostgreSQL)
+# Start local infrastructure (Anvil, LocalTerra, Solana, PostgreSQL)
 make start
 
-# Check service status
+# Check service status (all chains + services)
 make status
 
-# Deploy contracts to local chains
+# Deploy contracts to all local chains (EVM, Terra, Solana)
 make deploy
 
 # Run operator
@@ -166,7 +177,8 @@ The project includes comprehensive tests at multiple levels. See the full [Testi
 |--------------|----------------|
 | EVM contracts | Foundry tests against in-memory EVM |
 | Terra contracts | Cargo tests with CosmWasm VM |
-| Frontend blockchain calls | Real LocalTerra + Anvil devnet |
+| Solana contracts | Anchor tests against local validator |
+| Frontend blockchain calls | Real LocalTerra + Anvil + Solana devnet |
 | Canceler event polling | Real LocalTerra + Anvil devnet |
 | E2E transfers | Full infrastructure with real transactions |
 
@@ -327,7 +339,8 @@ See [Testing Guide](./docs/testing.md) for environment setup and troubleshooting
 | [`scripts/deploy-terra-local.sh`](./scripts/deploy-terra-local.sh) | Deploy Terra contracts to LocalTerra |
 | [`scripts/deploy-terra-testnet.sh`](./scripts/deploy-terra-testnet.sh) | Deploy Terra contracts to testnet |
 | [`scripts/deploy-terra-mainnet.sh`](./scripts/deploy-terra-mainnet.sh) | Deploy Terra contracts to mainnet |
-| [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections |
+| [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections (loads `.deploy/local.env`; Solana id from deploy keypair if unset) |
+| [`scripts/deploy-evm-local.sh`](./scripts/deploy-evm-local.sh) | Deploy EVM to Anvil and record addresses in `.deploy/local.env` |
 | [`scripts/test-transfer.sh`](./scripts/test-transfer.sh) | Interactive transfer testing |
 | [`scripts/e2e-test.sh`](./scripts/e2e-test.sh) | Automated E2E test suite (watchtower pattern) |
 
@@ -374,6 +387,7 @@ cl8y-bridge-monorepo/
 ├── packages/
 │   ├── contracts-evm/          # Foundry project for Solidity contracts
 │   ├── contracts-terraclassic/ # CosmWasm contracts for Terra Classic
+│   ├── contracts-solana/       # Anchor program for Solana bridge
 │   ├── operator/               # Rust bridge operator service
 │   ├── canceler/               # Rust canceler node for watchtower security
 │   └── frontend/               # Web application (Vite + React)
@@ -395,10 +409,10 @@ cl8y-bridge-monorepo/
 
 ```bash
 # Infrastructure
-make start              # Start Docker services
-make stop               # Stop Docker services
+make start              # Start Docker services (Anvil, LocalTerra, Solana, PostgreSQL)
+make stop               # Stop all Docker services
 make reset              # Stop and remove volumes
-make status             # Check status of all services
+make status             # Check status of all services (incl. Solana)
 make logs               # View service logs
 
 # Building
@@ -416,9 +430,10 @@ make test-integration   # Run integration tests
 make e2e-test           # Run E2E tests
 
 # Deployment - Local
-make deploy             # Deploy all contracts locally
+make deploy             # Deploy all contracts locally (EVM, Terra, Solana)
 make deploy-evm         # Deploy EVM contracts to Anvil
 make deploy-terra       # Deploy Terra contracts to LocalTerra
+make deploy-solana      # Deploy Solana program to local validator
 
 # Deployment - Testnet
 make deploy-evm-bsc-testnet    # Deploy to BSC Testnet
@@ -433,7 +448,7 @@ make deploy-terra-mainnet      # Deploy to Terra Classic Mainnet
 # Monitoring
 make start-monitoring   # Start Prometheus + Grafana
 make stop-monitoring    # Stop monitoring services
-# Prometheus: http://localhost:9091
+# Prometheus: http://localhost:9092
 # Grafana: http://localhost:3000 (admin/admin)
 
 # Development

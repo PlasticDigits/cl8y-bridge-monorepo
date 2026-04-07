@@ -87,6 +87,14 @@ describe('useTerraDeposit V2 encoding helpers', () => {
       expect(nonZeroBytes.length).toBeGreaterThan(0)
     })
 
+    it('should encode Solana address as raw 32-byte pubkey', () => {
+      const solAddr = '11111111111111111111111111111111'
+      const result = encodeDestAccountBase64(solAddr)
+      const bytes = Uint8Array.from(atob(result), (c) => c.charCodeAt(0))
+      expect(bytes.length).toBe(32)
+      expect(Array.from(bytes).every((b) => b === 0)).toBe(true)
+    })
+
     it('should produce 32 bytes for any valid address', () => {
       const evmResult = encodeDestAccountBase64('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266')
       const terraResult = encodeDestAccountBase64('terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v')

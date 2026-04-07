@@ -15,6 +15,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [EVM Contracts](./contracts-evm.md)
 - [Terra Classic Contracts](./contracts-terraclassic.md)
 - [Terra Classic Upgrade Spec](./terraclassic-upgrade-spec.md)
+- [Solana bridge deposits](./SOLANA_BRIDGE_DEPOSITS.md) — `deposit_native` vs `deposit_spl` (source chain)
 
 ### Operations
 
@@ -22,6 +23,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Canceler Network](./canceler-network.md)
 - [Canceler Runbook](./runbook-cancelers.md)
 - [Production Deployment Guide](./deployment-guide.md)
+- [Solana Mainnet Deployment Runbook](./deployment-solana-mainnet.md)
 - [Terra Classic Upgrade Deployment](./deployment-terraclassic-upgrade.md)
 
 ### Development and Testing

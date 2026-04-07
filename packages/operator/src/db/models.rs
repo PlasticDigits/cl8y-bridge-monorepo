@@ -42,6 +42,9 @@ pub struct EvmDeposit {
     /// This replaces the native chain_id for cross-chain hash matching.
     #[sqlx(default)]
     pub src_v2_chain_id: Option<Vec<u8>>,
+    /// V2 unified transfer hash (see `compute_xchain_hash_id`); NULL for legacy V1 deposits
+    #[sqlx(default)]
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// For inserting new EVM deposits
@@ -64,6 +67,8 @@ pub struct NewEvmDeposit {
     pub src_account: Vec<u8>,
     /// V2 chain ID (4 bytes from ChainRegistry)
     pub src_v2_chain_id: Vec<u8>,
+    /// V2 unified transfer hash; None for V1 deposits
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// Represents a deposit (lock) from Terra Classic
@@ -83,6 +88,9 @@ pub struct TerraDeposit {
     pub updated_at: DateTime<Utc>,
     /// Destination token address on the target chain (from deposit event's dest_token_address)
     pub dest_token_address: Option<String>,
+    /// V2 32-byte xchain hash (from wasm `xchain_hash_id` attribute)
+    #[sqlx(default)]
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// For inserting new Terra deposits
@@ -98,6 +106,8 @@ pub struct NewTerraDeposit {
     pub block_height: i64,
     /// Destination token address on the target chain (from deposit event)
     pub dest_token_address: Option<String>,
+    /// V2 32-byte xchain hash (from wasm `xchain_hash_id` attribute)
+    pub transfer_hash: Option<Vec<u8>>,
 }
 
 /// Represents a withdrawal approval submitted to an EVM chain

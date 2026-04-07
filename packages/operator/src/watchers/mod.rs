@@ -7,15 +7,18 @@ use crate::config::Config;
 use crate::multi_evm::EvmChainConfigExt;
 
 pub mod evm;
+pub mod solana;
 pub mod terra;
 
 pub use evm::EvmWatcher;
+pub use solana::SolanaWatcher;
 pub use terra::TerraWatcher;
 
 /// Manages multiple chain watchers
 pub struct WatcherManager {
     evm_watchers: Vec<EvmWatcher>,
     terra_watcher: TerraWatcher,
+    solana_watcher: Option<SolanaWatcher>,
 }
 
 impl WatcherManager {
@@ -51,7 +54,39 @@ impl WatcherManager {
             }
         }
 
-        let terra_watcher = TerraWatcher::new(&config.terra, db).await?;
+        let terra_watcher = TerraWatcher::new(&config.terra, db.clone()).await?;
+
+        let solana_watcher = if let Some(ref sol_cfg) = config.solana {
+            let program_id: solana_sdk::pubkey::Pubkey = sol_cfg
+                .program_id
+                .parse()
+                .map_err(|e| eyre::eyre!("Invalid SOLANA_PROGRAM_ID: {}", e))?;
+            match SolanaWatcher::new(
+                &sol_cfg.rpc_url,
+                program_id,
+                db,
+                sol_cfg.poll_interval_ms,
+                *sol_cfg
+                    .bytes4_chain_ids
+                    .first()
+                    .unwrap_or(&[0x00, 0x00, 0x00, 0x05]),
+            ) {
+                Ok(w) => {
+                    info!(
+                        program_id = %sol_cfg.program_id,
+                        poll_interval_ms = sol_cfg.poll_interval_ms,
+                        "Created Solana watcher"
+                    );
+                    Some(w)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create Solana watcher; continuing without it");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Deduplicate watchers: if the same native chain ID appears more than
         // once (e.g., in both primary EVM config and multi-EVM config), keep only
@@ -75,6 +110,7 @@ impl WatcherManager {
         Ok(Self {
             evm_watchers,
             terra_watcher,
+            solana_watcher,
         })
     }
 
@@ -88,6 +124,9 @@ impl WatcherManager {
             join_set.spawn(async move { (format!("evm:{chain_id}"), evm_watcher.run().await) });
         }
         join_set.spawn(async move { ("terra".to_string(), self.terra_watcher.run().await) });
+        if let Some(solana_watcher) = self.solana_watcher {
+            join_set.spawn(async move { ("solana".to_string(), solana_watcher.run().await) });
+        }
 
         tokio::select! {
             _ = shutdown.recv() => {

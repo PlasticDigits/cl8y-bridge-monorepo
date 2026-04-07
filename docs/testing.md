@@ -16,7 +16,7 @@ All tests involving blockchain interactions run against real infrastructure:
 
 | Test Type | Example | Infrastructure |
 |-----------|---------|----------------|
-| Pure functions | `formatAmount()`, `parseAmount()` | None |
+| Pure functions | `formatAmount()`, `parseAmount()` (see [frontend.md](frontend.md#token-amounts-and-formatting) for rational micro parsing and unparseable sentinels) | None |
 | Configuration | Validate constants structure | None |
 | Hash computation | `keccak256` tests | None |
 | Component rendering | React UI elements | jsdom only |
@@ -422,6 +422,35 @@ Options:
 | `scripts/test-transfer.sh` | Interactive transfer tests | `./scripts/test-transfer.sh` |
 | `scripts/deploy-terra-local.sh` | Deploy Terra contracts | `./scripts/deploy-terra-local.sh` |
 | `scripts/setup-bridge.sh` | Configure cross-chain | `./scripts/setup-bridge.sh` |
+| `scripts/deploy-evm-local.sh` | Deploy EVM to Anvil + write `.deploy/local.env` | Used by `make deploy-evm` |
+| `scripts/lib-local-deploy-env.sh` | Helpers for `.deploy/local.env` | Sourced by deploy + `setup-bridge` |
+
+### Solana — offline hash / PDA goldens (`test_solana_flows`)
+
+`packages/e2e/tests/test_solana_flows.rs` is an **offline** integration test target: V2 hash parity and PDA derivations against `multichain-rs`, **no** Solana RPC and **no** `#[ignore]`. It does not replace `anchor test`; it complements it for INV-H1-style goldens.
+
+```bash
+cd packages/e2e && cargo test --test test_solana_flows -- --nocapture
+# or from repo root (sets default program id from deploy keypair when present):
+make solana-test-e2e
+```
+
+**CI:** `.github/workflows/test.yml` job `e2e-offline-solana` runs the same command on pushes/PRs that touch `packages/e2e/**` (and other paths in that workflow).
+
+### Solana — live canceler / operator E2E (`SOLANA_ENABLED`)
+
+Rust scenarios that exercise the canceler or operator against a **real** Solana JSON-RPC (e.g. `packages/e2e/src/tests/canceler_solana_destination.rs`) require `SOLANA_ENABLED=true` and related env (`SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, keypair paths, etc.). The default **`.github/workflows/e2e.yml`** full suite does **not** set `SOLANA_ENABLED`; those flows are not covered by routine GitHub E2E alone.
+
+**Pre-release:** Before production cuts that include Solana, run `cl8y-e2e` with a reachable Solana RPC and `SOLANA_ENABLED=true` (and documented env) so canceler/operator Solana paths are exercised — for example from `packages/e2e` after `cargo run -p cl8y-e2e -- setup` and configuring Solana in `.env`, then running the relevant tests or the full `run` with Solana enabled.
+
+### Optional: in-program Rust tests
+
+Today, Solana program behavior is validated primarily by **Anchor TypeScript** tests (`anchor test`) and the offline goldens above. A further optional hardening step is **`solana-program-test`** (or similar) in the program crate for decode-only or lightweight CPI scenarios; that harness is not wired in this repo yet.
+
+**Program id for offline goldens**
+
+- Override with `SOLANA_PROGRAM_ID` if needed; otherwise `test_solana_flows.rs` defaults to the Anchor workspace id (committed localnet bridge program id).
+- `make solana-test-e2e` sets `SOLANA_PROGRAM_ID` from `packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json` when the env var is empty.
 
 ---
 
@@ -449,6 +478,9 @@ TERRA_KEY_NAME=test1
 # Test accounts
 EVM_TEST_ADDRESS=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 TERRA_TEST_ADDRESS=terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v
+
+# Solana (optional — defaults to committed localnet program id / deploy keypair)
+# SOLANA_PROGRAM_ID=<pubkey from solana-keygen pubkey packages/contracts-solana/keys/localnet/cl8y_bridge-keypair.json>
 ```
 
 Load before running tests:

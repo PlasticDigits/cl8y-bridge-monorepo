@@ -5,9 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { hexToBytes, type Hex } from 'viem'
 import {
   computeXchainHashId,
   chainIdToBytes32,
+  chainBytes4ToBytes32,
+  computeXchainHashIdFromBytes,
+  computeXchainHashIdBytes,
   evmAddressToBytes32,
   terraAddressToBytes32,
   tokenUlunaBytes32,
@@ -54,6 +58,168 @@ describe('hashVerification', () => {
     it('should reject out-of-range chain ID', () => {
       expect(() => chainIdToBytes32(-1)).toThrow('out of bytes4 range')
       expect(() => chainIdToBytes32(0x100000000)).toThrow('out of bytes4 range')
+    })
+  })
+
+  describe('chainBytes4ToBytes32', () => {
+    it('matches chainIdToBytes32 for big-endian uint32', () => {
+      const b = new Uint8Array([0, 0, 0, 1])
+      expect(chainBytes4ToBytes32(b)).toBe(chainIdToBytes32(1))
+      expect(chainBytes4ToBytes32(new Uint8Array([0, 0, 0, 56]))).toBe(chainIdToBytes32(56))
+    })
+  })
+
+  describe('computeXchainHashIdFromBytes (Solana / INV-H1)', () => {
+    it('matches computeXchainHashId for EVM-style hex fields', () => {
+      const srcChain = new Uint8Array([0, 0, 0, 1])
+      const destChain = new Uint8Array([0, 0, 0, 2])
+      const srcAccount = hexToBytes(
+        '0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Hex
+      )
+      const destAccount = hexToBytes(
+        '0x00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8' as Hex
+      )
+      const token = hexToBytes(tokenUlunaBytes32())
+      const hexWay = computeXchainHashId(
+        chainIdToBytes32(1),
+        chainIdToBytes32(2),
+        evmAddressToBytes32('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as `0x${string}`),
+        evmAddressToBytes32('0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as `0x${string}`),
+        tokenUlunaBytes32(),
+        BigInt(1_000_000),
+        BigInt(1)
+      )
+      const bytesWay = computeXchainHashIdFromBytes(
+        srcChain,
+        destChain,
+        srcAccount,
+        destAccount,
+        token,
+        BigInt(1_000_000),
+        BigInt(1)
+      )
+      expect(bytesWay).toBe(hexWay)
+    })
+
+    it('matches HashLib.t.sol test_DepositWithdraw_EvmToEvm_ERC20', () => {
+      const h = computeXchainHashId(
+        chainIdToBytes32(1),
+        chainIdToBytes32(56),
+        evmAddressToBytes32('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as `0x${string}`),
+        evmAddressToBytes32('0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as `0x${string}`),
+        evmAddressToBytes32('0x5FbDB2315678afecb367f032d93F642f64180aa3' as `0x${string}`),
+        BigInt('1000000000000000000'),
+        BigInt(42)
+      )
+      expect(h).toBe(
+        '0x11c90f88a3d48e75a39bc219d261069075a136436ae06b2b571b66a9a600aa54' as Hex
+      )
+    })
+
+    it('matches HashLib.t.sol test_DepositWithdraw_EvmToTerra_NativeUluna', () => {
+      const srcChain = new Uint8Array([0, 0, 0, 1])
+      const destChain = new Uint8Array([0, 0, 0, 2])
+      const srcAccount = hexToBytes(
+        '0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Hex
+      )
+      const destAccount = hexToBytes(
+        '0x00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d' as Hex
+      )
+      const token = hexToBytes(tokenUlunaBytes32())
+      const h = computeXchainHashIdFromBytes(
+        srcChain,
+        destChain,
+        srcAccount,
+        destAccount,
+        token,
+        BigInt(995_000),
+        BigInt(1)
+      )
+      expect(h).toBe(
+        '0x92b16cdec59cb405996f66a9153c364ed635f40f922b518885aa76e5e9c23453' as Hex
+      )
+      const raw = computeXchainHashIdBytes(
+        srcChain,
+        destChain,
+        srcAccount,
+        destAccount,
+        token,
+        BigInt(995_000),
+        BigInt(1)
+      )
+      expect(raw.length).toBe(32)
+    })
+
+    const CW20_BYTES32 =
+      '0x00000000000000000000000035743074956c710800e83198011ccbd4ddf1556d' as Hex
+
+    it('matches HashLib.t.sol test_DepositWithdraw_EvmToTerra_CW20', () => {
+      const srcChain = new Uint8Array([0, 0, 0, 1])
+      const destChain = new Uint8Array([0, 0, 0, 2])
+      const evmAcc = hexToBytes(
+        '0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Hex
+      )
+      const cw20 = hexToBytes(CW20_BYTES32)
+      const h = computeXchainHashIdFromBytes(
+        srcChain,
+        destChain,
+        evmAcc,
+        cw20,
+        cw20,
+        BigInt(1_000_000),
+        BigInt(5)
+      )
+      expect(h).toBe(
+        '0x1ec7d94b0f068682032903f83c88fd643d03969e04875ec7ea70f02d1a74db7b' as Hex
+      )
+    })
+
+    it('matches HashLib.t.sol test_DepositWithdraw_TerraToEvm_NativeToERC20', () => {
+      const srcChain = new Uint8Array([0, 0, 0, 2])
+      const destChain = new Uint8Array([0, 0, 0, 1])
+      const terraAcc = hexToBytes(CW20_BYTES32)
+      const evmAcc = hexToBytes(
+        '0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Hex
+      )
+      const token = hexToBytes(
+        '0x0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3' as Hex
+      )
+      const h = computeXchainHashIdFromBytes(
+        srcChain,
+        destChain,
+        terraAcc,
+        evmAcc,
+        token,
+        BigInt(500_000),
+        BigInt(3)
+      )
+      expect(h).toBe(
+        '0x076a0951bf01eaaf385807d46f1bdfaa4e3f88d7ba77aae03c65871f525a7438' as Hex
+      )
+    })
+
+    it('matches HashLib.t.sol test_DepositWithdraw_TerraToEvm_CW20ToERC20', () => {
+      const srcChain = new Uint8Array([0, 0, 0, 2])
+      const destChain = new Uint8Array([0, 0, 0, 1])
+      const terraAcc = hexToBytes(CW20_BYTES32)
+      const evmB = hexToBytes(
+        '0x00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8' as Hex
+      )
+      const token = hexToBytes(
+        '0x000000000000000000000000e7f1725e7734ce288f8367e1bb143e90bb3f0512' as Hex
+      )
+      const h = computeXchainHashIdFromBytes(
+        srcChain,
+        destChain,
+        terraAcc,
+        evmB,
+        token,
+        BigInt(2_500_000),
+        BigInt(7)
+      )
+      expect(h).toBe(
+        '0xf1ab14494f74acdd3a622cd214e6d0ebde29121309203a6bd7509bf3025c22ab' as Hex
+      )
     })
   })
 

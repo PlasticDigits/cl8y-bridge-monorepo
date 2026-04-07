@@ -98,7 +98,6 @@ pub fn compute_xchain_hash_id(
     keccak256(&data)
 }
 
-
 /// Convert an EVM address to bytes32 (left-padded with zeros)
 pub fn address_to_bytes32(addr: &[u8; 20]) -> [u8; 32] {
     let mut result = [0u8; 32];
@@ -858,5 +857,192 @@ mod tests {
             "Terra→EVM CW20→ERC20 deposit=withdraw: {}",
             bytes32_to_hex(&xchain_hash_id_deposit)
         );
+    }
+}
+
+/// Property-based tests for V2 hash identity (determinism, sensitivity, parity).
+#[cfg(test)]
+mod proptest_xchain_hash {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn chain4() -> impl Strategy<Value = [u8; 4]> {
+        prop::array::uniform4(any::<u8>())
+    }
+
+    fn bytes32() -> impl Strategy<Value = [u8; 32]> {
+        prop::array::uniform32(any::<u8>())
+    }
+
+    proptest! {
+        #[test]
+        fn compute_xchain_hash_id_is_deterministic(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h2 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_eq!(h1, h2);
+        }
+
+        #[test]
+        fn deposit_and_withdraw_same_inputs_same_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let deposit_side = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let withdraw_side = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_eq!(deposit_side, withdraw_side);
+        }
+
+        #[test]
+        fn changing_amount_by_one_changes_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            prop_assume!(amount < u128::MAX);
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount + 1, nonce);
+            prop_assert_ne!(h0, h1);
+        }
+
+        #[test]
+        fn changing_nonce_by_one_changes_hash(
+            sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            prop_assume!(nonce < u64::MAX);
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce + 1);
+            prop_assert_ne!(h0, h1);
+        }
+
+        #[test]
+        fn flipping_src_chain_byte_changes_hash(
+            mut sc in chain4(),
+            dc in chain4(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let h0 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            sc[0] ^= 0xFF;
+            let h1 = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            prop_assert_ne!(h0, h1);
+        }
+    }
+}
+
+/// Fuzz + catalogue: V2 xchain hash must match Solidity `abi.encode` + `keccak256` (Alloy), across
+/// arbitrary chain-id pairs and field vectors. Covers EVM / Terra / Solana / common L2 ids used in bridge configs.
+#[cfg(test)]
+mod alloy_abi_encode_xchain_fuzz {
+    use super::compute_xchain_hash_id;
+    use alloy::primitives::{keccak256, B256, U256};
+    use alloy::sol_types::SolValue;
+    use proptest::prelude::*;
+
+    fn chain4_to_b256(chain: [u8; 4]) -> B256 {
+        let mut word = [0u8; 32];
+        word[..4].copy_from_slice(&chain);
+        B256::from(word)
+    }
+
+    /// Same as `HashLib.computeXchainHashId` / `abi.encode` of seven 32-byte words.
+    fn xchain_hash_alloy_abi_encode(
+        src_chain: [u8; 4],
+        dest_chain: [u8; 4],
+        src_account: [u8; 32],
+        dest_account: [u8; 32],
+        token: [u8; 32],
+        amount: u128,
+        nonce: u64,
+    ) -> [u8; 32] {
+        let encoded = (
+            chain4_to_b256(src_chain),
+            chain4_to_b256(dest_chain),
+            B256::from(src_account),
+            B256::from(dest_account),
+            B256::from(token),
+            U256::from(amount),
+            U256::from(nonce),
+        )
+            .abi_encode();
+        keccak256(&encoded).0
+    }
+
+    fn bytes32() -> impl Strategy<Value = [u8; 32]> {
+        prop::array::uniform32(any::<u8>())
+    }
+
+    /// V2 bytes4 chain ids used across local / testnet / mainnet configs (big-endian u32).
+    const BRIDGE_CHAIN_IDS: &[[u8; 4]] = &[
+        [0, 0, 0, 1],        // Ethereum mainnet-style
+        [0, 0, 0, 2],        // Terra Classic (docs / e2e)
+        [0, 0, 0, 5],        // Solana (local V2 id)
+        [0, 0, 0, 56],       // BNB Chain
+        [0, 0, 0, 137],      // Polygon
+        [0, 0, 0x7a, 0x69],  // 31337 Anvil
+        [0, 0, 0x42, 0x61],  // 16993 (0x4261)
+        [0, 0, 0x21, 0x05],  // 8453 Base
+        [0, 0, 0xA4, 0xB1],  // 42161 Arbitrum One
+        [0, 0, 0x44, 0xCB],  // 17611 (0x44cb)
+    ];
+
+    proptest! {
+        #[test]
+        fn proptest_multichain_hash_matches_alloy_abi_encode(
+            sc in prop::array::uniform4(any::<u8>()),
+            dc in prop::array::uniform4(any::<u8>()),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            let lib = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let sol = xchain_hash_alloy_abi_encode(sc, dc, sa, da, tok, amount, nonce);
+            prop_assert_eq!(lib, sol);
+        }
+
+        #[test]
+        fn proptest_hash_matches_alloy_for_catalogued_chain_pairs(
+            src_i in 0..BRIDGE_CHAIN_IDS.len(),
+            dest_i in 0..BRIDGE_CHAIN_IDS.len(),
+            sa in bytes32(),
+            da in bytes32(),
+            tok in bytes32(),
+            amount in any::<u128>(),
+            nonce in any::<u64>(),
+        ) {
+            prop_assume!(src_i != dest_i);
+            let sc = BRIDGE_CHAIN_IDS[src_i];
+            let dc = BRIDGE_CHAIN_IDS[dest_i];
+            let lib = compute_xchain_hash_id(&sc, &dc, &sa, &da, &tok, amount, nonce);
+            let sol = xchain_hash_alloy_abi_encode(sc, dc, sa, da, tok, amount, nonce);
+            prop_assert_eq!(lib, sol);
+        }
     }
 }

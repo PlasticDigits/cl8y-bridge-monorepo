@@ -45,6 +45,16 @@
       "tier": "local"
     },
     {
+      "id": "solana-localnet",
+      "name": "Solana Localnet",
+      "chainId": "solana-localnet",
+      "type": "solana",
+      "icon": "/chains/localsolana-icon.png",
+      "rpcUrl": "http://localhost:8899",
+      "explorerUrl": "",
+      "tier": "local"
+    },
+    {
       "id": "ethereum",
       "name": "Ethereum",
       "chainId": 1,
@@ -84,6 +94,26 @@
       "lcdUrl": "https://terra-classic-lcd.publicnode.com",
       "explorerUrl": "https://finder.terraclassic.community/mainnet",
       "tier": "mainnet"
+    },
+    {
+      "id": "solana",
+      "name": "Solana",
+      "chainId": "solana",
+      "type": "solana",
+      "icon": "/chains/solana-icon.png",
+      "rpcUrl": "https://api.mainnet-beta.solana.com",
+      "explorerUrl": "https://explorer.solana.com",
+      "tier": "mainnet"
+    },
+    {
+      "id": "solana-devnet",
+      "name": "Solana Devnet",
+      "chainId": "solana-devnet",
+      "type": "solana",
+      "icon": "/chains/solana-icon.png",
+      "rpcUrl": "https://api.devnet.solana.com",
+      "explorerUrl": "https://explorer.solana.com/?cluster=devnet",
+      "tier": "testnet"
     }
   ]
 }

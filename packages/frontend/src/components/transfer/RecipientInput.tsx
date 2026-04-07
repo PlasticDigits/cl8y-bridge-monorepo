@@ -1,4 +1,5 @@
 import { isValidEvmAddress, isValidTerraAddress } from '../../utils/validation'
+import { isValidSolanaAddress } from '../../services/solana/address'
 import { sounds } from '../../lib/sounds'
 import type { TransferDirection } from '../../types/transfer'
 
@@ -19,15 +20,19 @@ export function RecipientInput({
   disabled,
   onAutofill,
 }: RecipientInputProps) {
-  const isTerraDest = direction === 'evm-to-terra'
-  const isEvmDest = direction === 'terra-to-evm' || direction === 'evm-to-evm'
-  const defaultPlaceholder = isTerraDest ? 'terra1...' : '0x...'
+  const isTerraDest = direction === 'evm-to-terra' || direction === 'solana-to-terra'
+  const isSolanaDest = direction === 'terra-to-solana' || direction === 'evm-to-solana'
+  const isEvmDest =
+    direction === 'terra-to-evm' || direction === 'evm-to-evm' || direction === 'solana-to-evm'
+  const defaultPlaceholder = isTerraDest ? 'terra1...' : isSolanaDest ? 'Solana address…' : '0x...'
   const isValid = value
     ? isTerraDest
       ? isValidTerraAddress(value)
-      : isEvmDest
-      ? isValidEvmAddress(value)
-      : true
+      : isSolanaDest
+        ? isValidSolanaAddress(value)
+        : isEvmDest
+          ? isValidEvmAddress(value)
+          : true
     : true
 
   return (

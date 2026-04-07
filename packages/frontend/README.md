@@ -47,6 +47,10 @@ VITE_TERRA_BRIDGE_ADDRESS=terra1...
 - **Bridge Form**: Transfer tokens between Terra Classic and EVM chains
 - **Transaction History**: Track your bridge transactions (stored locally)
 
+### Solana as source chain
+
+When bridging **from Solana**, the app loads `TokenMapping.local_mint` for the route. If it is the **wrapped SOL** mint, the transaction uses **`deposit_native`** (lamports). For any other SPL mint, it uses **`deposit_spl`** from the user’s ATA (and may create the ATA first). See [docs/SOLANA_BRIDGE_DEPOSITS.md](../../docs/SOLANA_BRIDGE_DEPOSITS.md).
+
 ## Project Structure
 
 ```

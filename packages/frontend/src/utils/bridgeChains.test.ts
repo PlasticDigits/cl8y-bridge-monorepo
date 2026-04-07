@@ -6,6 +6,7 @@ import {
   getBridgeChainByName,
   getEvmBridgeChains,
   getCosmosBridgeChains,
+  getSolanaBridgeChains,
 } from './bridgeChains'
 
 describe('bridgeChains', () => {
@@ -70,5 +71,11 @@ describe('bridgeChains', () => {
     const cosmosChains = getCosmosBridgeChains()
     expect(cosmosChains.length).toBeGreaterThan(0)
     expect(cosmosChains.every((c) => c.type === 'cosmos')).toBe(true)
+  })
+
+  it('should filter Solana chains only', () => {
+    const solanaChains = getSolanaBridgeChains()
+    expect(solanaChains.length).toBeGreaterThan(0)
+    expect(solanaChains.every((c) => c.type === 'solana')).toBe(true)
   })
 })

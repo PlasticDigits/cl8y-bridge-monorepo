@@ -6,6 +6,11 @@
 const DEFAULT_TIMEOUT = 60_000 // 60 seconds
 const POLL_INTERVAL = 2_000 // 2 seconds
 
+/** Match docker-compose `E2E_TERRA_LCD_PORT` / `.env.e2e.local` `TERRA_LCD_URL` (default 1317). */
+export function terraLcdUrl(): string {
+  return process.env.TERRA_LCD_URL?.trim() || 'http://localhost:1317'
+}
+
 export interface HealthCheckResult {
   name: string
   healthy: boolean
@@ -44,6 +49,26 @@ async function checkTerraHealth(lcdUrl: string): Promise<boolean> {
   }
 }
 
+const DEFAULT_SOLANA_RPC = 'http://127.0.0.1:8899'
+
+/**
+ * Check if a Solana JSON-RPC endpoint is healthy (local test validator).
+ */
+async function checkSolanaHealth(rpcUrl: string = DEFAULT_SOLANA_RPC): Promise<boolean> {
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getHealth' }),
+      signal: AbortSignal.timeout(5000),
+    })
+    const data = (await response.json()) as { result?: string }
+    return data.result === 'ok'
+  } catch {
+    return false
+  }
+}
+
 /**
  * Poll an endpoint until it's healthy or timeout is reached.
  */
@@ -68,10 +93,13 @@ async function pollUntilHealthy(
  */
 export async function waitForAllChains(timeout: number = DEFAULT_TIMEOUT): Promise<void> {
   console.log('[health] Waiting for chains to be healthy...')
+  const solRpc = process.env.SOLANA_RPC_URL || DEFAULT_SOLANA_RPC
+  const terra = terraLcdUrl()
   await Promise.all([
     pollUntilHealthy('Anvil (8545)', () => checkEvmHealth('http://localhost:8545'), timeout),
     pollUntilHealthy('Anvil1 (8546)', () => checkEvmHealth('http://localhost:8546'), timeout),
-    pollUntilHealthy('LocalTerra (1317)', () => checkTerraHealth('http://localhost:1317'), timeout),
+    pollUntilHealthy(`LocalTerra LCD (${terra})`, () => checkTerraHealth(terra), timeout),
+    pollUntilHealthy(`Solana (${solRpc})`, () => checkSolanaHealth(solRpc), timeout),
   ])
   console.log('[health] All chains are healthy')
 }
@@ -80,10 +108,13 @@ export async function waitForAllChains(timeout: number = DEFAULT_TIMEOUT): Promi
  * Quick check if all chains are already running.
  */
 export async function areAllChainsHealthy(): Promise<boolean> {
+  const solRpc = process.env.SOLANA_RPC_URL || DEFAULT_SOLANA_RPC
+  const terra = terraLcdUrl()
   const results = await Promise.all([
     checkEvmHealth('http://localhost:8545'),
     checkEvmHealth('http://localhost:8546'),
-    checkTerraHealth('http://localhost:1317'),
+    checkTerraHealth(terra),
+    checkSolanaHealth(solRpc),
   ])
   return results.every(Boolean)
 }

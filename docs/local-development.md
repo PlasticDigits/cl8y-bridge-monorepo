@@ -9,6 +9,10 @@ This guide explains how to set up a fully local development environment for test
 - Foundry (for EVM contracts)
 - Node.js 18+ (for scripts)
 
+### Node.js package manager
+
+Use **npm** only for JavaScript packages in this monorepo (`packages/frontend`, `packages/contracts-solana`, etc.). Install dependencies with **`npm ci`** when a `package-lock.json` is present (reproducible installs for CI and QA), or **`npm install`** when adding or updating dependencies. Do not add **Yarn** or **pnpm** lockfiles here — they are not part of the supported workflow.
+
 ## Quick Start
 
 ```bash

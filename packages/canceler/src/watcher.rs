@@ -37,6 +37,7 @@ use crate::config::Config;
 use crate::evm_client::EvmClient;
 use crate::hash::bytes32_to_hex;
 use crate::server::{SharedMetrics, SharedStats};
+use crate::solana_client::SolanaCancelerClient;
 use crate::terra_client::TerraClient;
 use crate::verifier::{ApprovalVerifier, PendingApproval, VerificationResult};
 
@@ -109,6 +110,14 @@ pub struct CancelerWatcher {
     verifier: ApprovalVerifier,
     evm_client: EvmClient,
     terra_client: TerraClient,
+    /// Optional Solana canceler client (only when Solana is enabled)
+    solana_client: Option<SolanaCancelerClient>,
+    /// V2 chain ID for Solana (if configured)
+    solana_chain_id: Option<[u8; 4]>,
+    /// Solana bridge `withdraw_delay` in seconds (from on-chain config; default 300).
+    solana_cancel_window_secs: u64,
+    /// Last processed Solana signature for cursor-based pagination
+    last_solana_signature: Option<solana_sdk::signature::Signature>,
     /// Hashes we've already verified (C3: bounded)
     verified_hashes: BoundedHashCache,
     /// Hashes we've cancelled (C3: bounded)
@@ -190,6 +199,104 @@ impl CancelerWatcher {
             &config.terra_mnemonic,
         )?;
 
+        // Initialize optional Solana client
+        let (solana_client, solana_chain_id) = if let Some(ref sol_config) = config.solana {
+            let program_id: solana_sdk::pubkey::Pubkey = sol_config
+                .program_id
+                .parse()
+                .map_err(|e| eyre!("Invalid SOLANA_PROGRAM_ID: {}", e))?;
+
+            let keypair_bytes = std::fs::read(&sol_config.keypair_path).map_err(|e| {
+                eyre!(
+                    "Failed to read SOLANA_KEYPAIR_PATH '{}': {}",
+                    sol_config.keypair_path,
+                    e
+                )
+            })?;
+            let keypair_data: Vec<u8> = serde_json::from_slice(&keypair_bytes)
+                .map_err(|e| eyre!("Failed to parse Solana keypair JSON: {}", e))?;
+            let keypair = solana_sdk::signature::Keypair::from_bytes(&keypair_data)
+                .map_err(|e| eyre!("Invalid Solana keypair bytes: {}", e))?;
+
+            let client = SolanaCancelerClient::new(
+                &sol_config.rpc_url,
+                program_id,
+                keypair,
+                &sol_config.commitment,
+            );
+            info!(
+                program_id = %program_id,
+                canceler_pubkey = %client.pubkey(),
+                chain_ids = ?sol_config
+                    .chain_ids
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>(),
+                "Solana canceler client initialized"
+            );
+            // Register Solana in the verifier for source-chain deposit verification
+            let program_id_bytes = program_id.to_bytes();
+            verifier.register_solana(crate::verifier::SolanaVerifierConfig {
+                rpc_url: sol_config.rpc_url.clone(),
+                program_id: program_id_bytes,
+                chain_ids: sol_config.chain_ids.clone(),
+            });
+
+            (Some(client), sol_config.chain_ids.first().copied())
+        } else {
+            // Register HTTP-only Solana deposit verification (no Solana watcher / keypair).
+            // E2E sets SOLANA_DEPOSIT_VERIFY_RPC_URL + SOLANA_DEPOSIT_VERIFY_PROGRAM_ID so
+            // Solana-source fraud approvals hit getAccountInfo → null PDA → Invalid → cancel.
+            if let Ok(rpc_url) = std::env::var("SOLANA_DEPOSIT_VERIFY_RPC_URL") {
+                if let Ok(program_id_str) = std::env::var("SOLANA_DEPOSIT_VERIFY_PROGRAM_ID") {
+                    if let Ok(program_id) = solana_sdk::pubkey::Pubkey::from_str(&program_id_str) {
+                        let chain_ids = match crate::config::parse_solana_v2_chain_ids_from_env() {
+                            Ok(ids) => ids,
+                            Err(e) => {
+                                warn!(error = %e, "SOLANA_DEPOSIT_VERIFY: invalid SOLANA_V2_CHAIN_ID(S)");
+                                vec![[0x00, 0x00, 0x00, 0x05]]
+                            }
+                        };
+                        verifier.register_solana(crate::verifier::SolanaVerifierConfig {
+                            rpc_url,
+                            program_id: program_id.to_bytes(),
+                            chain_ids: chain_ids.clone(),
+                        });
+                        info!(
+                            chain_ids = ?chain_ids.iter().map(hex::encode).collect::<Vec<_>>(),
+                            program_id = %program_id_str,
+                            "Registered Solana deposit verifier (SOLANA_DEPOSIT_VERIFY_* — no full Solana watcher)"
+                        );
+                    } else {
+                        warn!(
+                            program_id = %program_id_str,
+                            "SOLANA_DEPOSIT_VERIFY_PROGRAM_ID is not a valid Solana pubkey"
+                        );
+                    }
+                }
+            }
+            (None, None)
+        };
+
+        let mut solana_cancel_window_secs = 300u64;
+        if let Some(ref sc) = solana_client {
+            match sc.read_bridge_withdraw_delay_secs() {
+                Ok(d) => {
+                    solana_cancel_window_secs = d;
+                    info!(
+                        withdraw_delay_secs = d,
+                        "Read withdraw_delay from Solana bridge config"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to read Solana bridge withdraw_delay; using default 300s"
+                    );
+                }
+            }
+        }
+
         // Use the already-resolved V2 chain ID (guaranteed by resolve_v2_chain_ids_required)
         let this_chain_id = evm_v2;
 
@@ -233,6 +340,10 @@ impl CancelerWatcher {
             verifier,
             evm_client,
             terra_client,
+            solana_client,
+            solana_chain_id,
+            solana_cancel_window_secs,
+            last_solana_signature: None,
             verified_hashes: BoundedHashCache::new(
                 config.dedupe_cache_max_size,
                 config.dedupe_cache_ttl_secs,
@@ -426,6 +537,13 @@ impl CancelerWatcher {
 
         // Poll Terra bridge for approvals
         self.poll_terra_approvals().await?;
+
+        // Poll Solana bridge for approvals (if configured)
+        if self.solana_client.is_some() {
+            if let Err(e) = self.poll_solana_approvals().await {
+                warn!(error = %e, "Solana poll failed");
+            }
+        }
 
         // C3: Update dedupe cache size gauges
         self.metrics
@@ -1371,6 +1489,123 @@ impl CancelerWatcher {
         Ok(())
     }
 
+    /// Poll Solana bridge for pending withdraw_approve events.
+    ///
+    /// Uses cursor-based signature pagination via the last processed signature.
+    /// Processes events chronologically (oldest-first) and verifies each against
+    /// the source chain deposit records.
+    async fn poll_solana_approvals(&mut self) -> Result<()> {
+        debug!("Polling Solana approvals");
+
+        let solana_chain_id = match self.solana_chain_id {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        // Collect all data from solana_client in a block so the immutable
+        // borrow on `self.solana_client` is released before we call
+        // `self.verify_and_cancel` (which requires `&mut self`).
+        #[allow(clippy::type_complexity)]
+        let prepared: Vec<(
+            solana_sdk::signature::Signature,
+            [u8; 32],
+            Option<[u8; 4]>,
+            i64,
+        )>;
+        {
+            let solana_client = match self.solana_client {
+                Some(ref client) => client,
+                None => return Ok(()),
+            };
+
+            let approvals = match solana_client.poll_approvals(self.last_solana_signature.as_ref())
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(error = %e, "Failed to poll Solana approvals");
+                    return Ok(());
+                }
+            };
+
+            if approvals.is_empty() {
+                debug!("No new Solana approval events");
+                return Ok(());
+            }
+
+            info!(
+                event_count = approvals.len(),
+                "Found Solana WithdrawApprove events — processing for fraud detection"
+            );
+
+            prepared = approvals
+                .iter()
+                .map(|(sig, evt)| {
+                    let src = solana_client
+                        .read_pending_withdraw_src_chain(&evt.transfer_hash)
+                        .ok();
+                    (*sig, evt.transfer_hash, src, evt.approved_at)
+                })
+                .collect();
+        }
+
+        let mut last_sig = self.last_solana_signature;
+
+        for (signature, xchain_hash_id, _src_chain_id_opt, approved_at) in &prepared {
+            if self.verified_hashes.contains(xchain_hash_id)
+                || self.cancelled_hashes.contains(xchain_hash_id)
+            {
+                last_sig = Some(*signature);
+                continue;
+            }
+
+            info!(
+                xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                signature = %signature,
+                approved_at = approved_at,
+                "Processing Solana approval event"
+            );
+
+            let solana_ref = self.solana_client.as_ref().unwrap();
+            let approval = match solana_ref.read_pending_withdraw_full(xchain_hash_id) {
+                Ok(pw) => PendingApproval {
+                    xchain_hash_id: *xchain_hash_id,
+                    src_chain_id: pw.src_chain,
+                    dest_chain_id: solana_chain_id,
+                    src_account: pw.src_account,
+                    dest_account: pw.dest_account,
+                    dest_token: pw.token,
+                    amount: pw.amount,
+                    nonce: pw.nonce,
+                    approved_at_timestamp: pw.approved_at as u64,
+                    cancel_window: self.solana_cancel_window_secs,
+                },
+                Err(e) => {
+                    warn!(
+                        xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                        error = %e,
+                        "Failed to read full PendingWithdraw data, skipping"
+                    );
+                    last_sig = Some(*signature);
+                    continue;
+                }
+            };
+
+            if let Err(e) = self.verify_and_cancel(&approval).await {
+                error!(
+                    error = %e,
+                    xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
+                    "Failed to verify Solana approval"
+                );
+            }
+
+            last_sig = Some(*signature);
+        }
+
+        self.last_solana_signature = last_sig;
+
+        Ok(())
+    }
+
     /// Helper to parse bytes4 from JSON (base64 encoded).
     /// Returns None if the value is missing, empty, or cannot be decoded.
     fn parse_bytes4_from_json(&self, value: &serde_json::Value) -> Option<[u8; 4]> {
@@ -1638,6 +1873,35 @@ impl CancelerWatcher {
                             hash = %bytes32_to_hex(&xchain_hash_id),
                             chain = %peer.name,
                             "EVM peer-chain cancellation FAILED"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Try Solana
+        if let (Some(ref solana_client), Some(sol_chain_id)) =
+            (&self.solana_client, self.solana_chain_id)
+        {
+            if dest_chain == sol_chain_id {
+                info!(
+                    hash = %bytes32_to_hex(&xchain_hash_id),
+                    "Submitting cancellation to Solana"
+                );
+                match solana_client.submit_cancel(&xchain_hash_id) {
+                    Ok(sig) => {
+                        info!(
+                            tx = %sig,
+                            hash = %bytes32_to_hex(&xchain_hash_id),
+                            "Solana cancellation transaction SUCCEEDED"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            hash = %bytes32_to_hex(&xchain_hash_id),
+                            "Solana cancellation FAILED"
                         );
                     }
                 }

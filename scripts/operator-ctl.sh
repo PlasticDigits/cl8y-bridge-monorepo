@@ -68,20 +68,34 @@ start_operator() {
 
     log_info "Starting operator..."
 
-    # Check if binary exists (binary is named cl8y-relayer)
-    local binary="$OPERATOR_DIR/target/release/cl8y-relayer"
-    if [ ! -f "$binary" ]; then
+    # Cargo [[bin]] name is cl8y-operator; older trees may still have cl8y-relayer
+    resolve_operator_binary() {
+        local name
+        for name in cl8y-operator cl8y-relayer; do
+            if [ -f "$OPERATOR_DIR/target/release/$name" ]; then
+                echo "$OPERATOR_DIR/target/release/$name"
+                return 0
+            fi
+        done
+        for name in cl8y-operator cl8y-relayer; do
+            if [ -f "$OPERATOR_DIR/target/debug/$name" ]; then
+                echo "$OPERATOR_DIR/target/debug/$name"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    local binary
+    binary="$(resolve_operator_binary)" || binary=""
+    if [ -z "$binary" ]; then
         log_warn "Binary not found, building..."
         build_operator
+        binary="$(resolve_operator_binary)" || binary=""
     fi
 
-    # Check if debug binary exists instead
-    if [ ! -f "$binary" ]; then
-        binary="$OPERATOR_DIR/target/debug/cl8y-relayer"
-    fi
-
-    if [ ! -f "$binary" ]; then
-        log_error "Operator binary not found. Run: ./scripts/operator-ctl.sh build"
+    if [ -z "$binary" ] || [ ! -f "$binary" ]; then
+        log_error "Operator binary not found (expected cl8y-operator or cl8y-relayer under target/release). Run: ./scripts/operator-ctl.sh build"
         exit 1
     fi
 
@@ -90,6 +104,20 @@ start_operator() {
         set -a
         source "$PROJECT_ROOT/.env"
         set +a
+    fi
+
+    # Shared QA host: qa-host.env forces remapped Terra URLs when QA_SHARED_HOST=1 (overrides stale .env)
+    if [ "${QA_SHARED_HOST:-}" = "1" ] && [ -f "$PROJECT_ROOT/scripts/qa/qa-host.env" ]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$PROJECT_ROOT/scripts/qa/qa-host.env"
+        set +a
+    fi
+
+    # deploy-evm-local.sh / deploy-evm1-local.sh forge --private-key: bridge operator = Anvil account #0.
+    # A different EVM_PRIVATE_KEY in repo-root .env makes withdrawApprove revert Unauthorized().
+    if [ "${QA_SHARED_HOST:-}" = "1" ] && [ "${QA_USE_ENV_EVM_PRIVATE_KEY:-}" != "1" ]; then
+        export EVM_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     fi
 
     # Check required env vars

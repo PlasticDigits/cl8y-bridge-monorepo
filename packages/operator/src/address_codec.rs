@@ -14,7 +14,7 @@
 //!
 //! - `0x00000001`: EVM (Ethereum, BSC, Polygon, etc.)
 //! - `0x00000002`: Cosmos/Terra (Terra Classic, Osmosis)
-//! - `0x00000003`: Solana (future)
+//! - `0x00000003`: Solana
 //! - `0x00000004`: Bitcoin (future)
 
 // Re-export everything from multichain-rs for backwards compatibility

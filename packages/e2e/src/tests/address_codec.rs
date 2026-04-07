@@ -82,12 +82,13 @@ pub async fn test_evm_address_encoding(_config: &E2eConfig) -> TestResult {
         );
     }
 
-    if decoded.raw_address != universal.raw_address {
+    if decoded.raw_address_bytes() != universal.raw_address_bytes() {
         return TestResult::fail(
             name,
             format!(
                 "Raw address mismatch: expected {:?}, got {:?}",
-                universal.raw_address, decoded.raw_address
+                universal.raw_address_bytes(),
+                decoded.raw_address_bytes()
             ),
             start.elapsed(),
         );
@@ -195,12 +196,13 @@ pub async fn test_terra_address_encoding(config: &E2eConfig) -> TestResult {
         );
     }
 
-    if decoded.raw_address != universal.raw_address {
+    if decoded.raw_address_bytes() != universal.raw_address_bytes() {
         return TestResult::fail(
             name,
             format!(
                 "Raw address mismatch: expected {:?}, got {:?}",
-                universal.raw_address, decoded.raw_address
+                universal.raw_address_bytes(),
+                decoded.raw_address_bytes()
             ),
             start.elapsed(),
         );
@@ -277,7 +279,7 @@ pub async fn test_encoding_cross_chain_match(config: &E2eConfig) -> TestResult {
 
     // Raw address should be in bytes 4-23
     let raw_addr_slice = &bytes32_evm[4..24];
-    if raw_addr_slice != universal_evm.raw_address.as_slice() {
+    if raw_addr_slice != universal_evm.raw_address_bytes() {
         return TestResult::fail(
             name,
             "Raw address slice mismatch in bytes32",
@@ -335,7 +337,7 @@ pub async fn test_encoding_cross_chain_match(config: &E2eConfig) -> TestResult {
 
     // Verify Terra raw address in bytes 4-23
     let raw_addr_terra_slice = &bytes32_terra[4..24];
-    if raw_addr_terra_slice != universal_terra.raw_address.as_slice() {
+    if raw_addr_terra_slice != universal_terra.raw_address_bytes() {
         return TestResult::fail(
             name,
             "Terra raw address slice mismatch in bytes32",
@@ -384,7 +386,7 @@ pub async fn test_zero_address_rejection(_config: &E2eConfig) -> TestResult {
     match result_evm {
         Ok(addr) => {
             // Verify it's actually zero
-            if addr.raw_address != [0u8; 20] {
+            if addr.raw_address_bytes() != &[0u8; 20] {
                 return TestResult::fail(
                     name,
                     "Zero EVM address did not decode to all zeros",

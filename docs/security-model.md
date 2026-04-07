@@ -410,6 +410,10 @@ Rate limits are configured per token in the GuardBridge:
 | `maxPerPeriod` | Maximum total amount per time window |
 | `periodDuration` | Time window length (e.g., 1 hour) |
 
+### Solana (Anchor `cl8y-bridge`)
+
+Solana enforces the same conceptual model on **withdraw execute** only: a per–`local_mint` PDA (`WithdrawRateLimit`) tracks a 24h window and cumulative payout (after decimal normalization). The admin instruction `set_rate_limit` sets min per transaction, max per transaction, and max per period. If the PDA is created implicitly on first execute without prior admin configuration, **implicit** defaults match EVM `TokenRegistry` / Terra `add_token`: min = `supply / 10^6`, max per tx and max per 24h = `supply / 10^4` (native SOL path: see `rate_limit.rs` for the zero-supply floor). **Production must not** rely on explicit all-zero limits, which remove the per-period cap. Narrative and test mapping: [SPL_BRIDGE_SECURITY_AUDIT.md](./SPL_BRIDGE_SECURITY_AUDIT.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) (INV-W4).
+
 ---
 
 ## Security Properties Summary
@@ -430,6 +434,6 @@ Rate limits are configured per token in the GuardBridge:
 ## Related Documentation
 
 - [EVM Contracts](./contracts-evm.md) - Contract implementation details
-- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm implementation
+- [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm implementation; on-chain **governance map** (admin timelock, operators, cancelers) under *Governance and trust (on-chain)*
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Gap Analysis](./gap-analysis-terraclassic.md) - Security parity analysis

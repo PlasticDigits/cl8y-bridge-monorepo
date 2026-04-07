@@ -7,10 +7,14 @@
  *   - Incoming src decimals configured (other chain → token)
  *   - Terra dest mapping configured (token → EVM chain)
  *   - Terra incoming mapping configured (EVM chain → Terra token)
+ *   - Solana (dedicated section): Terra↔Solana LCD mappings + cl8y_bridge TokenMapping PDAs per remote chain
  */
 
 import { useState, useCallback } from 'react'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import type { Address, Hex } from 'viem'
+import { hexToBytes, pad } from 'viem'
 import { BRIDGE_CHAINS, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 import { getEvmClient } from '../services/evmClient'
@@ -20,8 +24,19 @@ import {
   getSrcTokenDecimals,
   bytes32ToAddress,
 } from '../services/evm/tokenRegistry'
+import { bytes32ToSolanaAddress } from '../services/solana/address'
+import {
+  bytes4HexToUint8Array,
+  fetchTokenMappingLocalMint,
+  findBridgePda,
+  WSOL_MINT,
+} from '../services/solana/transaction'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
+import {
+  terraDestTokenKeccakUtf8Bytes,
+  terraIncomingSrcTokenB64WithKeccakFallback,
+} from '../services/terraTokenEncoding'
 import type { BridgeChainConfig } from '../types/chain'
 
 export type CheckStatus = 'pass' | 'fail' | 'error' | 'loading' | 'skip'
@@ -56,6 +71,18 @@ interface TerraIncomingMappingResponse {
 
 type ChainEntry = [string, BridgeChainConfig & { bytes4ChainId: string }]
 
+/** Human-readable dest token for TokenRegistry bytes32 (EVM address vs SPL mint). */
+function formatDestTokenLabel(dest: `0x${string}`, otherConfig: BridgeChainConfig): string {
+  if (otherConfig.type === 'solana') {
+    try {
+      return `SPL mint ${bytes32ToSolanaAddress(dest)}`
+    } catch {
+      return String(dest)
+    }
+  }
+  return `Mapped to ${bytes32ToAddress(dest)}`
+}
+
 function getConfiguredChains(): ChainEntry[] {
   const tier = DEFAULT_NETWORK as NetworkTier
   const chains = BRIDGE_CHAINS[tier] ?? {}
@@ -73,42 +100,8 @@ function bytes4ToBase64(hex: string): string {
   return btoa(String.fromCharCode(...bytes))
 }
 
-/**
- * Decode a bech32 Terra address to base64-encoded bytes32.
- * Mirrors the deploy script: bech32_decode → convertbits(5→8) → pad to 32 bytes.
- */
-function terraBech32ToBase64Bytes32(terraAddr: string): string | null {
-  try {
-    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
-    const lower = terraAddr.toLowerCase()
-    const sepIdx = lower.lastIndexOf('1')
-    if (sepIdx < 1) return null
-    const dataPart = lower.slice(sepIdx + 1)
-    const values: number[] = []
-    for (const ch of dataPart) {
-      const idx = CHARSET.indexOf(ch)
-      if (idx < 0) return null
-      values.push(idx)
-    }
-    const data5bit = values.slice(0, -6)
-    let acc = 0
-    let bits = 0
-    const result: number[] = []
-    for (const v of data5bit) {
-      acc = (acc << 5) | v
-      bits += 5
-      while (bits >= 8) {
-        bits -= 8
-        result.push((acc >> bits) & 0xff)
-      }
-    }
-    const raw = new Uint8Array(result)
-    const padded = new Uint8Array(32)
-    padded.set(raw, 32 - raw.length)
-    return btoa(String.fromCharCode(...padded))
-  } catch {
-    return null
-  }
+function evmAddrToDestToken32Bytes(addr: Address): Uint8Array {
+  return hexToBytes(pad(addr, { size: 32 }))
 }
 
 /**
@@ -174,6 +167,7 @@ export function useTokenVerification() {
 
     const allChains = getConfiguredChains()
     const evmChains = allChains.filter(([_, c]) => c.type === 'evm')
+    const solanaChains = allChains.filter(([_, c]) => c.type === 'solana')
     const cosmosChains = allChains.filter(([_, c]) => c.type === 'cosmos')
     const chainVerifications: ChainVerification[] = []
 
@@ -222,7 +216,7 @@ export function useTokenVerification() {
             label: `Dest mapping → ${otherName}`,
             status: dest ? 'pass' : 'fail',
             detail: dest
-              ? `Mapped to ${bytes32ToAddress(dest)}`
+              ? formatDestTokenLabel(dest, otherConfig)
               : `No outgoing dest mapping — call setTokenDestinationWithDecimals()`,
           })
         } catch (err) {
@@ -278,17 +272,15 @@ export function useTokenVerification() {
         }
       }
 
-      // 2. Incoming mappings from each EVM chain to Terra
-      // The protocol uses the bech32-decoded Terra CW20 address as src_token
-      // (the cross-chain hash token field is the dest token, which is the Terra address)
-      const srcTokenB64 = terraBech32ToBase64Bytes32(terraTokenId)
+      // 2. Incoming mappings from each EVM chain to Terra (`src_token` = encode_token_address)
+      const srcTokenB64 = terraIncomingSrcTokenB64WithKeccakFallback(terraTokenId)
       for (const [otherKey, otherConfig] of evmChains) {
         const otherName = otherConfig.name ?? otherKey
         if (!srcTokenB64) {
           checks.push({
             label: `Incoming mapping ← ${otherName}`,
             status: 'skip',
-            detail: 'Could not bech32-decode Terra token address',
+            detail: 'Could not derive src_token bytes32 for this Terra token id',
           })
           continue
         }
@@ -315,6 +307,196 @@ export function useTokenVerification() {
       }
 
       chainVerifications.push({ chainKey, chainName: config.name ?? chainKey, checks })
+    }
+
+    // Phase 4: Solana — Terra↔Solana LCD + on-chain cl8y_bridge token mappings (own section in UI)
+    const remoteChainsForSolana: ChainEntry[] = [...evmChains, ...cosmosChains]
+    for (const [chainKey, solConfig] of solanaChains) {
+      const checks: VerificationCheck[] = []
+      const networkConfig = NETWORKS[DEFAULT_NETWORK].terra
+      const lcdUrls = networkConfig.lcdFallbacks?.length
+        ? [...networkConfig.lcdFallbacks]
+        : [networkConfig.lcd]
+      const terraBridgeAddr = cosmosChains[0]?.[1].bridgeAddress
+
+      let solMapping: Awaited<ReturnType<typeof queryTokenDestMapping>> = null
+      try {
+        solMapping = await queryTokenDestMapping(terraTokenId, solConfig.bytes4ChainId)
+      } catch (err) {
+        checks.push({
+          label: 'Terra bridge: dest mapping (→ Solana)',
+          status: 'error',
+          detail: String(err),
+        })
+      }
+
+      if (checks.length === 0) {
+        checks.push({
+          label: 'Terra bridge: dest mapping (→ Solana)',
+          status: solMapping ? 'pass' : 'fail',
+          detail: solMapping
+            ? `Mapped to SPL ${bytes32ToSolanaAddress(solMapping.hex as `0x${string}`)} (${solMapping.decimals} dec)`
+            : 'No outgoing dest mapping — call set_token_destination',
+        })
+      }
+
+      // Incoming: Solana (src) → Terra
+      if (solMapping?.hex && terraBridgeAddr) {
+        try {
+          const raw = hexToBytes(solMapping.hex as Hex)
+          const srcTokenB64 = btoa(String.fromCharCode(...raw))
+          const srcChainB64 = bytes4ToBase64(solConfig.bytes4ChainId)
+          const res = await queryContract<TerraIncomingMappingResponse>(
+            lcdUrls, terraBridgeAddr,
+            { incoming_token_mapping: { src_chain: srcChainB64, src_token: srcTokenB64 } }
+          )
+          checks.push({
+            label: 'Terra bridge: incoming mapping (← Solana)',
+            status: res?.local_token ? 'pass' : 'fail',
+            detail: res?.local_token
+              ? `Maps to ${res.local_token} (src dec: ${res.src_decimals})`
+              : 'No incoming mapping — call set_incoming_token_mapping',
+          })
+        } catch (err) {
+          checks.push({
+            label: 'Terra bridge: incoming mapping (← Solana)',
+            status: 'error',
+            detail: String(err),
+          })
+        }
+      } else if (!solMapping?.hex) {
+        checks.push({
+          label: 'Terra bridge: incoming mapping (← Solana)',
+          status: 'skip',
+          detail: 'No SPL mint from dest mapping — cannot query incoming',
+        })
+      } else if (!terraBridgeAddr) {
+        checks.push({
+          label: 'Terra bridge: incoming mapping (← Solana)',
+          status: 'skip',
+          detail: 'Terra bridge address not configured',
+        })
+      }
+
+      // On-chain Solana program: token_mapping PDAs per remote chain
+      const programIdStr = solConfig.bridgeAddress?.trim()
+      const rpcUrl = solConfig.rpcUrl?.trim()
+      if (programIdStr && rpcUrl && solMapping?.hex) {
+        let expectedMint: PublicKey
+        try {
+          expectedMint = new PublicKey(bytes32ToSolanaAddress(solMapping.hex as `0x${string}`))
+        } catch (e) {
+          checks.push({
+            label: 'Solana program: SPL mint',
+            status: 'error',
+            detail: `Invalid mint from mapping: ${String(e)}`,
+          })
+          chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
+          continue
+        }
+
+        const connection = new Connection(rpcUrl, 'confirmed')
+        let programId: PublicKey
+        try {
+          programId = new PublicKey(programIdStr)
+        } catch (e) {
+          checks.push({
+            label: 'Solana program: program id',
+            status: 'error',
+            detail: String(e),
+          })
+          chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
+          continue
+        }
+
+        for (const [remoteKey, remoteConfig] of remoteChainsForSolana) {
+          const remoteName = remoteConfig.name ?? remoteKey
+          let destToken32: Uint8Array
+          if (remoteConfig.type === 'evm') {
+            const evmAddr = evmAddresses.get(remoteKey)
+            if (!evmAddr) {
+              checks.push({
+                label: `On-chain mapping (→ ${remoteName})`,
+                status: 'fail',
+                detail: 'No EVM token address — cannot verify PDA',
+              })
+              continue
+            }
+            destToken32 = evmAddrToDestToken32Bytes(evmAddr)
+          } else {
+            destToken32 = terraDestTokenKeccakUtf8Bytes(terraTokenId)
+          }
+          const destChain = bytes4HexToUint8Array(remoteConfig.bytes4ChainId)
+          try {
+            const localMint = await fetchTokenMappingLocalMint(
+              connection,
+              programId,
+              destChain,
+              destToken32
+            )
+            const ok = localMint !== null && localMint.equals(expectedMint)
+            checks.push({
+              label: `TokenMapping PDA (→ ${remoteName})`,
+              status: ok ? 'pass' : 'fail',
+              detail: ok
+                ? `local_mint ${localMint!.toBase58()} matches SPL mint`
+                : localMint
+                  ? `local_mint ${localMint.toBase58()} ≠ expected ${expectedMint.toBase58()} — re-run register_token`
+                  : 'No TokenMapping account — call register_token on Solana',
+            })
+          } catch (err) {
+            checks.push({
+              label: `TokenMapping PDA (→ ${remoteName})`,
+              status: 'error',
+              detail: String(err),
+            })
+          }
+        }
+
+        // SPL lock/unlock deposits credit a bridge-owned ATA; TokenMapping alone is not enough.
+        if (!expectedMint.equals(WSOL_MINT)) {
+          try {
+            const mintInfo = await connection.getAccountInfo(expectedMint)
+            if (!mintInfo) {
+              checks.push({
+                label: 'Bridge SPL vault (for deposit_spl)',
+                status: 'fail',
+                detail: 'SPL mint account not found on Solana RPC',
+              })
+            } else {
+              const bridgePda = findBridgePda(programId)
+              const vault = getAssociatedTokenAddressSync(
+                expectedMint,
+                bridgePda,
+                true,
+                mintInfo.owner,
+              )
+              const vaultInfo = await connection.getAccountInfo(vault)
+              checks.push({
+                label: 'Bridge SPL vault (for deposit_spl)',
+                status: vaultInfo ? 'pass' : 'fail',
+                detail: vaultInfo
+                  ? `Bridge custodian ATA exists (${vault.toBase58()})`
+                  : `No ATA at ${vault.toBase58()} — create the bridge vault for this mint (admin: spl-token / getOrCreateAssociatedTokenAccount for bridge PDA, or re-run register-qa-tokens)`,
+              })
+            }
+          } catch (err) {
+            checks.push({
+              label: 'Bridge SPL vault (for deposit_spl)',
+              status: 'error',
+              detail: String(err),
+            })
+          }
+        }
+      } else if (!programIdStr || !rpcUrl) {
+        checks.push({
+          label: 'Solana program: on-chain checks',
+          status: 'skip',
+          detail: 'VITE_SOLANA_PROGRAM_ID + RPC URL required for PDA verification',
+        })
+      }
+
+      chainVerifications.push({ chainKey, chainName: solConfig.name ?? chainKey, checks })
     }
 
     // Compute totals

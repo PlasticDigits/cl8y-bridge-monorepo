@@ -19,6 +19,7 @@ mod address_codec;
 mod canceler;
 mod canceler_execution;
 mod canceler_helpers;
+mod canceler_solana_destination;
 mod chain_registry;
 mod configuration;
 mod connectivity;
@@ -178,15 +179,23 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     // These tests verify on-chain results with actual transaction execution.
     // They will skip gracefully if the required services are not running.
 
-    // Live Canceler Execution Tests (6) - IMPLEMENTED in canceler_execution.rs
+    // Live Canceler Execution Tests (8) - IMPLEMENTED in canceler_execution.rs
     // Canceler is started by E2E setup, so these should run
     results.push(canceler_execution::test_canceler_live_fraud_detection(config).await);
     results.push(canceler_execution::test_cancelled_approval_blocks_withdrawal(config).await);
     results.push(canceler_execution::test_canceler_concurrent_fraud_handling(config).await);
     results.push(canceler_execution::test_canceler_restart_fraud_detection(config).await);
-    // EVM→EVM and Terra→EVM fraud detection tests
+    // EVM→EVM, Terra→EVM, and Solana→EVM fraud detection tests
     results.push(canceler_execution::test_canceler_evm_source_fraud_detection(config).await);
     results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_canceler_solana_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_operator_rejects_unverified_solana_source(config).await);
+    results.push(
+        canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
+    );
+    results
+        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     // Live Operator Execution Tests - IMPLEMENTED in operator_execution.rs
     // Operator is started by E2E setup (same as canceler). These tests verify
@@ -320,14 +329,22 @@ pub async fn run_live_execution_tests(
             .await,
     );
 
-    // Live Canceler Execution Tests (6)
+    // Live Canceler Execution Tests (8)
     results.push(canceler_execution::test_canceler_live_fraud_detection(config).await);
     results.push(canceler_execution::test_cancelled_approval_blocks_withdrawal(config).await);
     results.push(canceler_execution::test_canceler_concurrent_fraud_handling(config).await);
     results.push(canceler_execution::test_canceler_restart_fraud_detection(config).await);
-    // EVM→EVM and Terra→EVM fraud detection tests
+    // EVM→EVM, Terra→EVM, and Solana→EVM fraud detection tests
     results.push(canceler_execution::test_canceler_evm_source_fraud_detection(config).await);
     results.push(canceler_execution::test_canceler_terra_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_canceler_solana_source_fraud_detection(config).await);
+    results.push(canceler_execution::test_operator_rejects_unverified_solana_source(config).await);
+    results.push(
+        canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
+    );
+    results
+        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     results
 }

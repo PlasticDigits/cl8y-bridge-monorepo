@@ -685,19 +685,44 @@ impl TerraClient {
             args.extend(["--amount", funds]);
         }
 
-        let output = self.exec_terrad(&args).await?;
+        const MAX_SEQUENCE_RETRIES: u32 = 4;
+        let mut last_err: Option<eyre::Report> = None;
+        for attempt in 0..MAX_SEQUENCE_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(800 + u64::from(attempt) * 400)).await;
+            }
+            let output = match self.exec_terrad(&args).await {
+                Ok(o) => o,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("account sequence mismatch")
+                        && attempt + 1 < MAX_SEQUENCE_RETRIES
+                    {
+                        last_err = Some(e);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
 
-        // Parse JSON response to extract txhash
-        let json: serde_json::Value = serde_json::from_str(output.trim())
-            .map_err(|e| eyre!("Failed to parse execute response as JSON: {}", e))?;
+            if output.contains("account sequence mismatch") && attempt + 1 < MAX_SEQUENCE_RETRIES {
+                last_err = Some(eyre!("terrad sequence mismatch: {}", output));
+                continue;
+            }
 
-        let tx_hash = json["txhash"]
-            .as_str()
-            .ok_or_else(|| eyre!("No txhash found in execute response"))?
-            .to_string();
+            let json: serde_json::Value = serde_json::from_str(output.trim())
+                .map_err(|e| eyre!("Failed to parse execute response as JSON: {}", e))?;
 
-        debug!("Transaction submitted with hash: {}", tx_hash);
-        Ok(tx_hash)
+            let tx_hash = json["txhash"]
+                .as_str()
+                .ok_or_else(|| eyre!("No txhash found in execute response"))?
+                .to_string();
+
+            debug!("Transaction submitted with hash: {}", tx_hash);
+            return Ok(tx_hash);
+        }
+
+        Err(last_err.unwrap_or_else(|| eyre!("execute_contract failed after retries")))
     }
 
     /// Wait for transaction confirmation

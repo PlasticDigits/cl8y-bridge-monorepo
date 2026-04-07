@@ -15,10 +15,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Configuration
+# Configuration (host may remap LocalTerra — set TERRA_RPC_URL / TERRA_LCD_URL, e.g. from scripts/qa/qa-host.env)
 CHAIN_ID="localterra"
-NODE="http://localhost:26657"
-LCD="http://localhost:1317"
+NODE="${TERRA_RPC_URL:-http://localhost:26657}"
+LCD="${TERRA_LCD_URL:-http://localhost:1317}"
 KEY_NAME="${TERRA_KEY_NAME:-test1}"
 WASM_PATH="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts/bridge.wasm"
 CW20_WASM_PATH="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm"
@@ -53,6 +53,23 @@ terrad_tx() {
 # Run terrad query command via docker exec (no keyring needed)
 terrad_query() {
     docker exec "$CONTAINER_NAME" terrad "$@"
+}
+
+# With `set -e`, `TX=$(terrad_tx ...)` aborts the whole script if terrad exits non-zero
+# (CLI error, wasm rejected, etc.) before any log_error. Use this wrapper instead.
+terrad_tx_capture() {
+    local _out _rc
+    set +e
+    _out=$(terrad_tx "$@" 2>&1)
+    _rc=$?
+    set -e
+    printf '%s\n' "$_out"
+    return "$_rc"
+}
+
+# Extract txhash from terrad JSON (multi-line OK).
+extract_txhash() {
+    echo "$1" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 | head -1
 }
 
 # Setup test key in container (imports if not present)
@@ -100,6 +117,12 @@ check_prereqs() {
         log_info "Build with: make build-terra-optimized  (or make build-terra for dev)"
         exit 1
     fi
+
+    if [ "$DEPLOY_CW20" = true ] && [ ! -f "$CW20_WASM_PATH" ]; then
+        log_error "CW20 wasm not found at $CW20_WASM_PATH (required for --cw20 / make deploy-terra)"
+        log_info "Build Terraclassic artifacts (cw20-mintable) before deploy."
+        exit 1
+    fi
     
     log_info "Prerequisites OK"
 }
@@ -120,23 +143,39 @@ copy_wasm_to_container() {
         docker cp "$CW20_WASM_PATH" "$CONTAINER_NAME:/tmp/wasm/cw20_mintable.wasm"
         log_info "Copied cw20_mintable.wasm to container"
     fi
+
+    # docker cp preserves host permissions; a 0600 artifact (e.g. umask) is unreadable by terrad if it runs as another UID.
+    # chmod must run as root: the image default USER may be non-root, so chmod on another UID's file returns EPERM.
+    docker exec -u 0 "$CONTAINER_NAME" chmod 0644 /tmp/wasm/bridge.wasm
+    if [ "$DEPLOY_CW20" = true ] && [ -f "$CW20_WASM_PATH" ]; then
+        docker exec -u 0 "$CONTAINER_NAME" chmod 0644 /tmp/wasm/cw20_mintable.wasm
+    fi
 }
 
 # Store bridge contract
 store_bridge_contract() {
+    local _tx_rc
+    
     log_info "Storing bridge contract..."
     
     # Store contract (test1 key is already in the keyring from genesis)
-    TX=$(terrad_tx tx wasm store /tmp/wasm/bridge.wasm \
+    set +e
+    TX=$(terrad_tx_capture tx wasm store /tmp/wasm/bridge.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
         --fees 200000000uluna \
         --broadcast-mode sync \
-        -y -o json 2>&1)
+        -y -o json)
+    _tx_rc=$?
+    set -e
+    if [ "$_tx_rc" != 0 ]; then
+        log_error "terrad wasm store bridge failed (exit $_tx_rc): $TX"
+        exit 1
+    fi
     
     # Extract txhash - handle both sync response and error formats
-    TX_HASH=$(echo "$TX" | grep -o '"txhash":"[^"]*"' | cut -d'"' -f4 || echo "")
+    TX_HASH=$(extract_txhash "$TX")
     TX_CODE=$(echo "$TX" | jq -r '.code // 0' 2>/dev/null || echo "0")
     
     if [ -z "$TX_HASH" ]; then
@@ -247,34 +286,67 @@ EOF
 
 # Store cw20-mintable contract
 store_cw20_contract() {
+    local _tx_rc CODE_LEN_BEFORE CODE_LEN
+    
     if [ "$DEPLOY_CW20" != true ]; then
         return
     fi
     
     log_info "Storing cw20-mintable contract..."
     
-    TX=$(terrad_tx tx wasm store /tmp/wasm/cw20_mintable.wasm \
+    CODE_LEN_BEFORE=$(terrad_query query wasm list-code -o json | jq '.code_infos | length' 2>/dev/null || echo "0")
+    
+    set +e
+    TX=$(terrad_tx_capture tx wasm store /tmp/wasm/cw20_mintable.wasm \
         --from "$KEY_NAME" \
         --chain-id "$CHAIN_ID" \
         --gas auto --gas-adjustment 1.5 \
         --fees 200000000uluna \
         --broadcast-mode sync \
-        -y -o json 2>&1)
+        -y -o json)
+    _tx_rc=$?
+    set -e
+    if [ "$_tx_rc" != 0 ]; then
+        log_error "terrad wasm store cw20 failed (exit $_tx_rc): $TX"
+        exit 1
+    fi
     
-    TX_JSON=$(echo "$TX" | grep '^{' | head -1)
-    TX_HASH=$(echo "$TX_JSON" | jq -r '.txhash' 2>/dev/null || echo "")
-    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+    TX_HASH=$(extract_txhash "$TX")
+    TX_CODE=$(echo "$TX" | jq -r '.code // 0' 2>/dev/null || echo "0")
+    
+    if [ -z "$TX_HASH" ]; then
         log_error "Failed to store cw20-mintable: $TX"
         exit 1
     fi
     
     log_info "Store TX: $TX_HASH"
     
-    log_info "Waiting for confirmation..."
-    sleep 8
+    if [ "$TX_CODE" != "0" ]; then
+        RAW_LOG=$(echo "$TX" | jq -r '.raw_log // "Unknown error"' 2>/dev/null)
+        log_error "Transaction rejected: $RAW_LOG"
+        exit 1
+    fi
     
-    # Get code ID
-    CW20_CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id')
+    log_info "Waiting for confirmation..."
+    
+    CW20_CODE_ID=""
+    for i in $(seq 1 30); do
+        sleep 2
+        CODE_LEN=$(terrad_query query wasm list-code -o json | jq '.code_infos | length' 2>/dev/null || echo "0")
+        if [ "$CODE_LEN" -gt "$CODE_LEN_BEFORE" ] 2>/dev/null; then
+            CW20_CODE_ID=$(terrad_query query wasm list-code -o json | jq -r '.code_infos[-1].code_id' 2>/dev/null)
+            if [ -n "$CW20_CODE_ID" ] && [ "$CW20_CODE_ID" != "null" ]; then
+                break
+            fi
+        fi
+        log_info "  Waiting for CW20 code store confirmation... (${i}/30) (codes: $CODE_LEN_BEFORE → $CODE_LEN)"
+    done
+    
+    if [ -z "$CW20_CODE_ID" ] || [ "$CW20_CODE_ID" = "null" ]; then
+        log_error "Failed to get CW20 code ID after 60s (codes before store: $CODE_LEN_BEFORE; bridge code id: $BRIDGE_CODE_ID). Last terrad output was: $TX"
+        exit 1
+    fi
+    
     log_info "CW20-Mintable Code ID: $CW20_CODE_ID"
 }
 
@@ -408,7 +480,14 @@ main() {
     instantiate_test_cw20
     configure_local
     verify_deployment
-    
+
+    if [ -f "$SCRIPT_DIR/lib-local-deploy-env.sh" ]; then
+        # shellcheck source=lib-local-deploy-env.sh
+        source "$SCRIPT_DIR/lib-local-deploy-env.sh"
+        write_deploy_env_terra "$BRIDGE_CONTRACT" "${CW20_CONTRACT:-}"
+        log_info "Recorded TERRA_BRIDGE_ADDRESS (and CW20 if deployed) in ${DEPLOY_ENV_FILE}"
+    fi
+
     echo ""
     log_info "=== Deployment Complete ==="
     echo ""
@@ -420,14 +499,16 @@ main() {
     fi
     echo "========================================"
     echo ""
-    log_info "Add to packages/operator/.env:"
-    echo "  TERRA_BRIDGE_ADDRESS=$BRIDGE_CONTRACT"
-    echo ""
-    log_info "Next steps:"
-    echo "  1. Export: export TERRA_BRIDGE_ADDRESS=$BRIDGE_CONTRACT"
-    echo "  2. Run: ./scripts/setup-bridge.sh"
-    echo "  3. Run: make operator"
-    echo "  4. Run: make test-transfer"
+
+    if [ -f "$SCRIPT_DIR/merge-env-var.sh" ]; then
+        chmod +x "$SCRIPT_DIR/merge-env-var.sh" 2>/dev/null || true
+        for envf in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/packages/operator/.env"; do
+            "$SCRIPT_DIR/merge-env-var.sh" "$envf" TERRA_BRIDGE_ADDRESS "$BRIDGE_CONTRACT"
+        done
+        log_info "Merged TERRA_BRIDGE_ADDRESS into existing repo / operator .env files (skipped missing files)."
+    fi
+
+    log_info "Full \`make deploy\` runs ./scripts/setup-bridge.sh after Solana deploy — no manual export/setup-bridge steps."
 }
 
 main "$@"

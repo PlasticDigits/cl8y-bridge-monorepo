@@ -19,20 +19,35 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useAccount, useSwitchChain } from 'wagmi'
+import { Connection, PublicKey } from '@solana/web3.js'
 import type { Address, Hex } from 'viem'
 import { useWallet } from './useWallet'
+import { useSolanaWallet } from './useSolanaWallet'
 import { useWithdrawSubmit } from './useWithdrawSubmit'
 import { useTransferStore } from '../stores/transfer'
 import { BRIDGE_WITHDRAW_VIEW_ABI } from '../services/evm/withdrawSubmit'
-import { queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
+import {
+  queryTerraBridgeTransactionByNonce,
+  queryTerraPendingWithdraw,
+} from '../services/terraBridgeQueries'
+import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { getDestToken, bytes32ToAddress } from '../services/evm/tokenRegistry'
 import {
   chainIdToBytes4,
   evmAddressToBytes32Array,
   hexToUint8Array,
 } from '../services/terra/withdrawSubmit'
-import { isTerraContractError, TERRA_TX_ERROR } from '../services/terra/transaction'
-import { terraAddressToBytes32, bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
+import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/terra/transaction'
+import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
+import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
+import { solanaAddressToBytes32 } from '../services/solana/address'
+import { withdrawSubmitSrcAccountBytes32 } from '../services/solana/srcAccountBytes32'
+import {
+  bytes32HexToPublicKey,
+  fetchTokenMappingLocalMint,
+} from '../services/solana/transaction'
+import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
+import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
@@ -40,6 +55,44 @@ import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
 
 const LOG = '[autoWithdraw]'
+
+/** Avoid false "submission lost" when React state lags localStorage after a successful submit (#87). */
+function hasPersistedSuccessfulHashSubmit(transferId: string, xchainHashId: string | undefined): boolean {
+  const { getTransferByXchainHashId, getAllTransfers } = useTransferStore.getState()
+  const fromList = getAllTransfers().find((t) => t.id === transferId)
+  if (
+    fromList?.withdrawSubmitTxHash &&
+    (fromList.lifecycle === 'hash-submitted' ||
+      fromList.lifecycle === 'approved' ||
+      fromList.lifecycle === 'executed')
+  ) {
+    return true
+  }
+  if (xchainHashId) {
+    const byHash = getTransferByXchainHashId(xchainHashId)
+    if (
+      byHash &&
+      byHash.id === transferId &&
+      byHash.withdrawSubmitTxHash &&
+      (byHash.lifecycle === 'hash-submitted' ||
+        byHash.lifecycle === 'approved' ||
+        byHash.lifecycle === 'executed')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function terraErrIndicatesDuplicateWithdrawSubmit(err: unknown): boolean {
+  if (!(err instanceof TerraTxError) || err.code !== TERRA_TX_ERROR.CONTRACT_ERROR) return false
+  const combined = `${err.message}\n${err.rawMessage}`.toLowerCase()
+  return (
+    combined.includes('withdrawal already submitted') ||
+    combined.includes('withdraw already submitted') ||
+    combined.includes('withdrawalreadysubmitted')
+  )
+}
 
 export type AutoSubmitPhase =
   | 'idle'
@@ -62,8 +115,9 @@ export type AutoSubmitBlockReason =
 export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoading?: boolean) {
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { connected: isTerraConnected, luncBalance } = useWallet()
+  const { connected: isSolanaConnected } = useSolanaWallet()
   const { switchChainAsync } = useSwitchChain()
-  const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
+  const { submitOnEvm, submitOnTerra, submitOnSolana } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
   const { data: tokenlist } = useTokenList()
 
@@ -93,13 +147,16 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       return BRIDGE_CHAINS[tier][transfer.destChain] ?? null
     })()
     const destIsCosmos = destConfig?.type === 'cosmos' || transfer.direction === 'evm-to-terra'
+    const destIsSolana = destConfig?.type === 'solana'
     if (destIsCosmos) {
       if (!isTerraConnected) return 'wallet-disconnected'
+    } else if (destIsSolana) {
+      if (!isSolanaConnected) return 'wallet-disconnected'
     } else {
       if (!evmAddress) return 'wallet-disconnected'
     }
     return null
-  }, [transfer, evmAddress, isTerraConnected, lookupLoading])
+  }, [transfer, evmAddress, isTerraConnected, isSolanaConnected, lookupLoading])
 
   // Determine if auto-submit is possible (pure function, no state updates)
   const canAutoSubmit = useCallback((): boolean => {
@@ -285,6 +342,12 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         let srcAccountHex = (transfer.srcAccount || '0x' + '0'.repeat(64)) as Hex
         if (transfer.srcAccount?.startsWith('terra1')) {
           srcAccountHex = terraAddressToBytes32(transfer.srcAccount)
+        } else if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
+          try {
+            srcAccountHex = solanaAddressToBytes32(transfer.srcAccount)
+          } catch {
+            /* leave as-is */
+          }
         }
 
         // V2 fix: resolve the correct destination token
@@ -302,8 +365,8 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           srcAccount: srcAccountHex,
           destAccount: (transfer.destAccount || '0x' + '0'.repeat(64)) as Hex,
           token: destTokenAddress,
-          amount: BigInt(transfer.amount || '0'),
-          nonce: BigInt(transfer.depositNonce || 0),
+          amount: bigintFromBaseUnitsString(transfer.amount || '0'),
+          nonce: bigintFromBaseUnitsString(transfer.depositNonce ?? 0),
         })
 
         if (txHash) {
@@ -356,26 +419,35 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           }
         }
 
-        // srcAccount: should be the EVM depositor address as bytes32
-        const srcAccountBytes32 = transfer.srcAccount
-          ? hexToUint8Array(transfer.srcAccount)
-          : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
-
-        // Resolve the Terra denom for the token parameter.
-        // The Terra contract expects a native denom (e.g. "uluna") or CW20 address (terra1...),
-        // NOT the EVM source token address. Use destTokenId if stored, otherwise resolve
-        // from the deposit's dest token bytes32 via tokenlist native denom hashes.
-        let terraToken = transfer.destTokenId || ''
-        if (!terraToken && transfer.destToken) {
+        // srcAccount: EVM depositor as bytes32, or Solana base58 → bytes32 for solana→terra
+        let srcAccountBytes32: Uint8Array
+        if (transfer.srcAccount && !transfer.srcAccount.startsWith('0x')) {
           try {
-            terraToken = resolveTokenFromBytes32(transfer.destToken, tokenlist)
+            srcAccountBytes32 = hexToUint8Array(solanaAddressToBytes32(transfer.srcAccount))
           } catch {
-            console.warn(`${LOG} Could not resolve Terra token from destToken bytes32`)
+            srcAccountBytes32 = evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
           }
+        } else {
+          srcAccountBytes32 = transfer.srcAccount
+            ? hexToUint8Array(transfer.srcAccount)
+            : evmAddressToBytes32Array(evmAddress || '0x0000000000000000000000000000000000000000')
         }
-        if (!terraToken) {
-          terraToken = 'uluna'
-          console.warn(`${LOG} No destTokenId or destToken — falling back to uluna`)
+
+        // Terra `withdraw_submit` must use denom / CW20 bech32 matching EVM `getDestToken` bytes32.
+        // Never pass an 0x EVM address as `token` (keccak of ASCII breaks cross-chain hash; glab #89).
+        let terraToken: string
+        try {
+          terraToken = resolveTerraWithdrawToken(transfer.destTokenId, transfer.destToken, tokenlist)
+        } catch (e) {
+          const msg =
+            e instanceof Error
+              ? e.message
+              : 'Cannot resolve Terra token for withdraw_submit (check destToken / token list)'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
         }
 
         // Resolve the recipient as a terra1... bech32 address.
@@ -448,6 +520,244 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           setError('WithdrawSubmit transaction failed')
           submittedRef.current = false
         }
+      } else if (destChainConfig.type === 'solana') {
+        // Destination is Solana
+        setPhase('submitting-hash')
+
+        if (!destChainConfig.bridgeAddress && !destChainConfig.programId) {
+          const msg = `No program ID configured for destination chain "${transfer.destChain}"`
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        let srcChainBytes4Data: Uint8Array
+        if (transfer.sourceChainIdBytes4) {
+          srcChainBytes4Data = hexToUint8Array(transfer.sourceChainIdBytes4)
+        } else {
+          const msg = 'Cannot determine source chain bytes4 for Solana transfer'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        const srcAccountBytes32Sol = withdrawSubmitSrcAccountBytes32(
+          transfer.srcAccount || '',
+        )
+
+        const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
+        const chains = BRIDGE_CHAINS[tier]
+        const srcCfg = chains[transfer.sourceChain]
+
+        // Local Terra token id (denom / CW20 bech32) for TokenMapping PDA + token_dest_mapping.
+        // Synthetic records from hash lookup often omit `token`; receipt may wrongly carry a bytes32.
+        let terraLocalTokenId = transfer.token?.trim() || ''
+        const initialTokenLooksLikeBytes32Hex =
+          terraLocalTokenId.startsWith('0x') && terraLocalTokenId.length === 66
+        const nonceOk = transfer.depositNonce !== undefined && transfer.depositNonce !== null
+        if (
+          srcCfg?.type === 'cosmos' &&
+          srcCfg.bridgeAddress &&
+          nonceOk &&
+          (!terraLocalTokenId || initialTokenLooksLikeBytes32Hex)
+        ) {
+          const lcdUrls =
+            srcCfg.lcdFallbacks?.length ? [...srcCfg.lcdFallbacks] : srcCfg.lcdUrl ? [srcCfg.lcdUrl] : []
+          if (lcdUrls.length > 0) {
+            const row = await queryTerraBridgeTransactionByNonce(
+              lcdUrls,
+              srcCfg.bridgeAddress,
+              transfer.depositNonce as number,
+            )
+            if (row?.token) {
+              if (terraLocalTokenId && terraLocalTokenId !== row.token) {
+                console.warn(
+                  `${LOG} Replacing transfer.token (${terraLocalTokenId.slice(0, 22)}…) ` +
+                    `with Terra bridge transaction.token=${row.token.slice(0, 24)}… for Solana withdrawSubmit`
+                )
+              }
+              terraLocalTokenId = row.token
+            }
+          }
+        }
+
+        const terraTokenIdForMapping = terraLocalTokenId
+        const mappingKeyIsTerraShaped =
+          !!terraTokenIdForMapping &&
+          !(terraTokenIdForMapping.startsWith('0x') && terraTokenIdForMapping.length === 66)
+
+        // EVM→Solana: prefer TokenRegistry.getDestToken (raw SPL mint bytes32).
+        // Terra→Solana: prefer Terra `token_dest_mapping` for (local token, Solana chain) — same
+        // bytes the Terra contract used in the deposit hash (glab #94 / #89 class of bugs).
+        let destTokenHex: string | undefined = transfer.destToken
+        if (
+          srcCfg?.type === 'cosmos' &&
+          destChainConfig.bytes4ChainId &&
+          mappingKeyIsTerraShaped
+        ) {
+          try {
+            const mapped = await queryTokenDestMapping(terraTokenIdForMapping, destChainConfig.bytes4ChainId)
+            if (mapped?.hex) {
+              const prev = destTokenHex?.toLowerCase()
+              if (prev && prev !== mapped.hex.toLowerCase()) {
+                console.warn(
+                  `${LOG} Solana destToken from transfer record (${prev.slice(0, 18)}…) ` +
+                    `differs from Terra token_dest_mapping; using LCD bytes32 (raw SPL mint).`
+                )
+              }
+              destTokenHex = mapped.hex
+            }
+          } catch (e) {
+            console.warn(`${LOG} Terra token_dest_mapping (Solana dest) failed:`, e)
+          }
+        }
+        if (srcCfg?.type === 'evm' && srcCfg.bridgeAddress && transfer.token?.startsWith('0x') && destChainConfig.bytes4ChainId) {
+          try {
+            const srcClient = getEvmClient(srcCfg)
+            const dt = await getDestToken(
+              srcClient,
+              srcCfg.bridgeAddress as Address,
+              transfer.token as Address,
+              destChainConfig.bytes4ChainId as Hex
+            )
+            if (dt) {
+              const prev = destTokenHex?.toLowerCase()
+              if (prev && prev !== dt.toLowerCase()) {
+                console.warn(
+                  `${LOG} Solana destToken from transfer record (${prev.slice(0, 18)}…) ` +
+                    `differs from TokenRegistry; using on-chain bytes32 (raw SPL mint bytes).`
+                )
+              }
+              destTokenHex = dt
+            }
+          } catch (e) {
+            console.warn(`${LOG} getDestToken (Solana dest) failed:`, e)
+          }
+        }
+        if (!destTokenHex || destTokenHex === '0x' + '0'.repeat(64)) {
+          const msg = 'Missing Solana destination mint (destToken) for withdrawSubmit'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        const solanaSrcTokenKey =
+          srcCfg?.type === 'cosmos' && mappingKeyIsTerraShaped ? terraTokenIdForMapping : transfer.token || ''
+        const srcTokenBytes = resolveWithdrawSrcTokenBytesForSolana(solanaSrcTokenKey)
+        if (!srcTokenBytes || srcTokenBytes.length !== 32) {
+          const msg =
+            'Could not resolve source token for Solana withdrawSubmit (expected EVM 0x address/bytes32, or Terra denom/CW20)'
+          console.error(`${LOG} ${msg}`, { token: transfer.token, terraLocalTokenId, solanaSrcTokenKey })
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
+        if (
+          terraLocalTokenId &&
+          (terraLocalTokenId !== transfer.token ||
+            (destTokenHex && destTokenHex.toLowerCase() !== transfer.destToken?.toLowerCase()))
+        ) {
+          updateTransferRecord(transfer.id, {
+            ...(terraLocalTokenId !== transfer.token ? { token: terraLocalTokenId } : {}),
+            ...(destTokenHex && destTokenHex.toLowerCase() !== transfer.destToken?.toLowerCase()
+              ? { destToken: destTokenHex }
+              : {}),
+          })
+        }
+
+        const mintPkToHex = (pk: PublicKey) =>
+          `0x${Array.from(pk.toBytes())
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')}`
+
+        const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+        if (programIdStr && destChainConfig.rpcUrl) {
+          try {
+            const conn = new Connection(destChainConfig.rpcUrl, 'confirmed')
+            const programPk = new PublicKey(programIdStr)
+            const mappedMint = await fetchTokenMappingLocalMint(
+              conn,
+              programPk,
+              srcChainBytes4Data,
+              srcTokenBytes,
+            )
+            if (mappedMint) {
+              const solMintHex = mintPkToHex(mappedMint).toLowerCase()
+              if (solMintHex !== destTokenHex.toLowerCase()) {
+                const msg =
+                  'Solana withdrawSubmit dest mint does not match TokenMapping.local_mint (withdraw_submit would fail). ' +
+                  'Re-register mappings: EVM→Solana uses setTokenDestinationWithDecimals with raw SPL mint bytes; ' +
+                  'Terra→Solana uses set_token_destination with splMintToBytes32Hex (not keccak of mint strings). ' +
+                  `expected_mint≈${destTokenHex.slice(0, 22)}… mapping_mint=${solMintHex.slice(0, 22)}…`
+                console.error(`${LOG} ${msg}`)
+                setPhase('error')
+                setError(msg)
+                submittedRef.current = false
+                return
+              }
+            }
+          } catch (e) {
+            console.warn(`${LOG} Solana TokenMapping preflight failed (continuing):`, e)
+          }
+        }
+
+        const destMintPk = bytes32HexToPublicKey(destTokenHex)
+
+        if (!transfer.destAccount || !transfer.destAccount.startsWith('0x') || transfer.destAccount.length !== 66) {
+          const msg =
+            'Solana withdrawSubmit requires transfer.destAccount as 0x + 64 hex (32-byte recipient pubkey)'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+        const destAccountPk = bytes32HexToPublicKey(transfer.destAccount)
+
+        const programForLog = destChainConfig.programId || destChainConfig.bridgeAddress
+        console.info(
+          `${LOG} Submitting Solana withdrawSubmit: program=${programForLog}, ` +
+          `amount=${transfer.amount}, nonce=${transfer.depositNonce}`
+        )
+
+        const solanaTxSig = await submitOnSolana({
+          rpcUrl: destChainConfig.rpcUrl,
+          programId: destChainConfig.programId || destChainConfig.bridgeAddress,
+          srcChain: srcChainBytes4Data,
+          srcAccount: srcAccountBytes32Sol,
+          srcToken: srcTokenBytes,
+          destTokenMint: destMintPk.toBase58(),
+          destAccount: destAccountPk.toBase58(),
+          amount: bigintFromBaseUnitsString(transfer.amount || '0'),
+          nonce: bigintFromBaseUnitsString(transfer.depositNonce ?? 0),
+          bridgeChainId: destChainConfig.bytes4ChainId
+            ? hexToUint8Array(destChainConfig.bytes4ChainId)
+            : new Uint8Array([0, 0, 0, 5]),
+          operatorGas: 0n,
+        })
+
+        if (solanaTxSig) {
+          console.info(`${LOG} submitOnSolana success: txSig=${solanaTxSig}`)
+          updateTransferRecord(transfer.id, {
+            lifecycle: 'hash-submitted',
+            withdrawSubmitTxHash: solanaTxSig,
+          })
+          setPhase('waiting-approval')
+          startPolling()
+        } else {
+          console.warn(`${LOG} submitOnSolana returned null`)
+          setPhase('error')
+          setError('WithdrawSubmit transaction failed')
+          submittedRef.current = false
+        }
       }
     } catch (err) {
       // If the contract says the withdrawal already exists or the nonce was
@@ -455,7 +765,8 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       // updating lifecycle and resuming polling instead of showing an error.
       if (
         isTerraContractError(err, TERRA_TX_ERROR.NONCE_ALREADY_APPROVED) ||
-        isTerraContractError(err, TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED)
+        isTerraContractError(err, TERRA_TX_ERROR.WITHDRAW_ALREADY_SUBMITTED) ||
+        terraErrIndicatesDuplicateWithdrawSubmit(err)
       ) {
         console.info(
           `${LOG} Withdrawal already on-chain (${err instanceof Error ? err.message : err}), recovering...`
@@ -473,7 +784,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       submittedRef.current = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, updateTransferRecord, getDestChainConfig, resolveDestToken])
+  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, submitOnSolana, updateTransferRecord, getDestChainConfig, resolveDestToken])
 
   /**
    * Poll destination chain for approval and execution.
@@ -519,6 +830,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               setPhase('waiting-execution')
             }
           } else if (result.submittedAt === 0n) {
+            if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+              notConfirmedCountRef.current = 0
+              return
+            }
             notConfirmedCountRef.current++
             if (notConfirmedCountRef.current >= 3) {
               console.warn(
@@ -568,6 +883,10 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               setPhase('waiting-execution')
             }
           } else if (!result) {
+            if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+              notConfirmedCountRef.current = 0
+              return
+            }
             notConfirmedCountRef.current++
             if (notConfirmedCountRef.current >= 3) {
               console.warn(
@@ -586,6 +905,62 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             }
           } else {
             notConfirmedCountRef.current = 0
+          }
+        } else if (destChainConfig.type === 'solana') {
+          // Solana destination: read PendingWithdraw PDA
+          try {
+            const { Connection, PublicKey } = await import('@solana/web3.js')
+            const connection = new Connection(destChainConfig.rpcUrl, 'confirmed')
+            const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+            if (!programIdStr) return
+            const programId = new PublicKey(programIdStr)
+            const hashBytes = new Uint8Array(32)
+            const hexStr = (transfer.xchainHashId as string).replace('0x', '')
+            for (let i = 0; i < 32; i++) {
+              hashBytes[i] = parseInt(hexStr.slice(i * 2, i * 2 + 2), 16)
+            }
+            const [pendingPda] = PublicKey.findProgramAddressSync(
+              [Buffer.from('withdraw'), Buffer.from(hashBytes)],
+              programId,
+            )
+            const account = await connection.getAccountInfo(pendingPda)
+            if (account && account.data.length >= 175) {
+              const approved = account.data[164] !== 0
+              const executed = account.data[174] !== 0
+              if (executed) {
+                if (transfer.lifecycle !== 'executed') {
+                  updateTransferRecord(transfer.id, { lifecycle: 'executed' })
+                  setPhase('complete')
+                }
+                if (pollingRef.current) {
+                  clearInterval(pollingRef.current)
+                  pollingRef.current = null
+                }
+              } else if (approved) {
+                notConfirmedCountRef.current = 0
+                if (transfer.lifecycle === 'hash-submitted') {
+                  updateTransferRecord(transfer.id, { lifecycle: 'approved' })
+                  setPhase('waiting-execution')
+                }
+              }
+            } else if (!account) {
+              if (hasPersistedSuccessfulHashSubmit(transfer.id, transfer.xchainHashId)) {
+                notConfirmedCountRef.current = 0
+                return
+              }
+              notConfirmedCountRef.current++
+              if (notConfirmedCountRef.current >= 3) {
+                setPhase('error')
+                setError('Withdrawal not found on Solana — submission may have failed')
+                submittedRef.current = false
+                if (pollingRef.current) {
+                  clearInterval(pollingRef.current)
+                  pollingRef.current = null
+                }
+              }
+            }
+          } catch {
+            // Polling error, continue
           }
         }
       } catch {

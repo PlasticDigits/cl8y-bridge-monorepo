@@ -1,20 +1,38 @@
-.PHONY: start stop reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint
+.PHONY: start stop start-qa qa-start qa-tunnel-help stop-qa ensure-terra-artifacts qa-full-token-setup qa-frontend-env reset deploy operator test-transfer logs help status gitleaks gitleaks-scan setup-hooks fmt fmt-check lint solana-validator-native solana-test-e2e solana-reset solana-test-docker
 
 # Default target
 help:
 	@echo "CL8Y Bridge Development Commands"
 	@echo ""
 	@echo "Infrastructure:"
-	@echo "  make start          - Start all services (Anvil, Anvil1, LocalTerra, PostgreSQL)"
-	@echo "  make stop           - Stop all services"
+	@echo "  make start          - Start Docker chains only (Anvil, Anvil1, LocalTerra, Solana, PostgreSQL)"
+	@echo "  make start-qa       - QA server: Docker (2x Anvil) + migrate + deploy + full e2e token setup + operator + canceler; see scripts/qa/README.md"
+	@echo "  make qa-start       - Same as make start-qa (alias)"
+	@echo "  make qa-tunnel-help - Reprint SSH tunnel + laptop steps (same as end of start-qa; run on server or laptop)"
+	@echo "  make qa-full-token-setup - After make deploy: full e2e-infra tokens + registerAllTokens + Solana (same as start-qa token phase)"
+	@echo "  make stop           - Stop Docker services"
+	@echo "  make stop-qa        - Stop canceler + operator + Docker (bridge stack)"
 	@echo "  make reset          - Stop and remove all volumes"
 	@echo "  make status         - Check status of all services"
 	@echo "  make logs           - View service logs"
 	@echo ""
 	@echo "Development:"
-	@echo "  make deploy         - Deploy contracts to local chains"
+	@echo "  make deploy         - Deploy contracts to all local chains (EVM, Terra, Solana) + setup-bridge"
+	@echo "  make ensure-terra-artifacts - Build bridge.wasm if missing; download cw20_mintable.wasm if missing (used by start-qa)"
+	@echo "  make qa-frontend-env - Write packages/frontend/.env.local from .deploy/local.env + qa-host.env (laptop after scp)"
 	@echo "  make operator       - Run the bridge operator service"
 	@echo "  make test-transfer  - Run a test crosschain transfer"
+	@echo ""
+	@echo "Solana:"
+	@echo "  make solana-validator         - Start Solana test validator (Docker; binds 127.0.0.1)"
+	@echo "  make solana-validator-native  - Run solana-test-validator on host (loopback; safe on public IPs)"
+	@echo "  make solana-build             - Build Solana programs"
+	@echo "  make solana-test              - Run Solana program tests (Anchor-managed validator, clean state)"
+	@echo "  make solana-test-docker       - Run Solana tests against Docker validator (resets ledger first)"
+	@echo "  make solana-reset             - Recreate Docker Solana validator with fresh ledger"
+	@echo "  make solana-deploy-local      - Deploy Solana program to local validator"
+	@echo "  make solana-test-e2e          - Rust Solana offline checks (PDA/hash parity; optional SOLANA_PROGRAM_ID)"
+	@echo "  make solana-logs              - Follow Solana program logs"
 	@echo ""
 	@echo "Building:"
 	@echo "  make build-evm            - Build EVM contracts"
@@ -65,7 +83,11 @@ help:
 	@echo "  make e2e-single TEST=x  - Run single test by name"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy             - Deploy all contracts locally"
+	@echo "  make deploy             - Deploy all contracts locally + setup-bridge (Solana program id auto-detected)"
+	@echo "  make deploy-evm         - Deploy EVM contracts to first Anvil (8545)"
+	@echo "  make deploy-evm1        - Deploy EVM contracts to second Anvil / anvil1 (8546)"
+	@echo "  make deploy-terra       - Deploy Terra bridge + CW20 test token to LocalTerra"
+	@echo "  make deploy-solana      - Deploy Solana program to local validator"
 	@echo "  make deploy-test-token  - Deploy test ERC20 for integration tests"
 	@echo "  make deploy-terra-cw20  - Deploy Terra bridge and CW20 token"
 	@echo "  make deploy-tokens      - Deploy test tokens on both chains"
@@ -80,31 +102,117 @@ help:
 
 # Infrastructure
 start:
-	docker-compose up -d
+	docker compose up -d
 	@echo "Waiting for services to be healthy..."
 	@sleep 5
-	docker-compose ps
+	docker compose ps
+
+# Full QA server bootstrap (shared host with remapped Terra ports — scripts/qa/qa-host.env)
+start-qa:
+	@chmod +x scripts/qa/start-qa.sh scripts/qa/write-qa-env-e2e.sh scripts/qa/sync-localterra-compose-ports.sh scripts/qa/write-frontend-env-local.sh scripts/qa/stop-qa.sh scripts/qa/print-qa-tunnel-instructions.sh scripts/solana/airdrop-qa-wallets.sh scripts/qa/fund-qa-gas-wallets.sh
+	./scripts/qa/start-qa.sh
+
+qa-start: start-qa
+
+qa-tunnel-help:
+	@chmod +x scripts/qa/print-qa-tunnel-instructions.sh
+	./scripts/qa/print-qa-tunnel-instructions.sh
+
+# After `make deploy`, runs full e2e-infra token matrix + registerAllTokens + Solana register_token (same as start-qa token step)
+qa-full-token-setup:
+	cd packages/frontend && npm run qa:full-token-setup
+
+qa-frontend-env:
+	@chmod +x scripts/qa/write-frontend-env-local.sh
+	./scripts/qa/write-frontend-env-local.sh
+
+stop-qa:
+	@chmod +x scripts/qa/stop-qa.sh
+	./scripts/qa/stop-qa.sh
 
 stop:
-	docker-compose down
+	docker compose down
 
 reset:
-	docker-compose down -v
+	docker compose down -v
 
 logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 status:
 	./scripts/status.sh
 
 logs-anvil:
-	docker-compose logs -f anvil
+	docker compose logs -f anvil
 
 logs-terra:
-	docker-compose logs -f localterra
+	docker compose logs -f localterra
 
 logs-postgres:
-	docker-compose logs -f postgres
+	docker compose logs -f postgres
+
+logs-solana:
+	docker compose logs -f solana
+
+# ===========================================================================
+# Solana Targets
+# ===========================================================================
+
+.PHONY: solana-validator
+solana-validator: ## Start local Solana test validator (Docker; RPC on 127.0.0.1 only)
+	docker compose up solana -d
+
+.PHONY: solana-validator-native
+solana-validator-native: ## Run solana-test-validator on host — loopback bind (safe on internet-facing servers)
+	@chmod +x "$(CURDIR)/scripts/solana/run-test-validator.sh" 2>/dev/null || true
+	"$(CURDIR)/scripts/solana/run-test-validator.sh"
+
+.PHONY: solana-reset
+solana-reset: ## Recreate Solana validator container with a clean ledger
+	@echo "Recreating Solana validator with fresh ledger..."
+	docker compose rm -sf solana
+	docker compose up -d solana
+	@echo "Waiting for validator to be healthy..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if docker compose exec -T solana solana cluster-version --url http://localhost:8899 >/dev/null 2>&1; then \
+			echo "Solana validator ready."; break; \
+		fi; \
+		sleep 2; \
+	done
+
+.PHONY: solana-build
+solana-build: ## Build Solana programs
+	cd packages/contracts-solana && anchor build
+
+.PHONY: solana-test
+solana-test: ## Run Solana program tests (stops Docker validator so Anchor manages its own clean one)
+	@if docker compose ps --status running 2>/dev/null | grep -q solana; then \
+		echo "Stopping Docker Solana validator so Anchor can manage its own clean instance..."; \
+		docker compose stop solana; \
+	fi
+	cd packages/contracts-solana && anchor test
+
+.PHONY: solana-test-docker
+solana-test-docker: solana-reset ## Run Solana tests against Docker validator (fresh ledger)
+	@echo "Airdropping deploy key for anchor deploy (fresh ledger has no SOL)..."
+	@solana airdrop 100 "$$(solana address)" --url http://127.0.0.1:8899 2>/dev/null || true
+	cd packages/contracts-solana && ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 anchor test --skip-local-validator
+
+.PHONY: solana-deploy-local
+solana-deploy-local: ## Deploy Solana program to local validator (keys sync + build + deploy)
+	@chmod +x "$(CURDIR)/scripts/solana/anchor-deploy-localnet.sh" 2>/dev/null || true
+	./scripts/solana/anchor-deploy-localnet.sh
+
+.PHONY: solana-test-e2e
+solana-test-e2e: ## Run Solana bridge offline Rust tests (test_solana_flows; no live validator required)
+	bash -c '. ./scripts/lib-local-deploy-env.sh && load_local_deploy_env && cd packages/e2e && \
+		SOLANA_RPC_URL="$${SOLANA_RPC_URL:-http://localhost:8899}" \
+		SOLANA_PROGRAM_ID="$${SOLANA_PROGRAM_ID:-$$(solana-keygen pubkey ../contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null)}" \
+		cargo test --test test_solana_flows -- --nocapture --test-threads=1'
+
+.PHONY: solana-logs
+solana-logs: ## Follow Solana program logs
+	solana logs --url http://localhost:8899
 
 # Formatting
 fmt:
@@ -143,6 +251,25 @@ build-terra:
 	cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown -p bridge --features cosmwasm_1_2 && \
 		mkdir -p artifacts && \
 		cp target/wasm32-unknown-unknown/release/bridge.wasm artifacts/
+
+# Used by start-qa before deploy-terra --cw20: bridge from Rust; CW20 wasm via clone+build then release download fallback (see scripts/ensure-cw20-mintable-wasm.sh).
+ensure-terra-artifacts:
+	@chmod +x "$(CURDIR)/scripts/ensure-cw20-mintable-wasm.sh" "$(CURDIR)/scripts/download-cw20-wasm.sh" 2>/dev/null || true
+	@mkdir -p "$(CURDIR)/packages/contracts-terraclassic/artifacts"
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/bridge.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing bridge.wasm — running make build-terra..."; \
+		$(MAKE) build-terra; \
+	fi
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/cw20_mintable.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing cw20_mintable.wasm — running scripts/ensure-cw20-mintable-wasm.sh..."; \
+		"$(CURDIR)/scripts/ensure-cw20-mintable-wasm.sh"; \
+	fi
+	@if [ ! -f "$(CURDIR)/packages/contracts-terraclassic/artifacts/faucet.wasm" ]; then \
+		echo "[ensure-terra-artifacts] Missing faucet.wasm — building (qa Settings → Faucet / LocalTerra)..."; \
+		cd "$(CURDIR)/packages/contracts-terraclassic" && \
+		cargo build --release -p faucet --target wasm32-unknown-unknown && \
+		cp target/wasm32-unknown-unknown/release/faucet.wasm artifacts/; \
+	fi
 
 build-terra-optimized:
 	@echo "Building optimized Terra WASM via Docker (cosmwasm_1_2 + BankQuery::Supply)..."
@@ -199,46 +326,54 @@ test-frontend-integration:
 test: test-evm test-terra test-operator test-canceler test-frontend
 
 # Deployment - Local
-deploy: deploy-evm deploy-terra setup-bridge
+deploy: deploy-evm deploy-evm1 deploy-terra deploy-solana setup-bridge
 	@echo "Deployment complete!"
 
 deploy-evm:
 	@echo "Deploying EVM contracts to Anvil..."
-	cd packages/contracts-evm && forge script script/DeployLocal.s.sol:DeployLocal \
-		--broadcast \
-		--rpc-url http://localhost:8545
+	./scripts/deploy-evm-local.sh
+
+deploy-evm1:
+	@echo "Deploying EVM contracts to Anvil1 (second chain, port 8546)..."
+	@chmod +x "$(CURDIR)/scripts/deploy-evm1-local.sh" 2>/dev/null || true
+	./scripts/deploy-evm1-local.sh
 
 deploy-test-token:
-	@echo "Deploying test ERC20 token to Anvil..."
-	cd packages/contracts-evm && forge script script/DeployTestToken.s.sol:DeployTestToken \
-		--broadcast \
-		--rpc-url http://localhost:8545
-	@echo ""
-	@echo "Set these in packages/frontend/.env.local:"
-	@echo "  VITE_BRIDGE_TOKEN_ADDRESS=<address from output>"
-	@echo "  VITE_LOCK_UNLOCK_ADDRESS=<LockUnlock from deploy-evm>"
+	@chmod +x "$(CURDIR)/scripts/record-test-token-deploy.sh" 2>/dev/null || true
+	@echo "Deploying test ERC20 token to Anvil and recording TEST_TOKEN_ADDRESS in .deploy/local.env..."
+	./scripts/record-test-token-deploy.sh
 
 deploy-terra:
-	@echo "Deploying Terra contracts to LocalTerra..."
-	./scripts/deploy-terra-local.sh
+	@echo "Deploying Terra contracts to LocalTerra (bridge + optional CW20 test token)..."
+	./scripts/deploy-terra-local.sh --cw20
 
 deploy-terra-local: deploy-terra
 	@echo "Terra local deployment complete"
+
+deploy-solana:
+	@echo "Deploying Solana program to local validator..."
+	@chmod +x "$(CURDIR)/scripts/solana/airdrop-for-anchor-deploy.sh" "$(CURDIR)/scripts/solana/anchor-deploy-localnet.sh" 2>/dev/null || true
+	./scripts/solana/airdrop-for-anchor-deploy.sh
+	./scripts/solana/anchor-deploy-localnet.sh
+	@bash -c '. ./scripts/lib-local-deploy-env.sh && \
+		PID=$$(solana-keygen pubkey packages/contracts-solana/target/deploy/cl8y_bridge-keypair.json 2>/dev/null) && \
+		if [ -n "$$PID" ]; then write_deploy_env_solana "$$PID"; echo "  SOLANA_PROGRAM_ID=$$PID saved to .deploy/local.env"; fi' || true
 
 deploy-terra-cw20:
 	@echo "Deploying Terra bridge and CW20 token to LocalTerra..."
 	./scripts/deploy-terra-local.sh --cw20
 
-deploy-tokens: deploy-test-token deploy-terra-cw20
-	@echo "Test tokens deployed on both chains"
+deploy-tokens: deploy-test-token
+	@echo "Test ERC20 recorded; Terra CW20 comes from deploy-terra (--cw20 in make deploy)."
 
 register-tokens:
 	@echo "Registering test tokens on bridges..."
 	./scripts/register-test-tokens.sh
 
+# Pass SETUP_BRIDGE_DEBUG=1 or SETUP_BRIDGE_TRACE=1 for bash xtrace (e.g. make deploy SETUP_BRIDGE_DEBUG=1).
 setup-bridge:
 	@echo "Configuring bridge connections..."
-	./scripts/setup-bridge.sh
+	SETUP_BRIDGE_DEBUG="$(SETUP_BRIDGE_DEBUG)" SETUP_BRIDGE_TRACE="$(SETUP_BRIDGE_TRACE)" ./scripts/setup-bridge.sh
 
 # Full E2E setup (infrastructure + contracts + tokens)
 e2e-setup:
@@ -281,7 +416,8 @@ operator-status:
 	./scripts/operator-ctl.sh status
 
 operator-migrate:
-	cd packages/operator && sqlx migrate run
+	@chmod +x "$(CURDIR)/scripts/operator-migrate.sh" 2>/dev/null || true
+	./scripts/operator-migrate.sh
 
 # Canceler
 canceler:

@@ -6,14 +6,7 @@ import { useTokenOptionsDisplayMap } from '../../hooks/useTokenDisplayInfo'
 import { getTokenFromList } from '../../services/tokenlist'
 import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 import type { BridgeChainConfig } from '../../types/chain'
-
-export interface TokenOption {
-  id: string
-  symbol: string
-  tokenId: string
-  /** EVM token address when source is EVM - used for onchain symbol lookup */
-  evmTokenAddress?: string
-}
+import type { TokenOption } from '../../types/tokenOption'
 
 export interface TokenSelectProps {
   tokens: TokenOption[]

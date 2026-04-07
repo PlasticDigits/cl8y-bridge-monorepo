@@ -27,6 +27,7 @@ async function fetchDiscoveredChains(): Promise<ChainInfo[]> {
 
   return staticChains.filter((chain) => {
     if (chain.type === 'cosmos') return true
+    if (chain.type === 'solana') return true
 
     const config = configs[chain.id]
     if (!config?.bytes4ChainId) return false

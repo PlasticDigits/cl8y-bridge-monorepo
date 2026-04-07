@@ -26,7 +26,6 @@ import {
   withdrawExecuteViaCast,
   computeXchainHashIdViaCast,
   pollForApproval,
-  pollForExecution,
   mintTestTokens,
   ANVIL_ACCOUNTS,
 } from './fixtures/transfer-helpers'
@@ -35,7 +34,7 @@ import { loadEnv, getAnvilRpcUrl, getAnvil1RpcUrl } from './fixtures/env-helpers
 test.describe('Round-Trip Transfer Verification', () => {
   test.describe.configure({ mode: 'serial' })
 
-  test('Anvil -> Anvil1 -> Anvil round-trip', async ({ connectedPage: page }) => {
+  test('Anvil -> Anvil1 -> Anvil round-trip', async ({ connectedPage: _connectedPage }) => {
     const env = loadEnv()
     const ANVIL_RPC = getAnvilRpcUrl(env)
     const ANVIL1_RPC = getAnvil1RpcUrl(env)

@@ -14,6 +14,8 @@ on:
       - 'packages/e2e/**'
       - 'packages/contracts-evm/**'
       - 'packages/contracts-terraclassic/**'
+      - 'packages/contracts-solana/**'
+      - 'packages/frontend/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
   pull_request:
@@ -24,6 +26,8 @@ on:
       - 'packages/e2e/**'
       - 'packages/contracts-evm/**'
       - 'packages/contracts-terraclassic/**'
+      - 'packages/contracts-solana/**'
+      - 'packages/frontend/**'
       - 'scripts/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:

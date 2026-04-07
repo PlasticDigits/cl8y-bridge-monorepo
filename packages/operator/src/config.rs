@@ -21,6 +21,10 @@ pub struct Config {
     /// (e.g., BSC→opBNB, ETH→Polygon). Loaded from EVM_CHAINS_COUNT env vars.
     #[serde(skip)]
     pub multi_evm: Option<MultiEvmConfig>,
+    /// Optional Solana chain configuration. When set, the operator watches for
+    /// Solana deposits and submits withdraw_approve instructions on Solana.
+    #[serde(skip)]
+    pub solana: Option<SolanaConfig>,
 }
 
 /// Database configuration
@@ -115,6 +119,69 @@ impl fmt::Debug for TerraConfig {
             .field("this_chain_id", &self.this_chain_id)
             .finish()
     }
+}
+
+/// Solana chain configuration (optional — operator runs without Solana if unset)
+#[derive(Clone)]
+pub struct SolanaConfig {
+    pub rpc_url: String,
+    pub program_id: String,
+    pub private_key: String,
+    pub poll_interval_ms: u64,
+    /// All registered SVM V2 chain IDs (mainnet, testnets, future SVM forks). Same RPC/program for all in phase 1.
+    pub bytes4_chain_ids: Vec<[u8; 4]>,
+    pub commitment: String,
+}
+
+impl fmt::Debug for SolanaConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SolanaConfig")
+            .field("rpc_url", &self.rpc_url)
+            .field("program_id", &self.program_id)
+            .field("private_key", &"<redacted>")
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .field(
+                "bytes4_chain_ids",
+                &self
+                    .bytes4_chain_ids
+                    .iter()
+                    .map(|b| format!("0x{}", hex::encode(b)))
+                    .collect::<Vec<_>>(),
+            )
+            .field("commitment", &self.commitment)
+            .finish()
+    }
+}
+
+/// Parse one 4-byte V2 chain id (hex or decimal).
+fn parse_one_u32_chain_bytes(s: &str) -> Result<[u8; 4]> {
+    let s = s.trim().trim_start_matches("0x");
+    let n: u32 = u32::from_str_radix(s, 16)
+        .or_else(|_| s.parse::<u32>())
+        .wrap_err_with(|| format!("invalid V2 chain id segment: {s}"))?;
+    Ok(n.to_be_bytes())
+}
+
+/// `SOLANA_V2_CHAIN_IDS` (comma-separated) or single `SOLANA_V2_CHAIN_ID`, else default dev id 5.
+fn parse_solana_v2_chain_ids_from_env() -> Result<Vec<[u8; 4]>> {
+    if let Ok(raw) = env::var("SOLANA_V2_CHAIN_IDS") {
+        let mut out = Vec::new();
+        for part in raw.split(',') {
+            let p = part.trim();
+            if p.is_empty() {
+                continue;
+            }
+            out.push(parse_one_u32_chain_bytes(p)?);
+        }
+        if out.is_empty() {
+            return Err(eyre!("SOLANA_V2_CHAIN_IDS produced no chain IDs"));
+        }
+        return Ok(out);
+    }
+    if let Ok(v) = env::var("SOLANA_V2_CHAIN_ID") {
+        return Ok(vec![parse_one_u32_chain_bytes(&v)?]);
+    }
+    Ok(vec![[0, 0, 0, 5]])
 }
 
 /// Relayer configuration
@@ -256,6 +323,37 @@ impl Config {
         // Load optional multi-EVM configuration (for EVM-to-EVM bridging)
         let multi_evm = crate::multi_evm::load_from_env()?;
 
+        // Load optional Solana configuration (only when SOLANA_RPC_URL is set)
+        let solana = match env::var("SOLANA_RPC_URL") {
+            Ok(rpc_url) if !rpc_url.is_empty() => {
+                let program_id = env::var("SOLANA_PROGRAM_ID").map_err(|_| {
+                    eyre!("SOLANA_PROGRAM_ID is required when SOLANA_RPC_URL is set")
+                })?;
+                let private_key = env::var("SOLANA_PRIVATE_KEY").map_err(|_| {
+                    eyre!("SOLANA_PRIVATE_KEY is required when SOLANA_RPC_URL is set")
+                })?;
+                let poll_interval_ms = env::var("SOLANA_POLL_INTERVAL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(2000);
+                let commitment =
+                    env::var("SOLANA_COMMITMENT").unwrap_or_else(|_| "finalized".to_string());
+
+                let bytes4_chain_ids = parse_solana_v2_chain_ids_from_env()
+                    .wrap_err("SOLANA_V2_CHAIN_IDS / SOLANA_V2_CHAIN_ID: invalid chain id list")?;
+
+                Some(SolanaConfig {
+                    rpc_url,
+                    program_id,
+                    private_key,
+                    poll_interval_ms,
+                    bytes4_chain_ids,
+                    commitment,
+                })
+            }
+            _ => None,
+        };
+
         let config = Config {
             database,
             evm,
@@ -263,6 +361,7 @@ impl Config {
             relayer,
             fees,
             multi_evm,
+            solana,
         };
 
         config.validate()?;
@@ -349,6 +448,12 @@ impl Config {
             }
         }
 
+        if let Some(ref sol) = self.solana {
+            if sol.bytes4_chain_ids.is_empty() {
+                return Err(eyre!("solana.bytes4_chain_ids must be non-empty"));
+            }
+        }
+
         Ok(())
     }
 }
@@ -417,6 +522,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // Valid config should pass
@@ -473,6 +579,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // Valid fee BPS
@@ -523,6 +630,7 @@ mod tests {
                 fee_recipient: "0x0000000000000000000000000000000000000001".to_string(),
             },
             multi_evm: None,
+            solana: None,
         };
 
         // No multi-EVM — should pass

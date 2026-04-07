@@ -15,8 +15,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('chains')
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
-      <div className="shell-panel-strong relative overflow-hidden">
+    <div className="mx-auto min-w-0 max-w-5xl space-y-4">
+      <div className="shell-panel-strong relative min-w-0 overflow-hidden">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-8 top-2 h-28 rounded-[24px] theme-hero-glow blur-2xl"
@@ -51,7 +51,12 @@ export default function SettingsPage() {
           ))}
         </div>
 
-        <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+        <div
+          role="tabpanel"
+          className="min-w-0"
+          id={`tabpanel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+        >
           {activeTab === 'chains' && <ChainsPanel />}
           {activeTab === 'tokens' && <TokensPanel />}
           {activeTab === 'bridge' && <BridgeConfigPanel />}

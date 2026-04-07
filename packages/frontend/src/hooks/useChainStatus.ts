@@ -75,6 +75,36 @@ async function pingLcd(url: string): Promise<ChainStatus> {
   }
 }
 
+/** Ping Solana RPC endpoint. Uses getHealth JSON-RPC method. */
+async function pingSolanaRpc(url: string): Promise<ChainStatus> {
+  const start = performance.now()
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), PING_TIMEOUT_MS)
+
+    const res = await fetch(url.replace(/\/$/, ''), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getHealth' }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    const latencyMs = Math.round(performance.now() - start)
+    if (!res.ok) {
+      return { ok: false, latencyMs: null, error: `HTTP ${res.status}`, activeUrl: url }
+    }
+    const data = await res.json()
+    if (data.error) {
+      return { ok: false, latencyMs: null, error: data.error.message || 'RPC error', activeUrl: url }
+    }
+    return { ok: true, latencyMs, error: null, activeUrl: url }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error'
+    return { ok: false, latencyMs: null, error: msg, activeUrl: url }
+  }
+}
+
 /**
  * Ping multiple URLs in parallel, return the fastest success or first failure.
  * Enables round-robin / fallback display: shows best available endpoint.
@@ -113,9 +143,15 @@ async function pingMultiple(
   }
 }
 
-export function useChainStatus(urls: string | string[] | null, type: 'evm' | 'cosmos') {
+function getPingFn(type: 'evm' | 'cosmos' | 'solana') {
+  if (type === 'evm') return pingRpc
+  if (type === 'solana') return pingSolanaRpc
+  return pingLcd
+}
+
+export function useChainStatus(urls: string | string[] | null, type: 'evm' | 'cosmos' | 'solana') {
   const urlList = Array.isArray(urls) ? urls : urls ? [urls] : []
-  const ping = type === 'evm' ? pingRpc : pingLcd
+  const ping = getPingFn(type)
 
   return useQuery({
     queryKey: ['chainStatus', urlList, type],
@@ -131,11 +167,11 @@ export type EndpointStatus = { url: string } & ChainStatus
 /** Ping each URL and return per-endpoint results. Only runs when enabled (e.g. when details expanded). */
 export function useChainStatusPerEndpoint(
   urls: string[],
-  type: 'evm' | 'cosmos',
+  type: 'evm' | 'cosmos' | 'solana',
   enabled: boolean
 ) {
   const unique = [...new Set(urls)].filter(Boolean)
-  const ping = type === 'evm' ? pingRpc : pingLcd
+  const ping = getPingFn(type)
 
   return useQuery({
     queryKey: ['chainStatusPerEndpoint', unique, type],

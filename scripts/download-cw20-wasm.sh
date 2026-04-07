@@ -1,10 +1,14 @@
 #!/bin/bash
-# Download CW20 WASM for E2E testing
+# Download CW20 WASM for E2E / QA (deploy-terra --cw20)
 #
-# Downloads cw20_base.wasm from CosmWasm/cw-plus releases that is compatible
-# with Terra Classic's wasmd (CosmWasm 1.x without reference-types).
+# Downloads cw20_base.wasm from CosmWasm/cw-plus releases (compatible with
+# Terra Classic wasmd / CosmWasm 1.x) and saves as cw20_mintable.wasm for
+# compatibility with existing scripts.
 #
 # Usage: ./scripts/download-cw20-wasm.sh
+#
+# Optional: CW20_WASM_URL_OVERRIDE="https://..." to fetch from an internal mirror
+# when GitHub is blocked (air-gapped QA hosts).
 
 set -euo pipefail
 
@@ -12,82 +16,146 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ARTIFACTS_DIR="$PROJECT_ROOT/packages/contracts-terraclassic/artifacts"
 
-# CW20 version compatible with cosmwasm-std 1.5.x and wasmd without reference-types
-# cw-plus v1.1.2 uses cosmwasm-std 1.5.x
 CW_PLUS_VERSION="v1.1.2"
-CW20_WASM_URL="https://github.com/CosmWasm/cw-plus/releases/download/${CW_PLUS_VERSION}/cw20_base.wasm"
-
-# Alternative: Try v1.1.0 if v1.1.2 doesn't work
 CW_PLUS_FALLBACK_VERSION="v1.1.0"
-CW20_FALLBACK_URL="https://github.com/CosmWasm/cw-plus/releases/download/${CW_PLUS_FALLBACK_VERSION}/cw20_base.wasm"
 
-# Output filename (cw20_mintable.wasm for compatibility with existing scripts)
+# Primary + fallbacks (same asset name on cw-plus releases)
+URLS=(
+  "https://github.com/CosmWasm/cw-plus/releases/download/${CW_PLUS_VERSION}/cw20_base.wasm"
+  "https://github.com/CosmWasm/cw-plus/releases/download/${CW_PLUS_FALLBACK_VERSION}/cw20_base.wasm"
+)
+
 OUTPUT_FILE="$ARTIFACTS_DIR/cw20_mintable.wasm"
 
-log_info() {
-    echo -e "\033[0;34m[INFO]\033[0m $1"
+log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
+log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
+log_error() { echo -e "\033[0;31m[ERROR]\033[0m $1"; }
+log_warn() { echo -e "\033[0;33m[WARN]\033[0m $1"; }
+
+# try_url is used inside `if try_url ...`; errexit is off — check mv explicitly.
+
+check_artifacts_writable() {
+  local probe
+  probe="$ARTIFACTS_DIR/.qa_write_probe_$$"
+  mkdir -p "$ARTIFACTS_DIR" || true
+  if ! ( umask 022 && : >"$probe" ) 2>/dev/null; then
+    log_error "Cannot write to $ARTIFACTS_DIR (e.g. owned by root from a prior sudo deploy)."
+    log_error "Fix: sudo chown -R \"$(id -un)\":\"$(id -gn)\" \"$ARTIFACTS_DIR\""
+    return 1
+  fi
+  rm -f "$probe"
+  return 0
 }
 
-log_success() {
-    echo -e "\033[0;32m[SUCCESS]\033[0m $1"
-}
-
-log_error() {
-    echo -e "\033[0;31m[ERROR]\033[0m $1"
-}
-
-log_warn() {
-    echo -e "\033[0;33m[WARN]\033[0m $1"
-}
-
-# Create artifacts directory if it doesn't exist
 mkdir -p "$ARTIFACTS_DIR"
 
-# Check if already exists
 if [ -f "$OUTPUT_FILE" ]; then
-    log_info "CW20 WASM already exists at $OUTPUT_FILE"
-    log_info "To re-download, delete the file first"
-    exit 0
+  log_info "CW20 WASM already exists at $OUTPUT_FILE"
+  log_info "To re-download, delete the file first"
+  exit 0
 fi
 
-log_info "Downloading CW20 WASM from cw-plus ${CW_PLUS_VERSION}..."
-log_info "URL: $CW20_WASM_URL"
-
-# Try primary version
-if curl -fsSL -o "$OUTPUT_FILE" "$CW20_WASM_URL" 2>/dev/null; then
-    log_success "Downloaded cw20_base.wasm from ${CW_PLUS_VERSION}"
-else
-    log_warn "Failed to download from ${CW_PLUS_VERSION}, trying ${CW_PLUS_FALLBACK_VERSION}..."
-    
-    if curl -fsSL -o "$OUTPUT_FILE" "$CW20_FALLBACK_URL" 2>/dev/null; then
-        log_success "Downloaded cw20_base.wasm from ${CW_PLUS_FALLBACK_VERSION}"
-    else
-        log_error "Failed to download CW20 WASM from any source"
-        log_info ""
-        log_info "Manual alternatives:"
-        log_info "1. Build locally: cd packages/contracts-terraclassic && cargo build --release --target wasm32-unknown-unknown"
-        log_info "2. Download from: https://github.com/CosmWasm/cw-plus/releases"
-        log_info "3. Use a pre-built wasm from Terra Classic compatible sources"
-        exit 1
-    fi
+if ! check_artifacts_writable; then
+  exit 1
 fi
 
-# Verify the file
-if [ -f "$OUTPUT_FILE" ]; then
-    SIZE=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
-    log_success "CW20 WASM saved to: $OUTPUT_FILE"
-    log_info "File size: ${SIZE:-unknown} bytes"
-    
-    # Basic validation - check if it starts with WASM magic bytes
-    if head -c 4 "$OUTPUT_FILE" | xxd -p | grep -q "0061736d"; then
-        log_success "WASM file validation passed (magic bytes check)"
-    else
-        log_warn "WASM file might be corrupted (magic bytes mismatch)"
+download_with_curl() {
+  local url=$1
+  local out=$2
+  # -f: fail on HTTP errors; -sS: quiet but show errors; -L: follow redirects
+  # --retry: transient network; -4: prefer IPv4 (avoids broken IPv6 on some hosts)
+  # Note: avoid --retry-all-errors for older curl (e.g. Ubuntu 20.04)
+  curl -fSL -sS --retry 8 --retry-delay 2 --retry-connrefused \
+    --connect-timeout 30 --max-time 300 \
+    -4 \
+    -A "cl8y-bridge/download-cw20-wasm (curl)" \
+    -o "$out" "$url"
+}
+
+download_with_wget() {
+  local url=$1
+  local out=$2
+  wget -q -O "$out" --timeout=300 --tries=5 "$url"
+}
+
+try_url() {
+  local url=$1
+  local tmp
+  tmp=$(mktemp)
+  if command -v curl >/dev/null 2>&1; then
+    if download_with_curl "$url" "$tmp"; then
+      if mv -f "$tmp" "$OUTPUT_FILE"; then
+        return 0
+      fi
+      log_error "Cannot write $OUTPUT_FILE after download (permission denied?)"
+      rm -f "$tmp"
+      return 1
     fi
-else
-    log_error "Download completed but file not found at $OUTPUT_FILE"
+  fi
+  rm -f "$tmp"
+  tmp=$(mktemp)
+  if command -v wget >/dev/null 2>&1; then
+    if download_with_wget "$url" "$tmp"; then
+      if mv -f "$tmp" "$OUTPUT_FILE"; then
+        return 0
+      fi
+      log_error "Cannot write $OUTPUT_FILE after download (permission denied?)"
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+if [ -n "${CW20_WASM_URL_OVERRIDE:-}" ]; then
+  log_info "Using CW20_WASM_URL_OVERRIDE: ${CW20_WASM_URL_OVERRIDE}"
+  if try_url "${CW20_WASM_URL_OVERRIDE}"; then
+    log_success "Downloaded cw20 via override"
+  else
+    log_error "CW20_WASM_URL_OVERRIDE download failed"
     exit 1
+  fi
+else
+  ok=0
+  for url in "${URLS[@]}"; do
+    log_info "Trying: $url"
+    if try_url "$url"; then
+      log_success "Downloaded cw20_base.wasm"
+      ok=1
+      break
+    fi
+    log_warn "Failed, trying next URL..."
+  done
+  if [ "$ok" != 1 ]; then
+    log_error "All automatic downloads failed (GitHub unreachable or TLS/firewall)."
+    log_info "Set CW20_WASM_URL_OVERRIDE to a mirror URL, or copy cw20_mintable.wasm into:"
+    log_info "  $OUTPUT_FILE"
+    log_info "Last curl diagnostic (if curl exists):"
+    if command -v curl >/dev/null 2>&1; then
+      curl -v --connect-timeout 10 --max-time 30 -4 -o /dev/null "${URLS[0]}" 2>&1 | tail -20 || true
+    fi
+    exit 1
+  fi
 fi
 
-log_info ""
-log_info "You can now run E2E tests with CW20 support"
+if [ -f "$OUTPUT_FILE" ]; then
+  SIZE=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
+  log_success "CW20 WASM saved to: $OUTPUT_FILE"
+  log_info "File size: ${SIZE:-unknown} bytes"
+  if command -v python3 >/dev/null 2>&1; then
+    if python3 -c 'import sys; sys.exit(0 if open(sys.argv[1],"rb").read(4)==b"\x00asm" else 1)' "$OUTPUT_FILE"; then
+      log_success "WASM magic bytes OK"
+    else
+      log_warn "WASM magic bytes mismatch — file may be HTML error page; remove and retry"
+      exit 1
+    fi
+  else
+    log_warn "python3 not found — skipping WASM magic check"
+  fi
+else
+  log_error "Expected output missing: $OUTPUT_FILE"
+  exit 1
+fi
+
+log_info "You can run deploy-terra / start-qa with CW20 support."

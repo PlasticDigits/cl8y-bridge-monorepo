@@ -16,9 +16,11 @@ const WC_CONNECTION_TIMEOUT_MS = 60_000;
 export { WalletName, WalletType };
 
 /**
- * Fetch native balance from LCD
+ * Fetch native balance from LCD.
+ * Returns null if every attempt failed (timeout, network, non-OK) so callers can
+ * keep the last known balance instead of overwriting with a false zero.
  */
-async function fetchNativeBalance(address: string, denom: string): Promise<string> {
+async function fetchNativeBalance(address: string, denom: string): Promise<string | null> {
   const networkConfig = NETWORKS[DEFAULT_NETWORK].terra;
   
   for (const lcd of networkConfig.lcdFallbacks) {
@@ -37,7 +39,7 @@ async function fetchNativeBalance(address: string, denom: string): Promise<strin
     }
   }
   
-  return '0';
+  return null;
 }
 
 export function useWallet() {
@@ -148,8 +150,9 @@ export function useWallet() {
 
     try {
       const lunc = await fetchNativeBalance(address, 'uluna');
-      console.log('Balance fetched:', { lunc });
-      setBalances({ lunc });
+      if (lunc !== null) {
+        setBalances({ lunc });
+      }
     } catch (error) {
       console.error('Failed to refresh balances:', error);
     }

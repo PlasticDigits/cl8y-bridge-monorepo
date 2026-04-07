@@ -87,6 +87,8 @@ pub struct EvmWriter {
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     /// Shared HTTP client for Terra LCD queries (reused across calls)
     http: reqwest::Client,
+    /// Optional Solana source config for verifying Solana-origin deposits
+    solana_source_config: Option<super::SolanaSourceConfig>,
 }
 
 impl EvmWriter {
@@ -100,6 +102,7 @@ impl EvmWriter {
         fee_config: &FeeConfig,
         db: PgPool,
         source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
+        solana_source_config: Option<super::SolanaSourceConfig>,
     ) -> Result<Self> {
         let bridge_address =
             Address::from_str(&evm_config.bridge_address).wrap_err("Invalid bridge address")?;
@@ -298,6 +301,7 @@ impl EvmWriter {
                 .pool_max_idle_per_host(2)
                 .build()
                 .wrap_err("Failed to build HTTP client for EVM writer")?,
+            solana_source_config,
         })
     }
 
@@ -428,7 +432,7 @@ impl EvmWriter {
             );
 
             let deposit_verified = match self
-                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id)
+                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id, nonce)
                 .await
             {
                 Ok(verified) => verified,
@@ -671,10 +675,10 @@ impl EvmWriter {
             );
 
             // Verify deposit on the source chain using getDeposit(hash)
-            // For both Terra→EVM and EVM→EVM, the deposit hash = withdraw hash
-            // because both use the same 7-field compute_xchain_hash_id.
+            // For Terra→EVM, EVM→EVM, and Solana→EVM, the deposit hash = withdraw hash
+            // because all chains use the same 7-field compute_xchain_hash_id.
             let deposit_verified = match self
-                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id)
+                .verify_deposit_on_source(&xchain_hash_id, &src_chain_id, nonce)
                 .await
             {
                 Ok(verified) => verified,
@@ -753,6 +757,7 @@ impl EvmWriter {
     ///
     /// Routes verification to the correct chain:
     /// - Terra source → Terra LCD query
+    /// - Solana source → Solana DepositRecord PDA query
     /// - This chain (self) → local RPC/bridge
     /// - Known multi-EVM source → source chain's RPC/bridge
     /// - Unknown source → **fail closed** (refuse to approve)
@@ -760,6 +765,7 @@ impl EvmWriter {
         &self,
         xchain_hash_id: &[u8; 32],
         src_chain_id: &[u8; 4],
+        nonce: u64,
     ) -> Result<bool> {
         // Terra-source withdrawals are verified on Terra bridge storage.
         if let Some(terra_id) = self
@@ -774,6 +780,24 @@ impl EvmWriter {
                 "Routing source deposit verification to Terra bridge"
             );
             return self.verify_terra_deposit(xchain_hash_id).await;
+        }
+
+        // Solana-source withdrawals are verified against the Solana DepositRecord PDA.
+        if let Some(ref sol_config) = self.solana_source_config {
+            if sol_config.chain_ids.iter().any(|id| id == src_chain_id) {
+                debug!(
+                    hash = %bytes32_to_hex(xchain_hash_id),
+                    src_chain = %format!("0x{}", hex::encode(src_chain_id)),
+                    "Routing source deposit verification to Solana"
+                );
+                return super::verify_deposit_on_solana_source(
+                    &self.http,
+                    sol_config,
+                    xchain_hash_id,
+                    nonce,
+                )
+                .await;
+            }
         }
 
         // Determine which RPC/bridge to use for EVM-source verification.

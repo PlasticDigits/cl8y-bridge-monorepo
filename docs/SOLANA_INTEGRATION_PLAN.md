@@ -2,7 +2,9 @@
 
 **Created:** 2026-03-17
 **Scope:** All packages — contracts, operator, canceler, multichain-rs, frontend, e2e
-**Status:** Draft — ready for review
+**Status:** In progress — implementation on feat/solana-integration
+
+**Deployment (mainnet rehearsal, upgrade, faucet):** [solana-mainnet-faucet-deployment.md](./solana-mainnet-faucet-deployment.md)
 
 ---
 
@@ -554,6 +556,15 @@ WriterManager
 | `packages/operator/src/writers/mod.rs` | Register Solana writer in `WriterManager` |
 | DB migration | `solana_deposits` and `solana_blocks` tables |
 
+### 6b.1 Environment variables (operator / canceler, multi-SVM)
+
+| Variable | Description |
+|----------|-------------|
+| `SOLANA_V2_CHAIN_IDS` | Comma-separated V2 chain IDs (hex `0x...` or decimal), e.g. `5,7`. Use when more than one SVM network shares the same RPC and program id. |
+| `SOLANA_V2_CHAIN_ID` | Single id when `SOLANA_V2_CHAIN_IDS` is not set (defaults to `5` for local dev). |
+
+**SolanaWriter** submits `withdraw_approve` for: (1) pending **EVM** deposits with `dest_chain_type = 'solana'` after `getDeposit` verification; (2) pending **Terra** deposits whose `dest_chain_id` matches any configured Solana V2 id and whose `transfer_hash` column is set from the Terra wasm `xchain_hash_id` attribute, after Terra LCD `DepositHash` verification. Outbound **Solana** deposits (`solana_deposits` from `SolanaWatcher`) are not queued for Solana approvals—destination-side writers handle those.
+
 ### 6c. SolanaWatcher Design
 
 ```rust
@@ -876,14 +887,14 @@ solana:
   command: >
     solana-test-validator
     --reset
-    --bind-address 0.0.0.0
+    --bind-address 127.0.0.1
     --rpc-port 8899
     --faucet-port 9900
     --limit-ledger-size 50000000
   ports:
-    - "8899:8899"
-    - "8900:8900"
-    - "9900:9900"
+    - "127.0.0.1:8899:8899"
+    - "127.0.0.1:8900:8900"
+    - "127.0.0.1:9900:9900"
   healthcheck:
     test: ["CMD", "solana", "cluster-version", "--url", "http://localhost:8899"]
     interval: 5s
@@ -988,6 +999,10 @@ register_token instruction with:
   dest_token: <bytes32 encoded dest token>
   mode: LockUnlock or MintBurn
 ```
+
+### 10c-ops. Bridge withdraw rate limits (not optional)
+
+**Bridge** withdraw rate limiting (per SPL mint and native SOL mapping) is distinct from **RPC** endpoint rate limits mentioned elsewhere in this document. It is a **required operational security control**: admin `set_rate_limit` on the Solana program configures min per transaction, max per transaction, and max per 24h window for payouts on execute. Production deployments **must** use risk-appropriate values; explicit configuration with all limits set to zero disables the per-period cap and must not be used as a production policy. See [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md) (INV-W4), [security-model.md](./security-model.md), and [SPL_BRIDGE_SECURITY_AUDIT.md](./SPL_BRIDGE_SECURITY_AUDIT.md).
 
 ### 10d. Deployment Sequence
 

@@ -5,8 +5,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   formatAmount,
+  formatAmountForNumberInput,
   formatCompact,
+  UNPARSEABLE_AMOUNT_DISPLAY,
+  UNPARSEABLE_AMOUNT_NUMBER_INPUT,
   parseAmount,
+  parseAmountAsBigInt,
+  expandScientificNotationToDecimalString,
   formatRate,
   formatDuration,
   formatCountdownMmSs,
@@ -45,6 +50,12 @@ describe('formatAmount', () => {
     expect(formatAmount(BigInt('1000000000000'), 6)).toBe('1,000,000.00')
   })
 
+  it('formats huge base-unit bigint without Number precision loss (18 decimals)', () => {
+    const base = BigInt('1000000000000000000000000')
+    expect(formatAmount(base, 18)).toBe('1,000,000.00')
+    expect(formatAmountForNumberInput(base, 18)).toBe('1000000.00')
+  })
+
   it('handles zero', () => {
     expect(formatAmount('0', 6)).toBe('0.00')
     expect(formatAmount(0, 6)).toBe('0.00')
@@ -70,6 +81,42 @@ describe('formatAmount', () => {
   it('handles small amounts', () => {
     expect(formatAmount('1', 6)).toBe('0.000001')
     expect(formatAmount('100', 6)).toBe('0.0001')
+  })
+
+  it('formats fractional micro (base-unit) strings without float scaling', () => {
+    expect(formatAmount('1000000.5', 6, 2)).toBe('1.00')
+    expect(formatAmount('1000000.5', 6)).toBe('1.000001')
+    expect(formatAmount('.5', 6, 9)).toBe('0.0000005')
+    expect(formatAmount('-1000000', 6)).toBe('-1.00')
+    expect(formatAmount('1e+6', 6)).toBe('1.00')
+  })
+
+  it('returns display sentinel and logs when micro amount is unparseable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatAmount('not-a-number', 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(formatAmount(Number.NaN, 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+describe('formatAmountForNumberInput', () => {
+  it('matches formatAmount without thousands separators', () => {
+    expect(formatAmountForNumberInput('1000000', 6)).toBe('1.00')
+    expect(formatAmountForNumberInput(BigInt('1000000000000'), 6)).toBe('1000000.00')
+    expect(formatAmountForNumberInput('1000000000000', 6)).toBe('1000000.00')
+    expect(formatAmountForNumberInput('999999999999', 6)).toBe('999999.999999')
+  })
+
+  it('respects displayDecimals', () => {
+    expect(formatAmountForNumberInput('1234567', 6, 2)).toBe('1.23')
+  })
+
+  it('returns empty sentinel for unparseable micro amount', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatAmountForNumberInput('bogus', 6)).toBe(UNPARSEABLE_AMOUNT_NUMBER_INPUT)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
 
@@ -111,6 +158,18 @@ describe('formatCompact', () => {
     expect(formatCompact(BigInt('500000000000000000000000'), 18)).toBe('500k')
   })
 
+  it('handles fractional micro strings on compact path', () => {
+    expect(formatCompact('12', 6)).toBe('0.000012')
+    expect(formatCompact('12.5', 6)).toBe('0.0000125')
+  })
+
+  it('returns compact sentinel when unparseable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(formatCompact('nope', 6)).toBe(UNPARSEABLE_AMOUNT_DISPLAY)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   it('supports custom significant figures', () => {
     expect(formatCompact('1234567000000', 6, 6)).toBe('1.23457m')
     expect(formatCompact('1234567', 6, 6)).toBe('1.23457')
@@ -147,6 +206,38 @@ describe('parseAmount', () => {
 
   it('handles large amounts', () => {
     expect(parseAmount('1000000', 6)).toBe('1000000000000')
+  })
+
+  // Regression (GitLab #95): Number scaling used scientific notation; BigInt() threw.
+  it('parses large human × decimals without scientific notation (Solana 18-dec SPL)', () => {
+    const s = parseAmount('1000', 18)
+    expect(s).toBe('1000000000000000000000')
+    expect(s).not.toMatch(/e/i)
+    expect(() => BigInt(s)).not.toThrow()
+    expect(parseAmountAsBigInt('1000', 18)).toBe(BigInt('1000000000000000000000'))
+  })
+
+  it('parseAmountAsBigInt + fee deduction stays exact integer (no float scientific notation)', () => {
+    const gross = parseAmountAsBigInt('2.985', 18)
+    expect(gross).toBe(2_985_000_000_000_000_000n)
+    const feeBps = 50n
+    const net = gross - (gross * feeBps) / 10000n
+    expect(net).toBe(2_970_075_000_000_000_000n)
+  })
+
+  it('parseAmountAsBigInt matches expected bigint for typical inputs', () => {
+    expect(parseAmountAsBigInt('1.5', 6)).toBe(1_500_000n)
+    expect(parseAmountAsBigInt(0, 6)).toBe(0n)
+  })
+})
+
+describe('expandScientificNotationToDecimalString', () => {
+  it('expands large exponents to plain digits', () => {
+    expect(expandScientificNotationToDecimalString('1e+21')).toBe('1000000000000000000000')
+  })
+
+  it('expands small negative exponents', () => {
+    expect(expandScientificNotationToDecimalString('1.5e-3')).toBe('0.0015')
   })
 })
 
@@ -336,6 +427,12 @@ describe('Scanner URL functions', () => {
     expect(getTokenExplorerUrl('https://finder.terraclassic.community/mainnet', 'terra1abc', 'cosmos')).toBe(
       'https://finder.terraclassic.community/mainnet/address/terra1abc'
     )
+  })
+
+  it('getTokenExplorerUrl builds Solana mint URL', () => {
+    expect(
+      getTokenExplorerUrl('https://explorer.solana.com/?cluster=devnet', 'Mint111111111111111111111111111111111111111', 'solana')
+    ).toBe('https://explorer.solana.com/?cluster=devnet/address/Mint111111111111111111111111111111111111111')
   })
 
   it('getTokenExplorerUrl returns empty when base or address missing', () => {

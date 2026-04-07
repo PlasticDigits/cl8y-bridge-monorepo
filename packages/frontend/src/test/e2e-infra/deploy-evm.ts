@@ -113,6 +113,24 @@ export function deployThreeTokens(rpcUrl: string): TokenDeployResult {
 }
 
 /**
+ * Deploy Token-2022 QA ERC20 (18 decimals, symbol TTWT) — paired with Token-2022 SPL + Terra CW20 for QA.
+ * Ticker matches `QA_TOKEN2022_TICKER` in `deploy-terra.ts` (CW20 disallows digits in symbols).
+ */
+export function deployT2022TestToken(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying Token-2022 QA ERC20 (TTWT) to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployT2022TestToken.s.sol:DeployT2022TestToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/TOKEN_T2022_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) {
+    throw new Error(`Could not find TOKEN_T2022_ADDRESS in deploy output:\n${output.slice(0, 600)}`)
+  }
+  console.log(`[deploy-evm] T2022 deployed: ${match[1]}`)
+  return match[1]!
+}
+
+/**
  * Deploy LUNC/tLUNC token (uluna representation) on a chain.
  * Symbol "tLUNC" so UI shows LUNC on Anvil/Anvil1, not TKNA.
  */
@@ -144,6 +162,35 @@ export function deployKdecToken(rpcUrl: string, decimals: number): string {
   const match = output.match(/KDEC_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
   if (!match) throw new Error('Could not find KDEC_TOKEN_ADDRESS in deploy output')
   console.log(`[deploy-evm] KDEC token (${decimals}d) deployed: ${match[1]!}`)
+  return match[1]!
+}
+
+/**
+ * Deploy the Faucet.sol contract (rate-limited mint via MockMintableToken.mint).
+ * Works with QA ERC20s — MockMintableToken allows any caller to mint.
+ */
+export function deployFaucet(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying Faucet contract to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeployFaucet.s.sol:DeployFaucet --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/FAUCET[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find FAUCET in deploy output')
+  console.log(`[deploy-evm] Faucet deployed: ${match[1]!}`)
+  return match[1]!
+}
+
+/** Deploy synthetic SOL ERC20 (9 decimals) for QA cross-chain registration with WSOL. */
+export function deploySolToken(rpcUrl: string): string {
+  console.log(`[deploy-evm] Deploying SOL token to ${rpcUrl}...`)
+  const output = execSync(
+    `forge script script/DeploySolToken.s.sol:DeploySolToken --broadcast --rpc-url ${rpcUrl} --sender ${DEPLOYER_ADDRESS} --private-key ${DEPLOYER_KEY}`,
+    { cwd: CONTRACTS_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, FOUNDRY_DISABLE_NIGHTLY_WARNING: '1' } }
+  )
+  const match = output.match(/SOL_TOKEN_ADDRESS[= ](0x[0-9a-fA-F]{40})/)
+  if (!match) throw new Error('Could not find SOL_TOKEN_ADDRESS in deploy output')
+  console.log(`[deploy-evm] SOL token deployed: ${match[1]!}`)
   return match[1]!
 }
 
