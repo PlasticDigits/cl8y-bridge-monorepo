@@ -3,6 +3,9 @@
 # (saves rent/fees and matches mainnet). For local all-program deploy use scripts/solana/anchor-deploy-localnet.sh;
 # optional SPL faucet program deploy is documented in docs/solana-mainnet-faucet-deployment.md.
 #
+# Bridge program keypair: CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH, else keys/private/cl8y_bridge-keypair.json,
+# else keys/localnet/cl8y_bridge-keypair.json (see docs/deployment-solana-mainnet.md Step 1.1).
+#
 # Usage: ./scripts/solana/deploy.sh [localnet|devnet|mainnet-beta]
 
 set -euo pipefail
@@ -38,10 +41,22 @@ echo
 
 cd "$REPO_ROOT/packages/contracts-solana"
 
-# Bridge program pubkey must match declare_id! / Anchor.toml (committed under keys/localnet/).
-KEYS_DIR="$REPO_ROOT/packages/contracts-solana/keys/localnet"
-mkdir -p target/deploy
-cp "$KEYS_DIR/cl8y_bridge-keypair.json" target/deploy/
+# Bridge program keypair: prefer gitignored keys/private/, then CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH, then keys/localnet/.
+mkdir -p target/deploy keys/private
+BRIDGE_KP=""
+if [[ -n "${CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH:-}" && -f "${CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH}" ]]; then
+  BRIDGE_KP="${CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH}"
+elif [[ -f keys/private/cl8y_bridge-keypair.json ]]; then
+  BRIDGE_KP="keys/private/cl8y_bridge-keypair.json"
+elif [[ -f keys/localnet/cl8y_bridge-keypair.json ]]; then
+  BRIDGE_KP="keys/localnet/cl8y_bridge-keypair.json"
+else
+  echo "Missing cl8y_bridge program keypair. For mainnet or a fresh program id, generate a gitignored keypair:" >&2
+  echo "  cd packages/contracts-solana && mkdir -p keys/private && solana-keygen new -o keys/private/cl8y_bridge-keypair.json" >&2
+  echo "Then set declare_id! and Anchor.toml to the pubkey; see docs/deployment-solana-mainnet.md Step 1.1." >&2
+  exit 1
+fi
+cp "${BRIDGE_KP}" target/deploy/cl8y_bridge-keypair.json
 
 # Build bridge only (smaller/faster; avoids faucet program rent on devnet/localnet when using this script).
 echo "[1/4] Building Anchor program (cl8y_bridge)..."

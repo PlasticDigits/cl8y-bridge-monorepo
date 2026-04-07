@@ -7,8 +7,9 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-# Match packages/contracts-solana/keys/localnet/*-keypair.json (committed; used by make deploy-solana)
-cl8y_bridge = "74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW"
+# Public program ids: must match declare_id! and solana-keygen pubkey on the bridge/faucet keypair files.
+# Keypairs live in keys/private/ (gitignored, preferred) or keys/localnet/ (dev/CI fallback only).
+cl8y_bridge = "4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt"
 cl8y_faucet = "7uqKHSr6naMr3LakCSRkZpiRTBboALh4ZgZdw7hvTwG4"
 
 [registry]

@@ -18,6 +18,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
 | [Solana bridge deposits](./docs/SOLANA_BRIDGE_DEPOSITS.md) | Solana source: `deposit_native` (lamports) vs `deposit_spl` (SPL) |
+| [Solana mainnet deployment](./docs/deployment-solana-mainnet.md) | Mainnet-beta rollout; bridge program `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`, BridgeConfig PDA `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (seeds `["bridge"]`) |
 | [Terra Upgrade Guide](./docs/deployment-terraclassic-upgrade.md) | Watchtower upgrade deployment |
 
 ## Live Deployments
@@ -31,6 +32,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | BNB Smart Chain (BSC) | EVM | 56 | `0x00000038` | [bscscan.com](https://bscscan.com) | Contracts + tokens deployed |
 | opBNB | EVM (L2) | 204 | `0x000000cc` | [opbnbscan.com](https://opbnbscan.com) | Contracts + tokens deployed |
 | Terra Classic | Cosmos / CosmWasm | `columbus-5` | `0x00000001` | [finder.terra.money](https://finder.terra.money/classic) | Bridge + tokens deployed |
+| Solana | SVM | `mainnet-beta` | `0x00000005` | [solscan.io](https://solscan.io) | Bridge program ([program](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt)), BridgeConfig PDA ([account](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD)) |
 
 ### BSC + opBNB Mainnet (Matching Addresses)
 
@@ -116,6 +118,18 @@ Proxy addresses are identical on BSC and opBNB (same deployer, same nonce order)
 | Fee | 30 bps (0.30%) |
 
 **Remaining:** Update operator/canceler/frontend config with new bridge address.
+
+### Solana mainnet-beta
+
+| Item | Value |
+|------|--------|
+| CL8Y bridge program | [`4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt) |
+| Bridge config PDA | [`HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD`](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD) — seeds **`["bridge"]`** under the program id above; holds `BridgeConfig`, SPL **mint authority** for MintBurn test tokens, fee vault |
+| V2 `bytes4` chain ID | `0x00000005` |
+
+**Noneconomic test SPL mints** (pair with BSC/opBNB/Terra test tokens; 9 / 9 / 6 decimals): testa [`6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E`](https://solscan.io/token/6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E), testb [`EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX`](https://solscan.io/token/EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX), tdec [`765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR`](https://solscan.io/token/765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR). Set `VITE_SOLANA_TESTA_MINT`, `VITE_SOLANA_TESTB_MINT`, `VITE_SOLANA_TDEC_MINT` (and operator env `SOLANA_TESTA_MINT` etc. if used) to these values. EVM `bytes32`, Terra `dest_token` hex, and Terra `src_token` base64 encodings are tabulated in [docs/deployment-solana-mainnet.md](./docs/deployment-solana-mainnet.md).
+
+Set `SOLANA_PROGRAM_ID` / `VITE_SOLANA_PROGRAM_ID` to the bridge program address for operator, canceler, and frontend against mainnet. The **BridgeConfig** account is the PDA above (not configured separately). Full rollout steps: [docs/deployment-solana-mainnet.md](./docs/deployment-solana-mainnet.md).
 
 ### Testnet Deployments (BSC Testnet + opBNB Testnet, v1.2)
 

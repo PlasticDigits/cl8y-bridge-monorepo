@@ -41,6 +41,8 @@ VITE_EVM_BRIDGE_ADDRESS=0x...
 VITE_TERRA_BRIDGE_ADDRESS=terra1...
 ```
 
+Mainnet Solana: set `VITE_SOLANA_PROGRAM_ID`, `VITE_SOLANA_RPC_URL`, and noneconomic test SPL mints (`VITE_SOLANA_TESTA_MINT`, `VITE_SOLANA_TESTB_MINT`, `VITE_SOLANA_TDEC_MINT`) per the monorepo [README.md](../../README.md) (Solana mainnet-beta). The **BridgeConfig PDA** for mainnet is `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (documented next to the program id there and in [docs/deployment-solana-mainnet.md](../../docs/deployment-solana-mainnet.md)); the app derives it from the program id. See `.env.example` for commented defaults.
+
 ### Features
 
 - **Wallet Connection**: Connect EVM wallets (MetaMask, etc.) via wagmi

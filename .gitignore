@@ -39,6 +39,7 @@ dist/
 # Solana (local validator / anchor test)
 # ===================
 test-ledger/
+**/*-keypair.json
 
 # ===================
 # Terra Contracts (Rust/CosmWasm)

@@ -686,7 +686,8 @@ impl SolanaWriter {
 # New env vars for operator
 SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 SOLANA_WS_URL=wss://api.mainnet-beta.solana.com
-SOLANA_PROGRAM_ID=<bridge program pubkey>
+SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+# Mainnet BridgeConfig PDA (seeds ["bridge"]): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD — not configured via env; derive from program id
 SOLANA_KEYPAIR_PATH=/path/to/operator-keypair.json
 SOLANA_POLL_INTERVAL_MS=2000
 SOLANA_COMMITMENT=finalized             # finalized recommended (see 6c-i)
@@ -843,9 +844,9 @@ Add Solana entries to `BRIDGE_CHAINS`:
   rpcUrl: 'https://api.devnet.solana.com', programId: '<devnet-program-id>',
   bytes4ChainId: '0x00000005' },
 
-// mainnet
+// mainnet (BridgeConfig PDA: HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD — seeds ["bridge"] under programId)
 { id: 'solana', type: 'solana', name: 'Solana',
-  rpcUrl: 'https://api.mainnet-beta.solana.com', programId: '<mainnet-program-id>',
+  rpcUrl: 'https://api.mainnet-beta.solana.com', programId: '4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt',
   bytes4ChainId: '0x00000005' },
 ```
 

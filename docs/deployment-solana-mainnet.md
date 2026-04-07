@@ -21,6 +21,8 @@ Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deplo
 | Terra Classic | `0x00000001` | registered | registered | self |
 | **Solana** | **`0x00000005`** | **NOT registered** | **NOT registered** | **NOT registered** |
 
+**Deployed Solana bridge program (mainnet-beta):** `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt` ([Solscan](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt)). **BridgeConfig PDA** (seeds **`["bridge"]`**, same program): `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` ([Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD)). Chain registration rows above refer to EVM/Terra **registry** state, not whether the program exists on Solana.
+
 ### Contract Addresses
 
 **BSC + opBNB (matching proxy addresses on both chains):**
@@ -69,19 +71,27 @@ Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, 
 
 ### Key Addresses and Configuration
 
-| Parameter | Value |
-|-----------|-------|
-| EVM contract owner (all) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` |
-| EVM operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` |
-| Terra admin | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
-| Terra operator | `terra1q7txczaxuvy923k4km9ya062dryk6mjwd6tmzm` |
-| Terra canceler | `terra1le993xczrgyhl022q9z3qly0xzfd5s7uyg7qg6` |
-| Cancel window | 300s (5 min) on both EVM and Terra |
-| EVM fee | 50 bps (0.50%) |
-| Terra fee | 30 bps (0.30%) |
-| GuardBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
-| rateLimitBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) |
-| Bridge cancelers (EVM) | **`getCancelerCount() >= 1`** per chain after [Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb) (watchtower); owner-only cancel is **not** sufficient for production |
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| EVM contract owner (all) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` | — |
+| EVM operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` | — |
+| Terra admin | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` | — |
+| Terra operator | `terra1q7txczaxuvy923k4km9ya062dryk6mjwd6tmzm` | — |
+| Terra canceler | `terra1le993xczrgyhl022q9z3qly0xzfd5s7uyg7qg6` | — |
+| Solana bridge program (mainnet-beta) | `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt` | **`SOLANA_PROGRAM_ID`** / **`VITE_SOLANA_PROGRAM_ID`**; [Solscan](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt) |
+| Solana BridgeConfig PDA | `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` | Seeds **`["bridge"]`** under program id above; [Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD). **Mint authority** for MintBurn SPL mints must be this PDA (not the program id). Confirm: `solana find-program-derived-address "$SOLANA_PROGRAM_ID" string:bridge` (pubkey is first field) |
+| Solana deployer / bridge admin | `5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg` | **`SOLANA_KEYPAIR`** for deploy, **`initialize-bridge.sh`**, **`setup-test-tokens.sh`**, and **`addCanceler`** (admin signer) |
+| Solana operator | `7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro` | **`OPERATOR_PUBKEY`** at init; operator service Solana signer (**`SOLANA_PRIVATE_KEY`**) |
+| Solana canceler | `EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK` | Register with **`addCanceler`**; canceler **`SOLANA_KEYPAIR_PATH`** must be this keypair |
+| Solana SPL **testa** (9 dec) | `6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E` | [Solscan](https://solscan.io/token/6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E); **`SOLANA_TESTA_MINT`** / **`VITE_SOLANA_TESTA_MINT`** |
+| Solana SPL **testb** (9 dec) | `EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX` | [Solscan](https://solscan.io/token/EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX); **`SOLANA_TESTB_MINT`** / **`VITE_SOLANA_TESTB_MINT`** |
+| Solana SPL **tdec** (6 dec) | `765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR` | [Solscan](https://solscan.io/token/765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR); **`SOLANA_TDEC_MINT`** / **`VITE_SOLANA_TDEC_MINT`** |
+| Cancel window | 300s (5 min) on both EVM and Terra | — |
+| EVM fee | 50 bps (0.50%) | — |
+| Terra fee | 30 bps (0.30%) | — |
+| GuardBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) | — |
+| rateLimitBridge (EVM) | Must not stay `address(0)` — see [Prerequisite](#prerequisite-evm-rate-limits-bsc-and-opbnb) | — |
+| Bridge cancelers (EVM) | **`getCancelerCount() >= 1`** per chain after [Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb) (watchtower); owner-only cancel is **not** sufficient for production | — |
 
 ### Terra Classic `terrad` keyring names (this rollout)
 
@@ -598,7 +608,7 @@ Follow **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-o
 
 ### Step 0.3: Solana Rate Limits
 
-The Solana bridge program has a `set_rate_limit` instruction. Since the bridge doesn't exist yet, CL8Y rate limits will be configured during Solana deployment. If a CL8Y SPL mint is ever created on Solana, set its rate limit to 1 immediately after registration.
+The Solana bridge program has a `set_rate_limit` instruction. The mainnet program id is **`4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`**; the **BridgeConfig** account lives at PDA **`HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD`** (seeds **`["bridge"]`**). If a CL8Y SPL mint is ever created on Solana, set its rate limit to 1 immediately after registration.
 
 ---
 
@@ -607,6 +617,8 @@ The Solana bridge program has a `set_rate_limit` instruction. Since the bridge d
 ### Step 0: Secure deployment keypair (BIP39 + gpg symmetric)
 
 Use a **dedicated deployer key** stored on disk **only** as a gpg-encrypted file. The Solana CLI keypair file (`*.json`) is **plaintext** unless you protect it yourself—gpg gives passphrase-protected storage at rest.
+
+**Production pubkeys (this rollout):** Deployer signs **`deploy.sh`**, **`initialize-bridge.sh`**, **`setup-test-tokens.sh`**, and on-chain admin instructions (`add_canceler`, etc.); its pubkey must be **`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`** (see **Solana deployer / bridge admin** in [Key Addresses and Configuration](#key-addresses-and-configuration)). **`OPERATOR_PUBKEY`** for initialization is **`7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro`**. Register canceler **`EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK`** on the Solana program after init ([Phase 4](#phase-4-operator-and-canceler-configuration)). After creating or decrypting **`id-deployer.json`**, run `solana-keygen pubkey` on that file and confirm it matches the deployer/admin pubkey before mainnet funding.
 
 **Paths:**
 
@@ -655,6 +667,8 @@ chmod 600 "${GPG_DEPLOYER}"
 ```bash
 gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
 ```
+
+**Production deployer (this runbook):** that pubkey must be **`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`** before you fund mainnet or run Phase 1 with the operator/canceler keys in the table above. If you intentionally use a different deployer, keep **`SOLANA_KEYPAIR`** consistent everywhere and still set **`OPERATOR_PUBKEY`** / canceler registration to **`7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro`** and **`EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK`** respectively.
 
 Then **delete the plaintext** keypair:
 
@@ -727,7 +741,7 @@ Solana charges **transaction fees** and **program account rent** for deployment,
 
 If those program IDs are **already** deployed on devnet, you may not pay full initial program-data rent again; **rent is driven by `.so` size**, which is the same on mainnet—use a first-time devnet deploy when you need a full balance-delta estimate.
 
-**`Program … has been closed, use a new Program Id`:** The program data account for that **program ID** was **closed** on-chain (common on devnet). Solana will not deploy again to the same address. Fix by issuing a **new program keypair** for that program, updating **`declare_id!`**, **`[programs.localnet]`** in **`Anchor.toml`**, **`keys/localnet/*-keypair.json`**, and any hardcoded pubkeys in scripts or tests (search the repo for the old address). **`deploy.sh`** only deploys **`cl8y_bridge`** and copies **`keys/localnet/cl8y_bridge-keypair.json`** into **`target/deploy/`** before each build—rotating the **bridge** program id is a major migration; treat closed-bridge cases as exceptional.
+**`Program … has been closed, use a new Program Id`:** The program data account for that **program ID** was **closed** on-chain (common on devnet). Solana will not deploy again to the same address. Fix by issuing a **new program keypair** under **`packages/contracts-solana/keys/private/`** (gitignored), then follow **[Step 1.1](#step-11-build-solana-programs-bridge)** to sync the **public** program id into **`declare_id!`**, **`Anchor.toml`**, and every other reference (search the repo for the old address). **`deploy.sh`** copies the resolved bridge keypair into **`target/deploy/`** before each build—rotating the **bridge** program id is a major migration; treat closed-bridge cases as exceptional.
 
 **Do not** reuse `id-devnet.json` as the mainnet deployer. Mainnet signing still follows **Step 0.3** with **`id-deployer.json`**.
 
@@ -741,23 +755,86 @@ gpg --decrypt "${GPG_DEPLOYER}" | solana-keygen pubkey /dev/stdin
 
 (or decrypt once to a file and run `solana-keygen pubkey "${PLAIN}"`).
 
+**Production address:** send mainnet SOL to **`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`** when using the deployer keypair documented in [Key Addresses and Configuration](#key-addresses-and-configuration).
+
 ---
 
 ### Step 1.1: Build Solana Programs (bridge)
 
-Matches **`./scripts/solana/deploy.sh`** (bridge only, **`no-log-ix-name`**):
+**Program keypair storage (mainnet / production):** Keep **`cl8y_bridge`** JSON keypairs **only** under **`packages/contracts-solana/keys/private/`**, which is **gitignored**—never commit `*-keypair.json` files. The **public** program address still appears in source and config after you sync it; that is expected (it matches on-chain state).
+
+**1. Generate the bridge program keypair and back it up**
 
 ```bash
 cd packages/contracts-solana
-mkdir -p target/deploy && cp keys/localnet/cl8y_bridge-keypair.json target/deploy/
+mkdir -p keys/private target/deploy
+# New program id (recommended for first mainnet deploy):
+solana-keygen new -o keys/private/cl8y_bridge-keypair.json
+# Optional non-interactive (no passphrase prompt):
+# solana-keygen new --no-bip39-passphrase -o keys/private/cl8y_bridge-keypair.json
+```
+
+**Immediately** copy the keypair to durable, offline storage (e.g. gpg-encrypted archive, hardware backup, same discipline as **Step 0**). If you lose this file, you lose upgrade authority for that program id.
+
+**2. Sync the pubkey everywhere it must match the keypair**
+
+After backup, obtain the address once and apply it everywhere below (paths from monorepo root):
+
+```bash
+cd packages/contracts-solana
+solana-keygen pubkey keys/private/cl8y_bridge-keypair.json
+```
+
+| File | What to set |
+|------|-------------|
+| `packages/contracts-solana/programs/cl8y-bridge/src/lib.rs` | `declare_id!("<PUBKEY>");` |
+| `packages/contracts-solana/Anchor.toml` | Under `[programs.localnet]`, `cl8y_bridge = "<PUBKEY>"` |
+| `packages/frontend/src/test/e2e-infra/setup.ts` | `LOCALNET_SOLANA_BRIDGE_PROGRAM_ID` (must match deployed bridge for local/e2e infra) |
+| `packages/frontend/src/hooks/useTokenChains.test.tsx` | `bridgeAddress` fixture for Solana in tests |
+| `packages/e2e/tests/test_solana_flows.rs` | `DEFAULT_SOLANA_PROGRAM_ID` |
+| `packages/e2e/src/tests/canceler_solana_destination.rs` | Default / fallback bridge program id string used when env is unset |
+
+Then search for any **remaining** copies of the **old** bridge program id (docs, scripts, env examples):
+
+```bash
+# From repo root; substitute the prior base58 id (example: value before your rotation)
+rg -nF '4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt' \
+  --glob '!**/target/**' --glob '!**/node_modules/**'
+```
+
+Fix every hit that should track the live program id. Paths such as `solana-keygen pubkey …/cl8y_bridge-keypair.json` can stay; string **literals** of the old address must not.
+
+**Overrides:** `deploy.sh` resolves the bridge keypair in order: **`CL8Y_BRIDGE_PROGRAM_KEYPAIR_PATH`** (if set and file exists) → **`keys/private/cl8y_bridge-keypair.json`** → **`keys/localnet/cl8y_bridge-keypair.json`** (dev/CI fallback only—**do not** rely on committed keypairs for mainnet authority).
+
+**3. Copy into `target/deploy/` and build** (same layout **`./scripts/solana/deploy.sh`** uses, bridge only, **`no-log-ix-name`**):
+
+```bash
+cd packages/contracts-solana
+mkdir -p target/deploy
+cp keys/private/cl8y_bridge-keypair.json target/deploy/
 anchor build -p cl8y_bridge -- --features no-log-ix-name
 ```
 
-Confirm the bridge program pubkey matches **`declare_id!`** in `programs/cl8y-bridge/src/lib.rs`:
+Confirm the built program id matches **`declare_id!`**:
 
 ```bash
 solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json
 ```
+
+**Verify the program address is not occupied by a third party (mainnet-beta).** Before **Step 1.2**, check the target cluster (the program **address** is public; only the **keypair file** must stay secret):
+
+```bash
+export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+BRIDGE_PROGRAM_ID="$(solana-keygen pubkey target/deploy/cl8y_bridge-keypair.json)"
+solana program show "$BRIDGE_PROGRAM_ID" --url "$SOLANA_RPC_URL"
+```
+
+- **`Error: Program account ... not found`** (or equivalent “account does not exist”): the address is free; safe to proceed with **Step 1.2** as the first deployer.
+- **Program details print successfully:** a program **already** occupies that id. **Do not** treat this as automatic green light:
+  - If **Upgrade Authority** is **your** mainnet deployer (same pubkey as **Step 0.3** / **Step 0.5**) and this rollout (or a prior approved deploy) placed it there, you are continuing your own program—proceed per **Step 1.2** (upgrade path) as appropriate.
+  - If the authority is **not** yours, or you cannot account for the deployment, **stop**: someone else (or an unknown deploy) owns that program id. Deploying or initializing against it is wrong; fixing it requires a **new** program keypair and repo-wide id rotation (same class of change as a closed program on devnet—see the note under **Step 0.4**).
+
+**Faucet program (`cl8y_faucet`):** Not deployed by **`deploy.sh`** on mainnet. Mainnet test SPLs use the **bridge** MintBurn path, not the faucet. If you deploy **`cl8y_faucet`** for **QA/devnet only**, use **`keys/private/cl8y_faucet-keypair.json`**, set **`declare_id!`** in `programs/cl8y-faucet/src/lib.rs` and **`cl8y_faucet`** in **`Anchor.toml`**, and set **`FAUCET_PROGRAM_ID`** when running tooling that targets the faucet (optional **`VITE_SOLANA_FAUCET_ADDRESS`**). **`scripts/solana/setup-test-tokens.sh`** does **not** assume a faucet on mainnet; it echoes **`VITE_SOLANA_PROGRAM_ID`** when **`SOLANA_PROGRAM_ID`** is set. **`scripts/solana/anchor-deploy-localnet.sh`** resolves faucet keypairs like the bridge: env **`CL8Y_FAUCET_PROGRAM_KEYPAIR_PATH`** → **`keys/private/`** → **`keys/localnet/`**.
 
 ### Step 1.2: Deploy to mainnet-beta
 
@@ -780,29 +857,41 @@ This runs:
 4. Hash parity mocha test
 
 Record from the output:
-- **`SOLANA_PROGRAM_ID`** (bridge program)
+- **`SOLANA_PROGRAM_ID`** (bridge program) — production mainnet-beta: **`4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`**
+- **BridgeConfig PDA** (after init, seeds **`["bridge"]`**) — mainnet-beta: **`HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD`** ([Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD))
 
 ### Step 1.3: Initialize the Bridge
+
+**Signer:** **`SOLANA_KEYPAIR`** is the bridge admin; for production it must be the keypair for **`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`** ([Key Addresses and Configuration](#key-addresses-and-configuration)). Confirm with `solana-keygen pubkey "$SOLANA_KEYPAIR"`.
 
 ```bash
 export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # After Step 0.3: same decrypted deployer as 1.2
 export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
-export SOLANA_PROGRAM_ID=<from step 1.2>
-export OPERATOR_PUBKEY=<solana operator pubkey>
+export SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+export OPERATOR_PUBKEY=7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro
 export FEE_BPS=50           # 0.5%, matching EVM
 export WITHDRAW_DELAY=300   # 5 minutes, matching EVM/Terra
 
+# From monorepo root (not packages/contracts-solana — the script path is ./scripts/...).
 ./scripts/solana/initialize-bridge.sh
 ```
 
+**Prerequisites:** The init script reads **`packages/contracts-solana/target/idl/cl8y_bridge.json`** (Anchor client IDL). That file is created by **`anchor build`**—including the build that **`deploy.sh`** already ran. You **do not** need to rebuild to “refresh” the on-chain program; only ensure the IDL is present (skip this if `target/idl/cl8y_bridge.json` already exists after your deploy).
+
 If the bridge PDA already exists, the script skips initialization.
 
+**Troubleshooting `410 Gone` / RPC errors:** Older versions of `initialize-bridge.sh` invoked `tests/bridge.test.ts`, whose setup calls `requestAirdrop` on non-local clusters. **Mainnet has no airdrop**, and public RPCs return **`410 Gone`** for disabled methods. The script now runs **`tests/production_initialize_bridge.test.ts`** instead (initialize only, no test-wallet funding). If sends still fail, try a dedicated provider (Helius, QuickNode, Triton, etc.) via **`SOLANA_RPC_URL`**.
+
 ### Step 1.4: Create Test SPL Token Mints
+
+**Mainnet model:** Noneconomic test SPL liquidity is minted/burned by the **bridge program** (MintBurn-style custody), not by **`cl8y_faucet`**. The script below only **creates** mints and an initial supply with the **deployer** as mint authority; follow **[Phase 3](#phase-3-register-cross-chain-token-mappings-noneconomic-test-tokens-only)** (or your token-registration procedure) to **`register_token`** on the bridge and move mint authority to the bridge as required.
 
 ```bash
 export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
+# Use your real bridge program id (same as Step 1.2); do not paste angle brackets — they break bash.
+export SOLANA_PROGRAM_ID="4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt"
 
 ./scripts/solana/setup-test-tokens.sh
 ```
@@ -815,7 +904,39 @@ This creates three SPL mints:
 | testb | 9 |
 | tdec | 6 |
 
-Record all three mint addresses: `SOLANA_TESTA_MINT`, `SOLANA_TESTB_MINT`, `SOLANA_TDEC_MINT`.
+**Deployed mainnet mints (noneconomic testing):** `SOLANA_TESTA_MINT` = `6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E`, `SOLANA_TESTB_MINT` = `EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX`, `SOLANA_TDEC_MINT` = `765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR` (same values as **`VITE_SOLANA_*_MINT`** in the frontend). See [Key Addresses and Configuration](#key-addresses-and-configuration) and the [live encoding table](#address-encoding-helpers) in Phase 3.
+
+#### MintBurn: mint authority must be the **BridgeConfig PDA** (not the program id)
+
+**Why mint authority can differ from your gas wallet:** `spl-token create-token` defaults **`--mint-authority`** to the Solana CLI **config** keypair (usually **`~/.config/solana/id.json`**), **not** to **`--fee-payer`**. Paying with **`id-deployer.json`** while **`solana config get keypair`** points at **`id.json`** yields mint authority **`CPQ8DsbWf…`** (from `id.json`) and fees paid by the deployer — then **`spl-token authorize`** must use **`--authority`** = the **mint authority** keypair (`id.json`), while **`--fee-payer`** can stay **`id-deployer.json`**. **`setup-test-tokens.sh`** now passes **`--mint-authority "$(solana-keygen pubkey "$SOLANA_KEYPAIR")"`** so new mints align mint authority with **`SOLANA_KEYPAIR`** (e.g. deployer).
+
+**What MintBurn requires on-chain:** `register_token` in `programs/cl8y-bridge` checks that the mint’s **mint authority** is the **BridgeConfig PDA** — the account at seeds **`["bridge"]`** under your **bridge program id**. Withdraw execute uses that PDA as the **`mint_to`** signer (see `withdraw_execute.rs`). It is **not** the raw program address (`4XX8…`); it is the PDA derived from the program id + seed `bridge`. **Mainnet-beta** with this program id: **`HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD`**.
+
+**Fix (per mint):** transfer mint authority from the **current** authority (you must sign with its keypair) to the bridge PDA:
+
+```bash
+export SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"   # pays fees
+export MINT_AUTHORITY_KEYPAIR="${HOME}/.config/solana/id.json"    # must match on-chain mint authority (e.g. CPQ8…)
+export SOLANA_PROGRAM_ID="4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt"
+
+# Live mainnet test SPL mints (repeat authorize for each):
+# export SOLANA_TESTA_MINT=6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E
+# export SOLANA_TESTB_MINT=EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX
+# export SOLANA_TDEC_MINT=765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR
+
+BRIDGE_PDA="$(solana find-program-derived-address "${SOLANA_PROGRAM_ID}" string:bridge | head -1)"
+echo "BridgeConfig PDA (required mint authority for MintBurn): ${BRIDGE_PDA}"
+# Mainnet-beta: must be HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD when SOLANA_PROGRAM_ID is 4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+
+# Repeat for each SPL mint (testa / testb / tdec):
+spl-token authorize "${SOLANA_TESTA_MINT}" mint "${BRIDGE_PDA}" \
+  --url "${SOLANA_RPC_URL}" \
+  --fee-payer "${SOLANA_KEYPAIR}" \
+  --authority "${MINT_AUTHORITY_KEYPAIR}"
+```
+
+If mint authority and fee payer are the **same** wallet, set both env vars to that keypair. Verify with `spl-token display <MINT> --url …` (**Mint authority** should match **`BRIDGE_PDA`**). Then run **`register_token`** with **`TokenMode::MintBurn`** as documented in Phase 3.
 
 ---
 
@@ -825,11 +946,12 @@ Record all three mint addresses: `SOLANA_TESTA_MINT`, `SOLANA_TESTB_MINT`, `SOLA
 
 ```bash
 export EVM_RPC_URL=https://bsc-dataseed1.binance.org
-export PRIVATE_KEY=<admin private key for 0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c>
 export CHAIN_REGISTRY_ADDRESS=0x2e5d36c46680a38e7ae156fc9d109084c58c688e
 
 ./scripts/solana/register-chain-evm.sh
 ```
+
+The script uses **`cast send --interactive`**: enter the **ChainRegistry owner** private key when prompted (must control **`0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c`** per [Key Addresses and Configuration](#key-addresses-and-configuration)). Do not export **`PRIVATE_KEY`** into the shell. Run from a real terminal so **`/dev/tty`** is available.
 
 This calls `registerChain("solana_mainnet-beta", 0x00000005)` on the BSC ChainRegistry.
 
@@ -847,13 +969,12 @@ cast call \
 
 ```bash
 export EVM_RPC_URL=https://opbnb-mainnet-rpc.bnbchain.org
-export PRIVATE_KEY=<admin private key for 0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c>
 export CHAIN_REGISTRY_ADDRESS=0x2e5d36c46680a38e7ae156fc9d109084c58c688e
 
 ./scripts/solana/register-chain-evm.sh
 ```
 
-**Verify** with the same `cast call` using opBNB RPC.
+Same interactive signing as Step 2.1. **Verify** with the same `cast call` using opBNB RPC.
 
 ### Step 2.3: Register Solana on Terra Classic Bridge
 
@@ -862,9 +983,14 @@ export TERRA_NODE_URL=https://terra-classic-rpc.publicnode.com:443
 export TERRA_CHAIN_ID=columbus-5
 export BRIDGE_CONTRACT=terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la
 export TERRA_WALLET=cl8y2_admin
+# Optional: TERRA_KEYRING_BACKEND (must match `terrad keys list`).
+# Fees: script defaults to --gas-prices 28.325uluna on columbus-5/rebel-2 (same as packages/contracts-terraclassic/scripts/deploy.sh).
+# Override with TERRA_GAS_PRICES or a fixed TERRA_FEES (e.g. 5000000uluna) if your node requires it.
 
 ./scripts/solana/register-chain-terra.sh
 ```
+
+`TERRA_NODE_URL` must be **Tendermint RPC** (as above), not the LCD REST base URL used in the verify `curl` below. You can set `TERRA_RPC_URL` instead if you prefer the same name as other repo scripts.
 
 This calls `register_chain` with chain_id `AAAABQ==` (base64 of `[0,0,0,5]`) and identifier `solana_mainnet-beta`.
 
@@ -878,38 +1004,31 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 
 ### Step 2.4: Register BSC, opBNB, and Terra on Solana Bridge
 
-Register peer chains on the Solana bridge program using a TypeScript script. Adapt from `packages/contracts-solana/scripts/register-qa-tokens.ts` or `tests/bridge.test.ts`:
+Each peer is a **ChainEntry** PDA (`seeds = ["chain", chain_id_bytes]`). The **4-byte ids and identifiers** must match the live EVM `ChainRegistry` / Terra bridge (same as `scripts/deploy-evm-full.sh` and the [chains table](#current-live-state-verified-via-rpc-on-2026-04-03)):
 
-```typescript
-// Register BSC
-await program.methods
-  .registerChain({ chainId: [0, 0, 0, 0x38], identifier: "evm_56" })
-  .accounts({ bridge: bridgePda, chainEntry: bscChainPda, admin: admin.publicKey, systemProgram })
-  .rpc();
+| Peer | Bytes (hex) | `identifier` |
+|------|-------------|--------------|
+| BSC | `0x00000038` | `evm_56` |
+| opBNB | `0x000000cc` | `evm_204` |
+| Terra Classic | `0x00000001` | `terraclassic_columbus-5` |
 
-// Register opBNB
-await program.methods
-  .registerChain({ chainId: [0, 0, 0, 0xCC], identifier: "evm_204" })
-  .accounts({ bridge: bridgePda, chainEntry: opbnbChainPda, admin: admin.publicKey, systemProgram })
-  .rpc();
+**Script:** [`packages/contracts-solana/scripts/register-mainnet-chains.ts`](../packages/contracts-solana/scripts/register-mainnet-chains.ts) registers all three **idempotently** (skips if the PDA already exists). It checks that the signer is **bridge admin** and that the bridge PDA exists.
 
-// Register Terra Classic
-await program.methods
-  .registerChain({ chainId: [0, 0, 0, 0x01], identifier: "terraclassic_columbus-5" })
-  .accounts({ bridge: bridgePda, chainEntry: terraChainPda, admin: admin.publicKey, systemProgram })
-  .rpc();
-```
-
-Run with:
+Prerequisites: **`anchor build`** so `target/idl/cl8y_bridge.json` exists.
 
 ```bash
 cd packages/contracts-solana
-ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com \
-ANCHOR_WALLET=~/.config/solana/id.json \
-  npx tsx scripts/register-mainnet-chains.ts
+export SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt   # deployed program id
+export ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"   # bridge admin (same as initialize)
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+
+npx tsx scripts/register-mainnet-chains.ts
 ```
 
-This script needs to be created or adapted from the QA registration scripts.
+Resolution order: **`ANCHOR_WALLET`**, then **`SOLANA_KEYPAIR`**, then default **`~/.config/solana/id-deployer.json`**. Use the **same** keypair that owns **`bridgeConfig.admin`** from Phase 1 initialize; otherwise the txs fail with **`UnauthorizedAdmin`**.
+
+Anchor 0.32 resolves PDA accounts from the IDL; the script passes only **`admin`** to `.accounts()` (same pattern as `tests/helpers/setup.ts` `registerChainIfNeeded`).
 
 ---
 
@@ -919,27 +1038,51 @@ This script needs to be created or adapted from the QA registration scripts.
 
 | Token | BSC Address | opBNB Address | Terra Address | Solana Mint | BSC Dec | opBNB Dec | Terra Dec | Sol Dec |
 |-------|-------------|---------------|---------------|-------------|---------|-----------|-----------|---------|
-| testa | `0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c` | `0xF073d5685594F465a66EA54516f0D2f76b6cc6F3` | `terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh` | `<TESTA_MINT>` | 18 | 18 | 18 | 9 |
-| testb | `0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52` | `0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e` | `terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3` | `<TESTB_MINT>` | 18 | 18 | 18 | 9 |
-| tdec | `0xe159c7a58d694fafba82221905d5a49e7f314330` | `0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd` | `terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv` | `<TDEC_MINT>` | 18 | 12 | 6 | 6 |
+| testa | `0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c` | `0xF073d5685594F465a66EA54516f0D2f76b6cc6F3` | `terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh` | `6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E` | 18 | 18 | 18 | 9 |
+| testb | `0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52` | `0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e` | `terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3` | `EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX` | 18 | 18 | 18 | 9 |
+| tdec | `0xe159c7a58d694fafba82221905d5a49e7f314330` | `0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd` | `terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv` | `765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR` | 18 | 12 | 6 | 6 |
 
 ### Address Encoding Helpers
 
-Solana SPL mint pubkeys are 32 bytes natively; no left-padding is needed. Use these helpers to convert between formats:
+Solana SPL mint pubkeys are 32 bytes natively; no left-padding is needed. Use these helpers to convert between formats.
+
+**Recommended (no extra pip packages):** from `packages/contracts-solana` (where `node_modules` includes `@solana/web3.js`):
 
 ```bash
+cd packages/contracts-solana
+export MINT='<SOLANA_MINT>'   # e.g. 6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E
+
 # Solana mint (base58) -> bytes32 hex for EVM cast commands
-python3 -c "import base58; print('0x' + base58.b58decode('<SOLANA_MINT>').hex())"
+node -e "const {PublicKey}=require('@solana/web3.js'); const b=Buffer.from(new PublicKey(process.env.MINT).toBytes()); console.log('0x'+b.toString('hex'));"
 
 # Solana mint (base58) -> 64-char hex for Terra dest_token fields
-python3 -c "import base58; print(base58.b58decode('<SOLANA_MINT>').hex())"
+node -e "const {PublicKey}=require('@solana/web3.js'); const b=Buffer.from(new PublicKey(process.env.MINT).toBytes()); console.log(b.toString('hex'));"
 
 # Solana mint (base58) -> base64 for Terra incoming src_token fields
-python3 -c "import base58,base64; print(base64.b64encode(base58.b58decode('<SOLANA_MINT>')).decode())"
+node -e "const {PublicKey}=require('@solana/web3.js'); const b=Buffer.from(new PublicKey(process.env.MINT).toBytes()); console.log(b.toString('base64'));"
+```
 
-# EVM address -> bytes32 hex (left-padded) for Solana register_token destToken
+**Python (requires `pip install base58` — not in the stdlib):**
+
+```bash
+python3 -c "import base58; print('0x' + base58.b58decode('<SOLANA_MINT>').hex())"
+python3 -c "import base58; print(base58.b58decode('<SOLANA_MINT>').hex())"
+python3 -c "import base58,base64; print(base64.b64encode(base58.b58decode('<SOLANA_MINT>')).decode())"
+```
+
+**EVM address -> bytes32 hex (left-padded) for Solana register_token destToken:**
+
+```bash
 cast abi-encode "f(address)" "0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c"
 ```
+
+**Live mainnet SPL encodings** (for `cast send`, Terra `dest_token`, Terra `src_token`):
+
+| Token | `bytes32` (`cast` / EVM) | Terra `dest_token` (64 hex, no `0x`) | Terra `src_token` (base64) |
+|-------|--------------------------|--------------------------------------|------------------------------|
+| testa | `0x5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1` | `5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1` | `Uinq2J7WIkHuy52Hb8wrXGE+j+Gn9CyigsnnyKzRbNE=` |
+| testb | `0xcec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568` | `cec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568` | `zsZ34r5qb6Y/ODgbV4oH5UOKMkpHKgIUom9hLzEOhWg=` |
+| tdec | `0x018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558` | `018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558` | `AY84tRh6UtgbqrEDSlhPQTKJyksngourykB8rXTmNVg=` |
 
 ### Step 3.1: Register Solana Token Destinations on BSC TokenRegistry
 
@@ -954,7 +1097,7 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c \
   0x00000005 \
-  <SOLANA_TESTA_BYTES32> \
+  0x5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1 \
   9 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
 
@@ -964,7 +1107,7 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52 \
   0x00000005 \
-  <SOLANA_TESTB_BYTES32> \
+  0xcec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568 \
   9 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
 
@@ -974,20 +1117,19 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0xe159c7a58d694fafba82221905d5a49e7f314330 \
   0x00000005 \
-  <SOLANA_TDEC_BYTES32> \
+  0x018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558 \
   6 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
 ```
 
-**Incoming mappings** (Solana -> BSC):
+**Incoming mappings** (Solana -> BSC): on-chain API is **`setIncomingTokenMapping(bytes4 srcChain, address localToken, uint8 srcDecimals)`** only ([`TokenRegistry.sol`](../packages/contracts-evm/src/TokenRegistry.sol)). There is **no** `bytes32` SPL field: the registry records “for withdrawals **from** `srcChain`, this **local** ERC20 uses `srcDecimals` on the source chain.” Pairing to the SPL mint relies on the **outgoing** `setTokenDestinationWithDecimals` you already set.
 
 ```bash
 # testa: Solana -> BSC
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TESTA_BYTES32> \
   0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c \
   9 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
@@ -995,9 +1137,8 @@ cast send \
 # testb: Solana -> BSC
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TESTB_BYTES32> \
   0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52 \
   9 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
@@ -1005,9 +1146,8 @@ cast send \
 # tdec: Solana -> BSC
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TDEC_BYTES32> \
   0xe159c7a58d694fafba82221905d5a49e7f314330 \
   6 \
   --rpc-url https://bsc-dataseed1.binance.org --interactive
@@ -1026,7 +1166,7 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0xF073d5685594F465a66EA54516f0D2f76b6cc6F3 \
   0x00000005 \
-  <SOLANA_TESTA_BYTES32> \
+  0x5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1 \
   9 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
 
@@ -1036,7 +1176,7 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e \
   0x00000005 \
-  <SOLANA_TESTB_BYTES32> \
+  0xcec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568 \
   9 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
 
@@ -1046,20 +1186,19 @@ cast send \
   "setTokenDestinationWithDecimals(address,bytes4,bytes32,uint8)" \
   0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd \
   0x00000005 \
-  <SOLANA_TDEC_BYTES32> \
+  0x018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558 \
   6 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
 ```
 
-**Incoming mappings** (Solana -> opBNB):
+**Incoming mappings** (Solana -> opBNB): same **`setIncomingTokenMapping(bytes4,address,uint8)`** as BSC; `localToken` is the **opBNB** ERC20.
 
 ```bash
 # testa: Solana -> opBNB
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TESTA_BYTES32> \
   0xF073d5685594F465a66EA54516f0D2f76b6cc6F3 \
   9 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
@@ -1067,9 +1206,8 @@ cast send \
 # testb: Solana -> opBNB
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TESTB_BYTES32> \
   0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e \
   9 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
@@ -1077,9 +1215,8 @@ cast send \
 # tdec: Solana -> opBNB
 cast send \
   0x3d8820ec93748fd4df8eee6b763834a23938b207 \
-  "setIncomingTokenMapping(bytes4,bytes32,address,uint8)" \
+  "setIncomingTokenMapping(bytes4,address,uint8)" \
   0x00000005 \
-  <SOLANA_TDEC_BYTES32> \
   0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd \
   6 \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org --interactive
@@ -1089,13 +1226,15 @@ cast send \
 
 For each Terra test token, add Solana destination. Terra uses base64 for `chain_id` and hex string (no `0x` prefix) for `dest_token`.
 
+**Troubleshooting `terrad tx wasm execute`:** Submit **one transaction at a time** and wait until it is included (or use `terrad query tx <txhash> --node …`) before sending the next from the same wallet. Broadcasting several commands in one paste often causes **`account sequence mismatch, expected N, got N-1`**: the node has not advanced the signer’s sequence yet. Retry after a few seconds, or pass an explicit **`--sequence`** from `terrad query account <admin_addr> --node …`. If your shell shows garbled flags such as **`-yfees`** or **`\ment`**, the line continuations (`\` at end of line) were broken when copying—fix the newlines or run each command as a single line. Optional: align fee flags with [`register-chain-terra.sh`](../scripts/solana/register-chain-terra.sh) (`--gas-prices 28.325uluna` on mainnet) instead of a fixed `--fees` if estimates differ.
+
 **Outgoing mappings** (Terra -> Solana):
 
 ```bash
 # testa: Terra -> Solana
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_token_destination":{"token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TESTA_HEX64>","dest_decimals":9}}' \
+  '{"set_token_destination":{"token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","dest_chain":"AAAABQ==","dest_token":"5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1","dest_decimals":9}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1106,7 +1245,7 @@ terrad tx wasm execute \
 # testb: Terra -> Solana
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_token_destination":{"token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TESTB_HEX64>","dest_decimals":9}}' \
+  '{"set_token_destination":{"token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","dest_chain":"AAAABQ==","dest_token":"cec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568","dest_decimals":9}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1117,7 +1256,7 @@ terrad tx wasm execute \
 # tdec: Terra -> Solana
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_token_destination":{"token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","dest_chain":"AAAABQ==","dest_token":"<SOLANA_TDEC_HEX64>","dest_decimals":6}}' \
+  '{"set_token_destination":{"token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","dest_chain":"AAAABQ==","dest_token":"018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558","dest_decimals":6}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1132,7 +1271,7 @@ terrad tx wasm execute \
 # testa: Solana -> Terra
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TESTA_B64>","local_token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","src_decimals":9}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"Uinq2J7WIkHuy52Hb8wrXGE+j+Gn9CyigsnnyKzRbNE=","local_token":"terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh","src_decimals":9}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1143,7 +1282,7 @@ terrad tx wasm execute \
 # testb: Solana -> Terra
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TESTB_B64>","local_token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","src_decimals":9}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"zsZ34r5qb6Y/ODgbV4oH5UOKMkpHKgIUom9hLzEOhWg=","local_token":"terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3","src_decimals":9}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1154,7 +1293,7 @@ terrad tx wasm execute \
 # tdec: Solana -> Terra
 terrad tx wasm execute \
   terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la \
-  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"<SOLANA_TDEC_B64>","local_token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","src_decimals":6}}' \
+  '{"set_incoming_token_mapping":{"src_chain":"AAAABQ==","src_token":"AY84tRh6UtgbqrEDSlhPQTKJyksngourykB8rXTmNVg=","local_token":"terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv","src_decimals":6}}' \
   --from cl8y2_admin \
   --node https://terra-classic-rpc.publicnode.com:443 \
   --chain-id columbus-5 \
@@ -1173,48 +1312,30 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 
 ### Step 3.4: Register Token Mappings on Solana Bridge
 
-Register all peer tokens on the Solana bridge program. For each Solana SPL mint, register destination mappings to BSC, opBNB, and Terra. This also creates bridge vault ATAs (Associated Token Accounts) for lock/unlock.
+For each **mainnet test SPL mint** (testa, testb, tdec), the program needs a **`TokenMapping` PDA** per destination chain (`seeds = ["token", dest_chain, dest_token]`). The runbook noneconomic path uses **`TokenMode::MintBurn`**: each SPL mint’s **mint authority must already be the BridgeConfig PDA** ([Phase 1](#mintburn-mint-authority-must-be-the-bridgeconfig-pda-not-the-program-id)).
 
-Adapt `packages/contracts-solana/scripts/register-qa-tokens.ts` for mainnet addresses:
+**Script (copy-paste):** [`packages/contracts-solana/scripts/register-mainnet-tokens.ts`](../packages/contracts-solana/scripts/register-mainnet-tokens.ts) registers **9** mappings (3 mints × BSC / opBNB / Terra) with the correct **remote decimals** (e.g. opBNB tdec **12**, Terra tdec **6**). It is **idempotent** (skips existing `TokenMapping` accounts). It also **creates the bridge’s associated token accounts** for each mint so **MintBurn fee** transfers in `deposit_spl` have a destination ATA.
 
-```typescript
-// For each SPL mint (testa, testb, tdec), register 3 destinations:
+Prerequisites:
 
-// testa -> BSC
-await program.methods.registerToken({
-  localMint: testaMint,
-  destChain: [0, 0, 0, 0x38],        // BSC
-  destToken: bscTestaBytes32,          // left-padded EVM address in bytes32
-  decimals: 9,                         // local SPL decimals
-  srcDecimals: 18,                     // BSC ERC20 decimals
-  mode: { lockUnlock: {} },
-}).accounts({ /* bridge, tokenMapping, admin, systemProgram */ }).rpc();
+1. **`anchor build`** in `packages/contracts-solana` (IDL present).
+2. **[Step 2.4](#step-24-register-bsc-opbnb-and-terra-on-solana-bridge)** done (chains on Solana).
+3. **Phase 3.1–3.3** done on EVM/Terra so off-chain operators agree on the same addresses (script hard-codes the [token matrix](#token-mapping-matrix) mints and peer tokens).
 
-// testa -> opBNB
-await program.methods.registerToken({
-  localMint: testaMint,
-  destChain: [0, 0, 0, 0xCC],        // opBNB
-  destToken: opbnbTestaBytes32,
-  decimals: 9,
-  srcDecimals: 18,
-  mode: { lockUnlock: {} },
-}).accounts({ /* ... */ }).rpc();
+```bash
+cd packages/contracts-solana
 
-// testa -> Terra
-await program.methods.registerToken({
-  localMint: testaMint,
-  destChain: [0, 0, 0, 0x01],        // Terra Classic
-  destToken: terraTestaBytes32,        // bech32-decoded CW20 address (already 32 bytes)
-  decimals: 9,
-  srcDecimals: 18,
-  mode: { lockUnlock: {} },
-}).accounts({ /* ... */ }).rpc();
+export SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+export ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
 
-// Repeat for testb (9 dec) and tdec (6 dec, dest_decimals vary per chain)
-// Also ensure bridge vault ATAs exist for each SPL mint (ensureBridgeSplVault)
+npx tsx scripts/register-mainnet-tokens.ts
 ```
 
-Run with `ANCHOR_PROVIDER_URL` and `ANCHOR_WALLET` pointed at mainnet.
+**If you use a fork or different mint addresses**, edit the `MINT_TESTA` / `MINT_TESTB` / `MINT_TDEC` constants (and ERC20 / Terra addresses) at the top of `register-mainnet-tokens.ts`.
+
+**Lock/unlock** test tokens (mint authority not on the bridge PDA) are **not** covered by this script; use `mode: { lockUnlock: {} }` and vault setup from `register-qa-tokens.ts` only if you deliberately run that model.
 
 ---
 
@@ -1230,11 +1351,23 @@ Three new migrations were added on the Solana integration branch:
 | `011_evm_transfer_hash.sql` | Adds `transfer_hash` column to `evm_deposits` |
 | `012_terra_transfer_hash.sql` | Adds `transfer_hash` column to `terra_deposits` |
 
+**Production Postgres without public ports (e.g. Render private networking):** you should **not** expose PostgreSQL to the internet so your laptop can run `sqlx`. The operator **applies pending migrations automatically on startup** ([`main.rs`](../packages/operator/src/main.rs): `db::run_migrations` right after connecting), using the same SQL files embedded at build time. Workflow:
+
+1. Set **`DATABASE_URL`** on the **operator** Render service to the **internal** Postgres URL Render provides for in-network access (linked service / private region networking—whatever you use so only trusted workloads reach the DB).
+2. Deploy an operator build **from a revision that includes the new files under `packages/operator/migrations/`**. On start, migrations run once, then the service continues. Do **not** set **`SKIP_MIGRATIONS=1`** unless you intentionally manage schema some other way.
+
+Manual **`sqlx migrate run`** is only for environments where your shell can reach Postgres **without** weakening DB network policy—e.g. **Render Shell** on a service in the same private network, a bastion, or local/staging—not “open the DB to the world.”
+
+**Local or staging Postgres** (reachable from your machine on purpose):
+
 ```bash
+export DATABASE_URL='postgres://…'
 cd packages/operator
 sqlx migrate run
-# Or: ./scripts/operator-migrate.sh
+# Or from repo root: ./scripts/operator-migrate.sh
 ```
+
+(`sqlx` CLI: `cargo install sqlx-cli --no-default-features --features rustls,postgres` — see [operator README](../packages/operator/README.md).)
 
 ### Step 4.2: Update Operator Environment
 
@@ -1242,7 +1375,9 @@ Add to the operator `.env`:
 
 ```bash
 SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-SOLANA_PROGRAM_ID=<deployed bridge program id>
+SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+# BridgeConfig PDA (seeds ["bridge"], not read from env): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD
+# Must be the keypair whose pubkey is 7wMthhaYayN2srDsWgE9MegYrLrhx1S2RNJCRD2sDmro
 SOLANA_PRIVATE_KEY=<base58 encoded relayer keypair>
 SOLANA_V2_CHAIN_ID=0x00000005
 # Optional tuning:
@@ -1257,16 +1392,23 @@ Add to the canceler `.env`:
 ```bash
 SOLANA_ENABLED=true
 SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-SOLANA_PROGRAM_ID=<deployed bridge program id>
+SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+# BridgeConfig PDA (reference): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD
+# Keypair must publish pubkey EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK
 SOLANA_KEYPAIR_PATH=/path/to/canceler-keypair.json
 SOLANA_V2_CHAIN_ID=0x00000005
 ```
 
 ### Step 4.4: Add Canceler on Solana Bridge
 
-Register the canceler's Solana pubkey on the bridge program:
+Register the canceler's Solana pubkey on the bridge program (**production canceler:** **`EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK`**). Sign as admin (**`5PL4gP3yFzJMomKncwwokB7UPPvXyTGQTWDA38smbHeg`**).
 
 ```typescript
+import { PublicKey } from '@solana/web3.js';
+
+const cancelerPubkey = new PublicKey(
+  'EY7wuMnVByAcKW8BDT2KpieAwL5KatC8xJk4f7q3CurK',
+);
 await program.methods
   .addCanceler({ canceler: cancelerPubkey })
   .accounts({ bridge: bridgePda, admin: admin.publicKey })
@@ -1290,11 +1432,12 @@ Confirm no startup errors and that the Solana watcher logs appear in the operato
 Update frontend environment (`.env.production` or equivalent):
 
 ```bash
-VITE_SOLANA_PROGRAM_ID=<deployed bridge program id>
+VITE_SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+# BridgeConfig PDA (seeds ["bridge"]): HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD — derived on-chain; not a separate VITE_* var
 VITE_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-VITE_SOLANA_TESTA_MINT=<testa SPL mint>
-VITE_SOLANA_TESTB_MINT=<testb SPL mint>
-VITE_SOLANA_TDEC_MINT=<tdec SPL mint>
+VITE_SOLANA_TESTA_MINT=6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E
+VITE_SOLANA_TESTB_MINT=EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX
+VITE_SOLANA_TDEC_MINT=765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR
 ```
 
 Rebuild and deploy the frontend.
@@ -1324,7 +1467,10 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 # Expected: "AAAABQ==" in the list
 
 # Solana: program alive?
-solana program show <SOLANA_PROGRAM_ID> --url https://api.mainnet-beta.solana.com
+solana program show 4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt --url https://api.mainnet-beta.solana.com
+
+# Solana: BridgeConfig PDA (seeds ["bridge"])
+solana account HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD --url https://api.mainnet-beta.solana.com
 ```
 
 ### Step 6.2: Test a Small Transfer (Test Token Only)

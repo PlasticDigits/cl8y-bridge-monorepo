@@ -290,7 +290,7 @@ pub(super) async fn run_solana_destination_fraud_test(config: &E2eConfig) -> Tes
     let rpc_url =
         std::env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8899".to_string());
     let program_id_str = std::env::var("SOLANA_PROGRAM_ID")
-        .unwrap_or_else(|_| "74o1KKwuUvtrf6ozbjmVrARnoHpQ4WjsQ647TCTKe1mW".to_string());
+        .unwrap_or_else(|_| "4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt".to_string());
 
     let evm_v2: [u8; 4] = config.evm.v2_chain_id.to_be_bytes();
 
