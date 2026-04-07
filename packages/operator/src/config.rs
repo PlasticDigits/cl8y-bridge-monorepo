@@ -8,13 +8,29 @@ use std::path::Path;
 
 use crate::multi_evm::MultiEvmConfig;
 
-/// Parse `SOLANA_PRIVATE_KEY`: base58 (64-byte secret key) or JSON `[u8,...]` from `solana-keygen`/Anchor.
-pub fn parse_solana_private_key(s: &str) -> eyre::Result<solana_sdk::signature::Keypair> {
+fn normalize_solana_secret_env(s: &str) -> &str {
+    let s = s.trim().trim_start_matches('\u{feff}');
+    let b = s.as_bytes();
+    if s.len() >= 2 {
+        let first = b[0];
+        let last = b[b.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return s[1..s.len() - 1].trim();
+        }
+    }
+    s
+}
+
+/// Parse `SOLANA_PRIVATE_KEY`: base58, JSON `[u8,...]` (`solana-keygen`/Anchor), or hex (`0x` + 128 nibbles / 64 nibbles seed).
+pub fn parse_solana_private_key(raw: &str) -> eyre::Result<solana_sdk::signature::Keypair> {
     use solana_sdk::signature::Keypair;
-    let s = s.trim();
+    use solana_sdk::signer::SeedDerivable;
+
+    let s = normalize_solana_secret_env(raw);
     if s.is_empty() {
         return Err(eyre!("SOLANA_PRIVATE_KEY is empty"));
     }
+
     if s.starts_with('[') {
         let bytes: Vec<u8> = serde_json::from_str(s).map_err(|e| {
             eyre!(
@@ -22,26 +38,60 @@ pub fn parse_solana_private_key(s: &str) -> eyre::Result<solana_sdk::signature::
                 e
             )
         })?;
-        Keypair::from_bytes(&bytes).map_err(|e| {
+        return Keypair::from_bytes(&bytes).map_err(|e| {
             eyre!(
                 "SOLANA_PRIVATE_KEY: invalid keypair bytes (expected 64-byte secret key): {}",
                 e
             )
-        })
+        });
+    }
+
+    let prefixed_hex = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .filter(|h| !h.is_empty());
+    let hex_body: Option<&str> = if let Some(h) = prefixed_hex {
+        (h.len().is_multiple_of(2) && h.chars().all(|c| c.is_ascii_hexdigit())).then_some(h)
+    } else if s.len().is_multiple_of(2) && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(s)
     } else {
-        let decoded = bs58::decode(s).into_vec().map_err(|e| {
+        None
+    };
+
+    if let Some(body) = hex_body {
+        let bytes = hex::decode(body).map_err(|e| {
             eyre!(
-                "SOLANA_PRIVATE_KEY: not valid base58 (or use JSON `[u8,...]` from keypair file): {}",
+                "SOLANA_PRIVATE_KEY: invalid hex (expected 64-byte keypair or 32-byte seed): {}",
                 e
             )
         })?;
-        Keypair::from_bytes(&decoded).map_err(|e| {
-            eyre!(
-                "SOLANA_PRIVATE_KEY: base58 decoded but invalid keypair length: {}",
-                e
-            )
-        })
+        return match bytes.len() {
+            64 => Keypair::from_bytes(&bytes).map_err(|e| {
+                eyre!(
+                    "SOLANA_PRIVATE_KEY: 64-byte hex is not a valid keypair: {}",
+                    e
+                )
+            }),
+            32 => Keypair::from_seed(&bytes).map_err(|e| eyre!("SOLANA_PRIVATE_KEY: {}", e)),
+            n => Err(eyre!(
+                "SOLANA_PRIVATE_KEY: hex decodes to {} bytes (want 32-byte seed or 64-byte keypair)",
+                n
+            )),
+        };
     }
+
+    let decoded = bs58::decode(s).into_vec().map_err(|e| {
+        eyre!(
+            "SOLANA_PRIVATE_KEY: not valid base58 (try JSON `[u8,...]`, hex `0x` + keypair, or 32-byte seed hex): {}",
+            e
+        )
+    })?;
+    Keypair::from_bytes(&decoded).map_err(|e| {
+        eyre!(
+            "SOLANA_PRIVATE_KEY: base58 decoded but invalid keypair length: {}",
+            e
+        )
+    })
 }
 
 /// Main configuration for the relayer

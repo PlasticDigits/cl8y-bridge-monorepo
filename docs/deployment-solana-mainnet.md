@@ -604,6 +604,19 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 
 Follow **[Prerequisite: EVM rate limits](#prerequisite-evm-rate-limits-bsc-and-opbnb)** in full. **`rateLimitBridge`** and **`guardBridge`** must be non-zero; use **[Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)** to confirm, and fix immediately if either is `address(0)`. CL8Y on BSC is **`0x8f452a1fdd388a45e1080992eff051b4dd9048d2`** ([CL8Y bidirectional routing](#cl8y-bidirectional-routing-the-only-economic-token)).
 
+**Record current `TokenRegistry` row for CL8Y on BSC** (for restore in [Phase 7](#phase-7-post-deployment--restore-cl8y-rate-limits)) **before** tightening it in [Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb):
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+CL8Y_BSC=0x8f452a1fdd388a45e1080992eff051b4dd9048d2
+RPC_BSC=https://bsc-dataseed1.binance.org
+
+cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" "$CL8Y_BSC" --rpc-url "$RPC_BSC"
+# Returns: minPerTransaction, maxPerTransaction, maxPerPeriod — save these for Phase 7
+```
+
+If you also tighten **guard** caps for CL8Y on **`TokenRateLimit`** during the rollout, record **`getDepositLimit` / `getWithdrawLimit`** (or your operator’s documented policy) so you can restore them in Phase 7.
+
 **WARNING:** `setRateLimitBridge` enforces limits for **all** registered tokens on withdraw. Set **generous** explicit limits for noneconomic test tokens before enabling, or withdrawals for those tokens may fail.
 
 ### Step 0.3: Solana Rate Limits
@@ -1492,14 +1505,17 @@ solana account HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD --url https://api.ma
 ### Step 6.3: Verify CL8Y is Protected
 
 - Confirm CL8Y rate limit on Terra is set to `1` (from Phase 0)
-- Attempt a CL8Y transfer -- should fail or only allow 1 base unit
+- Confirm BSC **`TokenRegistry.getRateLimitConfig(CL8Y)`** matches the tight safety row from [Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb) (e.g. `0`, `1`, `1` in base units) while **`rateLimitBridge`** remains the Bridge proxy
+- Attempt a CL8Y transfer -- should fail or only allow 1 base unit (exercise both directions you care about: Terra and BSC legs)
 - CL8Y has NO Solana destination mapping, so Terra -> Solana CL8Y transfers should be rejected at the contract level
 
 ---
 
 ## Phase 7: Post-Deployment -- Restore CL8Y Rate Limits
 
-Once confident the deployment is stable and all smoke tests pass, restore CL8Y rate limits to their original values:
+Once confident the deployment is stable and all smoke tests pass, restore CL8Y rate limits on **Terra Classic** and **BSC** to the values you **recorded before Phase 0** (Terra: [Step 0.1](#step-01-reduce-cl8y-rate-limit-on-terra-classic); BSC: [Step 0.2](#step-02-evm-rate-limits-during-the-safety-window)).
+
+### Step 7.1: Terra Classic (`set_rate_limit`)
 
 ```bash
 terrad tx wasm execute \
@@ -1518,8 +1534,35 @@ terrad tx wasm execute \
 ```bash
 curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la/smart/'$(echo -n '{"rate_limit":{"token":"terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3"}}' | base64 -w0) \
   | python3 -m json.tool
-# Expected: max_per_transaction: "0", max_per_period: "1000000000000000000000"
+# Expected: max_per_transaction: "0", max_per_period: "1000000000000000000000" (or your recorded production values)
 ```
+
+### Step 7.2: BSC EVM (`TokenRegistry.setRateLimit`)
+
+**Signer:** **`TokenRegistry` owner** (same as [Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)). Replace the three limit arguments with the **`getRateLimitConfig`** triple you saved in [Step 0.2](#step-02-evm-rate-limits-during-the-safety-window) (not the temporary `0 1 1` safety row from [Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb) unless that *was* production).
+
+```bash
+TR=0x3d8820ec93748fd4df8eee6b763834a23938b207
+CL8Y_BSC=0x8f452a1fdd388a45e1080992eff051b4dd9048d2
+RPC_BSC=https://bsc-dataseed1.binance.org
+# MIN_PER_TX MAX_PER_TX MAX_PER_PERIOD — from Phase 0 recording (getRateLimitConfig)
+MIN_PER_TX=...
+MAX_PER_TX=...
+MAX_PER_PERIOD=...
+
+cast send "$TR" "setRateLimit(address,uint256,uint256,uint256)" \
+  "$CL8Y_BSC" "$MIN_PER_TX" "$MAX_PER_TX" "$MAX_PER_PERIOD" \
+  --rpc-url "$RPC_BSC" --interactive
+```
+
+**Verify**:
+
+```bash
+cast call "$TR" "getRateLimitConfig(address)(uint256,uint256,uint256)" "$CL8Y_BSC" --rpc-url "$RPC_BSC"
+# Must match your restored minPerTransaction, maxPerTransaction, maxPerPeriod
+```
+
+**Guard stack:** If you changed **`TokenRateLimit`** deposit/withdraw caps for CL8Y on BSC, restore them via the same admin flows as [§3.4](#34-set-guard-policy-on-tokenratelimit) and re-check limits on-chain. **opBNB:** CL8Y is usually **not** registered; skip unless you recorded a row there.
 
 ---
 
@@ -1530,7 +1573,7 @@ If issues are discovered at any point:
 1. **Solana bridge**: The bridge PDA init is idempotent (skips if exists). If not yet initialized, simply don't initialize. If already live, the admin can pause deposits by not funding the operator or removing operator permissions.
 2. **EVM**: Chain registrations cannot be removed, but token destination mappings can be unset. Pause the bridge via `pause()` on the Bridge contract if critical. **`setRateLimitBridge(address(0))` or `setGuardBridge(address(0))` re-creates the critical unwired state**—use only as an **emergency** brake, then restore correct non-zero addresses as soon as it is safe (see [Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical)).
 3. **Terra**: Pause the bridge via `{"pause":{}}` execute msg. Remove token destinations or unregister chains as needed.
-4. **CL8Y**: Rate limit is already at minimum (1 base unit). Restore original values only after verification (Phase 7).
+4. **CL8Y**: Terra and BSC safety rows are tight (Terra: 1 base unit; BSC: see [Step 2](#step-2--set-limits-then-activate-ratelimitbridge-bsc-and-opbnb)). Restore **Terra** and **BSC `TokenRegistry`** (and any **TokenRateLimit** caps you changed) only after verification ([Phase 7](#phase-7-post-deployment--restore-cl8y-rate-limits)).
 5. **Operator/Canceler**: Remove `SOLANA_*` env vars and restart to disable Solana processing. Existing EVM/Terra flows are unaffected.
 
 ---
