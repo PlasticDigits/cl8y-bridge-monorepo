@@ -374,7 +374,7 @@ export function TransferForm() {
     }
   }, [transferTokens, selectedTokenId])
 
-  const { data: tokenDestMappingAddr } = useTokenDestMapping(
+  const { data: tokenDestMappingAddr, isLoading: isTokenDestMappingLoading } = useTokenDestMapping(
     selectedTokenId || undefined,
     destChainBytes4,
     !!destChainBytes4 && (!!isDestEvmChain || isDestSolanaChain)
@@ -1692,7 +1692,9 @@ export function TransferForm() {
       !!destChainConfig &&
       !isChainsLoading &&
       !isTokenInfoLoading &&
-      (!isSourceSolana || !isSolanaLocalMintLoading),
+      (!isSourceSolana || !isSolanaLocalMintLoading) &&
+      (direction !== 'evm-to-solana' || !isEvmToSolanaDestLoading) &&
+      (direction !== 'terra-to-solana' || !isTokenDestMappingLoading),
     tokenLabel: selectedSymbol,
     sourceChainConfig,
     destChainConfig,
@@ -1706,6 +1708,12 @@ export function TransferForm() {
         : destChainConfig?.type === 'solana'
           ? solanaDestTokenIdForRoute
           : undefined,
+    solanaMappingSourceBytes4:
+      destChainConfig?.type === 'solana' ? sourceChainBytes4 : undefined,
+    solanaMappingEvmTokenAddress:
+      direction === 'evm-to-solana' ? tokenConfig?.address : undefined,
+    solanaMappingTerraTokenId:
+      direction === 'terra-to-solana' ? selectedTokenId || undefined : undefined,
   })
   const solanaMappingGuardError =
     isSourceSolana &&

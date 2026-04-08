@@ -1,12 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
+import { PublicKey } from '@solana/web3.js'
 import { getAddress, type Address } from 'viem'
 import { fetchLcd, queryContract } from '../services/lcdClient'
 import { getEvmClient } from '../services/evmClient'
 import type { BridgeChainConfig } from '../types/chain'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
 import {
   solanaRpcUrlsForBridgeChain,
   withSolanaReadFallback,
 } from '../services/solana/solanaRpcUrls'
+import {
+  bytes4HexToUint8Array,
+  fetchTokenMappingLocalMint,
+} from '../services/solana/transaction'
+import { evmAddressToBytes32Array } from '../services/terra/withdrawSubmit'
+import { terraTokenIdToSrcTokenBytes } from '../services/terraTokenEncoding'
 import { DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 
 interface UseTransferRouteValidationParams {
@@ -19,6 +27,15 @@ interface UseTransferRouteValidationParams {
   destTokenAddress?: string
   destMappingAddress?: string
   destTokenId?: string
+  /**
+   * EVM/Terra → Solana: source chain V2 bytes4 for `TokenMapping` PDA
+   * (`dest_chain` + `dest_token` seeds on Solana).
+   */
+  solanaMappingSourceBytes4?: string
+  /** EVM → Solana: source ERC-20 `0x` address for `dest_token` seed (left-padded bytes32). */
+  solanaMappingEvmTokenAddress?: string
+  /** Terra → Solana: Terra token id (same string as LCD `token_dest_mapping` / bridge encoding). */
+  solanaMappingTerraTokenId?: string
 }
 
 interface TransferRouteValidationState {
@@ -82,14 +99,13 @@ async function terraTokenExists(chainConfig: BridgeChainConfig, tokenId: string)
   }
 }
 
-async function solanaTokenExists(
+async function solanaMintAccountExists(
   chainConfig: BridgeChainConfig,
   tokenId: string,
   rpcUrls?: string[],
 ): Promise<boolean> {
   if (chainConfig.type !== 'solana') return false
   try {
-    const { PublicKey } = await import('@solana/web3.js')
     const urls = rpcUrls ?? solanaRpcUrlsForBridgeChain(chainConfig)
     if (urls.length === 0) return false
     const pubkey = new PublicKey(tokenId)
@@ -98,6 +114,56 @@ async function solanaTokenExists(
   } catch {
     return false
   }
+}
+
+/**
+ * Prefer reading `TokenMapping.local_mint` via the bridge program id (matches deposit/withdraw).
+ * Falls back to {@link solanaMintAccountExists} if mapping params are incomplete or RPC fails.
+ */
+async function solanaDestMintValidated(
+  destChainConfig: BridgeChainConfig,
+  destMintBase58: string,
+  sourceChainConfig: BridgeChainConfig,
+  sourceBytes4: string | undefined,
+  evmTokenAddr: string | undefined,
+  terraTokenId: string | undefined,
+  rpcUrls: string[],
+): Promise<boolean> {
+  const programIdStr = getSolanaProgramIdString(destChainConfig)
+  let destPk: PublicKey
+  try {
+    destPk = new PublicKey(destMintBase58)
+  } catch {
+    return false
+  }
+
+  if (programIdStr && sourceBytes4) {
+    try {
+      const srcChain = bytes4HexToUint8Array(sourceBytes4)
+      const programId = new PublicKey(programIdStr)
+      let srcTokenBytes: Uint8Array | null = null
+      if (sourceChainConfig.type === 'evm' && evmTokenAddr?.startsWith('0x')) {
+        srcTokenBytes = evmAddressToBytes32Array(evmTokenAddr)
+      } else if (sourceChainConfig.type === 'cosmos' && terraTokenId?.trim()) {
+        srcTokenBytes = terraTokenIdToSrcTokenBytes(terraTokenId.trim())
+      }
+      if (srcTokenBytes && srcTokenBytes.length === 32) {
+        const mapped = await withSolanaReadFallback(rpcUrls, (c) =>
+          fetchTokenMappingLocalMint(c, programId, srcChain, srcTokenBytes!),
+        )
+        if (mapped !== null && mapped.equals(destPk)) {
+          return true
+        }
+        if (mapped !== null && !mapped.equals(destPk)) {
+          return false
+        }
+      }
+    } catch {
+      /* fall through to mint account check */
+    }
+  }
+
+  return solanaMintAccountExists(destChainConfig, destMintBase58, rpcUrls)
 }
 
 export function useTransferRouteValidation({
@@ -110,6 +176,9 @@ export function useTransferRouteValidation({
   destTokenAddress,
   destMappingAddress,
   destTokenId,
+  solanaMappingSourceBytes4,
+  solanaMappingEvmTokenAddress,
+  solanaMappingTerraTokenId,
 }: UseTransferRouteValidationParams) {
   const query = useQuery({
     queryKey: [
@@ -122,6 +191,9 @@ export function useTransferRouteValidation({
       destTokenAddress,
       destMappingAddress,
       destTokenId,
+      solanaMappingSourceBytes4,
+      solanaMappingEvmTokenAddress,
+      solanaMappingTerraTokenId,
     ],
     queryFn: async (): Promise<TransferRouteValidationState> => {
       if (!sourceChainConfig || !destChainConfig) return VALID_ROUTE
@@ -154,7 +226,7 @@ export function useTransferRouteValidation({
             `No Solana RPC URL is configured for ${sourceChainConfig.name}; cannot verify the source mint for ${tokenName}.`,
           )
         }
-        const sourceExists = await solanaTokenExists(
+        const sourceExists = await solanaMintAccountExists(
           sourceChainConfig,
           sourceTokenAddress,
           sourceRpcUrls,
@@ -186,7 +258,15 @@ export function useTransferRouteValidation({
             `No Solana RPC URL is configured for ${destChainConfig.name}; cannot verify the destination mint for ${tokenName}.`,
           )
         }
-        const destExists = await solanaTokenExists(destChainConfig, destTokenId, destRpcUrls)
+        const destExists = await solanaDestMintValidated(
+          destChainConfig,
+          destTokenId,
+          sourceChainConfig,
+          solanaMappingSourceBytes4,
+          solanaMappingEvmTokenAddress,
+          solanaMappingTerraTokenId,
+          destRpcUrls,
+        )
         if (!destExists) {
           return invalid(`The destination token for ${tokenName} does not exist on ${destChainConfig.name}.`)
         }

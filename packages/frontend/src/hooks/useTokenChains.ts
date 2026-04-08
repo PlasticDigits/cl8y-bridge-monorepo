@@ -8,6 +8,7 @@ import { useQueries } from '@tanstack/react-query'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { bytes32ToAddress, normalizeToEvmAddress } from '../services/evm/tokenRegistry'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
 import { BRIDGE_CHAINS, getExplorerUrlForChain, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
 
@@ -34,13 +35,13 @@ export function useTokenChains(
   const tier = DEFAULT_NETWORK as NetworkTier
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const chains = BRIDGE_CHAINS[tier] ?? {}
-  /** EVM + Solana: LCD token_dest_mapping (bytes32 → EVM address or SPL mint). Solana requires program id. */
+  /** EVM + Solana: LCD token_dest_mapping (bytes32 → EVM address or SPL mint). Solana needs deploy program id. */
   const mappingChainEntries = Object.entries(chains).filter(
     (entry): entry is [string, typeof chains[string] & { bytes4ChainId: string }] => {
       const c = entry[1]
       if (!c.bytes4ChainId) return false
       if (c.type === 'evm') return true
-      if (c.type === 'solana') return !!c.bridgeAddress
+      if (c.type === 'solana') return getSolanaProgramIdString(c) != null
       return false
     }
   )
