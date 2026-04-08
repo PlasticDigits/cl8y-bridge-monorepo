@@ -56,10 +56,13 @@ async function main(): Promise<void> {
   }
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8")) as anchor.Idl;
 
-  const rpc =
+  const rpc = (
     process.env.ANCHOR_PROVIDER_URL ||
     process.env.SOLANA_RPC_URL ||
-    "http://127.0.0.1:8899";
+    "http://127.0.0.1:8899"
+  )
+    .split(",")[0]
+    .trim();
   const walletPath =
     process.env.ANCHOR_WALLET || `${process.env.HOME}/.config/solana/id.json`;
   const kp = Keypair.fromSecretKey(

@@ -18,16 +18,17 @@ import {
   type WithdrawSubmitTerraParams,
 } from '../services/terra/withdrawSubmit'
 import { TerraTxError } from '../services/terra/transaction'
-import { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import { PublicKey, Transaction } from '@solana/web3.js'
 import {
   buildWithdrawSubmitInstruction,
   formatSolanaWalletError,
   sendSolanaTransaction,
 } from '../services/solana/transaction'
+import { pickSolanaConnection } from '../services/solana/solanaRpcUrls'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
 
 export interface WithdrawSubmitSolanaParams {
-  rpcUrl: string
+  rpcUrls: string[]
   programId: string
   srcChain: Uint8Array
   srcAccount: Uint8Array
@@ -147,7 +148,7 @@ export function useWithdrawSubmit() {
         if (!solanaWallet.address || !solanaWallet.walletType) {
           throw new Error('Solana wallet not connected')
         }
-        const connection = new Connection(params.rpcUrl, 'confirmed')
+        const connection = await pickSolanaConnection(params.rpcUrls)
         const programId = new PublicKey(params.programId)
         const payer = new PublicKey(solanaWallet.address)
         const destAccount = new PublicKey(params.destAccount ?? solanaWallet.address)

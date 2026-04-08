@@ -19,6 +19,16 @@ import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { sounds } from '../../lib/sounds'
 import { anchorDiscriminator } from '../../utils/anchorDiscriminator'
 import type { NetworkTier } from '../../utils/bridgeChains'
+import {
+  parseSolanaRpcUrlList,
+  pickSolanaConnection,
+  withSolanaReadFallback,
+} from '../../services/solana/solanaRpcUrls'
+
+function faucetSolanaRpcUrls(): string[] {
+  const u = parseSolanaRpcUrlList(import.meta.env.VITE_SOLANA_RPC_URL)
+  return u.length > 0 ? u : ['http://localhost:8899']
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -436,16 +446,14 @@ function SolanaBalanceCell({
     let cancelled = false
     ;(async () => {
       try {
-        const { Connection, PublicKey } = await import('@solana/web3.js')
+        const { PublicKey } = await import('@solana/web3.js')
         const { getAssociatedTokenAddress } = await import('@solana/spl-token')
-        const connection = new Connection(
-          import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899',
-          'confirmed',
-        )
         const mint = new PublicKey(tokenAddress)
         const owner = new PublicKey(address)
         const ata = await getAssociatedTokenAddress(mint, owner)
-        const info = await connection.getTokenAccountBalance(ata)
+        const info = await withSolanaReadFallback(faucetSolanaRpcUrls(), (connection) =>
+          connection.getTokenAccountBalance(ata),
+        )
         if (!cancelled) setBalance(info.value.amount)
       } catch {
         if (!cancelled) setBalance('0')
@@ -477,12 +485,12 @@ function SolanaClaimButton({
     setError(null)
     setClaimTx(null)
     try {
-      const { Connection, PublicKey, Transaction } = await import('@solana/web3.js')
+      const { PublicKey, Transaction } = await import('@solana/web3.js')
       const { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token')
       const { sendSolanaTransaction } = await import('../../services/solana/transaction')
 
-      const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
-      const connection = new Connection(rpcUrl, 'confirmed')
+      const solUrls = faucetSolanaRpcUrls()
+      const connection = await pickSolanaConnection(solUrls)
       const programId = new PublicKey(chain.faucetAddress)
       const mint = new PublicKey(tokenAddress)
       const claimer = new PublicKey(address)
@@ -537,7 +545,7 @@ function SolanaClaimButton({
     return <span className="text-xs text-gray-500">Connect Solana</span>
   }
 
-  const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL || 'http://localhost:8899'
+  const rpcUrl = faucetSolanaRpcUrls()[0] ?? 'http://localhost:8899'
   const isLocalRpc = /localhost|127\.0\.0\.1/.test(rpcUrl)
   const explorerHref =
     claimTx &&

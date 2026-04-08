@@ -18,10 +18,13 @@ describe("production-initialize-bridge", function () {
   it("initializes bridge PDA when absent", async function () {
     this.timeout(120_000);
 
-    const rpc =
+    const rpc = (
       process.env.ANCHOR_PROVIDER_URL ||
       process.env.SOLANA_RPC_URL ||
-      "http://127.0.0.1:8899";
+      "http://127.0.0.1:8899"
+    )
+      .split(",")[0]
+      .trim();
     const walletPath =
       process.env.ANCHOR_WALLET ||
       process.env.SOLANA_KEYPAIR ||

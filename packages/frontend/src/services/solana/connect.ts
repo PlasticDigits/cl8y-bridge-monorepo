@@ -1,5 +1,11 @@
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { getSolanaBridgeChains } from "../../utils/bridgeChains";
+import {
+  DEFAULT_SOLANA_MAINNET_RPC_URLS,
+  getSolanaWalletRpcUrls,
+  withSolanaReadFallback,
+} from "./solanaRpcUrls";
+
+export { getSolanaWalletRpcUrls } from "./solanaRpcUrls";
 
 export interface SolanaWalletState {
   connected: boolean;
@@ -77,23 +83,20 @@ export function createSolanaConnection(rpcUrl: string): Connection {
   return new Connection(rpcUrl, "confirmed");
 }
 
-/**
- * RPC URL for read-only queries (e.g. header SOL balance).
- * Prefer VITE_SOLANA_RPC_URL when set; otherwise the Solana bridge chain for the current VITE_NETWORK tier.
- */
+/** First URL in the active list (prefer `getSolanaWalletRpcUrls()` for failover). */
 export function getSolanaWalletRpcUrl(): string {
-  const env = import.meta.env.VITE_SOLANA_RPC_URL?.trim();
-  if (env) return env;
-  const chains = getSolanaBridgeChains();
-  return chains[0]?.rpcUrl ?? "https://api.mainnet-beta.solana.com";
+  const urls = getSolanaWalletRpcUrls();
+  return urls[0] ?? DEFAULT_SOLANA_MAINNET_RPC_URLS[0] ?? "https://solana-rpc.publicnode.com/";
 }
 
 /**
  * Fetch native SOL balance for a base58 address and format for display (matches EVM gas balance style).
  */
 export async function fetchNativeSolBalanceFormatted(address: string): Promise<string> {
-  const connection = createSolanaConnection(getSolanaWalletRpcUrl());
-  const lamports = await connection.getBalance(new PublicKey(address), "confirmed");
+  const urls = getSolanaWalletRpcUrls();
+  const lamports = await withSolanaReadFallback(urls, async (connection) =>
+    connection.getBalance(new PublicKey(address), "confirmed")
+  );
   const sol = lamports / LAMPORTS_PER_SOL;
   if (!Number.isFinite(sol)) return "0.00";
   return sol.toLocaleString("en-US", {

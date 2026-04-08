@@ -25,7 +25,7 @@ startup_wait = 10000
 [test.validator]
 ledger = ".anchor/test-ledger"
 # Clone canonical wSOL mint into local genesis (GitLab #84); register_token requires the mint account.
-url = "https://api.mainnet-beta.solana.com"
+url = "https://api.mainnet.solana.com"
 
 [[test.validator.clone]]
 address = "So11111111111111111111111111111111111111112"

@@ -3,6 +3,10 @@ import { getAddress, type Address } from 'viem'
 import { fetchLcd, queryContract } from '../services/lcdClient'
 import { getEvmClient } from '../services/evmClient'
 import type { BridgeChainConfig } from '../types/chain'
+import {
+  solanaRpcUrlsForBridgeChain,
+  withSolanaReadFallback,
+} from '../services/solana/solanaRpcUrls'
 import { DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 
 interface UseTransferRouteValidationParams {
@@ -79,11 +83,13 @@ async function terraTokenExists(chainConfig: BridgeChainConfig, tokenId: string)
 }
 
 async function solanaTokenExists(chainConfig: BridgeChainConfig, tokenId: string): Promise<boolean> {
+  if (chainConfig.type !== 'solana') return false
   try {
-    const { Connection, PublicKey } = await import('@solana/web3.js')
-    const connection = new Connection(chainConfig.rpcUrl, 'confirmed')
+    const { PublicKey } = await import('@solana/web3.js')
+    const urls = solanaRpcUrlsForBridgeChain(chainConfig)
+    if (urls.length === 0) return false
     const pubkey = new PublicKey(tokenId)
-    const account = await connection.getAccountInfo(pubkey)
+    const account = await withSolanaReadFallback(urls, (c) => c.getAccountInfo(pubkey))
     return account !== null
   } catch {
     return false

@@ -11,7 +11,7 @@
  */
 
 import { useState, useCallback } from 'react'
-import { Connection, PublicKey } from '@solana/web3.js'
+import { PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import type { Address, Hex } from 'viem'
 import { hexToBytes, pad } from 'viem'
@@ -31,6 +31,10 @@ import {
   findBridgePda,
   WSOL_MINT,
 } from '../services/solana/transaction'
+import {
+  pickSolanaConnection,
+  solanaRpcUrlsForBridgeChain,
+} from '../services/solana/solanaRpcUrls'
 import { queryTokenDestMapping } from '../services/terraTokenDestMapping'
 import { queryContract } from '../services/lcdClient'
 import {
@@ -380,8 +384,9 @@ export function useTokenVerification() {
 
       // On-chain Solana program: token_mapping PDAs per remote chain
       const programIdStr = solConfig.bridgeAddress?.trim()
-      const rpcUrl = solConfig.rpcUrl?.trim()
-      if (programIdStr && rpcUrl && solMapping?.hex) {
+      const solRpcUrls =
+        solConfig.type === 'solana' ? solanaRpcUrlsForBridgeChain(solConfig) : []
+      if (programIdStr && solRpcUrls.length > 0 && solMapping?.hex) {
         let expectedMint: PublicKey
         try {
           expectedMint = new PublicKey(bytes32ToSolanaAddress(solMapping.hex as `0x${string}`))
@@ -395,7 +400,7 @@ export function useTokenVerification() {
           continue
         }
 
-        const connection = new Connection(rpcUrl, 'confirmed')
+        const connection = await pickSolanaConnection(solRpcUrls)
         let programId: PublicKey
         try {
           programId = new PublicKey(programIdStr)
@@ -488,11 +493,11 @@ export function useTokenVerification() {
             })
           }
         }
-      } else if (!programIdStr || !rpcUrl) {
+      } else if (!programIdStr || solRpcUrls.length === 0) {
         checks.push({
           label: 'Solana program: on-chain checks',
           status: 'skip',
-          detail: 'VITE_SOLANA_PROGRAM_ID + RPC URL required for PDA verification',
+          detail: 'Solana program id + RPC URL(s) required for PDA verification',
         })
       }
 

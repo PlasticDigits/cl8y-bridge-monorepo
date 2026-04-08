@@ -1,4 +1,10 @@
+#![allow(clippy::result_large_err)] // Solana ClientError in RpcClient callbacks
+
 use eyre::Result;
+use multichain_rs::solana::{
+    get_signatures_for_program, get_transaction, parse_anchor_events, run_with_solana_rpc_fallback,
+    SolanaEvent,
+};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
@@ -9,7 +15,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 pub struct SolanaWatcher {
-    rpc_client: RpcClient,
+    rpc_clients: Vec<RpcClient>,
     program_id: Pubkey,
     db: PgPool,
     last_signature: Option<Signature>,
@@ -18,18 +24,33 @@ pub struct SolanaWatcher {
     bytes4_chain_id: [u8; 4],
 }
 
+fn solana_commitment_config(s: &str) -> CommitmentConfig {
+    match s {
+        "confirmed" => CommitmentConfig::confirmed(),
+        "processed" => CommitmentConfig::processed(),
+        _ => CommitmentConfig::finalized(),
+    }
+}
+
 impl SolanaWatcher {
     pub fn new(
-        rpc_url: &str,
+        rpc_urls: &[String],
+        commitment: &str,
         program_id: Pubkey,
         db: PgPool,
         poll_interval_ms: u64,
         bytes4_chain_id: [u8; 4],
     ) -> Result<Self> {
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::finalized());
+        if rpc_urls.is_empty() {
+            return Err(eyre::eyre!("at least one Solana RPC URL is required"));
+        }
+        let cc = solana_commitment_config(commitment);
+        let rpc_clients: Vec<RpcClient> = rpc_urls
+            .iter()
+            .map(|u| RpcClient::new_with_commitment(u.clone(), cc))
+            .collect();
         Ok(Self {
-            rpc_client,
+            rpc_clients,
             program_id,
             db,
             last_signature: None,
@@ -41,6 +62,7 @@ impl SolanaWatcher {
     pub async fn run(mut self) -> Result<()> {
         info!(
             program_id = %self.program_id,
+            endpoints = self.rpc_clients.len(),
             "Starting Solana watcher"
         );
 
@@ -65,16 +87,10 @@ impl SolanaWatcher {
     }
 
     async fn poll_deposits(&mut self) -> Result<usize> {
-        use multichain_rs::solana::{
-            get_signatures_for_program, get_transaction, parse_anchor_events, SolanaEvent,
-        };
-
-        let signatures = get_signatures_for_program(
-            &self.rpc_client,
-            &self.program_id,
-            self.last_signature.as_ref(),
-            1000,
-        )?;
+        let signatures = run_with_solana_rpc_fallback(&self.rpc_clients, |c| {
+            get_signatures_for_program(c, &self.program_id, self.last_signature.as_ref(), 1000)
+        })
+        .map_err(|e| eyre::eyre!("Failed to get signatures: {}", e))?;
 
         if signatures.is_empty() {
             return Ok(0);
@@ -95,7 +111,9 @@ impl SolanaWatcher {
                 continue;
             }
 
-            let tx = match get_transaction(&self.rpc_client, &signature) {
+            let tx = match run_with_solana_rpc_fallback(&self.rpc_clients, |c| {
+                get_transaction(c, &signature)
+            }) {
                 Ok(tx) => tx,
                 Err(e) => {
                     warn!(signature = %signature, error = %e, "Failed to fetch transaction, stopping batch");
@@ -193,7 +211,8 @@ impl SolanaWatcher {
     }
 
     async fn save_last_signature(&self, signature: &Signature) -> Result<()> {
-        let slot = self.rpc_client.get_slot()?;
+        let slot = run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_slot())
+            .map_err(|e| eyre::eyre!("Failed to get slot: {}", e))?;
         sqlx::query(
             r#"
             INSERT INTO solana_blocks (slot, block_hash, processed_at)

@@ -9,7 +9,6 @@ mod discovery;
 pub mod hash;
 mod metrics;
 mod multi_evm;
-mod rpc_fallback;
 mod terra_client;
 mod types;
 mod watchers;
@@ -145,8 +144,11 @@ async fn async_main() -> eyre::Result<()> {
             }
         }
 
+        let mut sol_rpc_urls: Vec<String> = Vec::with_capacity(1 + sol_cfg.rpc_fallback_urls.len());
+        sol_rpc_urls.push(sol_cfg.rpc_url.clone());
+        sol_rpc_urls.extend(sol_cfg.rpc_fallback_urls.iter().cloned());
         match writers::SolanaWriter::new(
-            &sol_cfg.rpc_url,
+            &sol_rpc_urls,
             program_id,
             keypair,
             db.clone(),

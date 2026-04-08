@@ -17,6 +17,7 @@ pub mod client;
 pub mod contracts;
 pub mod events;
 pub mod queries;
+pub mod rpc_fallback;
 pub mod signer;
 pub mod tokens;
 pub mod watcher;
@@ -29,5 +30,8 @@ pub use events::{
     WithdrawSubmitEvent,
 };
 pub use queries::EvmQueryClient;
+pub use rpc_fallback::{
+    create_alloy_http_providers, parse_comma_separated_rpc_urls, run_with_evm_rpc_url_fallback,
+};
 pub use signer::{EvmSigner, EvmSignerConfig, RetryConfig};
 pub use watcher::{BridgeEvent, EvmEventWatcher, WatcherConfig};

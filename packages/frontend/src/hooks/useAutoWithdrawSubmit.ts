@@ -19,7 +19,7 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { useAccount, useSwitchChain } from 'wagmi'
-import { Connection, PublicKey } from '@solana/web3.js'
+import { PublicKey } from '@solana/web3.js'
 import type { Address, Hex } from 'viem'
 import { useWallet } from './useWallet'
 import { useSolanaWallet } from './useSolanaWallet'
@@ -41,6 +41,10 @@ import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
+import {
+  solanaRpcUrlsForBridgeChain,
+  withSolanaReadFallback,
+} from '../services/solana/solanaRpcUrls'
 import { withdrawSubmitSrcAccountBytes32 } from '../services/solana/srcAccountBytes32'
 import {
   bytes32HexToPublicKey,
@@ -679,15 +683,20 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             .join('')}`
 
         const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
-        if (programIdStr && destChainConfig.rpcUrl) {
+        const destSolanaRpcUrls =
+          destChainConfig.type === 'solana'
+            ? solanaRpcUrlsForBridgeChain(destChainConfig)
+            : []
+        if (programIdStr && destSolanaRpcUrls.length > 0) {
           try {
-            const conn = new Connection(destChainConfig.rpcUrl, 'confirmed')
             const programPk = new PublicKey(programIdStr)
-            const mappedMint = await fetchTokenMappingLocalMint(
-              conn,
-              programPk,
-              srcChainBytes4Data,
-              srcTokenBytes,
+            const mappedMint = await withSolanaReadFallback(destSolanaRpcUrls, (conn) =>
+              fetchTokenMappingLocalMint(
+                conn,
+                programPk,
+                srcChainBytes4Data,
+                srcTokenBytes,
+              ),
             )
             if (mappedMint) {
               const solMintHex = mintPkToHex(mappedMint).toLowerCase()
@@ -722,6 +731,15 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         }
         const destAccountPk = bytes32HexToPublicKey(transfer.destAccount)
 
+        if (destSolanaRpcUrls.length === 0) {
+          const msg = 'No Solana RPC URLs configured for destination chain'
+          console.error(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
+        }
+
         const programForLog = destChainConfig.programId || destChainConfig.bridgeAddress
         console.info(
           `${LOG} Submitting Solana withdrawSubmit: program=${programForLog}, ` +
@@ -729,7 +747,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         )
 
         const solanaTxSig = await submitOnSolana({
-          rpcUrl: destChainConfig.rpcUrl,
+          rpcUrls: destSolanaRpcUrls,
           programId: destChainConfig.programId || destChainConfig.bridgeAddress,
           srcChain: srcChainBytes4Data,
           srcAccount: srcAccountBytes32Sol,
@@ -909,8 +927,9 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         } else if (destChainConfig.type === 'solana') {
           // Solana destination: read PendingWithdraw PDA
           try {
-            const { Connection, PublicKey } = await import('@solana/web3.js')
-            const connection = new Connection(destChainConfig.rpcUrl, 'confirmed')
+            const { PublicKey } = await import('@solana/web3.js')
+            const pollRpcUrls = solanaRpcUrlsForBridgeChain(destChainConfig)
+            if (pollRpcUrls.length === 0) return
             const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
             if (!programIdStr) return
             const programId = new PublicKey(programIdStr)
@@ -923,7 +942,9 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
               [Buffer.from('withdraw'), Buffer.from(hashBytes)],
               programId,
             )
-            const account = await connection.getAccountInfo(pendingPda)
+            const account = await withSolanaReadFallback(pollRpcUrls, (connection) =>
+              connection.getAccountInfo(pendingPda),
+            )
             if (account && account.data.length >= 175) {
               const approved = account.data[164] !== 0
               const executed = account.data[174] !== 0

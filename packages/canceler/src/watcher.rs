@@ -25,10 +25,12 @@ use std::time::Duration;
 use crate::bounded_cache::{BoundedHashCache, BoundedMapCache};
 
 use alloy::primitives::{Address, FixedBytes};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::sol;
+use alloy::transports::http::{Client, Http};
 use base64::Engine as _;
 use eyre::{eyre, Result, WrapErr};
+use multichain_rs::run_with_evm_rpc_url_fallback;
 use std::str::FromStr;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -95,10 +97,12 @@ sol! {
 struct EvmChainPollState {
     /// V2 chain ID (4 bytes)
     v2_chain_id: [u8; 4],
+    /// Native EVM chain id (for cancel tx gas floor)
+    evm_chain_id: u64,
     /// Chain name for logging
     name: String,
-    /// RPC URL
-    rpc_url: String,
+    /// JSON-RPC URLs (primary + fallbacks, comma-separated in config)
+    rpc_urls: Vec<String>,
     /// Bridge contract address
     bridge_address: String,
     /// Last polled block number
@@ -187,9 +191,10 @@ impl CancelerWatcher {
         }
 
         let evm_client = EvmClient::new(
-            &config.evm_rpc_url,
+            config.all_evm_rpc_urls(),
             &config.evm_bridge_address,
             &config.evm_private_key,
+            config.evm_chain_id,
         )?;
 
         let terra_client = TerraClient::new(
@@ -208,8 +213,13 @@ impl CancelerWatcher {
 
             let keypair = crate::config::parse_solana_private_key(&sol_config.private_key)?;
 
+            let mut sol_rpc_urls: Vec<String> =
+                Vec::with_capacity(1 + sol_config.rpc_fallback_urls.len());
+            sol_rpc_urls.push(sol_config.rpc_url.clone());
+            sol_rpc_urls.extend(sol_config.rpc_fallback_urls.iter().cloned());
+
             let client = SolanaCancelerClient::new(
-                &sol_config.rpc_url,
+                &sol_rpc_urls,
                 program_id,
                 keypair,
                 &sol_config.commitment,
@@ -227,7 +237,7 @@ impl CancelerWatcher {
             // Register Solana in the verifier for source-chain deposit verification
             let program_id_bytes = program_id.to_bytes();
             verifier.register_solana(crate::verifier::SolanaVerifierConfig {
-                rpc_url: sol_config.rpc_url.clone(),
+                rpc_urls: sol_rpc_urls.clone(),
                 program_id: program_id_bytes,
                 chain_ids: sol_config.chain_ids.clone(),
             });
@@ -237,7 +247,7 @@ impl CancelerWatcher {
             // Register HTTP-only Solana deposit verification (no Solana watcher / keypair).
             // E2E sets SOLANA_DEPOSIT_VERIFY_RPC_URL + SOLANA_DEPOSIT_VERIFY_PROGRAM_ID so
             // Solana-source fraud approvals hit getAccountInfo → null PDA → Invalid → cancel.
-            if let Ok(rpc_url) = std::env::var("SOLANA_DEPOSIT_VERIFY_RPC_URL") {
+            if let Ok(raw) = std::env::var("SOLANA_DEPOSIT_VERIFY_RPC_URL") {
                 if let Ok(program_id_str) = std::env::var("SOLANA_DEPOSIT_VERIFY_PROGRAM_ID") {
                     if let Ok(program_id) = solana_sdk::pubkey::Pubkey::from_str(&program_id_str) {
                         let chain_ids = match crate::config::parse_solana_v2_chain_ids_from_env() {
@@ -247,16 +257,25 @@ impl CancelerWatcher {
                                 vec![[0x00, 0x00, 0x00, 0x05]]
                             }
                         };
-                        verifier.register_solana(crate::verifier::SolanaVerifierConfig {
-                            rpc_url,
-                            program_id: program_id.to_bytes(),
-                            chain_ids: chain_ids.clone(),
-                        });
-                        info!(
-                            chain_ids = ?chain_ids.iter().map(hex::encode).collect::<Vec<_>>(),
-                            program_id = %program_id_str,
-                            "Registered Solana deposit verifier (SOLANA_DEPOSIT_VERIFY_* — no full Solana watcher)"
-                        );
+                        let rpc_urls: Vec<String> = raw
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if rpc_urls.is_empty() {
+                            warn!("SOLANA_DEPOSIT_VERIFY_RPC_URL is empty after parsing");
+                        } else {
+                            verifier.register_solana(crate::verifier::SolanaVerifierConfig {
+                                rpc_urls,
+                                program_id: program_id.to_bytes(),
+                                chain_ids: chain_ids.clone(),
+                            });
+                            info!(
+                                chain_ids = ?chain_ids.iter().map(hex::encode).collect::<Vec<_>>(),
+                                program_id = %program_id_str,
+                                "Registered Solana deposit verifier (SOLANA_DEPOSIT_VERIFY_* — no full Solana watcher)"
+                            );
+                        }
                     } else {
                         warn!(
                             program_id = %program_id_str,
@@ -304,12 +323,18 @@ impl CancelerWatcher {
                 multi
                     .enabled_chains()
                     .filter(|c| c.this_chain_id.0 != this_chain_id) // Skip the configured base chain (already polled)
-                    .map(|c| EvmChainPollState {
-                        v2_chain_id: c.this_chain_id.0,
-                        name: c.name.clone(),
-                        rpc_url: c.rpc_url.clone(),
-                        bridge_address: c.bridge_address.clone(),
-                        last_block: 0,
+                    .map(|c| {
+                        let mut rpc_urls = Vec::with_capacity(1 + c.rpc_fallback_urls.len());
+                        rpc_urls.push(c.rpc_url.clone());
+                        rpc_urls.extend(c.rpc_fallback_urls.iter().cloned());
+                        EvmChainPollState {
+                            v2_chain_id: c.this_chain_id.0,
+                            evm_chain_id: c.chain_id,
+                            name: c.name.clone(),
+                            rpc_urls,
+                            bridge_address: c.bridge_address.clone(),
+                            last_block: 0,
+                        }
                     })
                     .collect()
             } else {
@@ -355,6 +380,21 @@ impl CancelerWatcher {
                 config.pending_retry_ttl_secs,
             ),
         })
+    }
+
+    /// First JSON-RPC URL that answers `eth_blockNumber`; used for polling on a stable endpoint.
+    async fn first_evm_http_provider(urls: &[String]) -> Result<RootProvider<Http<Client>>> {
+        run_with_evm_rpc_url_fallback(urls, |url| async move {
+            let parsed = url
+                .parse()
+                .wrap_err_with(|| format!("Invalid EVM RPC URL: {url}"))?;
+            let p = ProviderBuilder::new().on_http(parsed);
+            p.get_block_number()
+                .await
+                .wrap_err_with(|| format!("get_block_number failed for {url}"))?;
+            Ok(p)
+        })
+        .await
     }
 
     /// C6: Validate that the verifier's chain IDs match what the bridge contract reports.
@@ -448,20 +488,22 @@ impl CancelerWatcher {
 
     /// Query `getThisChainId()` from the EVM bridge contract to get its V2 chain ID.
     async fn query_bridge_this_chain_id(config: &Config) -> Result<[u8; 4]> {
-        let provider = ProviderBuilder::new()
-            .on_http(config.evm_rpc_url.parse().wrap_err("Invalid EVM RPC URL")?);
-
+        let urls = config.all_evm_rpc_urls();
         let bridge_address =
             Address::from_str(&config.evm_bridge_address).wrap_err("Invalid EVM bridge address")?;
 
-        let contract = Bridge::new(bridge_address, &provider);
-        let result = contract
-            .getThisChainId()
-            .call()
-            .await
-            .map_err(|e| eyre!("getThisChainId() call failed: {}", e))?;
-
-        Ok(result.chainId.0)
+        run_with_evm_rpc_url_fallback(&urls, |url| async move {
+            let provider =
+                ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid EVM RPC URL")?);
+            let contract = Bridge::new(bridge_address, &provider);
+            let result = contract
+                .getThisChainId()
+                .call()
+                .await
+                .map_err(|e| eyre!("getThisChainId() call failed: {}", e))?;
+            Ok(result.chainId.0)
+        })
+        .await
     }
 
     /// Main run loop
@@ -596,12 +638,9 @@ impl CancelerWatcher {
     /// polling because it queries current contract state directly — no block ranges,
     /// no chunking, no missed events from RPC errors.
     async fn poll_evm_enumeration(&mut self) -> Result<()> {
-        let provider = ProviderBuilder::new().on_http(
-            self.config
-                .evm_rpc_url
-                .parse()
-                .wrap_err("Invalid EVM RPC URL")?,
-        );
+        let provider = Self::first_evm_http_provider(&self.config.all_evm_rpc_urls())
+            .await
+            .wrap_err("No reachable EVM RPC for enumeration")?;
 
         let bridge_address = Address::from_str(&self.config.evm_bridge_address)
             .wrap_err("Invalid EVM bridge address")?;
@@ -711,12 +750,9 @@ impl CancelerWatcher {
             "Polling EVM approvals"
         );
 
-        let provider = ProviderBuilder::new().on_http(
-            self.config
-                .evm_rpc_url
-                .parse()
-                .wrap_err("Invalid EVM RPC URL")?,
-        );
+        let provider = Self::first_evm_http_provider(&self.config.all_evm_rpc_urls())
+            .await
+            .map_err(|e| eyre!("No reachable EVM RPC for event poll: {}", e))?;
 
         let current_block = provider
             .get_block_number()
@@ -929,14 +965,17 @@ impl CancelerWatcher {
 
         for chain_state in &self.additional_evm_chains {
             let chain_name = &chain_state.name;
-            let rpc_url = &chain_state.rpc_url;
             let bridge_addr_str = &chain_state.bridge_address;
             let chain_v2_id = chain_state.v2_chain_id;
 
-            let provider = match rpc_url.parse() {
-                Ok(url) => ProviderBuilder::new().on_http(url),
+            let provider = match Self::first_evm_http_provider(&chain_state.rpc_urls).await {
+                Ok(p) => p,
                 Err(e) => {
-                    warn!(chain = %chain_name, error = %e, "Invalid RPC URL for additional chain");
+                    warn!(
+                        chain = %chain_name,
+                        error = %e,
+                        "No reachable RPC for additional chain enumeration"
+                    );
                     continue;
                 }
             };
@@ -1051,14 +1090,17 @@ impl CancelerWatcher {
 
         for (idx, chain_state) in self.additional_evm_chains.iter().enumerate() {
             let chain_name = &chain_state.name;
-            let rpc_url = &chain_state.rpc_url;
             let bridge_addr_str = &chain_state.bridge_address;
             let chain_v2_id = chain_state.v2_chain_id;
 
-            let provider = match rpc_url.parse() {
-                Ok(url) => ProviderBuilder::new().on_http(url),
+            let provider = match Self::first_evm_http_provider(&chain_state.rpc_urls).await {
+                Ok(p) => p,
                 Err(e) => {
-                    warn!(chain = %chain_name, error = %e, "Invalid RPC URL for additional chain");
+                    warn!(
+                        chain = %chain_name,
+                        error = %e,
+                        "No reachable RPC for additional chain event poll"
+                    );
                     continue;
                 }
             };
@@ -1833,9 +1875,10 @@ impl CancelerWatcher {
             .find(|c| c.v2_chain_id == dest_chain)
         {
             let peer_client = EvmClient::new(
-                &peer.rpc_url,
+                peer.rpc_urls.clone(),
                 &peer.bridge_address,
                 &self.config.evm_private_key,
+                peer.evm_chain_id,
             )?;
             if peer_client
                 .can_cancel(xchain_hash_id)

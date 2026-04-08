@@ -7,6 +7,7 @@
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
+import { DEFAULT_SOLANA_MAINNET_RPC_URLS } from './solanaMainnetRpcDefaults'
 import { DEFAULT_NETWORK, LOCAL_TERRA_LCD_URL, LOCAL_TERRA_RPC_URL } from './constants'
 import { getChainlist, getChainlistEntry } from './chainlist'
 
@@ -154,7 +155,8 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       chainId: 'solana',
       type: 'solana',
       name: 'Solana',
-      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      rpcUrl: DEFAULT_SOLANA_MAINNET_RPC_URLS[0] ?? "https://solana-rpc.publicnode.com/",
+      rpcFallbacks: [...DEFAULT_SOLANA_MAINNET_RPC_URLS.slice(1)],
       bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
       programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
       bytes4ChainId: '0x00000005',

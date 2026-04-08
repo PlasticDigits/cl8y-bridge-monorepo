@@ -999,16 +999,16 @@ mod alloy_abi_encode_xchain_fuzz {
 
     /// V2 bytes4 chain ids used across local / testnet / mainnet configs (big-endian u32).
     const BRIDGE_CHAIN_IDS: &[[u8; 4]] = &[
-        [0, 0, 0, 1],        // Ethereum mainnet-style
-        [0, 0, 0, 2],        // Terra Classic (docs / e2e)
-        [0, 0, 0, 5],        // Solana (local V2 id)
-        [0, 0, 0, 56],       // BNB Chain
-        [0, 0, 0, 137],      // Polygon
-        [0, 0, 0x7a, 0x69],  // 31337 Anvil
-        [0, 0, 0x42, 0x61],  // 16993 (0x4261)
-        [0, 0, 0x21, 0x05],  // 8453 Base
-        [0, 0, 0xA4, 0xB1],  // 42161 Arbitrum One
-        [0, 0, 0x44, 0xCB],  // 17611 (0x44cb)
+        [0, 0, 0, 1],       // Ethereum mainnet-style
+        [0, 0, 0, 2],       // Terra Classic (docs / e2e)
+        [0, 0, 0, 5],       // Solana (local V2 id)
+        [0, 0, 0, 56],      // BNB Chain
+        [0, 0, 0, 137],     // Polygon
+        [0, 0, 0x7a, 0x69], // 31337 Anvil
+        [0, 0, 0x42, 0x61], // 16993 (0x4261)
+        [0, 0, 0x21, 0x05], // 8453 Base
+        [0, 0, 0xA4, 0xB1], // 42161 Arbitrum One
+        [0, 0, 0x44, 0xCB], // 17611 (0x44cb)
     ];
 
     proptest! {

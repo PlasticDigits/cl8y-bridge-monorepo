@@ -55,7 +55,7 @@ mkdir -p "$SOLANA_LEDGER_DIR"
 WSOL_MINT="So11111111111111111111111111111111111111112"
 # Token-2022 program — matches docker-compose solana service + packages/contracts-solana/Anchor.toml (QA / anchor test).
 TOKEN_2022_PROG="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-CLONE_URL="${SOLANA_TEST_VALIDATOR_CLONE_URL:-https://api.mainnet-beta.solana.com}"
+CLONE_URL="${SOLANA_TEST_VALIDATOR_CLONE_URL:-https://api.mainnet.solana.com}"
 CLONE_ARGS=()
 if [[ "${SOLANA_SKIP_WSOL_GENESIS_CLONE:-}" != "1" ]]; then
   CLONE_ARGS+=(--url "$CLONE_URL" --clone "$WSOL_MINT" --clone "$TOKEN_2022_PROG")

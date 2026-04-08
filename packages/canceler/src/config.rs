@@ -132,8 +132,10 @@ pub struct Config {
     /// Unique canceler instance ID for multi-canceler deployments
     pub canceler_id: String,
 
-    /// EVM RPC URL
+    /// Primary EVM RPC URL (`EVM_RPC_URL` — first entry if comma-separated).
     pub evm_rpc_url: String,
+    /// Additional EVM RPC URLs (remaining entries from comma-separated `EVM_RPC_URL`).
+    pub evm_rpc_fallback_urls: Vec<String>,
     /// EVM native chain ID (e.g. 31337 for Anvil)
     pub evm_chain_id: u64,
     /// EVM bridge contract address
@@ -221,6 +223,7 @@ pub struct Config {
 #[derive(Clone)]
 pub struct SolanaConfig {
     pub rpc_url: String,
+    pub rpc_fallback_urls: Vec<String>,
     pub program_id: String,
     /// Solana signing secret: base58 64-byte secret key or JSON `[u8,...]` (keypair file contents).
     pub private_key: String,
@@ -235,6 +238,7 @@ impl fmt::Debug for SolanaConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SolanaConfig")
             .field("rpc_url", &self.rpc_url)
+            .field("rpc_fallback_urls", &self.rpc_fallback_urls)
             .field("program_id", &self.program_id)
             .field("private_key", &"<redacted>")
             .field("commitment", &self.commitment)
@@ -256,6 +260,7 @@ impl fmt::Debug for Config {
         f.debug_struct("Config")
             .field("canceler_id", &self.canceler_id)
             .field("evm_rpc_url", &self.evm_rpc_url)
+            .field("evm_rpc_fallback_urls", &self.evm_rpc_fallback_urls)
             .field("evm_chain_id", &self.evm_chain_id)
             .field("evm_bridge_address", &self.evm_bridge_address)
             .field("evm_private_key", &"<redacted>")
@@ -351,8 +356,16 @@ impl Config {
             }
         });
 
-        let evm_rpc_url = env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?;
-        validate_rpc_url(&evm_rpc_url, "EVM_RPC_URL")?;
+        let evm_rpc_raw = env::var("EVM_RPC_URL").map_err(|_| eyre!("EVM_RPC_URL required"))?;
+        let evm_rpc_parts = multichain_rs::parse_comma_separated_rpc_urls(&evm_rpc_raw);
+        if evm_rpc_parts.is_empty() {
+            return Err(eyre!("EVM_RPC_URL cannot be empty"));
+        }
+        for (i, u) in evm_rpc_parts.iter().enumerate() {
+            validate_rpc_url(u, &format!("EVM_RPC_URL[{i}]"))?;
+        }
+        let evm_rpc_url = evm_rpc_parts[0].clone();
+        let evm_rpc_fallback_urls = evm_rpc_parts[1..].to_vec();
 
         let terra_lcd_url =
             env::var("TERRA_LCD_URL").map_err(|_| eyre!("TERRA_LCD_URL required"))?;
@@ -384,9 +397,32 @@ impl Config {
                 .unwrap_or(false);
 
             if enabled {
-                let rpc_url = env::var("SOLANA_RPC_URL")
-                    .map_err(|_| eyre!("SOLANA_RPC_URL required when SOLANA_ENABLED=true"))?;
-                validate_rpc_url(&rpc_url, "SOLANA_RPC_URL")?;
+                let raw = env::var("SOLANA_RPC_URL")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        env::var("SOLANA_MAINNET_RPC")
+                            .ok()
+                            .filter(|s| !s.trim().is_empty())
+                    })
+                    .ok_or_else(|| {
+                        eyre!(
+                            "SOLANA_RPC_URL or SOLANA_MAINNET_RPC required when SOLANA_ENABLED=true"
+                        )
+                    })?;
+                let urls: Vec<String> = raw
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if urls.is_empty() {
+                    return Err(eyre!("SOLANA_RPC_URL / SOLANA_MAINNET_RPC cannot be empty"));
+                }
+                for (i, u) in urls.iter().enumerate() {
+                    validate_rpc_url(u, &format!("SOLANA_RPC[{i}]"))?;
+                }
+                let rpc_url = urls[0].clone();
+                let rpc_fallback_urls = urls[1..].to_vec();
 
                 let program_id = env::var("SOLANA_PROGRAM_ID")
                     .map_err(|_| eyre!("SOLANA_PROGRAM_ID required when SOLANA_ENABLED=true"))?;
@@ -409,6 +445,7 @@ impl Config {
 
                 Some(SolanaConfig {
                     rpc_url,
+                    rpc_fallback_urls,
                     program_id,
                     private_key,
                     commitment,
@@ -425,6 +462,7 @@ impl Config {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
             evm_rpc_url,
+            evm_rpc_fallback_urls,
             evm_chain_id: env::var("EVM_CHAIN_ID")
                 .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
                 .parse()
@@ -513,12 +551,51 @@ impl Config {
             solana,
         })
     }
+
+    /// Primary then fallback EVM JSON-RPC URLs (comma-separated `EVM_RPC_URL`).
+    pub fn all_evm_rpc_urls(&self) -> Vec<String> {
+        std::iter::once(self.evm_rpc_url.clone())
+            .chain(self.evm_rpc_fallback_urls.iter().cloned())
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{validate_rpc_url, Config};
     use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_evm_rpc_url_comma_separated_parsed() {
+        let required = [
+            (
+                "EVM_RPC_URL",
+                "http://localhost:8545,http://localhost:8546",
+            ),
+            ("EVM_CHAIN_ID", "31337"),
+            ("EVM_BRIDGE_ADDRESS", "0x0000000000000000000000000000000000000001"),
+            ("EVM_PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+            ("TERRA_LCD_URL", "http://localhost:1317"),
+            ("TERRA_RPC_URL", "http://localhost:26657"),
+            ("TERRA_CHAIN_ID", "localterra"),
+            ("TERRA_BRIDGE_ADDRESS", "terra1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+            ("TERRA_MNEMONIC", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
+        ];
+        for (k, v) in &required {
+            std::env::set_var(k, v);
+        }
+        let config = Config::load().expect("Config should load");
+        assert_eq!(config.evm_rpc_url, "http://localhost:8545");
+        assert_eq!(config.evm_rpc_fallback_urls, vec!["http://localhost:8546"]);
+        assert_eq!(
+            config.all_evm_rpc_urls(),
+            vec!["http://localhost:8545", "http://localhost:8546"]
+        );
+        for (k, _) in &required {
+            std::env::remove_var(k);
+        }
+    }
 
     #[test]
     #[serial]

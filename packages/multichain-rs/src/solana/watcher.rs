@@ -1,5 +1,6 @@
 use base64::Engine;
 use eyre::{eyre, Result};
+use solana_client::client_error::Result as ClientResult;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_sdk::commitment_config::CommitmentConfig;
@@ -191,7 +192,7 @@ pub fn get_signatures_for_program(
     program_id: &Pubkey,
     until: Option<&Signature>,
     limit: usize,
-) -> Result<Vec<solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature>> {
+) -> ClientResult<Vec<solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature>> {
     use solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
 
     let config = GetConfirmedSignaturesForAddress2Config {
@@ -201,27 +202,19 @@ pub fn get_signatures_for_program(
         commitment: Some(CommitmentConfig::finalized()),
     };
 
-    let sigs = client
-        .get_signatures_for_address_with_config(program_id, config)
-        .map_err(|e| eyre!("Failed to get signatures: {}", e))?;
-
-    Ok(sigs)
+    client.get_signatures_for_address_with_config(program_id, config)
 }
 
 /// Get a transaction by signature with full details.
 pub fn get_transaction(
     client: &RpcClient,
     signature: &Signature,
-) -> Result<EncodedConfirmedTransactionWithStatusMeta> {
+) -> ClientResult<EncodedConfirmedTransactionWithStatusMeta> {
     let config = RpcTransactionConfig {
         encoding: Some(UiTransactionEncoding::JsonParsed),
         max_supported_transaction_version: Some(0),
         commitment: Some(CommitmentConfig::finalized()),
     };
 
-    let tx = client
-        .get_transaction_with_config(signature, config)
-        .map_err(|e| eyre!("Failed to get transaction {}: {}", signature, e))?;
-
-    Ok(tx)
+    client.get_transaction_with_config(signature, config)
 }

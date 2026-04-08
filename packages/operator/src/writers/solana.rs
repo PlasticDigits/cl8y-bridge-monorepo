@@ -6,12 +6,16 @@
 //! Outbound Solana deposits (`solana_deposits` from the Solana watcher) are **not** queued here —
 //! approvals for those occur on destination chains (EVM/Terra), not on Solana.
 
+#![allow(clippy::result_large_err)] // Solana ClientError in RpcClient callbacks
+
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::ProviderBuilder;
 use base64::Engine;
 use eyre::Result;
+use multichain_rs::solana::run_with_solana_rpc_fallback;
+use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -29,7 +33,7 @@ use tracing::{debug, error, info, warn};
 use crate::contracts::evm_bridge::Bridge;
 
 pub struct SolanaWriter {
-    rpc_client: RpcClient,
+    rpc_clients: Vec<RpcClient>,
     http: reqwest::Client,
     program_id: Pubkey,
     keypair: Keypair,
@@ -46,7 +50,7 @@ pub struct SolanaWriter {
 impl SolanaWriter {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        rpc_url: &str,
+        rpc_urls: &[String],
         program_id: Pubkey,
         keypair: Keypair,
         db: PgPool,
@@ -58,8 +62,13 @@ impl SolanaWriter {
         if solana_v2_chain_ids.is_empty() {
             return Err(eyre::eyre!("solana_v2_chain_ids must be non-empty"));
         }
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
+        if rpc_urls.is_empty() {
+            return Err(eyre::eyre!("at least one Solana RPC URL is required"));
+        }
+        let rpc_clients: Vec<RpcClient> = rpc_urls
+            .iter()
+            .map(|u| RpcClient::new_with_commitment(u.clone(), CommitmentConfig::confirmed()))
+            .collect();
         let terra_lcd = match (terra_lcd_url, terra_bridge_address) {
             (Some(lcd), Some(bridge)) if !lcd.is_empty() && !bridge.is_empty() => {
                 Some((lcd, bridge))
@@ -71,7 +80,7 @@ impl SolanaWriter {
             .map(|b| i64::from(u32::from_be_bytes(*b)))
             .collect();
         Ok(Self {
-            rpc_client,
+            rpc_clients,
             http: reqwest::Client::new(),
             program_id,
             keypair,
@@ -426,57 +435,52 @@ impl SolanaWriter {
         let pending_withdraw_pda =
             Pubkey::find_program_address(&[b"withdraw", transfer_hash], &self.program_id).0;
 
-        let pending = self
-            .rpc_client
-            .get_account(&pending_withdraw_pda)
-            .map_err(|e| eyre::eyre!("PendingWithdraw account missing: {}", e))?;
-        let data = pending.data;
-        // PendingWithdraw Borsh: nonce ends at byte offset 164 from account start (after 8-byte disc)
-        if data.len() < 172 {
-            return Err(eyre::eyre!(
-                "PendingWithdraw data too short: {} bytes",
-                data.len()
-            ));
-        }
-        // After 8-byte Anchor discriminator
-        let src_chain: [u8; 4] = data[40..44].try_into().unwrap();
-        let nonce = u64::from_le_bytes(data[156..164].try_into().unwrap());
+        run_with_solana_rpc_fallback(&self.rpc_clients, |client| {
+            let pending = client.get_account(&pending_withdraw_pda)?;
+            let data = pending.data;
+            // PendingWithdraw Borsh: nonce ends at byte offset 164 from account start (after 8-byte disc)
+            if data.len() < 172 {
+                return Err(ClientError::from(ClientErrorKind::Custom(format!(
+                    "PendingWithdraw data too short: {} bytes",
+                    data.len()
+                ))));
+            }
+            // After 8-byte Anchor discriminator
+            let src_chain: [u8; 4] = data[40..44].try_into().unwrap();
+            let nonce = u64::from_le_bytes(data[156..164].try_into().unwrap());
 
-        let (nonce_used_pda, _bump) = Pubkey::find_program_address(
-            &[b"nonce_used", src_chain.as_ref(), &nonce.to_le_bytes()],
-            &self.program_id,
-        );
+            let (nonce_used_pda, _bump) = Pubkey::find_program_address(
+                &[b"nonce_used", src_chain.as_ref(), &nonce.to_le_bytes()],
+                &self.program_id,
+            );
 
-        let mut ix_data = Vec::with_capacity(8 + 32);
-        ix_data.extend_from_slice(&anchor_discriminator("global:withdraw_approve"));
-        ix_data.extend_from_slice(transfer_hash);
+            let mut ix_data = Vec::with_capacity(8 + 32);
+            ix_data.extend_from_slice(&anchor_discriminator("global:withdraw_approve"));
+            ix_data.extend_from_slice(transfer_hash);
 
-        let instruction = Instruction {
-            program_id: self.program_id,
-            accounts: vec![
-                AccountMeta::new(bridge_pda, false),
-                AccountMeta::new(pending_withdraw_pda, false),
-                AccountMeta::new(nonce_used_pda, false),
-                AccountMeta::new(self.keypair.pubkey(), true),
-                AccountMeta::new_readonly(system_program::id(), false),
-            ],
-            data: ix_data,
-        };
+            let instruction = Instruction {
+                program_id: self.program_id,
+                accounts: vec![
+                    AccountMeta::new(bridge_pda, false),
+                    AccountMeta::new(pending_withdraw_pda, false),
+                    AccountMeta::new(nonce_used_pda, false),
+                    AccountMeta::new(self.keypair.pubkey(), true),
+                    AccountMeta::new_readonly(system_program::id(), false),
+                ],
+                data: ix_data,
+            };
 
-        let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction],
-            Some(&self.keypair.pubkey()),
-            &[&self.keypair],
-            recent_blockhash,
-        );
+            let recent_blockhash = client.get_latest_blockhash()?;
+            let tx = Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&self.keypair.pubkey()),
+                &[&self.keypair],
+                recent_blockhash,
+            );
 
-        let sig = self
-            .rpc_client
-            .send_and_confirm_transaction(&tx)
-            .map_err(|e| eyre::eyre!("Failed to send approval tx: {}", e))?;
-
-        Ok(sig)
+            client.send_and_confirm_transaction(&tx)
+        })
+        .map_err(|e| eyre::eyre!("Failed to submit Solana withdraw_approve: {}", e))
     }
 
     async fn mark_deposit_processed(

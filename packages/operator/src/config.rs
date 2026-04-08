@@ -210,7 +210,10 @@ impl fmt::Debug for TerraConfig {
 /// Solana chain configuration (optional — operator runs without Solana if unset)
 #[derive(Clone)]
 pub struct SolanaConfig {
+    /// Primary Solana JSON-RPC URL (first entry in `SOLANA_RPC_URL` when comma-separated).
     pub rpc_url: String,
+    /// Additional Solana RPC URLs tried on transient failures (same semantics as `EVM_RPC_URL`).
+    pub rpc_fallback_urls: Vec<String>,
     pub program_id: String,
     pub private_key: String,
     pub poll_interval_ms: u64,
@@ -223,6 +226,7 @@ impl fmt::Debug for SolanaConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SolanaConfig")
             .field("rpc_url", &self.rpc_url)
+            .field("rpc_fallback_urls", &self.rpc_fallback_urls)
             .field("program_id", &self.program_id)
             .field("private_key", &"<redacted>")
             .field("poll_interval_ms", &self.poll_interval_ms)
@@ -335,7 +339,7 @@ impl Config {
 
         let evm_rpc_raw = env::var("EVM_RPC_URL")
             .map_err(|_| eyre!("EVM_RPC_URL environment variable is required"))?;
-        let evm_rpc_urls = crate::rpc_fallback::parse_rpc_urls(&evm_rpc_raw);
+        let evm_rpc_urls = multichain_rs::parse_comma_separated_rpc_urls(&evm_rpc_raw);
         if evm_rpc_urls.is_empty() {
             return Err(eyre!("EVM_RPC_URL cannot be empty"));
         }
@@ -409,14 +413,35 @@ impl Config {
         // Load optional multi-EVM configuration (for EVM-to-EVM bridging)
         let multi_evm = crate::multi_evm::load_from_env()?;
 
-        // Load optional Solana configuration (only when SOLANA_RPC_URL is set)
-        let solana = match env::var("SOLANA_RPC_URL") {
-            Ok(rpc_url) if !rpc_url.is_empty() => {
+        // Load optional Solana configuration when `SOLANA_RPC_URL` or `SOLANA_MAINNET_RPC` is set.
+        // Comma-separated ordered list (same pattern as `EVM_RPC_URL`); no separate primary vs fallback.
+        let solana_rpc_raw = env::var("SOLANA_RPC_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                env::var("SOLANA_MAINNET_RPC")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+            });
+
+        let solana = match solana_rpc_raw {
+            Some(raw) => {
+                let sol_rpc_urls = multichain_rs::parse_comma_separated_rpc_urls(&raw);
+                if sol_rpc_urls.is_empty() {
+                    return Err(eyre!("SOLANA_RPC_URL / SOLANA_MAINNET_RPC cannot be empty"));
+                }
+                for (i, u) in sol_rpc_urls.iter().enumerate() {
+                    multichain_rs::validate_rpc_url(u, &format!("SOLANA_RPC[{i}]"))?;
+                }
                 let program_id = env::var("SOLANA_PROGRAM_ID").map_err(|_| {
-                    eyre!("SOLANA_PROGRAM_ID is required when SOLANA_RPC_URL is set")
+                    eyre!(
+                        "SOLANA_PROGRAM_ID is required when SOLANA_RPC_URL or SOLANA_MAINNET_RPC is set"
+                    )
                 })?;
                 let private_key = env::var("SOLANA_PRIVATE_KEY").map_err(|_| {
-                    eyre!("SOLANA_PRIVATE_KEY is required when SOLANA_RPC_URL is set")
+                    eyre!(
+                        "SOLANA_PRIVATE_KEY is required when SOLANA_RPC_URL or SOLANA_MAINNET_RPC is set"
+                    )
                 })?;
                 let poll_interval_ms = env::var("SOLANA_POLL_INTERVAL_MS")
                     .ok()
@@ -429,7 +454,8 @@ impl Config {
                     .wrap_err("SOLANA_V2_CHAIN_IDS / SOLANA_V2_CHAIN_ID: invalid chain id list")?;
 
                 Some(SolanaConfig {
-                    rpc_url,
+                    rpc_url: sol_rpc_urls[0].clone(),
+                    rpc_fallback_urls: sol_rpc_urls[1..].to_vec(),
                     program_id,
                     private_key,
                     poll_interval_ms,

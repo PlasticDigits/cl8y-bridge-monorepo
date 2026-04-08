@@ -36,6 +36,13 @@ pub mod verification;
 #[cfg(feature = "evm")]
 pub mod evm;
 
+/// Comma-separated RPC URL parsing, Alloy HTTP provider lists, and sequential EVM RPC retry.
+/// `parse_comma_separated_rpc_urls` is also used for operator Solana `SOLANA_RPC_URL` (same format as EVM).
+#[cfg(feature = "evm")]
+pub use evm::rpc_fallback::{
+    create_alloy_http_providers, parse_comma_separated_rpc_urls, run_with_evm_rpc_url_fallback,
+};
+
 #[cfg(feature = "terra")]
 pub mod terra;
 

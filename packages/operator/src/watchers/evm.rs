@@ -54,7 +54,7 @@ impl EvmWatcher {
     /// Create a new EVM watcher
     pub async fn new(config: &crate::config::EvmConfig, db: PgPool) -> Result<Self> {
         let rpc_urls = config.all_rpc_urls();
-        let providers = crate::rpc_fallback::create_providers(&rpc_urls)?;
+        let providers = multichain_rs::create_alloy_http_providers(&rpc_urls)?;
 
         if rpc_urls.len() > 1 {
             tracing::info!(

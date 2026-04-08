@@ -1,5 +1,11 @@
+#![allow(clippy::result_large_err)] // Solana ClientError in RpcClient callbacks
+
 use borsh::BorshDeserialize;
 use eyre::Result;
+use multichain_rs::solana::{
+    get_signatures_for_program, get_transaction, parse_anchor_events, run_with_solana_rpc_fallback,
+    SolanaEvent, SolanaWithdrawApproveEvent,
+};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::{AccountMeta, Instruction};
@@ -8,11 +14,6 @@ use solana_sdk::signature::{Keypair, Signature};
 use solana_sdk::signer::Signer;
 use solana_sdk::transaction::Transaction;
 use tracing::{info, warn};
-
-use multichain_rs::solana::{
-    get_signatures_for_program, get_transaction, parse_anchor_events, SolanaEvent,
-    SolanaWithdrawApproveEvent,
-};
 
 /// On-chain `BridgeConfig` (borsh layout after 8-byte Anchor discriminator).
 #[derive(BorshDeserialize)]
@@ -45,7 +46,7 @@ pub struct PendingWithdrawData {
 }
 
 pub struct SolanaCancelerClient {
-    rpc_client: RpcClient,
+    rpc_clients: Vec<RpcClient>,
     program_id: Pubkey,
     keypair: Keypair,
 }
@@ -54,10 +55,9 @@ impl SolanaCancelerClient {
     /// Read `withdraw_delay` (seconds) from the bridge config account.
     pub fn read_bridge_withdraw_delay_secs(&self) -> Result<u64> {
         let (bridge_pda, _) = Pubkey::find_program_address(&[b"bridge"], &self.program_id);
-        let account = self
-            .rpc_client
-            .get_account(&bridge_pda)
-            .map_err(|e| eyre::eyre!("Failed to read bridge config account: {}", e))?;
+        let account =
+            run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_account(&bridge_pda))
+                .map_err(|e| eyre::eyre!("Failed to read bridge config account: {}", e))?;
         if account.data.len() < 8 {
             return Err(eyre::eyre!("Bridge account data too short"));
         }
@@ -66,15 +66,23 @@ impl SolanaCancelerClient {
         Ok(cfg.withdraw_delay.max(0) as u64)
     }
 
-    pub fn new(rpc_url: &str, program_id: Pubkey, keypair: Keypair, commitment: &str) -> Self {
+    pub fn new(
+        rpc_urls: &[String],
+        program_id: Pubkey,
+        keypair: Keypair,
+        commitment: &str,
+    ) -> Self {
         let commitment_config = match commitment {
             "confirmed" => CommitmentConfig::confirmed(),
             "processed" => CommitmentConfig::processed(),
             _ => CommitmentConfig::finalized(),
         };
-        let rpc_client = RpcClient::new_with_commitment(rpc_url.to_string(), commitment_config);
+        let rpc_clients: Vec<RpcClient> = rpc_urls
+            .iter()
+            .map(|u| RpcClient::new_with_commitment(u.clone(), commitment_config))
+            .collect();
         Self {
-            rpc_client,
+            rpc_clients,
             program_id,
             keypair,
         }
@@ -85,8 +93,10 @@ impl SolanaCancelerClient {
         &self,
         last_signature: Option<&Signature>,
     ) -> Result<Vec<(Signature, SolanaWithdrawApproveEvent)>> {
-        let signatures =
-            get_signatures_for_program(&self.rpc_client, &self.program_id, last_signature, 1000)?;
+        let signatures = run_with_solana_rpc_fallback(&self.rpc_clients, |c| {
+            get_signatures_for_program(c, &self.program_id, last_signature, 1000)
+        })
+        .map_err(|e| eyre::eyre!("Failed to get signatures: {}", e))?;
 
         let mut approvals = Vec::new();
 
@@ -100,7 +110,9 @@ impl SolanaCancelerClient {
                 continue;
             }
 
-            let tx = match get_transaction(&self.rpc_client, &signature) {
+            let tx = match run_with_solana_rpc_fallback(&self.rpc_clients, |c| {
+                get_transaction(c, &signature)
+            }) {
                 Ok(tx) => tx,
                 Err(e) => {
                     warn!(signature = %signature, error = %e, "Failed to fetch tx");
@@ -139,7 +151,7 @@ impl SolanaCancelerClient {
         let (deposit_pda, _) =
             Pubkey::find_program_address(&[b"deposit", &nonce_bytes], &self.program_id);
 
-        match self.rpc_client.get_account(&deposit_pda) {
+        match run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_account(&deposit_pda)) {
             Ok(account) => Ok(!account.data.is_empty()),
             Err(_) => Ok(false),
         }
@@ -151,7 +163,7 @@ impl SolanaCancelerClient {
         let (deposit_pda, _) =
             Pubkey::find_program_address(&[b"deposit", &nonce_bytes], &self.program_id);
 
-        match self.rpc_client.get_account(&deposit_pda) {
+        match run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_account(&deposit_pda)) {
             Ok(account) => {
                 // Anchor account: 8 byte discriminator + data
                 // DepositRecord starts with transfer_hash: [u8; 32]
@@ -172,9 +184,7 @@ impl SolanaCancelerClient {
         let (pda, _) =
             Pubkey::find_program_address(&[b"withdraw", transfer_hash], &self.program_id);
 
-        let account = self
-            .rpc_client
-            .get_account(&pda)
+        let account = run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_account(&pda))
             .map_err(|e| eyre::eyre!("Failed to read PendingWithdraw PDA: {}", e))?;
 
         // 8 (discriminator) + 32 (transfer_hash) + 4 (src_chain) = 44 bytes minimum
@@ -207,9 +217,7 @@ impl SolanaCancelerClient {
         let (pda, _) =
             Pubkey::find_program_address(&[b"withdraw", transfer_hash], &self.program_id);
 
-        let account = self
-            .rpc_client
-            .get_account(&pda)
+        let account = run_with_solana_rpc_fallback(&self.rpc_clients, |c| c.get_account(&pda))
             .map_err(|e| eyre::eyre!("Failed to read PendingWithdraw PDA: {}", e))?;
 
         let data = &account.data;
@@ -278,29 +286,27 @@ impl SolanaCancelerClient {
             d
         };
 
-        let instruction = Instruction {
-            program_id: self.program_id,
-            accounts: vec![
-                AccountMeta::new_readonly(bridge_pda, false),
-                AccountMeta::new(pending_withdraw_pda, false),
-                AccountMeta::new_readonly(canceler_entry_pda, false),
-                AccountMeta::new_readonly(self.keypair.pubkey(), true),
-            ],
-            data: discriminator.to_vec(),
-        };
-
-        let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
-        let tx = Transaction::new_signed_with_payer(
-            &[instruction],
-            Some(&self.keypair.pubkey()),
-            &[&self.keypair],
-            recent_blockhash,
-        );
-
-        let sig = self
-            .rpc_client
-            .send_and_confirm_transaction(&tx)
-            .map_err(|e| eyre::eyre!("Failed to submit cancel tx: {}", e))?;
+        let sig = run_with_solana_rpc_fallback(&self.rpc_clients, |client| {
+            let instruction = Instruction {
+                program_id: self.program_id,
+                accounts: vec![
+                    AccountMeta::new_readonly(bridge_pda, false),
+                    AccountMeta::new(pending_withdraw_pda, false),
+                    AccountMeta::new_readonly(canceler_entry_pda, false),
+                    AccountMeta::new_readonly(self.keypair.pubkey(), true),
+                ],
+                data: discriminator.to_vec(),
+            };
+            let recent_blockhash = client.get_latest_blockhash()?;
+            let tx = Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&self.keypair.pubkey()),
+                &[&self.keypair],
+                recent_blockhash,
+            );
+            client.send_and_confirm_transaction(&tx)
+        })
+        .map_err(|e| eyre::eyre!("Failed to submit cancel tx: {}", e))?;
 
         info!(hash = hex::encode(transfer_hash), tx = %sig, "Submitted Solana cancel");
 

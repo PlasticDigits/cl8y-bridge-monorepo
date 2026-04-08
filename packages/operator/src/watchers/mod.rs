@@ -61,8 +61,13 @@ impl WatcherManager {
                 .program_id
                 .parse()
                 .map_err(|e| eyre::eyre!("Invalid SOLANA_PROGRAM_ID: {}", e))?;
+            let mut sol_rpc_urls: Vec<String> =
+                Vec::with_capacity(1 + sol_cfg.rpc_fallback_urls.len());
+            sol_rpc_urls.push(sol_cfg.rpc_url.clone());
+            sol_rpc_urls.extend(sol_cfg.rpc_fallback_urls.iter().cloned());
             match SolanaWatcher::new(
-                &sol_cfg.rpc_url,
+                &sol_rpc_urls,
+                &sol_cfg.commitment,
                 program_id,
                 db,
                 sol_cfg.poll_interval_ms,

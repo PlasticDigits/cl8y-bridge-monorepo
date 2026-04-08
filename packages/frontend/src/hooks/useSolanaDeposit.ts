@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
 import { useSolanaWalletStore } from "../stores/solanaWallet";
 import {
   buildDepositNativeInstruction,
@@ -8,6 +8,7 @@ import {
   formatSolanaWalletError,
   sendSolanaTransaction,
 } from "../services/solana/transaction";
+import { pickSolanaConnection } from "../services/solana/solanaRpcUrls";
 
 export type SolanaDepositStep = "idle" | "building" | "signing" | "confirming" | "confirmed" | "error";
 
@@ -22,7 +23,8 @@ interface UseSolanaDepositReturn {
 }
 
 export interface SolanaDepositParams {
-  rpcUrl: string;
+  /** Ordered JSON-RPC endpoints (primary first); same as comma-separated `VITE_SOLANA_RPC_URL`. */
+  rpcUrls: string[];
   programId: string;
   destChain: Uint8Array;
   destAccount: Uint8Array;
@@ -58,7 +60,7 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
         setError(null);
         setConfirmedDepositNonce(null);
 
-        const connection = new Connection(params.rpcUrl, "confirmed");
+        const connection = await pickSolanaConnection(params.rpcUrls);
         const programId = new PublicKey(params.programId);
         const depositor = new PublicKey(address);
 

@@ -24,10 +24,15 @@ import {
   fetchTokenMappingLocalMint,
   formatSolanaWalletError,
 } from '../../services/solana/transaction'
+import {
+  pickSolanaConnection,
+  solanaRpcUrlsForBridgeChain,
+  withSolanaReadFallback,
+} from '../../services/solana/solanaRpcUrls'
 import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
 import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
-import { Connection, PublicKey } from '@solana/web3.js'
+import { PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
 import { getChainById } from '../../lib/chains'
@@ -401,6 +406,15 @@ export function TransferForm() {
   }, [isSourceSolana, solanaTokenDestMappingRaw, destChainConfig?.type, destTokenAddr])
 
   const solanaProgramIdStr = sourceChainConfig?.programId ?? sourceChainConfig?.bridgeAddress
+
+  const sourceSolanaRpcUrls = useMemo(() => {
+    if (sourceChainConfig?.type === 'solana') {
+      return solanaRpcUrlsForBridgeChain(sourceChainConfig)
+    }
+    return [] as string[]
+  }, [sourceChainConfig])
+  const sourceSolanaRpcUrlsKey = sourceSolanaRpcUrls.join('|')
+
   const destChainBytesUint8 = useMemo(() => {
     if (!destChainBytes4) return null
     return bytes4HexToUint8Array(destChainBytes4)
@@ -408,7 +422,7 @@ export function TransferForm() {
 
   const solanaMappingQueryEnabled =
     isSourceSolana &&
-    !!sourceChainConfig?.rpcUrl &&
+    sourceSolanaRpcUrls.length > 0 &&
     !!solanaProgramIdStr &&
     !!destChainBytesUint8 &&
     !!solanaTokenMappingDest32
@@ -416,19 +430,20 @@ export function TransferForm() {
   const { data: solanaLocalMint, isLoading: isSolanaLocalMintLoading } = useQuery({
     queryKey: [
       'solanaDepositLocalMint',
-      sourceChainConfig?.rpcUrl,
+      sourceSolanaRpcUrlsKey,
       solanaProgramIdStr,
       destChainBytes4,
       solanaTokenMappingDest32,
     ],
     queryFn: async () => {
-      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
       const programId = new PublicKey(solanaProgramIdStr!)
-      return fetchTokenMappingLocalMint(
-        connection,
-        programId,
-        destChainBytesUint8!,
-        solanaTokenMappingDest32!,
+      return withSolanaReadFallback(sourceSolanaRpcUrls, (connection) =>
+        fetchTokenMappingLocalMint(
+          connection,
+          programId,
+          destChainBytesUint8!,
+          solanaTokenMappingDest32!,
+        ),
       )
     },
     enabled: solanaMappingQueryEnabled,
@@ -444,43 +459,43 @@ export function TransferForm() {
   )
 
   const { data: solanaSplDecimals, isLoading: isSolanaSplDecimalsLoading } = useQuery({
-    queryKey: ['solanaSplDecimals', sourceChainConfig?.rpcUrl, solanaLocalMint?.toBase58()],
-    queryFn: async () => {
-      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
-      return fetchSplMintDecimals(connection, solanaLocalMint!)
-    },
-    enabled: !!solanaDepositSpl && !!sourceChainConfig?.rpcUrl && !!solanaLocalMint,
+    queryKey: ['solanaSplDecimals', sourceSolanaRpcUrlsKey, solanaLocalMint?.toBase58()],
+    queryFn: async () =>
+      withSolanaReadFallback(sourceSolanaRpcUrls, (connection) =>
+        fetchSplMintDecimals(connection, solanaLocalMint!),
+      ),
+    enabled: !!solanaDepositSpl && sourceSolanaRpcUrls.length > 0 && !!solanaLocalMint,
   })
 
   const { data: solanaSourceBalance } = useQuery({
     queryKey: [
       'solanaSourceBalance',
-      sourceChainConfig?.rpcUrl,
+      sourceSolanaRpcUrlsKey,
       solanaAddress,
       solanaDepositNative,
       solanaLocalMint?.toBase58(),
     ],
-    queryFn: async () => {
-      const connection = new Connection(sourceChainConfig!.rpcUrl!, 'confirmed')
-      const addr = new PublicKey(solanaAddress!)
-      if (solanaDepositNative) {
-        return bigintFromBaseUnitsString(await connection.getBalance(addr))
-      }
-      const mint = solanaLocalMint!
-      const mintInfo = await connection.getAccountInfo(mint)
-      if (!mintInfo) return 0n
-      const { getAssociatedTokenAddressSync } = await import('@solana/spl-token')
-      const ata = getAssociatedTokenAddressSync(mint, addr, false, mintInfo.owner)
-      try {
-        const bal = await connection.getTokenAccountBalance(ata)
-        return bigintFromBaseUnitsString(bal.value.amount)
-      } catch {
-        return 0n
-      }
-    },
+    queryFn: async () =>
+      withSolanaReadFallback(sourceSolanaRpcUrls, async (connection) => {
+        const addr = new PublicKey(solanaAddress!)
+        if (solanaDepositNative) {
+          return bigintFromBaseUnitsString(await connection.getBalance(addr))
+        }
+        const mint = solanaLocalMint!
+        const mintInfo = await connection.getAccountInfo(mint)
+        if (!mintInfo) return 0n
+        const { getAssociatedTokenAddressSync } = await import('@solana/spl-token')
+        const ata = getAssociatedTokenAddressSync(mint, addr, false, mintInfo.owner)
+        try {
+          const bal = await connection.getTokenAccountBalance(ata)
+          return bigintFromBaseUnitsString(bal.value.amount)
+        } catch {
+          return 0n
+        }
+      }),
     enabled:
       !!isSourceSolana &&
-      !!sourceChainConfig?.rpcUrl &&
+      sourceSolanaRpcUrls.length > 0 &&
       !!solanaAddress &&
       !!solanaLocalMint &&
       (solanaDepositNative || solanaDepositSpl),
@@ -1380,7 +1395,9 @@ export function TransferForm() {
       const sourceConfig = sourceChainConfig
       // BRIDGE_CHAINS stores the Solana program id as bridgeAddress; optional programId overrides (see useAutoWithdrawSubmit).
       const solanaProgramIdStr = sourceConfig?.programId || sourceConfig?.bridgeAddress
-      if (!sourceConfig?.rpcUrl || !solanaProgramIdStr) {
+      const depositRpcUrls =
+        sourceConfig?.type === 'solana' ? solanaRpcUrlsForBridgeChain(sourceConfig) : []
+      if (depositRpcUrls.length === 0 || !solanaProgramIdStr) {
         setError(`Missing Solana RPC or program ID config for source chain: ${sourceChain}`)
         frozenChainsRef.current = null
         return
@@ -1393,7 +1410,7 @@ export function TransferForm() {
       }
 
       try {
-        const connection = new Connection(sourceConfig.rpcUrl, 'confirmed')
+        const connection = await pickSolanaConnection(depositRpcUrls)
         const programId = new PublicKey(solanaProgramIdStr)
         const depositNonce = await fetchDepositNonce(connection, programId)
 
@@ -1443,7 +1460,7 @@ export function TransferForm() {
         const amountBaseUnits = parseAmountAsBigInt(amount, amountDecimals)
 
         await solanaDeposit({
-          rpcUrl: sourceConfig.rpcUrl,
+          rpcUrls: depositRpcUrls,
           programId: solanaProgramIdStr,
           destChain: destChainBytes,
           destAccount: destAccountBytes,

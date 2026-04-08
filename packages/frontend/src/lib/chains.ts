@@ -93,7 +93,7 @@ export const supportedChains: ChainInfo[] = [
     chainId: 'solana',
     type: 'solana',
     icon: '◎',
-    rpcUrl: 'https://api.mainnet-beta.solana.com',
+    rpcUrl: 'https://api.mainnet.solana.com',
     explorerUrl: 'https://explorer.solana.com',
     nativeCurrency: {
       name: 'SOL',

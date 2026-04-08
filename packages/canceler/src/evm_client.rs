@@ -4,29 +4,48 @@
 //!
 //! # Transaction Building
 //!
-//! Uses Alloy's `ProviderBuilder::with_recommended_fillers()` to automatically
-//! populate transaction fields (nonce, gas_limit, max_fee_per_gas, max_priority_fee_per_gas).
-//! Without this, transactions will fail with missing property errors.
+//! Uses Alloy's `ProviderBuilder::with_recommended_fillers()` for nonce and gas limit.
+//! Cancel txs set an explicit legacy `gas_price` from `eth_gasPrice`, floored per **native EVM
+//! chain id** (e.g. BSC **0.1 gwei**, opBNB **0.00001 gwei**) so relays and bad fee quotes do not
+//! reject submissions.
 //!
-//! # Usage
-//!
-//! ```ignore
-//! let client = EvmClient::new(config).await?;
-//! client.cancel_withdraw_approval(xchain_hash_id).await?;
-//! ```
+//! **RPC failover:** tries each URL from `EVM_RPC_URL` (comma-separated, same as operator) until
+//! reads and `withdrawCancel` succeed.
 
 #![allow(dead_code)]
 
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, FixedBytes};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
 use eyre::{eyre, Result, WrapErr};
+use multichain_rs::run_with_evm_rpc_url_fallback;
 use std::str::FromStr;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::hash::bytes32_to_hex;
+
+/// BSC mainnet (`chain_id` 56): floor **0.1 gwei** (1e8 wei).
+const BSC_MAINNET_CHAIN_ID: u64 = 56;
+const MIN_CANCEL_GAS_PRICE_WEI_BSC: u128 = 100_000_000;
+
+/// opBNB mainnet (`chain_id` 204): floor **0.00001 gwei** (= 1e4 wei).
+const OPBNB_MAINNET_CHAIN_ID: u64 = 204;
+const MIN_CANCEL_GAS_PRICE_WEI_OPBNB: u128 = 10_000;
+
+/// Fallback floor for EVM chains without a specific rule (conservative).
+const MIN_CANCEL_GAS_PRICE_WEI_DEFAULT: u128 = MIN_CANCEL_GAS_PRICE_WEI_BSC;
+
+/// Minimum gas price (wei) applied after `eth_gasPrice` for cancel txs on this chain.
+#[inline]
+fn min_cancel_gas_price_floor_wei(evm_chain_id: u64) -> u128 {
+    match evm_chain_id {
+        BSC_MAINNET_CHAIN_ID => MIN_CANCEL_GAS_PRICE_WEI_BSC,
+        OPBNB_MAINNET_CHAIN_ID => MIN_CANCEL_GAS_PRICE_WEI_OPBNB,
+        _ => MIN_CANCEL_GAS_PRICE_WEI_DEFAULT,
+    }
+}
 
 sol! {
     /// Bridge contract interface for cancellation (V2)
@@ -66,14 +85,62 @@ sol! {
 
 /// EVM client for canceler transactions
 pub struct EvmClient {
-    rpc_url: String,
+    rpc_urls: Vec<String>,
     bridge_address: Address,
     signer: PrivateKeySigner,
+    /// Native EVM chain id (`eth_chainId`) — selects cancel-tx gas price floor.
+    evm_chain_id: u64,
 }
 
 impl EvmClient {
-    /// Create a new EVM client
-    pub fn new(rpc_url: &str, bridge_address: &str, private_key: &str) -> Result<Self> {
+    /// Resolve gas price for a cancel tx on `rpc_url`: `max(eth_gasPrice, chain floor)`, or the floor if `eth_gasPrice` errors.
+    async fn resolve_cancel_gas_price_for_url(&self, rpc_url: &str) -> Result<u128> {
+        let floor = min_cancel_gas_price_floor_wei(self.evm_chain_id);
+        let url = rpc_url.parse().wrap_err("Invalid RPC URL")?;
+        let provider = ProviderBuilder::new().on_http(url);
+
+        match provider.get_gas_price().await {
+            Ok(quoted) => {
+                let effective = quoted.max(floor);
+                if effective > quoted {
+                    debug!(
+                        evm_chain_id = self.evm_chain_id,
+                        quoted_wei = quoted,
+                        effective_wei = effective,
+                        floor_wei = floor,
+                        "Raised cancel tx gas price to per-chain floor"
+                    );
+                } else {
+                    debug!(
+                        evm_chain_id = self.evm_chain_id,
+                        gas_price_wei = effective,
+                        "Using network gas price for cancel tx (≥ floor)"
+                    );
+                }
+                Ok(effective)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    evm_chain_id = self.evm_chain_id,
+                    gas_price_wei = floor,
+                    "eth_gasPrice failed; using per-chain floor for cancel tx"
+                );
+                Ok(floor)
+            }
+        }
+    }
+
+    /// `rpc_urls` — non-empty; first is primary (same order as comma-separated `EVM_RPC_URL`).
+    pub fn new(
+        rpc_urls: Vec<String>,
+        bridge_address: &str,
+        private_key: &str,
+        evm_chain_id: u64,
+    ) -> Result<Self> {
+        if rpc_urls.is_empty() {
+            return Err(eyre!("at least one EVM RPC URL is required"));
+        }
         let bridge_address =
             Address::from_str(bridge_address).wrap_err("Invalid bridge address")?;
         let signer: PrivateKeySigner = private_key.parse().wrap_err("Invalid private key")?;
@@ -81,29 +148,29 @@ impl EvmClient {
         info!(
             canceler_address = %signer.address(),
             bridge = %bridge_address,
+            evm_chain_id,
+            rpc_endpoint_count = rpc_urls.len(),
+            min_cancel_gas_floor_wei = min_cancel_gas_price_floor_wei(evm_chain_id),
             "EVM client initialized"
         );
 
         Ok(Self {
-            rpc_url: rpc_url.to_string(),
+            rpc_urls,
             bridge_address,
             signer,
+            evm_chain_id,
         })
     }
 
-    /// Cancel a withdraw approval on EVM
-    pub async fn cancel_withdraw_approval(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
-        // Build provider with signer and gas filler
-        // Use with_recommended_fillers() to automatically fill nonce, gas, and fees
+    async fn try_cancel_on_url(&self, rpc_url: &str, xchain_hash_id: [u8; 32]) -> Result<String> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+            .on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
-        // First check if the withdrawal exists and is cancellable
         let pending = contract
             .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
             .call()
@@ -123,16 +190,21 @@ impl EvmClient {
             return Err(eyre!("Withdrawal already executed"));
         }
 
+        let gas_price_wei = self.resolve_cancel_gas_price_for_url(rpc_url).await?;
+
         info!(
             xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             nonce = pending.nonce,
             amount = %pending.amount,
             approved_at = %pending.approvedAt,
+            gas_price_wei,
+            rpc_url = %rpc_url,
             "Submitting withdrawCancel transaction"
         );
 
-        // Submit cancel transaction
-        let call = contract.withdrawCancel(FixedBytes::from(xchain_hash_id));
+        let call = contract
+            .withdrawCancel(FixedBytes::from(xchain_hash_id))
+            .gas_price(gas_price_wei);
 
         let pending_tx = call
             .send()
@@ -142,7 +214,6 @@ impl EvmClient {
         let tx_hash = *pending_tx.tx_hash();
         info!(tx_hash = %tx_hash, "Cancel transaction sent");
 
-        // Wait for confirmation
         let receipt = pending_tx
             .get_receipt()
             .await
@@ -161,13 +232,20 @@ impl EvmClient {
         Ok(format!("0x{:x}", tx_hash))
     }
 
-    /// Check if a withdrawal can be cancelled (submitted, approved, not cancelled, not executed)
-    pub async fn can_cancel(&self, xchain_hash_id: [u8; 32]) -> Result<bool> {
+    /// Cancel a withdraw approval on EVM (tries each configured RPC URL in order).
+    pub async fn cancel_withdraw_approval(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
+        run_with_evm_rpc_url_fallback(&self.rpc_urls, |url| async move {
+            self.try_cancel_on_url(&url, xchain_hash_id).await
+        })
+        .await
+    }
+
+    async fn try_can_cancel_on_url(&self, rpc_url: &str, xchain_hash_id: [u8; 32]) -> Result<bool> {
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+            .on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
 
         let contract = CL8YBridge::new(self.bridge_address, &provider);
 
@@ -189,10 +267,19 @@ impl EvmClient {
             cancelled = pending.cancelled,
             executed = pending.executed,
             cancellable = cancellable,
+            rpc_url = %rpc_url,
             "Checked cancellability of withdrawal"
         );
 
         Ok(cancellable)
+    }
+
+    /// Check if a withdrawal can be cancelled (tries each RPC URL until one responds).
+    pub async fn can_cancel(&self, xchain_hash_id: [u8; 32]) -> Result<bool> {
+        run_with_evm_rpc_url_fallback(&self.rpc_urls, |url| async move {
+            self.try_can_cancel_on_url(&url, xchain_hash_id).await
+        })
+        .await
     }
 
     /// Get the canceler's address

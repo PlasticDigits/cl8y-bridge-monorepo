@@ -119,7 +119,8 @@ pub struct ApprovalVerifier {
 /// Solana configuration for the verifier to verify deposits on Solana source chain.
 #[derive(Debug, Clone)]
 pub struct SolanaVerifierConfig {
-    pub rpc_url: String,
+    /// Solana JSON-RPC endpoints (primary first); comma-separated `SOLANA_RPC_URL` / verify env.
+    pub rpc_urls: Vec<String>,
     pub program_id: [u8; 32],
     pub chain_ids: Vec<[u8; 4]>,
 }
@@ -575,84 +576,103 @@ impl ApprovalVerifier {
             ]
         });
 
-        match self.client.post(&config.rpc_url).json(&body).send().await {
-            Ok(resp) => {
-                if !resp.status().is_success() {
-                    warn!(
-                        status = %resp.status(),
-                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                        "Solana RPC returned error status"
-                    );
-                    return Ok(VerificationResult::Pending);
-                }
+        let mut last_status_failure: Option<reqwest::StatusCode> = None;
+        for rpc_url in &config.rpc_urls {
+            match self.client.post(rpc_url).json(&body).send().await {
+                Ok(resp) => {
+                    if !resp.status().is_success() {
+                        last_status_failure = Some(resp.status());
+                        continue;
+                    }
 
-                let json: serde_json::Value = resp.json().await?;
-                let result = &json["result"]["value"];
+                    let json: serde_json::Value = match resp.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                rpc = %rpc_url,
+                                hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                                "Solana RPC JSON parse failed — trying next endpoint"
+                            );
+                            continue;
+                        }
+                    };
+                    let result = &json["result"]["value"];
 
-                if result.is_null() {
-                    info!(
-                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                        nonce = approval.nonce,
-                        pda = %deposit_pda_b58,
-                        "No deposit PDA found on Solana source chain"
-                    );
-                    return Ok(VerificationResult::Invalid {
-                        reason: "No deposit found with this nonce on Solana source chain"
-                            .to_string(),
-                    });
-                }
+                    if result.is_null() {
+                        info!(
+                            hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                            nonce = approval.nonce,
+                            pda = %deposit_pda_b58,
+                            "No deposit PDA found on Solana source chain"
+                        );
+                        return Ok(VerificationResult::Invalid {
+                            reason: "No deposit found with this nonce on Solana source chain"
+                                .to_string(),
+                        });
+                    }
 
-                // Parse base64 account data: 8 (discriminator) + 32 (transfer_hash) + ...
-                if let Some(data_arr) = result["data"].as_array() {
-                    if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
-                        if let Ok(data_bytes) =
-                            base64::engine::general_purpose::STANDARD.decode(data_b64)
-                        {
-                            if data_bytes.len() >= 40 {
-                                let mut stored_hash = [0u8; 32];
-                                stored_hash.copy_from_slice(&data_bytes[8..40]);
+                    // Parse base64 account data: 8 (discriminator) + 32 (transfer_hash) + ...
+                    if let Some(data_arr) = result["data"].as_array() {
+                        if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
+                            if let Ok(data_bytes) =
+                                base64::engine::general_purpose::STANDARD.decode(data_b64)
+                            {
+                                if data_bytes.len() >= 40 {
+                                    let mut stored_hash = [0u8; 32];
+                                    stored_hash.copy_from_slice(&data_bytes[8..40]);
 
-                                if stored_hash != approval.xchain_hash_id {
+                                    if stored_hash != approval.xchain_hash_id {
+                                        info!(
+                                            expected = %bytes32_to_hex(&approval.xchain_hash_id),
+                                            got = %bytes32_to_hex(&stored_hash),
+                                            "Deposit exists on Solana but hash doesn't match"
+                                        );
+                                        return Ok(VerificationResult::Invalid {
+                                            reason: format!(
+                                                "Hash mismatch: expected {}, got {}",
+                                                bytes32_to_hex(&approval.xchain_hash_id),
+                                                bytes32_to_hex(&stored_hash)
+                                            ),
+                                        });
+                                    }
+
                                     info!(
-                                        expected = %bytes32_to_hex(&approval.xchain_hash_id),
-                                        got = %bytes32_to_hex(&stored_hash),
-                                        "Deposit exists on Solana but hash doesn't match"
+                                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                                        nonce = approval.nonce,
+                                        "Deposit verified on Solana source chain"
                                     );
-                                    return Ok(VerificationResult::Invalid {
-                                        reason: format!(
-                                            "Hash mismatch: expected {}, got {}",
-                                            bytes32_to_hex(&approval.xchain_hash_id),
-                                            bytes32_to_hex(&stored_hash)
-                                        ),
-                                    });
+                                    return Ok(VerificationResult::Valid);
                                 }
-
-                                info!(
-                                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                                    nonce = approval.nonce,
-                                    "Deposit verified on Solana source chain"
-                                );
-                                return Ok(VerificationResult::Valid);
                             }
                         }
                     }
-                }
 
-                warn!(
-                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                    "Solana deposit PDA data could not be parsed"
-                );
-                Ok(VerificationResult::Pending)
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    hash = %bytes32_to_hex(&approval.xchain_hash_id),
-                    "Failed to query Solana deposit - will retry"
-                );
-                Ok(VerificationResult::Pending)
+                    warn!(
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        rpc = %rpc_url,
+                        "Solana deposit PDA data could not be parsed — trying next endpoint"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        rpc = %rpc_url,
+                        hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                        "Solana RPC request failed — trying next endpoint"
+                    );
+                }
             }
         }
+
+        if let Some(st) = last_status_failure {
+            warn!(
+                status = %st,
+                hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                "All Solana RPC endpoints returned error status"
+            );
+        }
+        Ok(VerificationResult::Pending)
     }
 
     /// Register Solana chain configuration for deposit verification.
@@ -663,7 +683,8 @@ impl ApprovalVerifier {
                 .iter()
                 .map(hex::encode)
                 .collect::<Vec<_>>(),
-            rpc = %config.rpc_url,
+            rpc_count = config.rpc_urls.len(),
+            primary_rpc = config.rpc_urls.first().map(String::as_str).unwrap_or(""),
             "Registered Solana chain(s) for deposit verification"
         );
         self.solana_config = Some(config);

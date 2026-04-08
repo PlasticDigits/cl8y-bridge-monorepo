@@ -23,7 +23,7 @@ case "${CLUSTER}" in
     RPC_URL="https://api.devnet.solana.com"
     ;;
   mainnet-beta)
-    RPC_URL="https://api.mainnet-beta.solana.com"
+    RPC_URL="https://api.mainnet.solana.com"
     ;;
   *)
     echo "Unknown cluster: ${CLUSTER}"

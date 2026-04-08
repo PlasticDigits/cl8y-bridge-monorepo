@@ -82,7 +82,7 @@ services:
       - --faucet-port
       - "9900"
       - --url
-      - https://api.mainnet-beta.solana.com
+      - https://api.mainnet.solana.com
       - --clone
       - So11111111111111111111111111111111111111112
       - --clone
