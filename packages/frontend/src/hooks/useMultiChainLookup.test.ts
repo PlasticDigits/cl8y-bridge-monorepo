@@ -5,12 +5,14 @@ import * as bridgeChains from '../utils/bridgeChains'
 import * as evmClient from '../services/evmClient'
 import * as evmBridgeQueries from '../services/evmBridgeQueries'
 import * as terraBridgeQueries from '../services/terraBridgeQueries'
+import * as solanaBridgeQueries from '../services/solana/solanaBridgeQueries'
 import type { BridgeChainConfig } from '../types/chain'
 import type { Hex, PublicClient } from 'viem'
 
 vi.mock('../utils/bridgeChains', () => ({
   getEvmBridgeChains: vi.fn(),
   getCosmosBridgeChains: vi.fn(),
+  getSolanaBridgeChains: vi.fn(),
 }))
 
 vi.mock('../services/evmClient', () => ({
@@ -25,6 +27,10 @@ vi.mock('../services/evmBridgeQueries', () => ({
 vi.mock('../services/terraBridgeQueries', () => ({
   queryTerraDeposit: vi.fn(),
   queryTerraPendingWithdraw: vi.fn(),
+}))
+
+vi.mock('../services/solana/solanaBridgeQueries', () => ({
+  querySolanaPendingWithdraw: vi.fn(),
 }))
 
 const HASH = ('0x' + 'ab'.repeat(32)) as Hex
@@ -53,11 +59,13 @@ describe('useMultiChainLookup', () => {
     vi.clearAllMocks()
     vi.mocked(bridgeChains.getEvmBridgeChains).mockReturnValue([evmChain])
     vi.mocked(bridgeChains.getCosmosBridgeChains).mockReturnValue([terraChain])
+    vi.mocked(bridgeChains.getSolanaBridgeChains).mockReturnValue([])
     vi.mocked(evmClient.getEvmClient).mockReturnValue({} as PublicClient)
     vi.mocked(evmBridgeQueries.queryEvmDeposit).mockResolvedValue(null)
     vi.mocked(evmBridgeQueries.queryEvmPendingWithdraw).mockResolvedValue(null)
     vi.mocked(terraBridgeQueries.queryTerraDeposit).mockResolvedValue(null)
     vi.mocked(terraBridgeQueries.queryTerraPendingWithdraw).mockResolvedValue(null)
+    vi.mocked(solanaBridgeQueries.querySolanaPendingWithdraw).mockResolvedValue(null)
   })
 
   it('should start with empty state', () => {
@@ -78,6 +86,7 @@ describe('useMultiChainLookup', () => {
     expect(evmBridgeQueries.queryEvmPendingWithdraw).toHaveBeenCalledTimes(1)
     expect(terraBridgeQueries.queryTerraDeposit).toHaveBeenCalledTimes(1)
     expect(terraBridgeQueries.queryTerraPendingWithdraw).toHaveBeenCalledTimes(1)
+    expect(solanaBridgeQueries.querySolanaPendingWithdraw).not.toHaveBeenCalled()
   })
 
   it('should return source when deposit found on EVM chain', async () => {

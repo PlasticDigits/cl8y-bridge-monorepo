@@ -861,6 +861,9 @@ export default function TransferStatusPage() {
     if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
     // Stay on Submit Hash during explicit retry or in-flight submit (#86)
     if (retryingHash) return 1
+    // Terra→Solana (etc.): retry keeps lifecycle `hash-submitted` — stay on Submit Hash while re-submitting
+    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'hash-submitted') return 1
+    if (transfer?.lifecycle === 'hash-submitted' && autoPhase === 'error') return 1
     // Only while still `deposited`; once lifecycle advances, show Approval (#hash-submitted UX)
     if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
     // Lookup-only / synthetic: source deposit confirmed, no dest withdraw yet — not still "confirming deposit"

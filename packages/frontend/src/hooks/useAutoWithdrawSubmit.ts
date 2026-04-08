@@ -51,6 +51,10 @@ import {
   bytes32HexToPublicKey,
   fetchTokenMappingLocalMint,
 } from '../services/solana/transaction'
+import {
+  parseSolanaPendingWithdrawAccount,
+  querySolanaPendingWithdraw,
+} from '../services/solana/solanaBridgeQueries'
 import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
@@ -538,6 +542,35 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
+        if (transfer.xchainHashId) {
+          try {
+            const existing = await querySolanaPendingWithdraw(
+              destChainConfig,
+              transfer.xchainHashId as Hex,
+            )
+            if (existing) {
+              const newLifecycle = existing.executed
+                ? 'executed'
+                : existing.approved
+                  ? 'approved'
+                  : 'hash-submitted'
+              console.info(`${LOG} Withdrawal already exists on Solana (${newLifecycle})`)
+              updateTransferRecord(transfer.id, { lifecycle: newLifecycle })
+              setPhase(
+                existing.executed
+                  ? 'complete'
+                  : existing.approved
+                    ? 'waiting-execution'
+                    : 'waiting-approval',
+              )
+              if (!existing.executed) startPolling()
+              return
+            }
+          } catch {
+            // RPC failed — proceed with submit attempt
+          }
+        }
+
         let srcChainBytes4Data: Uint8Array
         if (transfer.sourceChainIdBytes4) {
           srcChainBytes4Data = hexToUint8Array(transfer.sourceChainIdBytes4)
@@ -933,6 +966,14 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             if (pollRpcUrls.length === 0) return
             const programIdStr = getSolanaProgramIdString(destChainConfig)
             if (!programIdStr) return
+            const bytes4 = destChainConfig.bytes4ChainId as `0x${string}` | undefined
+            if (!bytes4) return
+            let chainNum = 0
+            try {
+              chainNum = parseInt(bytes4.slice(2), 16)
+            } catch {
+              chainNum = 0
+            }
             const programId = new PublicKey(programIdStr)
             const hashBytes = new Uint8Array(32)
             const hexStr = (transfer.xchainHashId as string).replace('0x', '')
@@ -946,10 +987,11 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             const account = await withSolanaReadFallback(pollRpcUrls, (connection) =>
               connection.getAccountInfo(pendingPda),
             )
-            if (account && account.data.length >= 175) {
-              const approved = account.data[164] !== 0
-              const executed = account.data[174] !== 0
-              if (executed) {
+            const parsed =
+              account?.data &&
+              parseSolanaPendingWithdrawAccount(account.data, bytes4, chainNum)
+            if (parsed) {
+              if (parsed.executed) {
                 if (transfer.lifecycle !== 'executed') {
                   updateTransferRecord(transfer.id, { lifecycle: 'executed' })
                   setPhase('complete')
@@ -958,7 +1000,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
                   clearInterval(pollingRef.current)
                   pollingRef.current = null
                 }
-              } else if (approved) {
+              } else if (parsed.approved) {
                 notConfirmedCountRef.current = 0
                 if (transfer.lifecycle === 'hash-submitted') {
                   updateTransferRecord(transfer.id, { lifecycle: 'approved' })

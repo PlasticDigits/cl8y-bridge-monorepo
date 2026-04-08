@@ -2,16 +2,19 @@
  * useMultiChainLookup Hook
  *
  * Orchestrates parallel transfer hash lookups across all configured bridge chains.
- * Queries both EVM bridges and Terra LCD endpoints to find source (deposit) and
+ * Queries EVM bridges, Terra LCD, and Solana programs to find source (deposit) and
  * destination (pending withdraw) records.
  */
 
 import { useState, useCallback } from 'react'
 import type { Hex } from 'viem'
-import { getEvmBridgeChains, getCosmosBridgeChains } from '../utils/bridgeChains'
+import { getEvmBridgeChains, getCosmosBridgeChains, getSolanaBridgeChains } from '../utils/bridgeChains'
 import { getEvmClient } from '../services/evmClient'
 import { queryEvmDeposit, queryEvmPendingWithdraw } from '../services/evmBridgeQueries'
 import { queryTerraDeposit, queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
+import { querySolanaPendingWithdraw } from '../services/solana/solanaBridgeQueries'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
+import { solanaRpcUrlsForBridgeChain } from '../services/solana/solanaRpcUrls'
 import type { DepositData, PendingWithdrawData } from './useTransferLookup'
 import type { BridgeChainConfig } from '../types/chain'
 
@@ -39,33 +42,44 @@ export function useMultiChainLookup() {
   })
 
   const lookup = useCallback(async (hash: Hex) => {
-    setResult({
-      source: null,
-      sourceChain: null,
-      dest: null,
-      destChain: null,
-      queriedChains: [],
-      failedChains: [],
+    // Keep prior source/dest while refreshing so the status stepper does not jump to Deposit (#terra-solana).
+    setResult((prev) => ({
+      ...prev,
       loading: true,
       error: null,
-    })
+    }))
 
     const evmChains = getEvmBridgeChains()
     const cosmosChains = getCosmosBridgeChains()
+    const solanaChains = getSolanaBridgeChains()
 
     // Categorize chains up front (synchronous) to avoid mutating arrays in async closures
     const configurableEvmChains = evmChains.filter((c) => !!c.bridgeAddress)
     const unconfiguredEvmChains = evmChains.filter((c) => !c.bridgeAddress)
     const configurableTerraChains = cosmosChains.filter((c) => !!c.bridgeAddress && !!c.lcdUrl)
     const unconfiguredTerraChains = cosmosChains.filter((c) => !c.bridgeAddress || !c.lcdUrl)
+    const configurableSolanaChains = solanaChains.filter(
+      (c) =>
+        !!getSolanaProgramIdString(c) &&
+        solanaRpcUrlsForBridgeChain(c).length > 0 &&
+        !!c.bytes4ChainId,
+    )
+    const unconfiguredSolanaChains = solanaChains.filter(
+      (c) =>
+        !getSolanaProgramIdString(c) ||
+        solanaRpcUrlsForBridgeChain(c).length === 0 ||
+        !c.bytes4ChainId,
+    )
 
     const queriedChains = [
       ...configurableEvmChains.map((c) => c.name),
       ...configurableTerraChains.map((c) => c.name),
+      ...configurableSolanaChains.map((c) => c.name),
     ]
     const failedChains = [
       ...unconfiguredEvmChains.map((c) => c.name),
       ...unconfiguredTerraChains.map((c) => c.name),
+      ...unconfiguredSolanaChains.map((c) => c.name),
     ]
 
     // Query all EVM bridges in parallel
@@ -102,10 +116,20 @@ export function useMultiChainLookup() {
       }
     })
 
-    // Wait for all queries to complete (EVM + Terra)
-    const [evmResults, terraResults] = await Promise.allSettled([
+    const solanaQueries = configurableSolanaChains.map(async (chain) => {
+      try {
+        const withdraw = await querySolanaPendingWithdraw(chain, hash)
+        return { chain, deposit: null as DepositData | null, withdraw, failed: false }
+      } catch {
+        return { chain, deposit: null as DepositData | null, withdraw: null, failed: true }
+      }
+    })
+
+    // Wait for all queries to complete (EVM + Terra + Solana)
+    const [evmResults, terraResults, solanaResults] = await Promise.allSettled([
       Promise.allSettled(evmQueries),
       Promise.allSettled(terraQueries),
+      Promise.allSettled(solanaQueries),
     ])
 
     // Collect runtime failures
@@ -117,12 +141,10 @@ export function useMultiChainLookup() {
     let dest: PendingWithdrawData | null = null
     let destChain: BridgeChainConfig | null = null
 
-    const allResults =
-      evmResults.status === 'fulfilled'
-        ? [...evmResults.value, ...(terraResults.status === 'fulfilled' ? terraResults.value : [])]
-        : terraResults.status === 'fulfilled'
-        ? terraResults.value
-        : []
+    const evmArr = evmResults.status === 'fulfilled' ? evmResults.value : []
+    const terraArr = terraResults.status === 'fulfilled' ? terraResults.value : []
+    const solanaArr = solanaResults.status === 'fulfilled' ? solanaResults.value : []
+    const allResults = [...evmArr, ...terraArr, ...solanaArr]
 
     for (const result of allResults) {
       if (result.status === 'fulfilled') {

@@ -213,6 +213,10 @@ export default function HashVerificationPage() {
   // Check if this hash has a local transfer record that needs submission
   const localTransfer = inputHash ? getTransferByXchainHashId(inputHash) : null
   const needsSubmit = localTransfer?.lifecycle === 'deposited'
+  const destChainFromSource = source ? getBridgeChainByBytes4(bytes32ToBytes4(source.destChain)) : null
+  /** SubmitHashButton only supports EVM/Terra destinations; Solana must use Transfer Status. */
+  const verifyFlowNeedsTransferPage =
+    needsSubmit || localTransfer || destChainFromSource?.type === 'solana'
   // dest is null means no PendingWithdraw found on dest chain => not submitted
   const notSubmittedOnChain = inputHash && !loading && source && !dest
 
@@ -294,7 +298,7 @@ export default function HashVerificationPage() {
                   <code className="text-yellow-300">withdrawSubmit</code> has not been called on the
                   destination chain yet. The operator cannot approve until it is submitted.
                 </p>
-                {needsSubmit || localTransfer ? (
+                {verifyFlowNeedsTransferPage ? (
                   <Link
                     to={`/transfer/${inputHash}`}
                     className="btn-primary inline-flex text-xs"
