@@ -13,6 +13,7 @@ import {
   bytes32ToAddress,
 } from '../services/evm/tokenRegistry'
 import type { BridgeChainConfig } from '../types/chain'
+import { parseBridgeConfigFromAnchorAccount } from '../services/solana/solanaBridgeAccounts'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
 import { BRIDGE_CHAINS, getChainDisplayInfo, getBridgeChainEntryByBytes4, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
@@ -309,23 +310,18 @@ export function useBridgeConfig(): {
               const accountData = await accountRes.json()
               const data = accountData?.result?.value?.data
               if (data && Array.isArray(data) && data[0]) {
-                const bytes = Uint8Array.from(atob(data[0]), c => c.charCodeAt(0))
-                // Anchor BridgeConfig layout after 8-byte discriminator:
-                // admin: 32, operator: 32, chain_id: 4, fee_bps: 2, withdraw_delay: 8, ...
-                if (bytes.length >= 8 + 32 + 32 + 4 + 2 + 8) {
-                  const adminBytes = bytes.slice(8, 40)
-                  const admin = Array.from(adminBytes).map(b => b.toString(16).padStart(2, '0')).join('')
-                  const feeBps = (bytes[8 + 32 + 32 + 4] ?? 0) | ((bytes[8 + 32 + 32 + 4 + 1] ?? 0) << 8)
-                  const delayView = new DataView(bytes.buffer, bytes.byteOffset + 8 + 32 + 32 + 4 + 2, 8)
-                  const withdrawDelay = Number(delayView.getBigInt64(0, true))
+                const bytes = Uint8Array.from(atob(data[0]), (c) => c.charCodeAt(0))
+                const parsed = parseBridgeConfigFromAnchorAccount(bytes)
+                if (parsed) {
+                  const withdrawDelay = Number(parsed.withdrawDelaySeconds)
                   return {
                     chainId: id,
                     chainName: config.name,
                     type: 'solana' as const,
-                    cancelWindowSeconds: withdrawDelay,
-                    feeBps,
-                    feeCollector: null,
-                    admin,
+                    cancelWindowSeconds: Number.isFinite(withdrawDelay) ? withdrawDelay : null,
+                    feeBps: parsed.feeBps,
+                    feeCollector: parsed.operator.toBase58(),
+                    admin: parsed.admin.toBase58(),
                     loaded: true,
                     chainConfig: config,
                     bridgeAddress: config.bridgeAddress,

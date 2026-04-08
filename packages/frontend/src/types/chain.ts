@@ -29,8 +29,13 @@ export interface BridgeChainConfig {
   rpcFallbacks?: string[]
   lcdUrl?: string
   lcdFallbacks?: string[]
+  /**
+   * EVM/Cosmos: bridge contract address.
+   * Solana: BridgeConfig PDA (seed `bridge`); use `programId` for the deployed program address.
+   */
   bridgeAddress: string
   bytes4ChainId?: string
+  /** Solana only: deployed cl8y_bridge program id (base58). */
   programId?: string
   explorerTxUrl?: string
   faucetAddress?: string

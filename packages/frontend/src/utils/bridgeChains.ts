@@ -7,11 +7,14 @@
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
+import { bridgeConfigPdaBase58 } from '../services/solana/solanaBridgeAccounts'
 import { DEFAULT_SOLANA_MAINNET_RPC_URLS } from './solanaMainnetRpcDefaults'
 import { DEFAULT_NETWORK, LOCAL_TERRA_LCD_URL, LOCAL_TERRA_RPC_URL } from './constants'
 import { getChainlist, getChainlistEntry } from './chainlist'
 
 export type NetworkTier = 'local' | 'testnet' | 'mainnet'
+
+const VITE_SOLANA_PROGRAM_ID = import.meta.env.VITE_SOLANA_PROGRAM_ID || ''
 
 /**
  * Bridge chain configurations per network tier.
@@ -50,9 +53,8 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'solana',
       name: 'Solana Localnet',
       rpcUrl: 'http://localhost:8899',
-      // No default: must match deployed program (same as EVM/Terra — avoids "only Solana" when env is incomplete)
-      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
-      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bridgeAddress: bridgeConfigPdaBase58(VITE_SOLANA_PROGRAM_ID),
+      programId: VITE_SOLANA_PROGRAM_ID,
       bytes4ChainId: '0x00000005',
     },
   },
@@ -101,8 +103,8 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       type: 'solana',
       name: 'Solana Devnet',
       rpcUrl: 'https://api.devnet.solana.com',
-      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
-      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bridgeAddress: bridgeConfigPdaBase58(VITE_SOLANA_PROGRAM_ID),
+      programId: VITE_SOLANA_PROGRAM_ID,
       bytes4ChainId: '0x00000005',
     },
   },
@@ -157,8 +159,8 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       name: 'Solana',
       rpcUrl: DEFAULT_SOLANA_MAINNET_RPC_URLS[0] ?? "https://solana-rpc.publicnode.com/",
       rpcFallbacks: [...DEFAULT_SOLANA_MAINNET_RPC_URLS.slice(1)],
-      bridgeAddress: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
-      programId: import.meta.env.VITE_SOLANA_PROGRAM_ID || '',
+      bridgeAddress: bridgeConfigPdaBase58(VITE_SOLANA_PROGRAM_ID),
+      programId: VITE_SOLANA_PROGRAM_ID,
       bytes4ChainId: '0x00000005',
     },
   },
@@ -336,7 +338,7 @@ export function getCosmosBridgeChains(): BridgeChainConfig[] {
 }
 
 /**
- * Get Solana bridge chains only (program id + bytes4 chain key for LCD mappings).
+ * Get Solana bridge chains only (program id, BridgeConfig PDA as `bridgeAddress`, bytes4 chain key).
  */
 export function getSolanaBridgeChains(): BridgeChainConfig[] {
   return getAllBridgeChains().filter((c) => c.type === 'solana')

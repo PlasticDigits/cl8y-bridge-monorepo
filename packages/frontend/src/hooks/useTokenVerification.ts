@@ -31,6 +31,7 @@ import {
   findBridgePda,
   WSOL_MINT,
 } from '../services/solana/transaction'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
 import {
   pickSolanaConnection,
   solanaRpcUrlsForBridgeChain,
@@ -383,7 +384,7 @@ export function useTokenVerification() {
       }
 
       // On-chain Solana program: token_mapping PDAs per remote chain
-      const programIdStr = solConfig.bridgeAddress?.trim()
+      const programIdStr = getSolanaProgramIdString(solConfig) ?? ''
       const solRpcUrls =
         solConfig.type === 'solana' ? solanaRpcUrlsForBridgeChain(solConfig) : []
       if (programIdStr && solRpcUrls.length > 0 && solMapping?.hex) {

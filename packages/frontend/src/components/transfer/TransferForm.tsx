@@ -29,6 +29,7 @@ import {
   solanaRpcUrlsForBridgeChain,
   withSolanaReadFallback,
 } from '../../services/solana/solanaRpcUrls'
+import { getSolanaProgramIdString } from '../../services/solana/solanaBridgeAccounts'
 import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
 import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
@@ -405,7 +406,10 @@ export function TransferForm() {
     return null
   }, [isSourceSolana, solanaTokenDestMappingRaw, destChainConfig?.type, destTokenAddr])
 
-  const solanaProgramIdStr = sourceChainConfig?.programId ?? sourceChainConfig?.bridgeAddress
+  const solanaProgramIdStr =
+    sourceChainConfig?.type === 'solana'
+      ? getSolanaProgramIdString(sourceChainConfig)
+      : null
 
   const sourceSolanaRpcUrls = useMemo(() => {
     if (sourceChainConfig?.type === 'solana') {
@@ -1393,8 +1397,8 @@ export function TransferForm() {
         return
       }
       const sourceConfig = sourceChainConfig
-      // BRIDGE_CHAINS stores the Solana program id as bridgeAddress; optional programId overrides (see useAutoWithdrawSubmit).
-      const solanaProgramIdStr = sourceConfig?.programId || sourceConfig?.bridgeAddress
+      const solanaProgramIdStr =
+        sourceConfig?.type === 'solana' ? getSolanaProgramIdString(sourceConfig) : null
       const depositRpcUrls =
         sourceConfig?.type === 'solana' ? solanaRpcUrlsForBridgeChain(sourceConfig) : []
       if (depositRpcUrls.length === 0 || !solanaProgramIdStr) {

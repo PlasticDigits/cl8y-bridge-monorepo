@@ -41,6 +41,7 @@ import { isTerraContractError, TERRA_TX_ERROR, TerraTxError } from '../services/
 import { terraAddressToBytes32, bytes32ToTerraAddress } from '../services/hashVerification'
 import { resolveTerraWithdrawToken } from '../services/terra/withdrawTokenResolve'
 import { solanaAddressToBytes32 } from '../services/solana/address'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
 import {
   solanaRpcUrlsForBridgeChain,
   withSolanaReadFallback,
@@ -528,7 +529,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         // Destination is Solana
         setPhase('submitting-hash')
 
-        if (!destChainConfig.bridgeAddress && !destChainConfig.programId) {
+        if (!getSolanaProgramIdString(destChainConfig)) {
           const msg = `No program ID configured for destination chain "${transfer.destChain}"`
           console.error(`${LOG} ${msg}`)
           setPhase('error')
@@ -682,7 +683,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('')}`
 
-        const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+        const programIdStr = getSolanaProgramIdString(destChainConfig) ?? ''
         const destSolanaRpcUrls =
           destChainConfig.type === 'solana'
             ? solanaRpcUrlsForBridgeChain(destChainConfig)
@@ -740,7 +741,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
           return
         }
 
-        const programForLog = destChainConfig.programId || destChainConfig.bridgeAddress
+        const programForLog = programIdStr
         console.info(
           `${LOG} Submitting Solana withdrawSubmit: program=${programForLog}, ` +
           `amount=${transfer.amount}, nonce=${transfer.depositNonce}`
@@ -748,7 +749,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
 
         const solanaTxSig = await submitOnSolana({
           rpcUrls: destSolanaRpcUrls,
-          programId: destChainConfig.programId || destChainConfig.bridgeAddress,
+          programId: programIdStr,
           srcChain: srcChainBytes4Data,
           srcAccount: srcAccountBytes32Sol,
           srcToken: srcTokenBytes,
@@ -930,7 +931,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             const { PublicKey } = await import('@solana/web3.js')
             const pollRpcUrls = solanaRpcUrlsForBridgeChain(destChainConfig)
             if (pollRpcUrls.length === 0) return
-            const programIdStr = destChainConfig.programId || destChainConfig.bridgeAddress
+            const programIdStr = getSolanaProgramIdString(destChainConfig)
             if (!programIdStr) return
             const programId = new PublicKey(programIdStr)
             const hashBytes = new Uint8Array(32)

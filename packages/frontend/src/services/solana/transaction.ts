@@ -13,8 +13,8 @@ import {
 import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
 import { computeXchainHashIdBytes } from "../hashVerification";
 import { hexToUint8Array } from "../terra/withdrawSubmit";
+import { findBridgeConfigPda } from "./solanaBridgeAccounts";
 
-const BRIDGE_SEED = Buffer.from("bridge");
 const DEPOSIT_SEED = Buffer.from("deposit");
 const CHAIN_SEED = Buffer.from("chain");
 const TOKEN_MAPPING_SEED = Buffer.from("token");
@@ -112,9 +112,9 @@ function withTimeout<T>(
   });
 }
 
+/** @deprecated Prefer {@link findBridgeConfigPda} from `./solanaBridgeAccounts`. */
 export function findBridgePda(programId: PublicKey): PublicKey {
-  const [pda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
-  return pda;
+  return findBridgeConfigPda(programId);
 }
 
 export function findTokenMappingPda(
@@ -203,7 +203,7 @@ export async function buildDepositNativeInstruction(
     throw new Error("tokenMappingDestToken must be 32 bytes");
   }
 
-  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+  const bridgePda = findBridgeConfigPda(programId);
 
   const nonceBuffer = Buffer.alloc(8);
   nonceBuffer.writeBigUInt64LE(BigInt(depositNonce + 1));
@@ -265,7 +265,7 @@ export function buildDepositSplInstruction(
     throw new Error("tokenMappingDestToken must be 32 bytes");
   }
 
-  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+  const bridgePda = findBridgeConfigPda(programId);
 
   const nonceBuffer = Buffer.alloc(8);
   nonceBuffer.writeBigUInt64LE(BigInt(depositNonce + 1));
@@ -558,10 +558,7 @@ export async function fetchDepositNonce(
   connection: Connection,
   programId: PublicKey,
 ): Promise<number> {
-  const [bridgePda] = PublicKey.findProgramAddressSync(
-    [BRIDGE_SEED],
-    programId,
-  );
+  const bridgePda = findBridgeConfigPda(programId);
 
   const account = await connection.getAccountInfo(bridgePda);
   if (!account || !account.data) {
@@ -642,7 +639,7 @@ export function buildWithdrawSubmitInstruction(
     nonce,
   );
 
-  const [bridgePda] = PublicKey.findProgramAddressSync([BRIDGE_SEED], programId);
+  const bridgePda = findBridgeConfigPda(programId);
 
   const [srcChainEntryPda] = PublicKey.findProgramAddressSync(
     [CHAIN_SEED, Buffer.from(srcChain)],
