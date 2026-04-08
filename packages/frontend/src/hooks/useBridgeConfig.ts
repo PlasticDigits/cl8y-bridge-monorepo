@@ -5,6 +5,7 @@
  */
 
 import { useQuery, useQueries } from '@tanstack/react-query'
+import { PublicKey } from '@solana/web3.js'
 import { queryContract } from '../services/lcdClient'
 import { getEvmClient } from '../services/evmClient'
 import {
@@ -13,7 +14,19 @@ import {
   bytes32ToAddress,
 } from '../services/evm/tokenRegistry'
 import type { BridgeChainConfig } from '../types/chain'
-import { parseBridgeConfigFromAnchorAccount } from '../services/solana/solanaBridgeAccounts'
+import {
+  getSolanaProgramIdString,
+  parseBridgeConfigFromAnchorAccount,
+} from '../services/solana/solanaBridgeAccounts'
+import {
+  fetchSolanaBridgeCancelerPubkeys,
+  fetchSolanaBridgeTokenMappingRows,
+  parseSolanaTokenMappingAccount,
+} from '../services/solana/solanaProgramAccounts'
+import {
+  solanaRpcUrlsForBridgeChain,
+  withSolanaReadFallback,
+} from '../services/solana/solanaRpcUrls'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
 import { BRIDGE_CHAINS, getChainDisplayInfo, getBridgeChainEntryByBytes4, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
@@ -421,9 +434,19 @@ export function useChainOperators(
 ): { data: ChainOperators | null; isLoading: boolean; error: Error | null } {
   const isCosmos = chainConfig?.type === 'cosmos'
   const { data, isLoading, error } = useQuery({
-    queryKey: ['chainOperators', chainConfig?.chainId, enabled],
+    queryKey: [
+      'chainOperators',
+      chainConfig?.chainId,
+      chainConfig?.type,
+      chainConfig?.feeCollector,
+      enabled,
+    ],
     queryFn: async (): Promise<ChainOperators> => {
       if (!chainConfig) return { operators: [] }
+      if (chainConfig.type === 'solana') {
+        const op = chainConfig.feeCollector?.trim()
+        return { operators: op ? [op] : [] }
+      }
       if (isCosmos) {
         const lcdUrls = getLcdUrls(chainConfig.chainConfig)
         const res = await queryContract<{ operators: string[]; min_signatures?: number }>(
@@ -454,9 +477,29 @@ export function useChainCancelers(
 ): { data: ChainCancelers | null; isLoading: boolean; error: Error | null } {
   const isCosmos = chainConfig?.type === 'cosmos'
   const { data, isLoading, error } = useQuery({
-    queryKey: ['chainCancelers', chainConfig?.chainId, enabled],
+    queryKey: [
+      'chainCancelers',
+      chainConfig?.chainId,
+      chainConfig?.type,
+      chainConfig?.bridgeAddress,
+      enabled,
+    ],
     queryFn: async (): Promise<ChainCancelers> => {
       if (!chainConfig) return { cancelers: [] }
+      if (chainConfig.type === 'solana') {
+        const urls = solanaRpcUrlsForBridgeChain(chainConfig.chainConfig)
+        const pidStr = getSolanaProgramIdString(chainConfig.chainConfig)
+        if (!pidStr || urls.length === 0) return { cancelers: [] }
+        try {
+          const cancelers = await withSolanaReadFallback(urls, (c) =>
+            fetchSolanaBridgeCancelerPubkeys(c, new PublicKey(pidStr)),
+          )
+          return { cancelers }
+        } catch (e) {
+          console.warn('[useChainCancelers] Solana getProgramAccounts failed:', e)
+          return { cancelers: [] }
+        }
+      }
       if (isCosmos) {
         const lcdUrls = getLcdUrls(chainConfig.chainConfig)
         const res = await queryContract<{ cancelers: string[] }>(
@@ -486,9 +529,38 @@ export function useChainTokens(
   enabled: boolean
 ): { data: BridgeTokenSummary[]; isLoading: boolean; error: Error | null } {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['chainTokens', chainConfig?.chainId, enabled],
+    queryKey: [
+      'chainTokens',
+      chainConfig?.chainId,
+      chainConfig?.type,
+      chainConfig?.bridgeAddress,
+      enabled,
+    ],
     queryFn: async (): Promise<BridgeTokenSummary[]> => {
       if (!chainConfig) return []
+      if (chainConfig.type === 'solana') {
+        const urls = solanaRpcUrlsForBridgeChain(chainConfig.chainConfig)
+        const pidStr = getSolanaProgramIdString(chainConfig.chainConfig)
+        if (!pidStr || urls.length === 0) return []
+        try {
+          const rows = await withSolanaReadFallback(urls, (c) =>
+            fetchSolanaBridgeTokenMappingRows(c, new PublicKey(pidStr)),
+          )
+          return rows.map((r) => {
+            const mintStr = r.localMint.toBase58()
+            return {
+              id: r.mappingPda.toBase58(),
+              symbol: getTokenDisplaySymbol(mintStr),
+              localAddress: mintStr,
+              isEvm: false,
+              decimals: r.decimals,
+            }
+          })
+        } catch (e) {
+          console.warn('[useChainTokens] Solana getProgramAccounts failed:', e)
+          return []
+        }
+      }
       if (chainConfig.type === 'cosmos') {
         const lcdUrls = getLcdUrls(chainConfig.chainConfig)
         const all: BridgeTokenSummary[] = []
@@ -584,7 +656,7 @@ export function useTokenDetails(
   enabled: boolean
 ): { data: BridgeTokenDetails | null; isLoading: boolean; error: Error | null } {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['tokenDetails', chainConfig?.chainId, tokenId, enabled],
+    queryKey: ['tokenDetails', chainConfig?.chainId, chainConfig?.type, tokenId, enabled],
     queryFn: async (): Promise<BridgeTokenDetails> => {
       if (!chainConfig || !tokenId) {
         return { minTransfer: null, maxTransfer: null, localAddress: '', destinations: [], withdrawRateLimit: null }
@@ -674,6 +746,62 @@ export function useTokenDetails(
           destinations,
           withdrawRateLimit,
         }
+      }
+      if (chainConfig.type === 'solana') {
+        const urls = solanaRpcUrlsForBridgeChain(chainConfig.chainConfig)
+        const pidStr = getSolanaProgramIdString(chainConfig.chainConfig)
+        const emptySol: BridgeTokenDetails = {
+          minTransfer: null,
+          maxTransfer: null,
+          localAddress: tokenId,
+          destinations: [],
+          withdrawRateLimit: null,
+        }
+        if (!urls.length || !pidStr) return emptySol
+        return withSolanaReadFallback(urls, async (c) => {
+          const mappingPk = new PublicKey(tokenId)
+          const acc = await c.getAccountInfo(mappingPk)
+          if (!acc?.data) return emptySol
+          const data = Buffer.from(acc.data as Buffer)
+          const parsed = parseSolanaTokenMappingAccount(mappingPk, data)
+          if (!parsed) return emptySol
+          const localMint = parsed.localMint.toBase58()
+          const destHex4 =
+            '0x' +
+            Array.from(parsed.destChain)
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('')
+          const entry = getBridgeChainEntryByBytes4(destHex4)
+          const display = entry
+            ? getChainDisplayInfo(entry[0])
+            : { name: destHex4, icon: '○' }
+          const destTokenHex =
+            (`0x${Buffer.from(parsed.destToken).toString('hex')}`) as `0x${string}`
+          let destAddr: string
+          if (entry?.[1].type === 'evm') {
+            try {
+              destAddr = bytes32ToAddress(destTokenHex)
+            } catch {
+              destAddr = destTokenHex
+            }
+          } else {
+            destAddr = destTokenHex
+          }
+          return {
+            minTransfer: null,
+            maxTransfer: null,
+            localAddress: localMint,
+            destinations: [
+              {
+                chainKey: entry?.[0] ?? destHex4,
+                chainName: display.name,
+                chainIcon: display.icon,
+                address: destAddr,
+              },
+            ],
+            withdrawRateLimit: null,
+          }
+        })
       }
       const client = getEvmClient(chainConfig.chainConfig)
       const bridgeAddr = chainConfig.bridgeAddress as `0x${string}`

@@ -82,11 +82,15 @@ async function terraTokenExists(chainConfig: BridgeChainConfig, tokenId: string)
   }
 }
 
-async function solanaTokenExists(chainConfig: BridgeChainConfig, tokenId: string): Promise<boolean> {
+async function solanaTokenExists(
+  chainConfig: BridgeChainConfig,
+  tokenId: string,
+  rpcUrls?: string[],
+): Promise<boolean> {
   if (chainConfig.type !== 'solana') return false
   try {
     const { PublicKey } = await import('@solana/web3.js')
-    const urls = solanaRpcUrlsForBridgeChain(chainConfig)
+    const urls = rpcUrls ?? solanaRpcUrlsForBridgeChain(chainConfig)
     if (urls.length === 0) return false
     const pubkey = new PublicKey(tokenId)
     const account = await withSolanaReadFallback(urls, (c) => c.getAccountInfo(pubkey))
@@ -144,7 +148,17 @@ export function useTransferRouteValidation({
             `The source SPL mint for ${tokenName} could not be resolved on ${sourceChainConfig.name}.`,
           )
         }
-        const sourceExists = await solanaTokenExists(sourceChainConfig, sourceTokenAddress)
+        const sourceRpcUrls = solanaRpcUrlsForBridgeChain(sourceChainConfig)
+        if (sourceRpcUrls.length === 0) {
+          return invalid(
+            `No Solana RPC URL is configured for ${sourceChainConfig.name}; cannot verify the source mint for ${tokenName}.`,
+          )
+        }
+        const sourceExists = await solanaTokenExists(
+          sourceChainConfig,
+          sourceTokenAddress,
+          sourceRpcUrls,
+        )
         if (!sourceExists) {
           return invalid(`The source SPL mint for ${tokenName} does not exist on ${sourceChainConfig.name}.`)
         }
@@ -166,7 +180,13 @@ export function useTransferRouteValidation({
         if (!destTokenId) {
           return invalid(`The destination token for ${tokenName} could not be resolved on ${destChainConfig.name}.`)
         }
-        const destExists = await solanaTokenExists(destChainConfig, destTokenId)
+        const destRpcUrls = solanaRpcUrlsForBridgeChain(destChainConfig)
+        if (destRpcUrls.length === 0) {
+          return invalid(
+            `No Solana RPC URL is configured for ${destChainConfig.name}; cannot verify the destination mint for ${tokenName}.`,
+          )
+        }
+        const destExists = await solanaTokenExists(destChainConfig, destTokenId, destRpcUrls)
         if (!destExists) {
           return invalid(`The destination token for ${tokenName} does not exist on ${destChainConfig.name}.`)
         }

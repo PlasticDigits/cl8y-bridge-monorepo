@@ -1,6 +1,45 @@
-import { defineConfig } from 'vite'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
+
+function bufferBootstrapEntry(): Plugin {
+  const bootstrapSrc = fileURLToPath(new URL('./src/buffer-bootstrap.ts', import.meta.url))
+  let base = '/'
+  return {
+    name: 'buffer-bootstrap-entry',
+    configResolved(config) {
+      base = config.base.endsWith('/') ? config.base : `${config.base}/`
+    },
+    transformIndexHtml(html, ctx) {
+      if (html.includes('buffer-bootstrap')) return html
+      let bootstrapHref: string
+      if (ctx.bundle) {
+        const chunk = Object.values(ctx.bundle).find(
+          (f) =>
+            f.type === 'chunk' &&
+            typeof f.facadeModuleId === 'string' &&
+            (f.facadeModuleId === bootstrapSrc || f.facadeModuleId.endsWith('/buffer-bootstrap.ts')),
+        )
+        if (!chunk) return html
+        bootstrapHref = `${base}${chunk.fileName}`.replace(/([^:]\/)\/+/g, '$1')
+      } else {
+        bootstrapHref = `${base}src/buffer-bootstrap.ts`.replace(/([^:]\/)\/+/g, '$1')
+      }
+      const cross = ctx.bundle ? ' crossorigin' : ''
+      // Dev: /src/main.tsx — build: /assets/main-*.js
+      const replaced = html.replace(
+        /(\n\s*)(<script type="module"[^>]*src="[^"]*main(\.tsx|-[^"]+\.js)"[^>]*><\/script>)/,
+        `$1<script type="module"${cross} src="${bootstrapHref}"></script>$1$2`,
+      )
+      if (replaced !== html) return replaced
+      return html.replace(
+        /(\n\s*)(<script type="module")/,
+        `$1<script type="module"${cross} src="${bootstrapHref}"></script>$1$2`,
+      )
+    },
+  }
+}
 
 const GITHUB_REPO = 'PlasticDigits/cl8y-bridge-monorepo'
 const VERSION_OFFSET = 190
@@ -23,7 +62,7 @@ const appVersion = `v0.1.${commitCount - VERSION_OFFSET}`
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), bufferBootstrapEntry()],
   server: {
     port: 3000,
   },
@@ -34,9 +73,18 @@ export default defineConfig({
     target: 'es2020',
     minify: 'esbuild',
     rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        'buffer-bootstrap': fileURLToPath(new URL('./src/buffer-bootstrap.ts', import.meta.url)),
+      },
       output: {
         // Split chunks for better caching and smaller initial load
         manualChunks: (id) => {
+          // Keep npm `buffer` out of shared vendor chunks so the bootstrap entry stays tiny and safe to run first.
+          if (id.includes('node_modules/buffer/') || id.endsWith('node_modules/buffer')) {
+            return 'buffer-polyfill'
+          }
+
           // Vendor chunk for React core
           if (id.includes('node_modules/react') || 
               id.includes('node_modules/react-dom') ||

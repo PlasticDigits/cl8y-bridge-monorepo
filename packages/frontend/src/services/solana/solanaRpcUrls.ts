@@ -39,16 +39,26 @@ export function solanaRpcUrlsForBridgeChain(
     return chain.rpcUrl ? [chain.rpcUrl] : [];
   }
   const full = import.meta.env.VITE_SOLANA_RPC_URL?.trim();
-  if (full) return parseSolanaRpcUrlList(full);
+  if (full) {
+    const fromFull = parseSolanaRpcUrlList(full);
+    if (fromFull.length > 0) return fromFull;
+    // Env was set but produced no URLs (e.g. "," or whitespace-only entries) — fall through.
+  }
   const mainnetOnly = import.meta.env.VITE_SOLANA_MAINNET_RPC?.trim();
-  if (mainnetOnly) return parseSolanaRpcUrlList(mainnetOnly);
+  if (mainnetOnly) {
+    const fromMainnet = parseSolanaRpcUrlList(mainnetOnly);
+    if (fromMainnet.length > 0) return fromMainnet;
+  }
   return [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])].filter(Boolean);
 }
 
 /** Header balance / wallet reads: `VITE_SOLANA_RPC_URL`, then bridge tier, then mainnet defaults. */
 export function getSolanaWalletRpcUrls(): string[] {
   const full = import.meta.env.VITE_SOLANA_RPC_URL?.trim();
-  if (full) return parseSolanaRpcUrlList(full);
+  if (full) {
+    const parsed = parseSolanaRpcUrlList(full);
+    if (parsed.length > 0) return parsed;
+  }
   const chains = getSolanaBridgeChains();
   const c = chains[0];
   if (c?.type === "solana") {
@@ -72,7 +82,13 @@ export function isTransientSolanaWeb3Error(err: unknown): boolean {
     m.includes("503") ||
     m.includes("502") ||
     m.includes("410") ||
-    m.includes("bad gateway")
+    m.includes("401") ||
+    m.includes("403") ||
+    m.includes("forbidden") ||
+    m.includes("bad gateway") ||
+    m.includes("-32601") ||
+    m.includes("method not found") ||
+    m.includes("getprogramaccounts")
   );
 }
 
