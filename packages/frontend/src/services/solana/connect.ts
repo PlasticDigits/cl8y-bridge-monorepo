@@ -4,6 +4,7 @@ import {
   getSolanaWalletRpcUrls,
   withSolanaReadFallback,
 } from "./solanaRpcUrls";
+import { getSolanaBrowserProvider } from "./solanaProvider";
 
 export { getSolanaWalletRpcUrls } from "./solanaRpcUrls";
 
@@ -19,7 +20,7 @@ export interface SolanaWalletState {
 export async function connectSolanaWallet(
   walletName: string
 ): Promise<SolanaWalletState> {
-  const provider = getSolanaProvider(walletName);
+  const provider = getSolanaBrowserProvider(walletName);
   if (!provider) {
     throw new Error(`${walletName} wallet not found. Is it installed?`);
   }
@@ -49,30 +50,9 @@ export async function connectSolanaWallet(
  * Disconnect the Solana wallet.
  */
 export async function disconnectSolanaWallet(walletName: string): Promise<void> {
-  const provider = getSolanaProvider(walletName);
+  const provider = getSolanaBrowserProvider(walletName);
   if (provider?.disconnect) {
     await provider.disconnect();
-  }
-}
-
-/**
- * Get the Solana provider from the window object.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getSolanaProvider(walletName: string): any {
-  if (typeof window === "undefined") return null;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const win = window as any;
-  switch (walletName.toLowerCase()) {
-    case "phantom":
-      return win.phantom?.solana;
-    case "solflare":
-      return win.solflare;
-    case "backpack":
-      return win.backpack;
-    default:
-      return win.solana;
   }
 }
 

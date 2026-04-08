@@ -10,6 +10,7 @@ import { Connection, type Commitment } from "@solana/web3.js";
 import type { BridgeChainConfig } from "../../types/chain";
 import { getSolanaBridgeChains } from "../../utils/bridgeChains";
 import { DEFAULT_SOLANA_MAINNET_RPC_URLS } from "../../utils/solanaMainnetRpcDefaults";
+import { getSolanaBrowserProvider } from "./solanaProvider";
 
 export { DEFAULT_SOLANA_MAINNET_RPC_URLS } from "../../utils/solanaMainnetRpcDefaults";
 
@@ -68,6 +69,62 @@ export function getSolanaWalletRpcUrls(): string[] {
 }
 
 const SOLANA_COMMITMENT: Commitment = "confirmed";
+
+/** When true, signing / broadcast / confirm use bridge `rpcUrls` only (legacy behaviour). */
+export function solanaTxUsesBridgeRpcOnly(): boolean {
+  return import.meta.env.VITE_SOLANA_TX_USE_BRIDGE_RPC === "true";
+}
+
+/**
+ * Read JSON-RPC HTTP(S) URL exposed by the injected wallet (Phantom, Solflare, …), if any.
+ */
+export function readInjectedWalletRpcUrl(provider: unknown): string | null {
+  if (!provider || typeof provider !== "object") return null;
+  const p = provider as Record<string, unknown>;
+  for (const key of ["rpcEndpoint", "_rpcEndpoint"] as const) {
+    const v = p[key];
+    if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) {
+      return v.trim();
+    }
+  }
+  const conn = p.connection;
+  if (conn && typeof conn === "object") {
+    const ep = (conn as { rpcEndpoint?: string }).rpcEndpoint;
+    if (typeof ep === "string" && /^https?:\/\//i.test(ep.trim())) {
+      return ep.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * JSON-RPC connection for **sending** transactions: prefers the wallet’s own endpoint so blockhash,
+ * broadcast (via `signAndSendTransaction` or `sendRawTransaction`), and `confirmTransaction` stay
+ * on the same RPC the extension uses. Falls back to {@link pickSolanaConnection} when the wallet
+ * does not expose an endpoint or it fails from the browser.
+ */
+export async function pickSolanaTxConnection(
+  walletName: string,
+  bridgeRpcUrls: string[],
+): Promise<Connection> {
+  if (solanaTxUsesBridgeRpcOnly()) {
+    return pickSolanaConnection(bridgeRpcUrls);
+  }
+  if (typeof window !== "undefined") {
+    const provider = getSolanaBrowserProvider(walletName);
+    const url = provider ? readInjectedWalletRpcUrl(provider) : null;
+    if (url) {
+      const c = new Connection(url, SOLANA_COMMITMENT);
+      try {
+        await c.getLatestBlockhash(SOLANA_COMMITMENT);
+        return c;
+      } catch (e) {
+        if (!isTransientSolanaWeb3Error(e)) throw e;
+      }
+    }
+  }
+  return pickSolanaConnection(bridgeRpcUrls);
+}
 
 export function isTransientSolanaWeb3Error(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);

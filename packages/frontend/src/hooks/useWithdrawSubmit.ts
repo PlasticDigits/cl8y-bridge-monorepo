@@ -24,7 +24,7 @@ import {
   formatSolanaWalletError,
   sendSolanaTransaction,
 } from '../services/solana/transaction'
-import { pickSolanaConnection } from '../services/solana/solanaRpcUrls'
+import { pickSolanaTxConnection } from '../services/solana/solanaRpcUrls'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
 
 export interface WithdrawSubmitSolanaParams {
@@ -148,7 +148,10 @@ export function useWithdrawSubmit() {
         if (!solanaWallet.address || !solanaWallet.walletType) {
           throw new Error('Solana wallet not connected')
         }
-        const connection = await pickSolanaConnection(params.rpcUrls)
+        const connection = await pickSolanaTxConnection(
+          solanaWallet.walletType,
+          params.rpcUrls,
+        )
         const programId = new PublicKey(params.programId)
         const payer = new PublicKey(solanaWallet.address)
         const destAccount = new PublicKey(params.destAccount ?? solanaWallet.address)

@@ -14,6 +14,7 @@ import { anchorDiscriminator } from "../../utils/anchorDiscriminator";
 import { computeXchainHashIdBytes } from "../hashVerification";
 import { hexToUint8Array } from "../terra/withdrawSubmit";
 import { findBridgeConfigPda } from "./solanaBridgeAccounts";
+import { getSolanaBrowserProvider } from "./solanaProvider";
 
 const DEPOSIT_SEED = Buffer.from("deposit");
 const CHAIN_SEED = Buffer.from("chain");
@@ -395,7 +396,7 @@ export async function sendSolanaTransaction(
   transaction: Transaction,
   walletName: string,
 ): Promise<string> {
-  const provider = getSolanaProvider(walletName);
+  const provider = getSolanaBrowserProvider(walletName);
   if (!provider) {
     throw new Error(`${walletName} wallet not found`);
   }
@@ -539,19 +540,6 @@ export async function sendSolanaTransaction(
   );
 
   return signature;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getSolanaProvider(walletName: string): any {
-  if (typeof window === "undefined") return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const win = window as any;
-  switch (walletName.toLowerCase()) {
-    case "phantom": return win.phantom?.solana;
-    case "solflare": return win.solflare;
-    case "backpack": return win.backpack;
-    default: return win.solana;
-  }
 }
 
 export async function fetchDepositNonce(

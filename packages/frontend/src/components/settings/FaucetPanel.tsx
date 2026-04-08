@@ -22,6 +22,7 @@ import type { NetworkTier } from '../../utils/bridgeChains'
 import {
   parseSolanaRpcUrlList,
   pickSolanaConnection,
+  pickSolanaTxConnection,
   withSolanaReadFallback,
 } from '../../services/solana/solanaRpcUrls'
 
@@ -491,6 +492,7 @@ function SolanaClaimButton({
 
       const solUrls = faucetSolanaRpcUrls()
       const connection = await pickSolanaConnection(solUrls)
+      const txConnection = await pickSolanaTxConnection(walletType, solUrls)
       const programId = new PublicKey(chain.faucetAddress)
       const mint = new PublicKey(tokenAddress)
       const claimer = new PublicKey(address)
@@ -527,7 +529,7 @@ function SolanaClaimButton({
         data: Buffer.from(disc),
       }))
 
-      const sig = await sendSolanaTransaction(connection, tx, walletType)
+      const sig = await sendSolanaTransaction(txConnection, tx, walletType)
       setClaimTx(sig)
       sounds.playSuccess()
     } catch (err) {

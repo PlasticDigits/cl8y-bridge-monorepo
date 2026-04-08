@@ -8,7 +8,10 @@ import {
   formatSolanaWalletError,
   sendSolanaTransaction,
 } from "../services/solana/transaction";
-import { pickSolanaConnection } from "../services/solana/solanaRpcUrls";
+import {
+  pickSolanaConnection,
+  pickSolanaTxConnection,
+} from "../services/solana/solanaRpcUrls";
 
 export type SolanaDepositStep = "idle" | "building" | "signing" | "confirming" | "confirmed" | "error";
 
@@ -60,7 +63,8 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
         setError(null);
         setConfirmedDepositNonce(null);
 
-        const connection = await pickSolanaConnection(params.rpcUrls);
+        const readConnection = await pickSolanaConnection(params.rpcUrls);
+        const txConnection = await pickSolanaTxConnection(walletType, params.rpcUrls);
         const programId = new PublicKey(params.programId);
         const depositor = new PublicKey(address);
 
@@ -68,7 +72,7 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
         if (params.splMint) {
           const mintPk = new PublicKey(params.splMint);
           const ixs = await buildSolanaSplDepositInstructions(
-            connection,
+            readConnection,
             programId,
             depositor,
             params.amount,
@@ -94,14 +98,14 @@ export function useSolanaDeposit(): UseSolanaDepositReturn {
         }
 
         setStep("signing");
-        const signature = await sendSolanaTransaction(connection, tx, walletType);
+        const signature = await sendSolanaTransaction(txConnection, tx, walletType);
 
         setStep("confirming");
         setTxSignature(signature);
 
-        await connection.confirmTransaction(signature, "finalized");
+        await txConnection.confirmTransaction(signature, "finalized");
 
-        const nonceAfter = await fetchDepositNonce(connection, programId);
+        const nonceAfter = await fetchDepositNonce(txConnection, programId);
         setConfirmedDepositNonce(nonceAfter);
 
         setStep("confirmed");
