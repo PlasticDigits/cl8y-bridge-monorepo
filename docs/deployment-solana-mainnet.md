@@ -6,7 +6,7 @@ This document covers the complete step-by-step process for deploying the CL8Y Br
 
 **Watchtower:** **`Bridge.getCancelerCount() == 0`** on BSC or opBNB means **no** dedicated cancelers can **`withdrawCancel`**—only the **owner** can (see [OPERATIONAL_NOTES §11](../packages/contracts-evm/OPERATIONAL_NOTES.md)). That is a **serious operational gap** for the watchtower model. Complete **[Step 2.5](#step-25--register-bridge-cancelers-bsc--opbnb)** ( **`addCanceler`**) **before** guard-stack tuning, Solana registration, or mapping work—not only as a best practice, but so automated canceler nodes can act during the cancel window.
 
-Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md).
+Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deployment-guide.md](./deployment-guide.md), [packages/contracts-evm/OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md). For a **short ordered checklist** (testa / testb / tdec + frontend route errors), see [solana-mainnet-test-tokens-checklist.md](./solana-mainnet-test-tokens-checklist.md).
 
 ---
 
@@ -534,7 +534,7 @@ cast send "$GUARD_BRIDGE_OPBNB" "addGuardModuleWithdraw(address)" "$TOKEN_RATE_L
 
 #### 3.4 Set guard policy on `TokenRateLimit`
 
-**`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. On **BSC**, call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) on **`TOKEN_RATE_LIMIT_BSC`** (`--rpc-url "$RPC_BSC"`). On **opBNB**, the same on **`TOKEN_RATE_LIMIT_OPBNB`** (`--rpc-url "$RPC_OPBNB"`). **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values.
+**`TokenRateLimit`** 24h caps are **separate** from **`TokenRegistry.setRateLimit`**. On **BSC**, call **`setDepositLimit` / `setWithdrawLimit`** (or **`setLimitsBatch`**) on **`TOKEN_RATE_LIMIT_BSC`** (`--rpc-url "$RPC_BSC"`). On **opBNB**, the same on **`TOKEN_RATE_LIMIT_OPBNB`** (`--rpc-url "$RPC_OPBNB"`). For noneconomic test tokens, you may use [`SetTokenRateLimitTestTokens.s.sol`](../packages/contracts-evm/script/SetTokenRateLimitTestTokens.s.sol) (defaults: **1000** whole tokens per 24h window per token, decimals-aware). **`limit == 0`** ⇒ **default 0.1% supply** in [`TokenRateLimit`](../packages/contracts-evm/src/TokenRateLimit.sol)—use explicit values for test tokens.
 
 Use **`cast send … --interactive`** for each policy tx; sign with **`ADMIN_EOA`**.
 
