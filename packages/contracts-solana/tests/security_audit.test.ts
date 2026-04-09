@@ -1221,7 +1221,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
-            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -1232,12 +1231,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
-            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.operator])
+          .signers([ctx.user])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -2088,7 +2086,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .withdrawExecute()
         .accounts({
           bridge: ctx.bridgePda,
-          operatorRent: ctx.operator.publicKey,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
           mint: fixture.mint,
@@ -2099,12 +2096,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             ctx.program.programId,
             fixture.mint
           )[0],
-          executor: ctx.operator.publicKey,
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([ctx.operator])
+        .signers([ctx.user])
         .rpc();
 
       const mintAfterExecute = await getMint(
@@ -2429,7 +2425,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
         .withdrawExecute()
         .accounts({
           bridge: ctx.bridgePda,
-          operatorRent: ctx.operator.publicKey,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
           mint: fixture.mint,
@@ -2440,12 +2435,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
             ctx.program.programId,
             fixture.mint
           )[0],
-          executor: ctx.operator.publicKey,
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([ctx.operator])
+        .signers([ctx.user])
         .rpc();
 
       const userTokenAfterExecute = await getAccount(
@@ -2549,7 +2543,6 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
-            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -2560,12 +2553,11 @@ describe("security audit: top-20 Solana vulnerability patterns", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
-            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.operator])
+          .signers([ctx.user])
           .rpc();
         expect.fail(
           "Should have thrown - native SOL cannot use SPL execution path"

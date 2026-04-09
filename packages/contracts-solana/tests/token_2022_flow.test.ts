@@ -297,7 +297,6 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
       .withdrawExecute()
       .accounts({
         bridge: ctx.bridgePda,
-        operatorRent: ctx.operator.publicKey,
         pendingWithdraw: withdrawPda,
         executedHash: executedHashPda,
         mint,
@@ -308,12 +307,11 @@ describe("Token-2022 plain mint (lock/unlock deposit → withdraw execute)", () 
           ctx.program.programId,
           mint
         )[0],
-        executor: ctx.operator.publicKey,
         recipient: ctx.user.publicKey,
         tokenProgram: TP2022,
         systemProgram: SystemProgram.programId,
       })
-      .signers([ctx.operator])
+      .signers([ctx.user])
       .rpc();
 
     const bridgeAfter = await getAccount(
