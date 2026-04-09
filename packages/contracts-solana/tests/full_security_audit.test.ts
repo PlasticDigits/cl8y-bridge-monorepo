@@ -881,6 +881,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
         .withdrawExecute()
         .accounts({
           bridge: ctx.bridgePda,
+          operatorRent: ctx.operator.publicKey,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
           mint: fixture.mint,
@@ -891,11 +892,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
             ctx.program.programId,
             fixture.mint
           )[0],
+          executor: ctx.operator.publicKey,
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([ctx.user])
+        .signers([ctx.operator])
         .rpc();
 
       const mintAfterExecute = await getMint(
@@ -1278,6 +1280,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -1288,11 +1291,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: attacker.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([attacker])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -2295,6 +2299,7 @@ describe("FULL E2E SECURITY AUDIT", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -2305,11 +2310,12 @@ describe("FULL E2E SECURITY AUDIT", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.user])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Native via SPL path should fail");
       } catch (err) {

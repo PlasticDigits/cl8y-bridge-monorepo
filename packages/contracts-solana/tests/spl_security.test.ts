@@ -403,6 +403,7 @@ describe("bridge SPL security and multi-user coverage", () => {
         .withdrawExecute()
         .accounts({
           bridge: ctx.bridgePda,
+          operatorRent: ctx.operator.publicKey,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
           mint: fixture.mint,
@@ -413,11 +414,12 @@ describe("bridge SPL security and multi-user coverage", () => {
             ctx.program.programId,
             fixture.mint
           )[0],
+          executor: ctx.operator.publicKey,
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([ctx.user])
+        .signers([ctx.operator])
         .rpc();
 
       const bridgeAfterExecute = await getAccount(
@@ -505,6 +507,7 @@ describe("bridge SPL security and multi-user coverage", () => {
         .withdrawExecute()
         .accounts({
           bridge: ctx.bridgePda,
+          operatorRent: ctx.operator.publicKey,
           pendingWithdraw: withdrawPda,
           executedHash: executedHashPda,
           mint: fixture.mint,
@@ -515,11 +518,12 @@ describe("bridge SPL security and multi-user coverage", () => {
             ctx.program.programId,
             fixture.mint
           )[0],
+          executor: ctx.operator.publicKey,
           recipient: ctx.user.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .signers([ctx.user])
+        .signers([ctx.operator])
         .rpc();
 
       const mintAfterExecute = await getMint(
@@ -589,6 +593,7 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -599,11 +604,12 @@ describe("bridge SPL security and multi-user coverage", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.user])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -633,6 +639,7 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -643,11 +650,12 @@ describe("bridge SPL security and multi-user coverage", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.user])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -659,6 +667,7 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -669,11 +678,12 @@ describe("bridge SPL security and multi-user coverage", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: rogueRecipient.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([rogueRecipient])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -685,17 +695,23 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: wrongMintFixture.mint,
             recipientTokenAccount: wrongMintFixture.userToken.address,
             bridgeTokenAccount: wrongMintFixture.bridgeToken.address,
             tokenMapping: wrongMintFixture.tokenPda,
+            withdrawRateLimit: findWithdrawRateLimitPda(
+              ctx.program.programId,
+              wrongMintFixture.mint
+            )[0],
+            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.user])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {
@@ -741,6 +757,7 @@ describe("bridge SPL security and multi-user coverage", () => {
           .withdrawExecute()
           .accounts({
             bridge: ctx.bridgePda,
+            operatorRent: ctx.operator.publicKey,
             pendingWithdraw: withdrawPda,
             executedHash: executedHashPda,
             mint: fixture.mint,
@@ -751,11 +768,12 @@ describe("bridge SPL security and multi-user coverage", () => {
               ctx.program.programId,
               fixture.mint
             )[0],
+            executor: ctx.operator.publicKey,
             recipient: ctx.user.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           })
-          .signers([ctx.user])
+          .signers([ctx.operator])
           .rpc();
         expect.fail("Should have thrown");
       } catch (err) {

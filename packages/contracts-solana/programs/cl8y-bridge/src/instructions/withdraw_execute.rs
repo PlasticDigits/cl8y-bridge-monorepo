@@ -9,7 +9,15 @@ use anchor_spl::token_interface::{
     self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
 };
 
-/// SPL (or Token-2022) withdrawal execution: lock/unlock transfer or mint. See `docs/SOLANA_BRIDGE_INVARIANTS.md` (INV-W2, INV-D1).
+/// SPL (or Token-2022) withdrawal execution: lock/unlock transfer or mint.
+///
+/// **Permissionless (after `withdraw_delay`):** any signer may invoke this as `executor` and pay
+/// account-creation rent, matching Terra `WithdrawExecuteUnlock` / `WithdrawExecuteMint` and EVM
+/// `withdrawExecuteUnlock` / `withdrawExecuteMint` (any caller after the cancel window).
+/// The token recipient does **not** sign; `recipient` is only the pending `dest_account` pubkey.
+/// Lamports from closing `pending_withdraw` go to **`bridge.operator`**, not the recipient.
+///
+/// See `docs/SOLANA_BRIDGE_INVARIANTS.md` (INV-W2, INV-D1).
 #[derive(Accounts)]
 pub struct WithdrawExecute<'info> {
     #[account(
@@ -18,17 +26,21 @@ pub struct WithdrawExecute<'info> {
     )]
     pub bridge: Box<Account<'info, BridgeConfig>>,
 
+    /// CHECK: receives rent when `pending_withdraw` is closed — must be `bridge.operator`.
+    #[account(mut, address = bridge.operator @ BridgeError::UnauthorizedOperator)]
+    pub operator_rent: UncheckedAccount<'info>,
+
     #[account(
         mut,
         seeds = [PendingWithdraw::SEED, pending_withdraw.transfer_hash.as_ref()],
         bump = pending_withdraw.bump,
-        close = recipient,
+        close = operator_rent,
     )]
     pub pending_withdraw: Box<Account<'info, PendingWithdraw>>,
 
     #[account(
         init,
-        payer = recipient,
+        payer = executor,
         space = 8 + ExecutedHash::INIT_SPACE,
         seeds = [ExecutedHash::SEED, pending_withdraw.transfer_hash.as_ref()],
         bump,
@@ -66,7 +78,7 @@ pub struct WithdrawExecute<'info> {
 
     #[account(
         init_if_needed,
-        payer = recipient,
+        payer = executor,
         space = 8 + WithdrawRateLimit::INIT_SPACE,
         seeds = [WithdrawRateLimit::SEED, mint.key().as_ref()],
         bump,
@@ -74,7 +86,13 @@ pub struct WithdrawExecute<'info> {
     pub withdraw_rate_limit: Account<'info, WithdrawRateLimit>,
 
     #[account(mut)]
-    pub recipient: Signer<'info>,
+    pub executor: Signer<'info>,
+
+    /// CHECK: withdrawal destination pubkey (must match pending); does not sign.
+    #[account(
+        constraint = recipient.key() == pending_withdraw.dest_account @ BridgeError::WrongRecipient
+    )]
+    pub recipient: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
@@ -90,10 +108,6 @@ pub fn handler(ctx: Context<WithdrawExecute>) -> Result<()> {
         require!(!pw.cancelled, BridgeError::WithdrawalCancelled);
         require!(pw.approved, BridgeError::NotApproved);
         require!(!pw.executed, BridgeError::AlreadyExecuted);
-        require!(
-            pw.dest_account == ctx.accounts.recipient.key(),
-            BridgeError::WrongRecipient
-        );
         require!(
             pw.token == ctx.accounts.mint.key(),
             BridgeError::TokenMintMismatch
