@@ -68,6 +68,7 @@ import {
 import { pow10BigInt } from '../../utils/pow10'
 import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { isValidAmount } from '../../utils/validation'
+import { minGrossForMinNet } from '../../utils/bridgeMinAmount'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
 import { DestChainSelector } from './DestChainSelector'
@@ -686,7 +687,12 @@ export function TransferForm() {
     [amountDecimals, destDecimals]
   )
 
-  const { displayMaxLabel, displayBridgeMax, displayMinLabel, effectiveMinInSrc, effectiveMaxInSrc } = useMemo(() => {
+  const bridgeFeeBps = useMemo(
+    () => BigInt(Math.round(BRIDGE_CONFIG.feePercent * 100)),
+    []
+  )
+
+  const { displayMaxLabel, displayBridgeMax, effectiveMinInSrc, effectiveMaxInSrc } = useMemo(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string | undefined
     if (isSourceTerra) {
@@ -727,10 +733,6 @@ export function TransferForm() {
         effectiveMax > 0n ? formatCompact(effectiveMax.toString(), srcDecimals) : undefined,
       displayBridgeMax:
         bridgeLimit != null && bridgeLimit > 0n ? formatCompact(bridgeLimit.toString(), srcDecimals) : undefined,
-      displayMinLabel:
-        effectiveMin != null && effectiveMin > 0n
-          ? formatCompact(effectiveMin.toString(), srcDecimals)
-          : undefined,
       effectiveMinInSrc: effectiveMin,
       effectiveMaxInSrc: effectiveMax,
     }
@@ -748,14 +750,27 @@ export function TransferForm() {
     toSourceUnits,
   ])
 
+  /** Smallest send amount (gross) so net after bridge fee is at least min + 1 base unit (avoids withdraw min edge cases). */
+  const { minSendGrossInSrc, displayMinLabel } = useMemo(() => {
+    if (effectiveMinInSrc == null || effectiveMinInSrc <= 0n) {
+      return { minSendGrossInSrc: null as bigint | null, displayMinLabel: undefined as string | undefined }
+    }
+    const gross = minGrossForMinNet(effectiveMinInSrc + 1n, bridgeFeeBps)
+    return {
+      minSendGrossInSrc: gross,
+      displayMinLabel: formatCompact(gross.toString(), amountDecimals),
+    }
+  }, [effectiveMinInSrc, bridgeFeeBps, amountDecimals])
+
   const isBelowMin = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
-    const parsed = parseAmountAsBigInt(amount, amountDecimals)
+    const gross = parseAmountAsBigInt(amount, amountDecimals)
     if (effectiveMinInSrc != null && effectiveMinInSrc > 0n) {
-      return parsed < effectiveMinInSrc
+      const net = gross - (gross * bridgeFeeBps) / 10000n
+      return net < effectiveMinInSrc
     }
     return false
-  }, [amount, amountDecimals, effectiveMinInSrc])
+  }, [amount, amountDecimals, effectiveMinInSrc, bridgeFeeBps])
 
   const isAboveMax = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
@@ -823,6 +838,11 @@ export function TransferForm() {
     amountDecimals,
     toSourceUnits,
   ])
+
+  const handleMin = useCallback(() => {
+    if (minSendGrossInSrc == null || minSendGrossInSrc <= 0n) return
+    setAmount(formatAmountForNumberInput(minSendGrossInSrc, amountDecimals))
+  }, [minSendGrossInSrc, amountDecimals])
 
   // EVM deposit success: parse receipt, compute transfer hash, store record, redirect.
   // IMPORTANT: Uses frozenChainsRef (captured at deposit time) to avoid reading stale/swapped
@@ -1863,6 +1883,7 @@ export function TransferForm() {
       <AmountInput
         value={amount}
         onChange={setAmount}
+        onMin={minSendGrossInSrc != null && minSendGrossInSrc > 0n ? handleMin : undefined}
         onMax={
           isSourceTerra && terraSourceBalance
             ? handleMax

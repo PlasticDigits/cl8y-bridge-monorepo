@@ -8,6 +8,8 @@ import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 export interface AmountInputProps {
   value: string
   onChange: (value: string) => void
+  /** Fills the minimum send amount (gross) that satisfies destination limits after fees */
+  onMin?: () => void
   onMax?: () => void
   symbol?: string
   /** When provided, shows a token dropdown instead of a static symbol */
@@ -27,6 +29,7 @@ export interface AmountInputProps {
 export function AmountInput({
   value,
   onChange,
+  onMin,
   onMax,
   symbol = '—',
   tokens,
@@ -95,6 +98,19 @@ export function AmountInput({
           className="w-full border-2 border-white/20 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:border-cyan-300 focus:outline-none disabled:opacity-50"
         />
         <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 flex items-center gap-2">
+          {onMin && (
+            <button
+              type="button"
+              data-testid="amount-min-button"
+              onClick={() => {
+                sounds.playButtonPress()
+                onMin()
+              }}
+              className="border border-amber-400/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300 hover:bg-amber-400/10"
+            >
+              MIN
+            </button>
+          )}
           {onMax && (
             <button
               type="button"
