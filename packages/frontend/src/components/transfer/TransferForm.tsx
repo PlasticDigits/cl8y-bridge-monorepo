@@ -36,7 +36,7 @@ import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawT
 import { PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
 import { useUIStore } from '../../stores/ui'
-import { getChainById } from '../../lib/chains'
+import { getChainById, getExplorerTxUrl } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
 import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
@@ -598,6 +598,7 @@ export function TransferForm() {
   const {
     deposit: evmDeposit,
     status: evmStatus,
+    approvalTxHash: evmApprovalTxHash,
     depositTxHash,
     error: evmError,
     reset: resetEvm,
@@ -1741,6 +1742,10 @@ export function TransferForm() {
     ? 'Route misconfigured'
     : evmStatus === 'switching-chain'
     ? `Switching to ${sourceChainConfig?.name ?? 'source chain'}...`
+    : evmStatus === 'waiting-approval'
+    ? 'Confirming approval…'
+    : evmStatus === 'waiting-deposit'
+    ? 'Confirming deposit…'
     : isSubmitting
     ? 'Processing...'
     : direction === 'terra-to-evm' || direction === 'terra-to-solana'
@@ -1764,12 +1769,62 @@ export function TransferForm() {
       )}
       {error && (
         <div className="bg-red-900/30 border-2 border-red-700 p-3 overflow-hidden">
-          <p className="text-red-300 text-sm break-all">{error}</p>
+          <p className="text-red-300 text-sm break-words whitespace-pre-wrap">{error}</p>
           <button type="button" onClick={() => setError(null)} className="text-red-200 text-xs mt-2 underline underline-offset-2">
             Dismiss
           </button>
         </div>
       )}
+      {!error &&
+        !txHash &&
+        (evmStatus === 'waiting-approval' || evmStatus === 'waiting-deposit') && (
+          <div className="border-2 border-cyan-700/70 bg-cyan-950/30 p-3 shadow-[2px_2px_0_#000]">
+            <p className="text-cyan-200 text-xs font-semibold uppercase tracking-wide">
+              {evmStatus === 'waiting-approval' ? 'Waiting for approval' : 'Waiting for deposit'}
+            </p>
+            <p className="text-cyan-100/85 text-sm mt-2">
+              Your wallet submitted a transaction. Confirmation can take from a few seconds to several minutes depending on
+              the network. If nothing appears after about two minutes, the transaction may have been dropped—check the
+              explorer link below, your wallet activity, gas settings, and RPC.
+            </p>
+            {evmStatus === 'waiting-approval' && evmApprovalTxHash && (
+              <p className="mt-2 text-xs text-cyan-300/90">
+                <span className="font-mono break-all">{evmApprovalTxHash}</span>
+                {getExplorerTxUrl(sourceChain, evmApprovalTxHash) ? (
+                  <>
+                    {' '}
+                    <a
+                      href={getExplorerTxUrl(sourceChain, evmApprovalTxHash)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300"
+                    >
+                      View on explorer →
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            )}
+            {evmStatus === 'waiting-deposit' && depositTxHash && (
+              <p className="mt-2 text-xs text-cyan-300/90">
+                <span className="font-mono break-all">{depositTxHash}</span>
+                {getExplorerTxUrl(sourceChain, depositTxHash) ? (
+                  <>
+                    {' '}
+                    <a
+                      href={getExplorerTxUrl(sourceChain, depositTxHash)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300"
+                    >
+                      View on explorer →
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            )}
+          </div>
+        )}
       {!error && submitGuardError && (
         <div className="bg-amber-900/30 border-2 border-amber-700 p-3">
           <p className="text-amber-200 text-sm">{submitGuardError}</p>

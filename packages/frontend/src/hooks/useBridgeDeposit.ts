@@ -446,7 +446,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
           setState(prev => ({
             ...prev,
             status: 'error',
-            error: 'Approval transaction timed out after 2 minutes',
+            error:
+              'Approval transaction timed out after 2 minutes. If the explorer shows nothing for this hash, the transaction may have been dropped from the mempool—try again with a higher max fee, switch to a reliable RPC in your wallet, or resubmit.',
           }))
         })
 
@@ -520,7 +521,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         setState(prev => ({
           ...prev,
           status: 'error',
-          error: 'Deposit transaction timed out after 2 minutes. Check your transaction on the block explorer.',
+          error:
+            'Deposit transaction timed out after 2 minutes. If the block explorer shows the transaction as not found, it likely never mined (low gas, RPC desync, or a replaced transaction). Retry with adequate gas, use a stable RPC in your wallet, check Activity for stuck txs, or verify the hash on the explorer.',
         }))
       })
 
