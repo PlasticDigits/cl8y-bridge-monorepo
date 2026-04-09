@@ -13,7 +13,8 @@ import {
   withSolanaReadFallback,
 } from "./solanaRpcUrls";
 
-const PENDING_WITHDRAW_MIN_LEN = 187;
+/** 8-byte Anchor disc + Borsh body (through `bump`); matches on-chain `PendingWithdraw` account size. */
+const PENDING_WITHDRAW_MIN_LEN = 186;
 
 function bytes4ToBytes32Left(b: `0x${string}`): Hex {
   const hex = b.slice(2).toLowerCase();
