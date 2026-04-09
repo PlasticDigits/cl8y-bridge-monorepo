@@ -20,15 +20,20 @@ import { sounds } from '../../lib/sounds'
 import { anchorDiscriminator } from '../../utils/anchorDiscriminator'
 import type { NetworkTier } from '../../utils/bridgeChains'
 import {
-  parseSolanaRpcUrlList,
   pickSolanaConnection,
   pickSolanaTxConnection,
+  solanaRpcUrlsForBridgeChain,
   withSolanaReadFallback,
 } from '../../services/solana/solanaRpcUrls'
+import { getSolanaBridgeChains } from '../../utils/bridgeChains'
 
 function faucetSolanaRpcUrls(): string[] {
-  const u = parseSolanaRpcUrlList(import.meta.env.VITE_SOLANA_RPC_URL)
-  return u.length > 0 ? u : ['http://localhost:8899']
+  const chains = getSolanaBridgeChains()
+  const c = chains[0]
+  if (c?.type === 'solana') {
+    return solanaRpcUrlsForBridgeChain(c)
+  }
+  return ['http://localhost:8899']
 }
 
 // ---------------------------------------------------------------------------

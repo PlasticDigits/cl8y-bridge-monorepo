@@ -1,5 +1,6 @@
 import { getAllBridgeChains } from '../../utils/bridgeChains'
 import { getChainByChainId } from '../../lib/chains'
+import { solanaRpcUrlsForBridgeChain } from '../../services/solana/solanaRpcUrls'
 import { ChainCard } from './ChainCard'
 
 export function ChainsPanel() {
@@ -9,9 +10,11 @@ export function ChainsPanel() {
   const chainsWithExplorer = bridgeChains.map((chain) => {
     const info = getChainByChainId(chain.chainId)
     const rpcUrls =
-      chain.type === 'evm' || chain.type === 'solana'
-        ? [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])].filter(Boolean)
-        : undefined
+      chain.type === 'solana'
+        ? solanaRpcUrlsForBridgeChain(chain)
+        : chain.type === 'evm'
+          ? [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])].filter(Boolean)
+          : undefined
     const lcdUrls =
       chain.type === 'cosmos'
         ? (chain.lcdFallbacks?.length ? chain.lcdFallbacks : chain.lcdUrl ? [chain.lcdUrl] : [])

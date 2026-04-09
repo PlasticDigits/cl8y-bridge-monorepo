@@ -21,7 +21,7 @@ import { TerraTxError } from '../services/terra/transaction'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import {
   buildWithdrawSubmitInstruction,
-  formatSolanaWalletError,
+  formatSolanaUserFacingError,
   sendSolanaTransaction,
 } from '../services/solana/transaction'
 import { pickSolanaTxConnection } from '../services/solana/solanaRpcUrls'
@@ -177,7 +177,7 @@ export function useWithdrawSubmit() {
         setState({ status: 'success', txHash: signature, error: null })
         return signature
       } catch (err) {
-        const message = formatSolanaWalletError(err)
+        const message = formatSolanaUserFacingError(err)
         const isRejection =
           message.toLowerCase().includes('rejected') || message.toLowerCase().includes('denied')
         const finalMessage = isRejection ? 'Transaction rejected by user' : message

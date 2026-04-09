@@ -22,3 +22,11 @@ export const DEFAULT_SOLANA_MAINNET_RPC_URLS: readonly string[] = [
   "https://public.rpc.solanavibestation.com/",
   "https://solana.rpc.subquery.network/public",
 ];
+
+/**
+ * Extra devnet JSON-RPC URLs merged after the bridge row (browser CORS–friendly where possible).
+ */
+export const DEFAULT_SOLANA_DEVNET_RPC_URLS: readonly string[] = [
+  "https://api.devnet.solana.com",
+  "https://rpc.ankr.com/solana_devnet",
+];

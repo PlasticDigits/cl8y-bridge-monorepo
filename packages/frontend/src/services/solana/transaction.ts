@@ -15,6 +15,10 @@ import { computeXchainHashIdBytes } from "../hashVerification";
 import { hexToUint8Array } from "../terra/withdrawSubmit";
 import { findBridgeConfigPda } from "./solanaBridgeAccounts";
 import { getSolanaBrowserProvider } from "./solanaProvider";
+import {
+  isSolanaPublicRpcHttp403,
+  SOLANA_PUBLIC_RPC_403_USER_MESSAGE,
+} from "./solanaRpcUrls";
 
 const DEPOSIT_SEED = Buffer.from("deposit");
 const CHAIN_SEED = Buffer.from("chain");
@@ -91,6 +95,16 @@ export function formatSolanaWalletError(err: unknown): string {
     }
   }
   return appendPhantomLocalnetHint("Solana wallet request failed.");
+}
+
+/** Wallet / RPC failures with an explicit HTTP 403 / public-RPC ban message when applicable. */
+export function formatSolanaUserFacingError(err: unknown): string {
+  if (isSolanaPublicRpcHttp403(err)) return SOLANA_PUBLIC_RPC_403_USER_MESSAGE;
+  return formatSolanaWalletError(err);
+}
+
+function rethrowSolanaUserFacing(err: unknown): never {
+  throw new Error(formatSolanaUserFacingError(err));
 }
 
 function withTimeout<T>(
@@ -383,13 +397,14 @@ export async function buildSolanaSplDepositInstructions(
 /**
  * Send a transaction via the connected Solana wallet.
  *
- * Prefers `signAndSendTransaction` when the wallet supports it (Backpack,
- * Phantom, Solflare) — this avoids cross-library serialisation issues where
- * the wallet returns a `VersionedTransaction` that our `@solana/web3.js`
- * cannot re-serialise (the root cause of the "numRequiredSignatures" crash).
+ * Default: `signTransaction` → simulate → `sendRawTransaction` on the provided
+ * `Connection` (bridge backup RPC list) so broadcast is not tied to the wallet’s
+ * default `api.mainnet.solana.com` endpoint.
  *
- * Falls back to the classic `signTransaction` → simulate → sendRaw path for
- * wallets that only expose the older interface.
+ * Set `VITE_SOLANA_PREFER_SIGN_AND_SEND_FIRST=true` to try `signAndSendTransaction`
+ * first (wallet-controlled broadcast). If sign+raw fails with a known
+ * cross-library serialization error, we retry once with `signAndSendTransaction`
+ * when available.
  */
 export async function sendSolanaTransaction(
   connection: Connection,
@@ -412,9 +427,6 @@ export async function sendSolanaTransaction(
   transaction.recentBlockhash = blockhash;
   transaction.feePayer = new PublicKey(provider.publicKey.toString());
 
-  // Pre-flight: make sure the transaction compiles in *our* web3.js before
-  // handing it to the wallet.  This surfaces structural errors early with a
-  // clear message instead of an opaque "numRequiredSignatures" crash.
   try {
     transaction.compileMessage();
   } catch (compileErr) {
@@ -423,8 +435,13 @@ export async function sendSolanaTransaction(
     );
   }
 
-  // ---- fast-path: signAndSendTransaction (preferred) -------------------
-  if (typeof provider.signAndSendTransaction === "function") {
+  const preferSignAndSendFirst =
+    import.meta.env.VITE_SOLANA_PREFER_SIGN_AND_SEND_FIRST === "true";
+
+  const runSignAndSend = async (): Promise<string> => {
+    if (typeof provider.signAndSendTransaction !== "function") {
+      throw new Error("Wallet does not support signAndSendTransaction.");
+    }
     const result = await withTimeout(
       provider.signAndSendTransaction(transaction, {
         preflightCommitment: "confirmed",
@@ -448,98 +465,158 @@ export async function sendSolanaTransaction(
       );
     }
 
-    await connection.confirmTransaction(
-      { signature: sig, blockhash, lastValidBlockHeight },
-      "confirmed",
-    );
-    return sig;
-  }
-
-  // ---- fallback: signTransaction → simulate → sendRaw ------------------
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const signResult: any = await withTimeout(
-    provider.signTransaction(transaction),
-    SOLANA_WALLET_SIGN_TIMEOUT_MS,
-    () =>
-      new Error(
-        `Wallet did not complete signing within ${Math.round(SOLANA_WALLET_SIGN_TIMEOUT_MS / 1000)}s. ` +
-          "If no popup appeared, this wallet may not support signing for this RPC (common with Phantom on a local validator).",
-      ),
-  );
-
-  if (!signResult) {
-    throw new Error(
-      "Wallet did not return a signed transaction. Try another Solana wallet or check the extension for blocked popups.",
-    );
-  }
-
-  // Reconstitute through our Transaction class so we control the
-  // serialisation path — wallets may return a VersionedTransaction or a
-  // Transaction from a different @solana/web3.js bundle.
-  let signed: Transaction;
-  if (signResult instanceof Transaction) {
-    signed = signResult;
-  } else if (typeof signResult.serialize === "function") {
     try {
-      const raw: Uint8Array | Buffer = signResult.serialize();
-      signed = Transaction.from(
-        raw instanceof Uint8Array ? Buffer.from(raw) : raw,
+      await connection.confirmTransaction(
+        { signature: sig, blockhash, lastValidBlockHeight },
+        "confirmed",
       );
-    } catch (reconErr) {
+    } catch (confirmErr) {
+      rethrowSolanaUserFacing(confirmErr);
+    }
+    return sig;
+  };
+
+  const runSignRaw = async (): Promise<string> => {
+    if (typeof provider.signTransaction !== "function") {
+      throw new Error("Wallet does not support signTransaction.");
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signResult: any = await withTimeout(
+      provider.signTransaction(transaction),
+      SOLANA_WALLET_SIGN_TIMEOUT_MS,
+      () =>
+        new Error(
+          `Wallet did not complete signing within ${Math.round(SOLANA_WALLET_SIGN_TIMEOUT_MS / 1000)}s. ` +
+            "If no popup appeared, this wallet may not support signing for this RPC (common with Phantom on a local validator).",
+        ),
+    );
+
+    if (!signResult) {
       throw new Error(
-        "Could not re-parse signed transaction returned by wallet. " +
-          `(${reconErr instanceof Error ? reconErr.message : String(reconErr)}). ` +
-          "Try a different Solana wallet (Solflare works well on local validators).",
+        "Wallet did not return a signed transaction. Try another Solana wallet or check the extension for blocked popups.",
       );
     }
-  } else {
-    throw new Error(
-      "Wallet returned an unexpected object from signTransaction. " +
-        "Try another Solana wallet or check the extension for blocked popups.",
-    );
-  }
 
-  const sim = await connection.simulateTransaction(signed);
-  if (sim.value.err) {
-    const logs = (sim.value.logs ?? []).filter(Boolean).slice(-24).join("\n");
-    const base =
-      typeof sim.value.err === "object"
-        ? JSON.stringify(sim.value.err)
-        : String(sim.value.err);
-    throw new Error(
-      logs
-        ? `Solana simulation failed: ${base}\n--- program logs ---\n${logs}`
-        : `Solana simulation failed: ${base}`,
-    );
-  }
-
-  let signature: string;
-  try {
-    signature = await connection.sendRawTransaction(signed.serialize());
-  } catch (err: unknown) {
-    const e = err as { getLogs?: () => string[] };
-    if (typeof e.getLogs === "function") {
+    let signed: Transaction;
+    if (signResult instanceof Transaction) {
+      signed = signResult;
+    } else if (typeof signResult.serialize === "function") {
       try {
-        const logs = e.getLogs();
-        if (logs?.length) {
-          const tail = logs.filter(Boolean).slice(-12).join("\n");
-          const base =
-            err instanceof Error ? err.message : "Solana transaction failed";
-          throw new Error(`${base}\n${tail}`);
-        }
-      } catch (wrapped) {
-        if (wrapped !== err) throw wrapped;
+        const raw: Uint8Array | Buffer = signResult.serialize();
+        signed = Transaction.from(
+          raw instanceof Uint8Array ? Buffer.from(raw) : raw,
+        );
+      } catch (reconErr) {
+        throw new Error(
+          "Could not re-parse signed transaction returned by wallet. " +
+            `(${reconErr instanceof Error ? reconErr.message : String(reconErr)}). ` +
+            "Try a different Solana wallet (Solflare works well on local validators).",
+        );
       }
+    } else {
+      throw new Error(
+        "Wallet returned an unexpected object from signTransaction. " +
+          "Try another Solana wallet or check the extension for blocked popups.",
+      );
     }
-    throw err;
+
+    const sim = await connection.simulateTransaction(signed);
+    if (sim.value.err) {
+      const logs = (sim.value.logs ?? []).filter(Boolean).slice(-24).join("\n");
+      const base =
+        typeof sim.value.err === "object"
+          ? JSON.stringify(sim.value.err)
+          : String(sim.value.err);
+      throw new Error(
+        logs
+          ? `Solana simulation failed: ${base}\n--- program logs ---\n${logs}`
+          : `Solana simulation failed: ${base}`,
+      );
+    }
+
+    let signature: string;
+    try {
+      signature = await connection.sendRawTransaction(signed.serialize());
+    } catch (err: unknown) {
+      const e = err as { getLogs?: () => string[] };
+      if (typeof e.getLogs === "function") {
+        try {
+          const logs = e.getLogs();
+          if (logs?.length) {
+            const tail = logs.filter(Boolean).slice(-12).join("\n");
+            const base =
+              err instanceof Error ? err.message : "Solana transaction failed";
+            throw new Error(`${base}\n${tail}`);
+          }
+        } catch (wrapped) {
+          if (wrapped !== err) throw wrapped;
+        }
+      }
+      rethrowSolanaUserFacing(err);
+    }
+
+    try {
+      await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        "confirmed",
+      );
+    } catch (confirmErr) {
+      rethrowSolanaUserFacing(confirmErr);
+    }
+
+    return signature;
+  };
+
+  if (
+    preferSignAndSendFirst &&
+    typeof provider.signAndSendTransaction === "function"
+  ) {
+    try {
+      return await runSignAndSend();
+    } catch (e) {
+      if (typeof provider.signTransaction === "function") {
+        try {
+          return await runSignRaw();
+        } catch (e2) {
+          rethrowSolanaUserFacing(e2);
+        }
+      }
+      rethrowSolanaUserFacing(e);
+    }
   }
 
-  await connection.confirmTransaction(
-    { signature, blockhash, lastValidBlockHeight },
-    "confirmed",
-  );
+  if (typeof provider.signTransaction === "function") {
+    try {
+      return await runSignRaw();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const serializationLikely =
+        typeof provider.signAndSendTransaction === "function" &&
+        /numRequiredSignatures|serialize|re-?parse|wrong size|versionedtransaction|cannot destructure/i.test(
+          msg,
+        );
+      if (serializationLikely) {
+        try {
+          return await runSignAndSend();
+        } catch (e2) {
+          rethrowSolanaUserFacing(e2);
+        }
+      }
+      rethrowSolanaUserFacing(e);
+    }
+  }
 
-  return signature;
+  if (typeof provider.signAndSendTransaction === "function") {
+    try {
+      return await runSignAndSend();
+    } catch (e) {
+      rethrowSolanaUserFacing(e);
+    }
+  }
+
+  throw new Error(
+    "Connected Solana wallet cannot sign transactions (no signTransaction or signAndSendTransaction).",
+  );
 }
 
 export async function fetchDepositNonce(

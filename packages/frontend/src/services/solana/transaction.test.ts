@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildWithdrawSubmitInstruction,
   bytes4HexToUint8Array,
+  formatSolanaUserFacingError,
   formatSolanaWalletError,
   looksLikeSolanaLocalnetRpc,
   parseTokenMappingLocalMint,
@@ -32,6 +33,11 @@ describe('solana/transaction helpers', () => {
     expect(formatSolanaWalletError(new Error('User rejected'))).toBe('User rejected')
     expect(formatSolanaWalletError({ code: 4001 })).toContain('rejected')
     expect(formatSolanaWalletError({ message: 'not supported on localnet' })).toContain('Phantom often')
+  })
+
+  it('formatSolanaUserFacingError uses public-RPC notice on HTTP 403', () => {
+    expect(formatSolanaUserFacingError(new Error('403 Forbidden'))).toContain('403')
+    expect(formatSolanaUserFacingError(new Error('403 Forbidden'))).toContain('custom RPC')
   })
 
   it('buildWithdrawSubmitInstruction rejects srcAccount that is not exactly 32 bytes', () => {
