@@ -16,6 +16,7 @@ import { DEFAULT_NETWORK } from '../utils/constants'
 import { getEvmClient } from '../services/evmClient'
 import { queryEvmPendingWithdraw } from '../services/evmBridgeQueries'
 import { queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
+import { querySolanaPendingWithdraw } from '../services/solana/solanaBridgeQueries'
 import type { BridgeChainConfig } from '../types/chain'
 
 const POLL_INTERVAL_MS = 1000
@@ -28,7 +29,9 @@ interface ApprovalCountdownResult {
 export function useApprovalCountdown(
   xchainHashId: Hex | undefined,
   destChainKey: string | undefined,
-  enabled: boolean
+  enabled: boolean,
+  /** Solana / fallback: cancel window length in seconds (bridge withdraw_delay). */
+  cancelWindowSeconds?: number | null,
 ): ApprovalCountdownResult {
   const tier = DEFAULT_NETWORK as NetworkTier
   const destChainConfig: BridgeChainConfig | undefined = destChainKey
@@ -36,7 +39,7 @@ export function useApprovalCountdown(
     : undefined
 
   const { data } = useQuery({
-    queryKey: ['approvalCountdown', xchainHashId, destChainKey],
+    queryKey: ['approvalCountdown', xchainHashId, destChainKey, cancelWindowSeconds],
     queryFn: async (): Promise<{ cancelWindowRemaining?: number; executed: boolean }> => {
       if (!xchainHashId || !destChainConfig?.bridgeAddress) {
         return { executed: false }
@@ -68,6 +71,22 @@ export function useApprovalCountdown(
         return {
           cancelWindowRemaining: result?.cancelWindowRemaining,
           executed: result?.executed ?? false,
+        }
+      }
+
+      if (destChainConfig.type === 'solana') {
+        const pw = await querySolanaPendingWithdraw(destChainConfig, xchainHashId)
+        if (!pw) return { executed: false }
+        const w = cancelWindowSeconds ?? 300
+        const now = Math.floor(Date.now() / 1000)
+        const approvedAt = Number(pw.approvedAt)
+        let cancelWindowRemaining: number | undefined
+        if (pw.approved && approvedAt > 0 && !pw.executed) {
+          cancelWindowRemaining = Math.max(0, approvedAt + w - now)
+        }
+        return {
+          cancelWindowRemaining,
+          executed: pw.executed,
         }
       }
 

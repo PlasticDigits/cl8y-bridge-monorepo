@@ -7,7 +7,8 @@
  *   1. Deposit (confirmed on source chain)
  *   2. Submit Hash (withdrawSubmit on destination chain)
  *   3. Approval (operator withdrawApprove)
- *   4. Execution (operator withdrawExecute, tokens released)
+ *   4. Execution — on Solana destination the recipient signs withdraw_execute; on EVM/Terra
+ *      the operator runs withdrawExecute after the cancel window.
  *
  * Auto-submits withdrawSubmit when both wallets are connected.
  * Falls back to manual submit with instructions.
@@ -43,33 +44,103 @@ import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
+import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
+import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 import type { Hex } from 'viem'
 
 const LOG = '[TransferStatus]'
 
 type NonceResolutionStatus = 'idle' | 'resolving' | 'resolved' | 'failed'
 
-// Lifecycle step definitions
-const STEPS: { key: TransferLifecycle; label: string; doneDescription: string; activeDescription: string; estimatedTime: string | null }[] = [
-  { key: 'deposited', label: 'Deposit', doneDescription: 'Tokens locked on source chain', activeDescription: 'Confirming deposit on source chain', estimatedTime: 'Usually ~30 seconds' },
-  { key: 'hash-submitted', label: 'Submit Hash', doneDescription: 'Withdrawal submitted to destination', activeDescription: 'Submitting withdrawal to destination', estimatedTime: 'Usually ~30 seconds' },
-  { key: 'approved', label: 'Approval', doneDescription: 'Operator verified deposit', activeDescription: 'Cancel window active', estimatedTime: '~5 min cancel window, then operator ~30s' },
-  { key: 'executed', label: 'Complete', doneDescription: 'Tokens delivered to recipient', activeDescription: 'Delivering tokens to recipient', estimatedTime: null },
-]
+type TransferStepRow = {
+  key: string
+  label: string
+  doneDescription: string
+  activeDescription: string
+  estimatedTime: string | null
+}
+
+const STEP_DEPOSIT: TransferStepRow = {
+  key: 'deposited',
+  label: 'Deposit',
+  doneDescription: 'Tokens locked on source chain',
+  activeDescription: 'Confirming deposit on source chain',
+  estimatedTime: 'Usually ~30 seconds',
+}
+const STEP_HASH: TransferStepRow = {
+  key: 'hash-submitted',
+  label: 'Submit Hash',
+  doneDescription: 'Withdrawal submitted to destination',
+  activeDescription: 'Submitting withdrawal to destination',
+  estimatedTime: 'Usually ~30 seconds',
+}
+const STEP_APPROVAL: TransferStepRow = {
+  key: 'approved',
+  label: 'Approval',
+  doneDescription: 'Operator verified deposit',
+  activeDescription: 'Cancel window active',
+  estimatedTime: '~5 min cancel window, then next step',
+}
+
+function buildTransferSteps(destIsSolana: boolean): TransferStepRow[] {
+  if (destIsSolana) {
+    return [
+      STEP_DEPOSIT,
+      STEP_HASH,
+      STEP_APPROVAL,
+      {
+        key: 'solana-exec',
+        label: 'Execute on Solana',
+        doneDescription: 'Recipient signed withdraw execute; tokens delivered',
+        activeDescription: 'Sign execute in your Solana wallet to receive funds',
+        estimatedTime: null,
+      },
+      {
+        key: 'executed',
+        label: 'Complete',
+        doneDescription: 'Transfer finished',
+        activeDescription: 'Finalizing',
+        estimatedTime: null,
+      },
+    ]
+  }
+  return [
+    STEP_DEPOSIT,
+    STEP_HASH,
+    STEP_APPROVAL,
+    {
+      key: 'executed',
+      label: 'Complete',
+      doneDescription: 'Tokens delivered to recipient',
+      activeDescription: 'Delivering tokens to recipient',
+      estimatedTime: null,
+    },
+  ]
+}
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
 
 /**
- * Index of the step that should show as ACTIVE in the stepper (not the STEPS row
- * whose `key` equals the lifecycle). E.g. lifecycle `hash-submitted` means
- * withdrawSubmit finished — steps 0–1 are done and step 2 (Approval) is active.
+ * Active step index for the vertical stepper. Solana destinations insert an explicit
+ * recipient execute step between approval and complete.
  */
-function getStepIndex(lifecycle?: TransferLifecycle): number {
+function getStepIndex(
+  lifecycle: TransferLifecycle | undefined,
+  destIsSolana: boolean,
+  cancelWindowRemaining: number | null | undefined,
+): number {
+  const n = destIsSolana ? 5 : 4
   if (!lifecycle || lifecycle === 'failed') return 0
-  if (lifecycle === 'executed') return STEPS.length
+  if (lifecycle === 'executed') return n
   if (lifecycle === 'deposited') return 0
   if (lifecycle === 'hash-submitted') return 2
-  if (lifecycle === 'approved') return 3
+  if (lifecycle === 'approved') {
+    if (destIsSolana) {
+      if (cancelWindowRemaining != null && cancelWindowRemaining > 0) return 2
+      return 3
+    }
+    return 3
+  }
   return 0
 }
 
@@ -77,12 +148,14 @@ function StepIndicator({
   step,
   currentIdx,
   idx,
+  totalSteps,
   isFailed,
   transferLifecycle,
 }: {
-  step: typeof STEPS[number]
+  step: TransferStepRow
   currentIdx: number
   idx: number
+  totalSteps: number
   isFailed: boolean
   transferLifecycle?: TransferLifecycle
 }) {
@@ -92,7 +165,9 @@ function StepIndicator({
   const progressKey =
     step.key === 'approved' && isActive && transferLifecycle === 'hash-submitted'
       ? 'hash-submitted'
-      : step.key
+      : step.key === 'solana-exec'
+        ? 'solana-exec'
+        : step.key
   const progress = useStepProgress(progressKey, isDone, isActive && !isError)
 
   const activeDescription =
@@ -146,7 +221,7 @@ function StepIndicator({
         >
           <img src={iconSrc} alt="" className="h-5 w-5 shrink-0 object-contain" aria-hidden />
         </div>
-        {idx < STEPS.length - 1 && (
+        {idx < totalSteps - 1 && (
           <div className="mt-1 flex min-h-6 flex-1 flex-col items-center">
             <div className={`w-1 flex-1 border-x border-black/50 ${connectorTone}`} />
             <div
@@ -675,6 +750,18 @@ export default function TransferStatusPage() {
     resetForRetry,
   } = useAutoWithdrawSubmit(transfer, lookupLoading)
 
+  const { data: bridgeConfigs } = useBridgeConfig()
+  const destChainCancelWindow = transfer?.destChain
+    ? bridgeConfigs?.find((c) => c.chainId === transfer.destChain)?.cancelWindowSeconds ?? null
+    : null
+
+  const { cancelWindowRemaining, executed: approvalPollDetectedExecuted } = useApprovalCountdown(
+    transfer?.xchainHashId as `0x${string}` | undefined,
+    transfer?.destChain,
+    transfer?.lifecycle === 'approved',
+    destChainCancelWindow,
+  )
+
   // Detect: hash-submitted in localStorage but not on destination chain (tx reverted/lost).
   // Suppress when auto-submit is actively processing (submit just succeeded, polling will catch up).
   const autoSubmitActive =
@@ -855,29 +942,6 @@ export default function TransferStatusPage() {
     }
   }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord, luncBalance])
 
-  const currentStepIdx = useMemo(() => {
-    const baseIdx = getStepIndex(transfer?.lifecycle)
-    // If deposit succeeded but hash submission failed, show step 1 (hash-submitted) not step 0 (deposit)
-    if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
-    // Stay on Submit Hash during explicit retry or in-flight submit (#86)
-    if (retryingHash) return 1
-    // Terra→Solana (etc.): retry keeps lifecycle `hash-submitted` — stay on Submit Hash while re-submitting
-    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'hash-submitted') return 1
-    if (transfer?.lifecycle === 'hash-submitted' && autoPhase === 'error') return 1
-    // Only while still `deposited`; once lifecycle advances, show Approval (#hash-submitted UX)
-    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
-    // Lookup-only / synthetic: source deposit confirmed, no dest withdraw yet — not still "confirming deposit"
-    if (
-      transfer?.lifecycle === 'deposited' &&
-      source != null &&
-      dest == null &&
-      !lookupLoading
-    ) {
-      return 1
-    }
-    return baseIdx
-  }, [transfer?.lifecycle, autoPhase, retryingHash, source, dest, lookupLoading])
-
   const submitDiagnostics = useMemo(() => {
     if (!transfer) return null
 
@@ -939,11 +1003,14 @@ export default function TransferStatusPage() {
 
   const isFailed = transfer?.lifecycle === 'failed'
 
-  const { cancelWindowRemaining, executed: approvalPollDetectedExecuted } = useApprovalCountdown(
-    transfer?.xchainHashId as `0x${string}` | undefined,
-    transfer?.destChain,
-    transfer?.lifecycle === 'approved'
-  )
+  const destIsSolana = useMemo(() => {
+    if (!transfer) return false
+    if (destChain?.type === 'solana') return true
+    const cfg = BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]
+    return cfg?.type === 'solana'
+  }, [transfer, destChain?.type])
+
+  const transferSteps = useMemo(() => buildTransferSteps(destIsSolana), [destIsSolana])
 
   // Advance lifecycle when the 1-second approval countdown poll detects execution.
   // This acts as a reliable fallback for the useAutoWithdrawSubmit polling, which
@@ -954,11 +1021,6 @@ export default function TransferStatusPage() {
     updateTransferRecord(transfer.id, { lifecycle: 'executed' })
     setTransfer((prev) => prev ? { ...prev, lifecycle: 'executed' } : null)
   }, [approvalPollDetectedExecuted, transfer, updateTransferRecord])
-
-  const { data: bridgeConfigs } = useBridgeConfig()
-  const destChainCancelWindow = transfer?.destChain
-    ? bridgeConfigs?.find((c) => c.chainId === transfer.destChain)?.cancelWindowSeconds ?? null
-    : null
 
   const showRateLimitInfo =
     !isFailed &&
@@ -999,6 +1061,67 @@ export default function TransferStatusPage() {
     rateLimitStatus?.kind === 'temporarily-blocked'
       ? Math.max(0, rateLimitStatus.periodEndsAt - nowSec)
       : null
+
+  const currentStepIdx = useMemo(() => {
+    const baseIdx = getStepIndex(
+      transfer?.lifecycle,
+      destIsSolana,
+      effectiveCancelWindowRemaining,
+    )
+    if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
+    if (retryingHash) return 1
+    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'hash-submitted') return 1
+    if (transfer?.lifecycle === 'hash-submitted' && autoPhase === 'error') return 1
+    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
+    if (
+      transfer?.lifecycle === 'deposited' &&
+      source != null &&
+      dest == null &&
+      !lookupLoading
+    ) {
+      return 1
+    }
+    return baseIdx
+  }, [
+    transfer?.lifecycle,
+    destIsSolana,
+    effectiveCancelWindowRemaining,
+    autoPhase,
+    retryingHash,
+    source,
+    dest,
+    lookupLoading,
+  ])
+
+  const solanaExecuteParams = useMemo(() => {
+    if (!transfer?.xchainHashId || !destChain || destChain.type !== 'solana') return null
+    const pendingToken = dest?.token ?? transfer.destToken
+    const destAcc = dest?.destAccount ?? transfer.destAccount
+    let srcChain = source?.srcChain
+    if (!srcChain && transfer.sourceChainIdBytes4) {
+      const b4 = transfer.sourceChainIdBytes4.replace(/^0x/i, '').slice(0, 8).padStart(8, '0')
+      srcChain = (`0x${b4.padEnd(64, '0')}`) as `0x${string}`
+    }
+    if (
+      !pendingToken ||
+      !destAcc ||
+      !srcChain ||
+      !pendingToken.startsWith('0x') ||
+      pendingToken.length !== 66 ||
+      !destAcc.startsWith('0x') ||
+      destAcc.length !== 66
+    ) {
+      return null
+    }
+    const srcTokKey = ((source?.srcToken ?? source?.token ?? transfer.token) ?? '') as string
+    if (!srcTokKey || !resolveWithdrawSrcTokenBytesForSolana(srcTokKey)) return null
+    return {
+      pendingTokenHex32: pendingToken,
+      destAccountHex32: destAcc,
+      sourceSrcChainHex32: srcChain,
+      mappingSrcTokenKey: srcTokKey,
+    }
+  }, [transfer, destChain, dest, source])
 
   if (!transfer) {
     const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)
@@ -1043,7 +1166,7 @@ export default function TransferStatusPage() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-xl font-semibold uppercase tracking-[0.08em] text-white">Transfer Status</h2>
             <span className="border-2 border-white/35 bg-[#111111] px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-gray-300 shadow-[2px_2px_0_#000]">
-              Step {Math.min(currentStepIdx + 1, STEPS.length)}/{STEPS.length}
+              Step {Math.min(currentStepIdx + 1, transferSteps.length)}/{transferSteps.length}
             </span>
           </div>
 
@@ -1059,12 +1182,13 @@ export default function TransferStatusPage() {
           )}
 
           <div className="space-y-2">
-            {STEPS.map((step, idx) => (
+            {transferSteps.map((step, idx) => (
               <StepIndicator
-                key={step.key}
+                key={`${step.key}-${idx}`}
                 step={step}
                 currentIdx={currentStepIdx}
                 idx={idx}
+                totalSteps={transferSteps.length}
                 isFailed={isFailed}
                 transferLifecycle={transfer.lifecycle}
               />
@@ -1284,7 +1408,13 @@ export default function TransferStatusPage() {
                   </p>
                   <p className="text-blue-400/70 text-xs mt-1">
                     The operator is verifying your deposit on the source chain.
-                    {destChainCancelWindow != null ? (
+                    {destIsSolana ? (
+                      <>
+                        {' '}
+                        After approval, the cancel window must pass; then you sign{' '}
+                        <strong>withdraw execute</strong> on Solana from this page to receive tokens.
+                      </>
+                    ) : destChainCancelWindow != null ? (
                       <> After approval, the cancel window is {formatCancelWindowRange(destChainCancelWindow)}. The operator usually executes within ~30 seconds after the cancel period ends.</>
                     ) : (
                       <> After approval, a ~5 minute cancel window will start. The operator usually executes within ~30 seconds after it ends.</>
@@ -1344,32 +1474,62 @@ export default function TransferStatusPage() {
                   </div>
                 )
               ) : (
-                <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
-                  <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
-                    Cancel Window Active
-                  </p>
-                  <p className="text-blue-400/70 text-xs mt-1">
-                    Approved. Waiting for the cancel window to expire before tokens are released
-                    {destChainCancelWindow != null && (
-                      <span className="ml-1">({formatCancelWindowRange(destChainCancelWindow)})</span>
-                    )}
-                    .
-                    {effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining > 0 ? (
-                      <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
-                        {formatCountdownMmSs(effectiveCancelWindowRemaining)} remaining
-                      </span>
-                    ) : effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining <= 0 ? (
-                      <>
+                <>
+                  <div className="mt-2 border-2 border-cyan-700 bg-[#121c22] p-3 shadow-[3px_3px_0_#000]">
+                    <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+                      Cancel Window Active
+                    </p>
+                    <p className="text-blue-400/70 text-xs mt-1">
+                      Approved. Waiting for the cancel window to expire before tokens are released
+                      {destChainCancelWindow != null && (
+                        <span className="ml-1">({formatCancelWindowRange(destChainCancelWindow)})</span>
+                      )}
+                      .
+                      {effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining > 0 ? (
                         <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
-                          Executing…
+                          {formatCountdownMmSs(effectiveCancelWindowRemaining)} remaining
                         </span>
-                        <span className="ml-1 text-cyan-400/60 text-[11px] italic">
-                          Operator usually completes within ~30 seconds
-                        </span>
-                      </>
-                    ) : null}
-                  </p>
-                </div>
+                      ) : effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining <= 0 ? (
+                        destIsSolana ? (
+                          <span className="ml-1 text-cyan-400/80 text-[11px]">
+                            You can execute from your Solana wallet below.
+                          </span>
+                        ) : (
+                          <>
+                            <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                              Executing…
+                            </span>
+                            <span className="ml-1 text-cyan-400/60 text-[11px] italic">
+                              Operator usually completes within ~30 seconds
+                            </span>
+                          </>
+                        )
+                      ) : null}
+                    </p>
+                  </div>
+                  {destIsSolana &&
+                    destChain?.type === 'solana' &&
+                    solanaExecuteParams &&
+                    transfer.xchainHashId && (
+                      <SolanaRecipientExecutePanel
+                        destChainConfig={destChain}
+                        xchainHashId={transfer.xchainHashId}
+                        pendingTokenHex32={solanaExecuteParams.pendingTokenHex32}
+                        destAccountHex32={solanaExecuteParams.destAccountHex32}
+                        sourceSrcChainHex32={solanaExecuteParams.sourceSrcChainHex32}
+                        mappingSrcTokenKey={solanaExecuteParams.mappingSrcTokenKey}
+                        canExecute={
+                          effectiveCancelWindowRemaining != null &&
+                          effectiveCancelWindowRemaining <= 0
+                        }
+                        cancelWindowHint={
+                          effectiveCancelWindowRemaining != null && effectiveCancelWindowRemaining > 0
+                            ? `${formatCountdownMmSs(effectiveCancelWindowRemaining)} left in cancel window`
+                            : null
+                        }
+                      />
+                    )}
+                </>
               )}
             </>
           )}

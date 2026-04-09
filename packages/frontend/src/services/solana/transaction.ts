@@ -25,6 +25,145 @@ const CHAIN_SEED = Buffer.from("chain");
 const TOKEN_MAPPING_SEED = Buffer.from("token");
 const WITHDRAW_SEED = Buffer.from("withdraw");
 const EXECUTED_SEED = Buffer.from("executed");
+const W_RATE_LIM = Buffer.from("w_rate_lim");
+
+/** PendingWithdraw.token for native SOL mappings (32 zero bytes on-chain). */
+export const SOLANA_NATIVE_TOKEN_PUBKEY = new PublicKey(new Uint8Array(32));
+
+export function findWithdrawRateLimitPda(
+  programId: PublicKey,
+  mint: PublicKey,
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [W_RATE_LIM, mint.toBuffer()],
+    programId,
+  );
+}
+
+/**
+ * SPL Token / Token-2022 program owning the mint (for ATA derivation).
+ */
+export async function resolveSplTokenProgramForMint(
+  connection: Connection,
+  mint: PublicKey,
+): Promise<PublicKey> {
+  const info = await connection.getAccountInfo(mint, "confirmed");
+  if (!info) {
+    throw new Error("Mint account not found");
+  }
+  return info.owner;
+}
+
+/**
+ * `withdraw_execute` — recipient signs; closes `pending_withdraw` to recipient (rent to recipient).
+ */
+export function buildWithdrawExecuteSplInstruction(
+  programId: PublicKey,
+  recipient: PublicKey,
+  transferHash32: Uint8Array,
+  mint: PublicKey,
+  tokenProgram: PublicKey,
+  srcChain4: Uint8Array,
+  mappingSrcToken32: Uint8Array,
+): TransactionInstruction {
+  if (transferHash32.length !== 32) {
+    throw new Error("transferHash32 must be 32 bytes");
+  }
+  if (srcChain4.length < 4) {
+    throw new Error("srcChain4 must be at least 4 bytes");
+  }
+  if (mappingSrcToken32.length !== 32) {
+    throw new Error("mappingSrcToken32 must be 32 bytes");
+  }
+
+  const bridgePda = findBridgeConfigPda(programId);
+  const [pendingPda] = PublicKey.findProgramAddressSync(
+    [WITHDRAW_SEED, Buffer.from(transferHash32)],
+    programId,
+  );
+  const [executedHashPda] = PublicKey.findProgramAddressSync(
+    [EXECUTED_SEED, Buffer.from(transferHash32)],
+    programId,
+  );
+  const [tokenMappingPda] = PublicKey.findProgramAddressSync(
+    [
+      TOKEN_MAPPING_SEED,
+      Buffer.from(srcChain4.subarray(0, 4)),
+      Buffer.from(mappingSrcToken32),
+    ],
+    programId,
+  );
+  const [wrPda] = findWithdrawRateLimitPda(programId, mint);
+
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient,
+    false,
+    tokenProgram,
+  );
+  const bridgeAta = getAssociatedTokenAddressSync(
+    mint,
+    bridgePda,
+    true,
+    tokenProgram,
+  );
+
+  const disc = anchorDiscriminator("withdraw_execute");
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: bridgePda, isSigner: false, isWritable: false },
+      { pubkey: pendingPda, isSigner: false, isWritable: true },
+      { pubkey: executedHashPda, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: true },
+      { pubkey: recipientAta, isSigner: false, isWritable: true },
+      { pubkey: bridgeAta, isSigner: false, isWritable: true },
+      { pubkey: tokenMappingPda, isSigner: false, isWritable: false },
+      { pubkey: wrPda, isSigner: false, isWritable: true },
+      { pubkey: recipient, isSigner: true, isWritable: true },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: disc,
+  });
+}
+
+/**
+ * `withdraw_execute_native` — recipient signs; native SOL payout from bridge PDA.
+ */
+export function buildWithdrawExecuteNativeInstruction(
+  programId: PublicKey,
+  recipient: PublicKey,
+  transferHash32: Uint8Array,
+): TransactionInstruction {
+  if (transferHash32.length !== 32) {
+    throw new Error("transferHash32 must be 32 bytes");
+  }
+  const bridgePda = findBridgeConfigPda(programId);
+  const [pendingPda] = PublicKey.findProgramAddressSync(
+    [WITHDRAW_SEED, Buffer.from(transferHash32)],
+    programId,
+  );
+  const [executedHashPda] = PublicKey.findProgramAddressSync(
+    [EXECUTED_SEED, Buffer.from(transferHash32)],
+    programId,
+  );
+  const [wrPda] = findWithdrawRateLimitPda(programId, SOLANA_NATIVE_TOKEN_PUBKEY);
+
+  const disc = anchorDiscriminator("withdraw_execute_native");
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: bridgePda, isSigner: false, isWritable: true },
+      { pubkey: pendingPda, isSigner: false, isWritable: true },
+      { pubkey: executedHashPda, isSigner: false, isWritable: true },
+      { pubkey: wrPda, isSigner: false, isWritable: true },
+      { pubkey: recipient, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: disc,
+  });
+}
 
 /** Wrapped SOL mint — when `TokenMapping.local_mint` is WSOL, the UI uses `deposit_native` (lamports). */
 export const WSOL_MINT = new PublicKey(

@@ -11,6 +11,7 @@ const STEP_EXPECTED_MS: Record<string, number> = {
   deposited: 30_000,
   'hash-submitted': 90_000,
   approved: 330_000,
+  'solana-exec': 60_000,
   executed: 0,
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useAccount, useSwitchChain } from 'wagmi'
 import { useHashVerification } from '../hooks/useHashVerification'
@@ -18,13 +18,17 @@ import {
 } from '../components/verify'
 import { HashWithBlockie } from '../components/ui'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
-import { getBridgeChainByBytes4 } from '../utils/bridgeChains'
+import { getBridgeChainByBytes4, getChainKeyByConfig } from '../utils/bridgeChains'
 import { bytes32ToAddress } from '../services/evm/tokenRegistry'
 import { bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useTokenList } from '../hooks/useTokenList'
 import type { DepositData } from '../hooks/useTransferLookup'
 import type { Hex, Address } from 'viem'
+import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
+import { useBridgeConfig } from '../hooks/useBridgeConfig'
+import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
+import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
 
 /** Extract bytes4 from bytes32 (left-aligned) */
 function bytes32ToBytes4(bytes32: Hex): string {
@@ -231,6 +235,42 @@ export default function HashVerificationPage() {
     !!showRateLimitInfo
   )
 
+  const destChainKey = destChain ? getChainKeyByConfig(destChain) : undefined
+  const { data: verifyBridgeConfigs } = useBridgeConfig()
+  const verifySolanaCancelWindow = destChainKey
+    ? verifyBridgeConfigs?.find((c) => c.chainId === destChainKey)?.cancelWindowSeconds ?? null
+    : null
+  const { cancelWindowRemaining: verifySolanaCancelRem } = useApprovalCountdown(
+    inputHash as Hex | undefined,
+    destChainKey,
+    !!(inputHash && dest?.approved && !dest.executed && destChain?.type === 'solana'),
+    verifySolanaCancelWindow,
+  )
+
+  const verifySolanaExecuteParams = useMemo(() => {
+    if (!inputHash || !source || !dest || !destChain || destChain.type !== 'solana') return null
+    const pendingToken = dest.token as string
+    const destAcc = dest.destAccount as string
+    const srcChain = source.srcChain as `0x${string}`
+    const srcTokKey = ((source.srcToken ?? source.token) ?? '') as string
+    if (
+      !pendingToken.startsWith('0x') ||
+      pendingToken.length !== 66 ||
+      !destAcc.startsWith('0x') ||
+      destAcc.length !== 66 ||
+      !srcChain.startsWith('0x') ||
+      !resolveWithdrawSrcTokenBytesForSolana(srcTokKey)
+    ) {
+      return null
+    }
+    return {
+      pendingTokenHex32: pendingToken,
+      destAccountHex32: destAcc,
+      sourceSrcChainHex32: srcChain,
+      mappingSrcTokenKey: srcTokKey,
+    }
+  }, [inputHash, source, dest, destChain])
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="shell-panel-strong relative overflow-hidden">
@@ -281,6 +321,31 @@ export default function HashVerificationPage() {
           error={error}
           terraRateLimitStatus={terraRateLimitStatus}
         />
+
+        {inputHash &&
+          destChain?.type === 'solana' &&
+          dest?.approved &&
+          !dest.executed &&
+          verifySolanaExecuteParams && (
+            <div className="mt-4">
+              <SolanaRecipientExecutePanel
+                destChainConfig={destChain}
+                xchainHashId={inputHash}
+                pendingTokenHex32={verifySolanaExecuteParams.pendingTokenHex32}
+                destAccountHex32={verifySolanaExecuteParams.destAccountHex32}
+                sourceSrcChainHex32={verifySolanaExecuteParams.sourceSrcChainHex32}
+                mappingSrcTokenKey={verifySolanaExecuteParams.mappingSrcTokenKey}
+                canExecute={
+                  verifySolanaCancelRem != null && verifySolanaCancelRem <= 0
+                }
+                cancelWindowHint={
+                  verifySolanaCancelRem != null && verifySolanaCancelRem > 0
+                    ? `~${verifySolanaCancelRem}s left in cancel window`
+                    : null
+                }
+              />
+            </div>
+          )}
 
         {/* WithdrawSubmit prompt when hash not submitted to destination */}
         {notSubmittedOnChain && (
