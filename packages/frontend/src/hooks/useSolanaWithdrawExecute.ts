@@ -5,8 +5,8 @@ import type { BridgeChainConfig } from "../types/chain";
 import { hexToUint8Array } from "../services/terra/withdrawSubmit";
 import { resolveWithdrawSrcTokenBytesForSolana } from "../services/solana/resolveWithdrawSrcTokenBytes";
 import {
+  buildSolanaSplWithdrawExecuteInstructions,
   buildWithdrawExecuteNativeInstruction,
-  buildWithdrawExecuteSplInstruction,
   bytes32HexToPublicKey,
   formatSolanaUserFacingError,
   resolveSplTokenProgramForMint,
@@ -109,20 +109,23 @@ export function useSolanaWithdrawExecute() {
           rpcUrls,
         );
 
-        let ix;
+        let ixs;
         if (bytes32HexIsAllZero(params.pendingTokenHex32)) {
-          ix = buildWithdrawExecuteNativeInstruction(
-            programId,
-            recipient,
-            hashBytes,
-          );
+          ixs = [
+            buildWithdrawExecuteNativeInstruction(
+              programId,
+              recipient,
+              hashBytes,
+            ),
+          ];
         } else {
           const mint = bytes32HexToPublicKey(params.pendingTokenHex32);
           const tokenProgram = await resolveSplTokenProgramForMint(
             readConnection,
             mint,
           );
-          ix = buildWithdrawExecuteSplInstruction(
+          ixs = await buildSolanaSplWithdrawExecuteInstructions(
+            readConnection,
             programId,
             recipient,
             hashBytes,
@@ -133,7 +136,7 @@ export function useSolanaWithdrawExecute() {
           );
         }
 
-        const tx = new Transaction().add(ix);
+        const tx = new Transaction().add(...ixs);
         const sig = await sendSolanaTransaction(
           txConnection,
           tx,

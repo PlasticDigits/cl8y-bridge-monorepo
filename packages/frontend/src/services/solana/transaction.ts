@@ -129,6 +129,57 @@ export function buildWithdrawExecuteSplInstruction(
 }
 
 /**
+ * Recipient SPL ATA (idempotent create if missing) + {@link buildWithdrawExecuteSplInstruction}.
+ * Without this, `withdraw_execute` fails with Anchor 3012 when the wallet has no ATA yet.
+ */
+export async function buildSolanaSplWithdrawExecuteInstructions(
+  connection: Connection,
+  programId: PublicKey,
+  recipient: PublicKey,
+  transferHash32: Uint8Array,
+  mint: PublicKey,
+  tokenProgram: PublicKey,
+  srcChain4: Uint8Array,
+  mappingSrcToken32: Uint8Array,
+): Promise<TransactionInstruction[]> {
+  const recipientAta = getAssociatedTokenAddressSync(
+    mint,
+    recipient,
+    false,
+    tokenProgram,
+  );
+
+  const ixs: TransactionInstruction[] = [];
+
+  const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+  if (!recipientAtaInfo) {
+    ixs.push(
+      createAssociatedTokenAccountIdempotentInstructionWithDerivation(
+        recipient,
+        recipient,
+        mint,
+        false,
+        tokenProgram,
+      ),
+    );
+  }
+
+  ixs.push(
+    buildWithdrawExecuteSplInstruction(
+      programId,
+      recipient,
+      transferHash32,
+      mint,
+      tokenProgram,
+      srcChain4,
+      mappingSrcToken32,
+    ),
+  );
+
+  return ixs;
+}
+
+/**
  * `withdraw_execute_native` — recipient signs; native SOL payout from bridge PDA.
  */
 export function buildWithdrawExecuteNativeInstruction(
