@@ -24,9 +24,10 @@ use alloy::providers::ProviderBuilder;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use eyre::Result;
 use multichain_rs::solana::run_with_solana_rpc_fallback;
+use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::rpc_client::RpcClient;
-use solana_client::rpc_config::RpcProgramAccountsConfig;
+use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_client::rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -183,6 +184,12 @@ impl SolanaWriter {
         let cfg = RpcProgramAccountsConfig {
             filters: Some(filters),
             sort_results: Some(true),
+            // Without this, many RPCs default account `data` to base58, which rejects payloads >128 bytes
+            // (PendingWithdraw is 186 bytes). Base64 is required for full account bodies.
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
