@@ -73,11 +73,7 @@ impl SolanaWatcher {
 
         loop {
             match self.poll_deposits().await {
-                Ok(count) => {
-                    if count > 0 {
-                        info!(count, "Processed Solana deposits");
-                    }
-                }
+                Ok(()) => {}
                 Err(e) => {
                     error!(error = %e, "Error polling Solana deposits");
                 }
@@ -86,21 +82,24 @@ impl SolanaWatcher {
         }
     }
 
-    async fn poll_deposits(&mut self) -> Result<usize> {
+    /// Polls recent program transactions; always emits one INFO line per poll (same idea as EVM / Terra watchers).
+    async fn poll_deposits(&mut self) -> Result<()> {
         let signatures = run_with_solana_rpc_fallback(&self.rpc_clients, |c| {
             get_signatures_for_program(c, &self.program_id, self.last_signature.as_ref(), 1000)
         })
         .map_err(|e| eyre::eyre!("Failed to get signatures: {}", e))?;
 
-        if signatures.is_empty() {
-            return Ok(0);
-        }
-
-        debug!(count = signatures.len(), "Found new Solana signatures");
+        let signatures_fetched = signatures.len();
+        let newest_slot = signatures.first().map(|s| s.slot);
 
         // Process in chronological order (signatures come newest-first)
-        let mut count = 0;
+        let mut new_deposits = 0usize;
         let mut last_success: Option<Signature> = None;
+
+        if !signatures.is_empty() {
+            debug!(count = signatures.len(), "Found new Solana signatures");
+        }
+
         for sig_info in signatures.iter().rev() {
             let signature = Signature::from_str(&sig_info.signature)
                 .map_err(|e| eyre::eyre!("Invalid signature: {}", e))?;
@@ -140,7 +139,7 @@ impl SolanaWatcher {
                 if let SolanaEvent::Deposit(deposit) = event {
                     self.store_deposit(&deposit, &signature, sig_info.slot)
                         .await?;
-                    count += 1;
+                    new_deposits += 1;
                 }
             }
 
@@ -152,7 +151,16 @@ impl SolanaWatcher {
             self.save_last_signature(&sig).await?;
         }
 
-        Ok(count)
+        info!(
+            program_id = %self.program_id,
+            svm_dest_chain_id = %format!("0x{}", hex::encode(self.bytes4_chain_id)),
+            signatures_fetched,
+            newest_slot,
+            new_deposits,
+            "Processing Solana deposit poll"
+        );
+
+        Ok(())
     }
 
     async fn store_deposit(

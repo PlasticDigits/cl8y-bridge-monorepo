@@ -1,9 +1,18 @@
-//! Solana writer — submits `withdraw_approve` on the Solana bridge for:
-//! - **EVM → Solana**: pending `evm_deposits` with `dest_chain_type = 'solana'`, verified via EVM `getDeposit`.
-//! - **TerraClassic → Solana**: pending `terra_deposits` with `dest_chain_id = SOLANA_V2_CHAIN_ID` and
-//!   `transfer_hash` set, verified via Terra LCD `DepositHash` smart query.
+//! Solana writer — submits `withdraw_approve` on the Solana bridge.
 //!
-//! Outbound Solana deposits (`solana_deposits` from the Solana watcher) are **not** queued here —
+//! **Discovery (matches EVM / TerraClassic writers):** pending withdrawals are found by scanning
+//! on-chain `PendingWithdraw` accounts for this program (`getProgramAccounts` + Anchor discriminator),
+//! not by relying on `evm_deposits` / `terra_deposits` rows. That way EVM→Solana and Terra→Solana
+//! approvals still run when the indexer missed a deposit or `transfer_hash` was never written to Postgres.
+//!
+//! For each unapproved, non-cancelled, non-executed `PendingWithdraw`, the operator verifies the
+//! source deposit (EVM `getDeposit` when the pending `src_chain` is a configured EVM source, else
+//! Terra `DepositHash` when LCD is configured), then submits `withdraw_approve`.
+//!
+//! After a successful approve, matching `evm_deposits` / `terra_deposits` rows (if any) are marked
+//! `processed` so DB metrics stay aligned with the EVM/Terra watchers.
+//!
+//! Outbound Solana deposits (`solana_deposits` from the Solana watcher) are **not** handled here —
 //! approvals for those occur on destination chains (EVM/Terra), not on Solana.
 
 #![allow(clippy::result_large_err)] // Solana ClientError in RpcClient callbacks
@@ -17,6 +26,8 @@ use eyre::Result;
 use multichain_rs::solana::run_with_solana_rpc_fallback;
 use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcProgramAccountsConfig;
+use solana_client::rpc_filter::{Memcmp, RpcFilterType};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
@@ -32,6 +43,49 @@ use tracing::{debug, error, info, warn};
 
 use crate::contracts::evm_bridge::Bridge;
 
+/// Parsed `PendingWithdraw` account body (matches `packages/contracts-solana/.../pending_withdraw.rs`).
+#[derive(Debug, Clone)]
+struct ParsedOnChainPendingWithdraw {
+    transfer_hash: [u8; 32],
+    src_chain: [u8; 4],
+    amount: u128,
+    nonce: u64,
+    approved: bool,
+    cancelled: bool,
+    executed: bool,
+}
+
+/// Parse Anchor `PendingWithdraw` account data (`8` byte disc + Borsh).
+fn parse_pending_withdraw_account(data: &[u8]) -> Option<ParsedOnChainPendingWithdraw> {
+    const BODY: usize = 178;
+    if data.len() < 8 + BODY {
+        return None;
+    }
+    let expect = anchor_account_discriminator("PendingWithdraw");
+    if data[..8] != expect {
+        return None;
+    }
+    let b = &data[8..];
+    let mut transfer_hash = [0u8; 32];
+    transfer_hash.copy_from_slice(&b[0..32]);
+    let mut src_chain = [0u8; 4];
+    src_chain.copy_from_slice(&b[32..36]);
+    let amount = u128::from_le_bytes(b[132..148].try_into().ok()?);
+    let nonce = u64::from_le_bytes(b[148..156].try_into().ok()?);
+    let approved = b[166] != 0;
+    let cancelled = b[175] != 0;
+    let executed = b[176] != 0;
+    Some(ParsedOnChainPendingWithdraw {
+        transfer_hash,
+        src_chain,
+        amount,
+        nonce,
+        approved,
+        cancelled,
+        executed,
+    })
+}
+
 pub struct SolanaWriter {
     rpc_clients: Vec<RpcClient>,
     http: reqwest::Client,
@@ -43,8 +97,8 @@ pub struct SolanaWriter {
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     /// Terra LCD + bridge for TerraClassic→Solana verification
     terra_lcd: Option<(String, String)>,
-    /// Terra `dest_chain_id` values that refer to this bridge (one per SVM V2 id)
-    solana_dest_chain_ids: Vec<i64>,
+    /// Configured SVM V2 chain IDs (from `SOLANA_V2_CHAIN_IDS`) — logged at startup for ops visibility.
+    configured_solana_v2_chain_ids: Vec<[u8; 4]>,
 }
 
 impl SolanaWriter {
@@ -58,6 +112,7 @@ impl SolanaWriter {
         terra_lcd_url: Option<String>,
         terra_bridge_address: Option<String>,
         solana_v2_chain_ids: Vec<[u8; 4]>,
+        poll_interval_ms: u64,
     ) -> Result<Self> {
         if solana_v2_chain_ids.is_empty() {
             return Err(eyre::eyre!("solana_v2_chain_ids must be non-empty"));
@@ -75,20 +130,16 @@ impl SolanaWriter {
             }
             _ => None,
         };
-        let solana_dest_chain_ids: Vec<i64> = solana_v2_chain_ids
-            .iter()
-            .map(|b| i64::from(u32::from_be_bytes(*b)))
-            .collect();
         Ok(Self {
             rpc_clients,
             http: reqwest::Client::new(),
             program_id,
             keypair,
             db,
-            poll_interval: Duration::from_secs(5),
+            poll_interval: Duration::from_millis(poll_interval_ms.max(1)),
             source_chain_endpoints,
             terra_lcd,
-            solana_dest_chain_ids,
+            configured_solana_v2_chain_ids: solana_v2_chain_ids,
         })
     }
 
@@ -98,17 +149,17 @@ impl SolanaWriter {
             operator = %self.keypair.pubkey(),
             evm_source_chains = self.source_chain_endpoints.len(),
             terra_verify = self.terra_lcd.is_some(),
-            solana_dest_chain_ids = ?self.solana_dest_chain_ids,
-            "Starting Solana writer with source-chain verification"
+            configured_solana_v2_chain_ids = ?self
+                .configured_solana_v2_chain_ids
+                .iter()
+                .map(|b| format!("0x{}", hex::encode(b)))
+                .collect::<Vec<_>>(),
+            "Starting Solana writer (on-chain PendingWithdraw discovery + source verification)"
         );
 
         loop {
             match self.process_pending_approvals().await {
-                Ok(count) => {
-                    if count > 0 {
-                        info!(count, "Processed Solana approvals");
-                    }
-                }
+                Ok(()) => {}
                 Err(e) => {
                     error!(error = %e, "Error processing Solana approvals");
                 }
@@ -117,155 +168,109 @@ impl SolanaWriter {
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    async fn process_pending_approvals(&self) -> Result<usize> {
-        let rows: Vec<(
-            i64,
-            i64,
-            Vec<u8>,
-            Vec<u8>,
-            Vec<u8>,
-            Vec<u8>,
-            Vec<u8>,
-            String,
-            String,
-        )> = sqlx::query_as(
-                r#"
-            SELECT id, nonce, transfer_hash, src_account, dest_account, token, dest_chain, source_type, amount::text AS amount_text FROM (
-                SELECT d.id, d.nonce, d.transfer_hash, d.src_account, d.dest_account,
-                       d.dest_token_address AS token, d.dest_chain_key AS dest_chain,
-                       'evm'::text AS source_type, d.amount
-                FROM evm_deposits d
-                WHERE d.status = 'pending'
-                  AND d.transfer_hash IS NOT NULL
-                  AND d.dest_chain_type = 'solana'
-                UNION ALL
-                SELECT d.id, d.nonce, d.transfer_hash, '\x'::bytea AS src_account, '\x'::bytea AS dest_account,
-                       '\x'::bytea AS token, '\x'::bytea AS dest_chain,
-                       'terra'::text AS source_type, d.amount
-                FROM terra_deposits d
-                WHERE d.status = 'pending'
-                  AND d.transfer_hash IS NOT NULL
-                  AND d.dest_chain_id = ANY($1)
-            ) combined
-            LIMIT 10
-            "#,
-            )
-            .bind(&self.solana_dest_chain_ids)
-            .fetch_all(&self.db)
-            .await
-            .map_err(|e| eyre::eyre!("Failed to query pending approvals: {}", e))?;
+    /// Scans on-chain `PendingWithdraw` PDAs; always emits one INFO summary per poll (parity with EVM / Terra watchers).
+    async fn process_pending_approvals(&self) -> Result<()> {
+        const PENDING_WITHDRAW_DATA_LEN: u64 = 186;
+        const MAX_APPROVAL_ATTEMPTS_PER_TICK: usize = 10;
 
-        let mut count = 0;
-        for (
-            id,
-            nonce,
-            transfer_hash,
-            _src_account,
-            _dest_account,
-            _token,
-            _dest_chain,
-            source_type,
-            amount_text,
-        ) in &rows
-        {
-            let hash_hex = hex::encode(transfer_hash);
+        let disc = anchor_account_discriminator("PendingWithdraw");
+        let filters = vec![
+            RpcFilterType::DataSize(PENDING_WITHDRAW_DATA_LEN),
+            RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, disc.to_vec())),
+        ];
+        let cfg = RpcProgramAccountsConfig {
+            filters: Some(filters),
+            sort_results: Some(true),
+            ..Default::default()
+        };
 
-            if transfer_hash.len() != 32 {
-                warn!(nonce, hash = %hash_hex, "Invalid transfer_hash length, skipping");
+        let program_id = self.program_id;
+        let rpc_clients = &self.rpc_clients;
+        let accounts = run_with_solana_rpc_fallback(rpc_clients, |client| {
+            client.get_program_accounts_with_config(&program_id, cfg.clone())
+        })
+        .map_err(|e| eyre::eyre!("getProgramAccounts for PendingWithdraw failed: {}", e))?;
+
+        let total_pending_withdraw_pdas = accounts.len();
+
+        let mut candidates: Vec<(Pubkey, ParsedOnChainPendingWithdraw)> = Vec::new();
+        for (pubkey, account) in accounts {
+            let Some(parsed) = parse_pending_withdraw_account(&account.data) else {
+                warn!(
+                    pda = %pubkey,
+                    data_len = account.data.len(),
+                    "Skipping account: not a valid PendingWithdraw layout"
+                );
+                continue;
+            };
+            if parsed.approved || parsed.cancelled || parsed.executed {
                 continue;
             }
+            candidates.push((pubkey, parsed));
+        }
 
-            let expected_amount: u128 = match amount_text.parse() {
-                Ok(a) => a,
-                Err(_) => {
+        let unapproved_count = candidates.len();
+
+        info!(
+            program_id = %self.program_id,
+            pending_withdraw_pdas = total_pending_withdraw_pdas,
+            unapproved_pending_withdraws = unapproved_count,
+            "Solana writer poll"
+        );
+
+        for (pda, pending) in candidates.into_iter().take(MAX_APPROVAL_ATTEMPTS_PER_TICK) {
+            let hash_hex = hex::encode(pending.transfer_hash);
+            let nonce = pending.nonce;
+
+            info!(
+                hash = %hash_hex,
+                nonce = nonce,
+                pda = %pda,
+                src_chain = %format!("0x{}", hex::encode(pending.src_chain)),
+                amount = %pending.amount,
+                "Processing unapproved Solana PendingWithdraw — verifying source deposit"
+            );
+
+            match self
+                .verify_source_for_pending(
+                    &pending.src_chain,
+                    &pending.transfer_hash,
+                    pending.amount,
+                    pending.nonce,
+                )
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
                     warn!(
                         nonce,
                         hash = %hash_hex,
-                        "Invalid amount from DB, skipping"
+                        "Source deposit not verified for Solana pending withdraw, skipping (will retry)"
                     );
                     continue;
                 }
-            };
-            let expected_nonce: u64 = match u64::try_from(*nonce) {
-                Ok(n) => n,
-                Err(_) => {
+                Err(e) => {
                     warn!(
                         nonce,
                         hash = %hash_hex,
-                        "Invalid nonce for DB row, skipping"
+                        error = %e,
+                        "Source verification error for Solana pending withdraw, will retry"
                     );
                     continue;
                 }
-            };
-
-            let mut hash_arr = [0u8; 32];
-            hash_arr.copy_from_slice(transfer_hash);
-
-            if source_type == "evm" {
-                match self
-                    .verify_evm_source_deposit(&hash_arr, expected_amount, expected_nonce)
-                    .await
-                {
-                    Ok(true) => {
-                        debug!(hash = %hash_hex, "EVM source deposit verified");
-                    }
-                    Ok(false) => {
-                        warn!(
-                            nonce,
-                            hash = %hash_hex,
-                            "No verified EVM source deposit found, skipping (will retry)"
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        warn!(
-                            nonce,
-                            hash = %hash_hex,
-                            error = %e,
-                            "EVM source verification failed, will retry"
-                        );
-                        continue;
-                    }
-                }
-            } else if source_type == "terra" {
-                match self
-                    .verify_terra_source_deposit(&hash_arr, expected_amount, expected_nonce)
-                    .await
-                {
-                    Ok(true) => {
-                        debug!(hash = %hash_hex, "Terra source deposit verified");
-                    }
-                    Ok(false) => {
-                        warn!(
-                            nonce,
-                            hash = %hash_hex,
-                            "No verified Terra source deposit found, skipping (will retry)"
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        warn!(
-                            nonce,
-                            hash = %hash_hex,
-                            error = %e,
-                            "Terra source verification failed, will retry"
-                        );
-                        continue;
-                    }
-                }
-            } else {
-                continue;
             }
 
-            match self.submit_approval(&hash_arr).await {
+            match self.submit_approval(&pending.transfer_hash).await {
                 Ok(sig) => {
-                    if let Err(e) = self.mark_deposit_processed(*id, *nonce, source_type).await {
+                    if let Err(e) = self
+                        .mark_deposits_processed_for_hash(&pending.transfer_hash)
+                        .await
+                    {
                         warn!(
                             nonce = nonce,
                             hash = %hash_hex,
                             error = %e,
-                            "Failed to mark deposit processed (tx already submitted)"
+                            "Failed to mark matching DB deposits processed (tx already submitted)"
                         );
                     }
                     info!(
@@ -274,7 +279,6 @@ impl SolanaWriter {
                         tx = %sig,
                         "Submitted Solana withdraw_approve"
                     );
-                    count += 1;
                 }
                 Err(e) => {
                     warn!(
@@ -287,7 +291,52 @@ impl SolanaWriter {
             }
         }
 
-        Ok(count)
+        Ok(())
+    }
+
+    /// Route source verification: configured EVM `src_chain` → `getDeposit`; otherwise Terra LCD when configured.
+    async fn verify_source_for_pending(
+        &self,
+        src_chain: &[u8; 4],
+        transfer_hash: &[u8; 32],
+        amount: u128,
+        nonce: u64,
+    ) -> Result<bool> {
+        if self.source_chain_endpoints.contains_key(src_chain) {
+            self.verify_evm_source_deposit(transfer_hash, amount, nonce)
+                .await
+        } else if self.terra_lcd.is_some() {
+            self.verify_terra_source_deposit(transfer_hash, amount, nonce)
+                .await
+        } else {
+            warn!(
+                hash = %hex::encode(transfer_hash),
+                src_chain = %format!("0x{}", hex::encode(src_chain)),
+                "Unknown source chain for Solana pending withdraw (not in EVM endpoint map and Terra LCD unset)"
+            );
+            Ok(false)
+        }
+    }
+
+    async fn mark_deposits_processed_for_hash(&self, transfer_hash: &[u8; 32]) -> Result<()> {
+        let h = transfer_hash.as_slice();
+        sqlx::query(
+            "UPDATE evm_deposits SET status = 'processed' WHERE transfer_hash = $1 AND status = 'pending'",
+        )
+        .bind(h)
+        .execute(&self.db)
+        .await
+        .map_err(|e| eyre::eyre!("mark evm_deposits processed by transfer_hash: {}", e))?;
+
+        sqlx::query(
+            "UPDATE terra_deposits SET status = 'processed' WHERE transfer_hash = $1 AND status = 'pending'",
+        )
+        .bind(h)
+        .execute(&self.db)
+        .await
+        .map_err(|e| eyre::eyre!("mark terra_deposits processed by transfer_hash: {}", e))?;
+
+        Ok(())
     }
 
     /// Query Terra bridge `DepositHash` smart query (same as canceler verifier).
@@ -482,44 +531,15 @@ impl SolanaWriter {
         })
         .map_err(|e| eyre::eyre!("Failed to submit Solana withdraw_approve: {}", e))
     }
+}
 
-    async fn mark_deposit_processed(
-        &self,
-        deposit_id: i64,
-        _nonce: i64,
-        source_type: &str,
-    ) -> Result<()> {
-        match source_type {
-            "evm" => {
-                sqlx::query("UPDATE evm_deposits SET status = 'processed' WHERE id = $1")
-                    .bind(deposit_id)
-                    .execute(&self.db)
-                    .await
-                    .map_err(|e| {
-                        eyre::eyre!("Failed to mark evm_deposit {} processed: {}", deposit_id, e)
-                    })?;
-            }
-            "terra" => {
-                sqlx::query("UPDATE terra_deposits SET status = 'processed' WHERE id = $1")
-                    .bind(deposit_id)
-                    .execute(&self.db)
-                    .await
-                    .map_err(|e| {
-                        eyre::eyre!(
-                            "Failed to mark terra_deposit {} processed: {}",
-                            deposit_id,
-                            e
-                        )
-                    })?;
-            }
-            _ => {
-                return Err(eyre::eyre!(
-                    "unknown source_type for mark_deposit_processed"
-                ));
-            }
-        }
-        Ok(())
-    }
+fn anchor_account_discriminator(name: &str) -> [u8; 8] {
+    use solana_sdk::hash::hash;
+    let preimage = format!("account:{name}");
+    let full_hash = hash(preimage.as_bytes());
+    let mut disc = [0u8; 8];
+    disc.copy_from_slice(&full_hash.to_bytes()[..8]);
+    disc
 }
 
 fn anchor_discriminator(name: &str) -> [u8; 8] {
@@ -528,4 +548,33 @@ fn anchor_discriminator(name: &str) -> [u8; 8] {
     let mut disc = [0u8; 8];
     disc.copy_from_slice(&full_hash.to_bytes()[..8]);
     disc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anchor_pending_withdraw_disc_matches_deployed_layout() {
+        assert_eq!(
+            anchor_account_discriminator("PendingWithdraw"),
+            [0xd7, 0x7d, 0x3e, 0x52, 0x0c, 0x8f, 0x70, 0x85]
+        );
+    }
+
+    #[test]
+    fn parse_pending_withdraw_reads_flags() {
+        let mut data = vec![0u8; 186];
+        data[..8].copy_from_slice(&anchor_account_discriminator("PendingWithdraw"));
+        data[8..40].copy_from_slice(&[7u8; 32]);
+        // Nonce is at body offset 148 → absolute 8+148 = 156 in account blob.
+        data[156..164].copy_from_slice(&42u64.to_le_bytes());
+        data[174] = 0;
+        data[183] = 0;
+        data[184] = 0;
+        let p = parse_pending_withdraw_account(&data).expect("parse");
+        assert_eq!(p.transfer_hash, [7u8; 32]);
+        assert_eq!(p.nonce, 42);
+        assert!(!p.approved && !p.cancelled && !p.executed);
+    }
 }

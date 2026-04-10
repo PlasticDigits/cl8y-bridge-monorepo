@@ -156,6 +156,7 @@ async fn async_main() -> eyre::Result<()> {
             Some(config.terra.lcd_url.clone()),
             Some(config.terra.bridge_address.clone()),
             sol_cfg.bytes4_chain_ids.clone(),
+            sol_cfg.poll_interval_ms,
         ) {
             Ok(w) => {
                 tracing::info!("Solana writer created with EVM source verification");
