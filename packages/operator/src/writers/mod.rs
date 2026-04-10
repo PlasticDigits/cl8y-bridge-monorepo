@@ -22,10 +22,19 @@ pub use terra::TerraWriter;
 /// Used by EVM and Terra writers to verify deposits originating from Solana.
 #[derive(Debug, Clone)]
 pub struct SolanaSourceConfig {
-    pub rpc_url: String,
+    /// Same ordered list as the Solana watcher/writer (`SOLANA_RPC_URL` primary + fallbacks).
+    pub rpc_urls: Vec<String>,
     pub program_id: [u8; 32],
     /// All SVM V2 chain IDs that share this RPC + program (multi-SVM / forks).
     pub chain_ids: Vec<[u8; 4]>,
+}
+
+fn solana_verify_http_status_retry_next(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::FORBIDDEN
+        || status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
 /// Verify a deposit exists on Solana by querying the DepositRecord PDA.
@@ -33,6 +42,9 @@ pub struct SolanaSourceConfig {
 /// Derives the PDA from seeds `["deposit", nonce.to_le_bytes()]`, fetches account
 /// data via JSON-RPC, and checks that the stored transfer_hash (bytes 8..40 of the
 /// Anchor account) matches `xchain_hash_id`.
+///
+/// Uses the same ordered RPC list as tx submission / the watcher: retries on transient
+/// HTTP / JSON-RPC failures against the next endpoint.
 pub(crate) async fn verify_deposit_on_solana_source(
     http: &reqwest::Client,
     config: &SolanaSourceConfig,
@@ -42,6 +54,10 @@ pub(crate) async fn verify_deposit_on_solana_source(
     use base64::Engine;
     use solana_sdk::pubkey::Pubkey;
     use tracing::{info, warn};
+
+    if config.rpc_urls.is_empty() {
+        return Err(eyre!("Solana source verification: no RPC URLs configured"));
+    }
 
     let nonce_bytes = nonce.to_le_bytes();
     let program_id = Pubkey::new_from_array(config.program_id);
@@ -54,69 +70,106 @@ pub(crate) async fn verify_deposit_on_solana_source(
         "id": 1,
         "method": "getAccountInfo",
         "params": [
-            deposit_pda_str,
+            deposit_pda_str.clone(),
             {"encoding": "base64", "commitment": "finalized"}
         ]
     });
 
-    let resp = http
-        .post(&config.rpc_url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| eyre::eyre!("Solana RPC request failed: {}", e))?;
+    let mut last_err: Option<eyre::Report> = None;
 
-    if !resp.status().is_success() {
-        warn!(
-            status = %resp.status(),
-            "Solana RPC error during deposit verification"
-        );
-        return Err(eyre::eyre!("Solana RPC returned {}", resp.status()));
-    }
+    for url in &config.rpc_urls {
+        let resp = match http.post(url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, rpc = %url, "Solana RPC request failed during deposit verification, trying next");
+                last_err = Some(eyre::eyre!("Solana RPC request failed: {}", e));
+                continue;
+            }
+        };
 
-    let json: serde_json::Value = resp.json().await?;
-    let result = &json["result"]["value"];
+        let status = resp.status();
+        if !status.is_success() {
+            warn!(
+                status = %status,
+                rpc = %url,
+                "Solana RPC HTTP error during deposit verification"
+            );
+            let err = eyre::eyre!("Solana RPC returned {}", status);
+            if solana_verify_http_status_retry_next(status) {
+                last_err = Some(err);
+                continue;
+            }
+            return Err(err);
+        }
 
-    if result.is_null() {
-        info!(
-            hash = %hex::encode(xchain_hash_id),
-            nonce = nonce,
-            pda = %deposit_pda_str,
-            "No deposit PDA found on Solana source chain"
-        );
-        return Ok(false);
-    }
+        let json: serde_json::Value = match resp.json().await {
+            Ok(j) => j,
+            Err(e) => {
+                warn!(error = %e, rpc = %url, "Solana RPC JSON decode failed during deposit verification, trying next");
+                last_err = Some(eyre::eyre!("Solana RPC JSON decode failed: {}", e));
+                continue;
+            }
+        };
 
-    if let Some(data_arr) = result["data"].as_array() {
-        if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
-            if let Ok(data_bytes) = base64::engine::general_purpose::STANDARD.decode(data_b64) {
-                if data_bytes.len() >= 40 {
-                    let stored_hash = &data_bytes[8..40];
-                    if stored_hash == xchain_hash_id {
-                        info!(
-                            hash = %hex::encode(xchain_hash_id),
-                            nonce = nonce,
-                            "Deposit verified on Solana source chain"
-                        );
-                        return Ok(true);
-                    } else {
-                        warn!(
-                            expected = %hex::encode(xchain_hash_id),
-                            got = %hex::encode(stored_hash),
-                            "Solana deposit exists but hash mismatch"
-                        );
-                        return Ok(false);
+        if !json["error"].is_null() {
+            warn!(
+                error = %json["error"],
+                rpc = %url,
+                "Solana JSON-RPC error during deposit verification, trying next endpoint"
+            );
+            last_err = Some(eyre::eyre!("Solana JSON-RPC error: {}", json["error"]));
+            continue;
+        }
+
+        let result = &json["result"]["value"];
+
+        if result.is_null() {
+            info!(
+                hash = %hex::encode(xchain_hash_id),
+                nonce = nonce,
+                pda = %deposit_pda_str,
+                rpc = %url,
+                "No deposit PDA found on Solana source chain"
+            );
+            return Ok(false);
+        }
+
+        if let Some(data_arr) = result["data"].as_array() {
+            if let Some(data_b64) = data_arr.first().and_then(|v| v.as_str()) {
+                if let Ok(data_bytes) = base64::engine::general_purpose::STANDARD.decode(data_b64) {
+                    if data_bytes.len() >= 40 {
+                        let stored_hash = &data_bytes[8..40];
+                        if stored_hash == xchain_hash_id {
+                            info!(
+                                hash = %hex::encode(xchain_hash_id),
+                                nonce = nonce,
+                                rpc = %url,
+                                "Deposit verified on Solana source chain"
+                            );
+                            return Ok(true);
+                        } else {
+                            warn!(
+                                expected = %hex::encode(xchain_hash_id),
+                                got = %hex::encode(stored_hash),
+                                "Solana deposit exists but hash mismatch"
+                            );
+                            return Ok(false);
+                        }
                     }
                 }
             }
         }
+
+        warn!(
+            hash = %hex::encode(xchain_hash_id),
+            rpc = %url,
+            "Solana deposit PDA data could not be parsed"
+        );
+        return Ok(false);
     }
 
-    warn!(
-        hash = %hex::encode(xchain_hash_id),
-        "Solana deposit PDA data could not be parsed"
-    );
-    Ok(false)
+    Err(last_err
+        .unwrap_or_else(|| eyre!("All Solana RPC endpoints failed for deposit verification")))
 }
 
 /// Circuit breaker configuration for writer managers
@@ -206,8 +259,11 @@ impl WriterManager {
                 .parse::<solana_sdk::pubkey::Pubkey>()
                 .expect("SOLANA_PROGRAM_ID already validated in config")
                 .to_bytes();
+            let mut rpc_urls: Vec<String> = Vec::with_capacity(1 + sol.rpc_fallback_urls.len());
+            rpc_urls.push(sol.rpc_url.clone());
+            rpc_urls.extend(sol.rpc_fallback_urls.iter().cloned());
             SolanaSourceConfig {
-                rpc_url: sol.rpc_url.clone(),
+                rpc_urls,
                 program_id,
                 chain_ids: sol.bytes4_chain_ids.clone(),
             }

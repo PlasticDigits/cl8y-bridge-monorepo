@@ -33,6 +33,8 @@ pub fn is_transient_solana_client_error(err: &ClientError) -> bool {
                 || message.to_ascii_lowercase().contains("timeout")
                 || message.to_ascii_lowercase().contains("rate limit")
                 || message.to_ascii_lowercase().contains("429")
+                || message.to_ascii_lowercase().contains("403")
+                || message.to_ascii_lowercase().contains("forbidden")
                 || message.to_ascii_lowercase().contains("503")
                 || message.to_ascii_lowercase().contains("502")
                 || message.to_ascii_lowercase().contains("410")

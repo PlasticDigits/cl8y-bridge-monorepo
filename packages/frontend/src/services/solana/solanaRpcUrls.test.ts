@@ -25,6 +25,25 @@ describe("solanaRpcUrls", () => {
     expect(m).toContain("https://solana-rpc.publicnode.com/");
   });
 
+  it("mergeSolanaClusterFallbackUrls deprioritizes browser-hostile api.mainnet.solana.com", () => {
+    const chain: BridgeChainConfig = {
+      chainId: "solana",
+      type: "solana",
+      name: "Solana",
+      rpcUrl: "https://api.mainnet.solana.com",
+      bridgeAddress: "x",
+    };
+    const m = mergeSolanaClusterFallbackUrls(chain, [
+      "https://api.mainnet.solana.com",
+    ]);
+    const pub = m.indexOf("https://solana-rpc.publicnode.com/");
+    const bad = m.indexOf("https://api.mainnet.solana.com");
+    expect(pub).toBeGreaterThanOrEqual(0);
+    expect(bad).toBeGreaterThanOrEqual(0);
+    expect(pub).toBeLessThan(bad);
+    expect(m[0]).toBe("https://solana-rpc.publicnode.com/");
+  });
+
   it("mergeSolanaClusterFallbackUrls does not append mainnet urls to localnet", () => {
     const chain: BridgeChainConfig = {
       chainId: "solana-localnet",

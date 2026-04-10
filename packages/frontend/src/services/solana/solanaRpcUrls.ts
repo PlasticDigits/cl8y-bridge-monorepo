@@ -22,6 +22,35 @@ import {
 } from "../../utils/solanaMainnetRpcDefaults";
 import { getSolanaBrowserProvider } from "./solanaProvider";
 
+/** Hosts often returning HTTP 403 / broken CORS in browsers — try after CORS-friendly defaults. */
+const SOLANA_MAINNET_BROWSER_DEPRIORITIZED_HOSTS = new Set([
+  "api.mainnet.solana.com",
+  "api.mainnet-beta.solana.com",
+]);
+
+function splitSolanaMainnetPrimaryForBrowser(urls: string[]): {
+  preferred: string[];
+  deprioritized: string[];
+} {
+  const preferred: string[] = [];
+  const deprioritized: string[] = [];
+  for (const u of urls) {
+    const t = u.trim();
+    if (!t) continue;
+    try {
+      const host = new URL(t).hostname.toLowerCase();
+      if (SOLANA_MAINNET_BROWSER_DEPRIORITIZED_HOSTS.has(host)) {
+        deprioritized.push(t);
+      } else {
+        preferred.push(t);
+      }
+    } catch {
+      preferred.push(t);
+    }
+  }
+  return { preferred, deprioritized };
+}
+
 export { DEFAULT_SOLANA_MAINNET_RPC_URLS } from "../../utils/solanaMainnetRpcDefaults";
 
 export function parseSolanaRpcUrlList(
@@ -45,7 +74,8 @@ export function dedupeSolanaRpcUrls(urls: string[]): string[] {
 }
 
 /**
- * Append cluster-appropriate public fallbacks (mainnet / devnet) after `primary` URLs.
+ * Merge bridge/env `primary` URLs with cluster defaults. Mainnet: CORS-friendly defaults are
+ * inserted before browser-hostile `api.mainnet*.solana.com` hosts so reads/polling avoid 403 spam.
  * Localnet (`solana-localnet`) is unchanged — only loopback URLs apply.
  */
 export function mergeSolanaClusterFallbackUrls(
@@ -57,9 +87,15 @@ export function mergeSolanaClusterFallbackUrls(
   }
   const id = String(chain.chainId);
   if (id === "solana") {
+    const { preferred, deprioritized } =
+      splitSolanaMainnetPrimaryForBrowser(primary);
+    const fallbacks = defaultSolanaMainnetRpcUrlList();
+    // Good user / bridge URLs first, then built-in CORS-friendly defaults, then
+    // browser-hostile public Solana RPCs last so polling and reads do not spam 403s.
     return dedupeSolanaRpcUrls([
-      ...primary,
-      ...defaultSolanaMainnetRpcUrlList(),
+      ...preferred,
+      ...fallbacks,
+      ...deprioritized,
     ]);
   }
   if (id === "solana-devnet") {

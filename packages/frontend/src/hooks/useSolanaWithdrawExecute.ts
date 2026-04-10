@@ -13,6 +13,7 @@ import {
   sendSolanaTransaction,
 } from "../services/solana/transaction";
 import {
+  pickSolanaConnection,
   pickSolanaTxConnection,
   solanaRpcUrlsForBridgeChain,
 } from "../services/solana/solanaRpcUrls";
@@ -100,7 +101,10 @@ export function useSolanaWithdrawExecute() {
           throw new Error("Could not resolve source token bytes for mapping PDA");
         }
 
-        const connection = await pickSolanaTxConnection(
+        // Reads (mint owner, etc.) always use the bridge RPC list — never the wallet’s
+        // default endpoint, which often 403s in the browser (#102).
+        const readConnection = await pickSolanaConnection(rpcUrls);
+        const txConnection = await pickSolanaTxConnection(
           solanaWallet.walletType,
           rpcUrls,
         );
@@ -115,7 +119,7 @@ export function useSolanaWithdrawExecute() {
         } else {
           const mint = bytes32HexToPublicKey(params.pendingTokenHex32);
           const tokenProgram = await resolveSplTokenProgramForMint(
-            connection,
+            readConnection,
             mint,
           );
           ix = buildWithdrawExecuteSplInstruction(
@@ -131,7 +135,7 @@ export function useSolanaWithdrawExecute() {
 
         const tx = new Transaction().add(ix);
         const sig = await sendSolanaTransaction(
-          connection,
+          txConnection,
           tx,
           solanaWallet.walletType,
         );
