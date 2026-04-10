@@ -10,7 +10,7 @@ Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deplo
 
 ---
 
-## Current Live State (Verified via RPC on 2026-04-03)
+## Current Live State (Verified via RPC on 2026-04-10)
 
 ### Chains Registered
 
@@ -19,9 +19,31 @@ Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deplo
 | BSC | `0x00000038` | self | registered | registered (`AAAAOA==`) |
 | opBNB | `0x000000cc` | registered | self | registered (`AAAAzA==`) |
 | Terra Classic | `0x00000001` | registered | registered | self |
-| **Solana** | **`0x00000005`** | **NOT registered** | **NOT registered** | **NOT registered** |
+| **Solana** | **`0x00000005`** | **registered** | **registered** | **registered** (`AAAABQ==`, `solana_mainnet-beta`) |
 
 **Deployed Solana bridge program (mainnet-beta):** `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt` ([Solscan](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt)). **BridgeConfig PDA** (seeds **`["bridge"]`**, same program): `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` ([Solscan](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD)). Chain registration rows above refer to EVM/Terra **registry** state, not whether the program exists on Solana.
+
+### Verification checklist (2026-04-10)
+
+Checks below were run against public endpoints (`cast`, Solana RPC, Terra LCD with a normal `User-Agent`; Python `urllib` alone may get HTTP 403 from some CDNs).
+
+| Item | Verified |
+|------|:--------:|
+| Solana `0x00000005` on BSC `ChainRegistry` (`registeredChains` → `true`) | ✓ |
+| Solana `0x00000005` on opBNB `ChainRegistry` → `true` | ✓ |
+| Terra bridge: Solana peer `chain_id` `AAAABQ==`, identifier `solana_mainnet-beta`, `enabled` | ✓ |
+| BSC: `TokenRegistry.rateLimitBridge()` equals Bridge proxy `0xb2a22c74da8e3642e0effc107d3ac362ce885369` | ✓ |
+| opBNB: same `rateLimitBridge` wiring | ✓ |
+| BSC / opBNB: `Bridge.guardBridge()` non-zero | ✓ |
+| BSC / opBNB: `Bridge.getCancelerCount() == 1` | ✓ |
+| BSC / opBNB: `getDestToken(local_erc20, 0x00000005)` matches SPL mint bytes32 for testa / testb / tdec | ✓ |
+| Terra LCD: `all_token_dest_mappings` rows for testa / testb / tdec with `dest_chain` `00000005` and expected `dest_token` / decimals | ✓ |
+| Solana: `ChainEntry` PDAs for BSC / opBNB / Terra exist and **owner** = bridge program id | ✓ |
+| Solana: nine `TokenMapping` accounts (3 SPL mints × 3 peer chains; PDAs in [checklist](./solana-mainnet-test-tokens-checklist.md) §3.4) | ✓ |
+| Solana SPL **testa** mint authority = BridgeConfig PDA | ✓ |
+| Solana: explicit per-mint **`WithdrawRateLimit`** for testa / testb / tdec via admin **`set_rate_limit`** ([`scripts/set-mainnet-withdraw-rate-limits.ts`](../packages/contracts-solana/scripts/set-mainnet-withdraw-rate-limits.ts)) — avoids implicit `max_per_tx = supply / 10_000` on tiny circulating supply | ✓ |
+
+**Terra withdraw rate limits** (table below): spot-checked LCD `rate_limit` for Terra **testa** CW20; `max_per_transaction` / `max_per_period` still match the documented values. Re-query if you change policy.
 
 ### Contract Addresses
 
@@ -142,7 +164,7 @@ Example snapshot (re-verify; **not** a guarantee for future): BSC nonce **42**, 
 | Terra CL8Y → BSC | dest mapping EXISTS (dest_chain `0x00000038`) |
 | BSC → Terra CL8Y | incoming mapping EXISTS (src_chain `AAAAOA==`) |
 | Terra CL8Y → opBNB | NO mapping |
-| Terra CL8Y → Solana | NO mapping (Solana not registered) |
+| Terra CL8Y → Solana | NO mapping (by design; noneconomic-only Solana path) |
 
 **CL8Y is not “Terra → BSC only.”** Production supports **both**:
 
@@ -286,7 +308,7 @@ If **`rateLimitBridge`** or **`guardBridge`** returns **`0x000000000000000000000
 
 ### Step 2 — Set limits, then activate `rateLimitBridge` (BSC and opBNB)
 
-**Live spot-check (BSC / opBNB):** **`rateLimitBridge()`** returns **`0x000…000`** today—stored **`getRateLimitConfig`** rows do **not** enforce until you **`setRateLimitBridge`**. Set **`setRateLimit`** for **every** registered token on that chain **first**, then enable the bridge pointer.
+**Live spot-check (BSC / opBNB):** If **`rateLimitBridge()`** returns **`0x000…000`**, stored **`getRateLimitConfig`** rows do **not** enforce until you **`setRateLimitBridge`**. Set **`setRateLimit`** for **every** registered token on that chain **first**, then enable the bridge pointer. As of **2026-04-10**, BSC and opBNB both return the Bridge proxy (see [verification checklist](#verification-checklist-2026-04-10)); re-run [Step 1b](#step-1b--verify-ratelimitbridge-and-guardbridge-critical) after any registry upgrade.
 
 **Signer:** **`TokenRegistry` owner** (README admin `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` or multisig).
 
@@ -1017,7 +1039,7 @@ curl -s 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/terr
 
 ### Step 2.4: Register BSC, opBNB, and Terra on Solana Bridge
 
-Each peer is a **ChainEntry** PDA (`seeds = ["chain", chain_id_bytes]`). The **4-byte ids and identifiers** must match the live EVM `ChainRegistry` / Terra bridge (same as `scripts/deploy-evm-full.sh` and the [chains table](#current-live-state-verified-via-rpc-on-2026-04-03)):
+Each peer is a **ChainEntry** PDA (`seeds = ["chain", chain_id_bytes]`). The **4-byte ids and identifiers** must match the live EVM `ChainRegistry` / Terra bridge (same as `scripts/deploy-evm-full.sh` and the [chains table](#current-live-state-verified-via-rpc-on-2026-04-10)):
 
 | Peer | Bytes (hex) | `identifier` |
 |------|-------------|--------------|
@@ -1347,6 +1369,8 @@ npx tsx scripts/register-mainnet-tokens.ts
 ```
 
 **If you use a fork or different mint addresses**, edit the `MINT_TESTA` / `MINT_TESTB` / `MINT_TDEC` constants (and ERC20 / Terra addresses) at the top of `register-mainnet-tokens.ts`.
+
+**Explicit withdraw rate limits (recommended for noneconomic SPLs):** If circulating **mint supply** is small, implicit Solana caps (`max_per_tx = supply / 10_000` in raw units) can block realistic test withdrawals. After **`register_token`**, run [`scripts/set-mainnet-withdraw-rate-limits.ts`](../packages/contracts-solana/scripts/set-mainnet-withdraw-rate-limits.ts) as bridge admin (same env vars as above; **`npx tsx scripts/set-mainnet-withdraw-rate-limits.ts`**). Verified on **2026-04-10**; see [checklist](#verification-checklist-2026-04-10).
 
 **Lock/unlock** test tokens (mint authority not on the bridge PDA) are **not** covered by this script; use `mode: { lockUnlock: {} }` and vault setup from `register-qa-tokens.ts` only if you deliberately run that model.
 

@@ -18,7 +18,7 @@ This document is a **focused operator checklist** to get the three noneconomic t
 
 ## Why this happens (runbook vs live snapshot)
 
-In [`deployment-solana-mainnet.md`](./deployment-solana-mainnet.md) **§ Current Live State (2026-04-03)**, **Solana (`0x00000005`) was not yet registered** on BSC/opBNB `ChainRegistry` or on the Terra bridge, and **Phases 2–3** had not been completed for cross-chain token mappings. SPL mints can exist on Solana while the **bridge program still has zero `TokenMapping` accounts** for BSC/opBNB/Terra peers — the UI will still block transfers.
+As of [`deployment-solana-mainnet.md`](./deployment-solana-mainnet.md) **§ Current Live State (2026-04-10)** (RPC/LCD [verification checklist](./deployment-solana-mainnet.md#verification-checklist-2026-04-10)), **Solana (`0x00000005`) is registered** on BSC/opBNB `ChainRegistry` and on the Terra bridge, and the **nine `TokenMapping`** rows for noneconomic SPLs × peers are present. **If you still see routing errors**, treat it as a **local env / stale UI / wrong RPC** issue until you reproduce missing PDAs with the runbook verify commands—not as “Solana unregistered” by default.
 
 Completing the checklist below aligns **four systems** the frontend depends on:
 
@@ -386,7 +386,7 @@ More context: runbook [Phase 5: Frontend Configuration](./deployment-solana-main
 
 ## After completion
 
-- [ ] Update the **“Current Live State”** table in [`deployment-solana-mainnet.md`](./deployment-solana-mainnet.md#current-live-state-verified-via-rpc-on-2026-04-03) so **Solana** shows as registered on BSC, opBNB, and Terra (avoids the next operator assuming work is still pending).
+- [x] Update the **“Current Live State”** table in [`deployment-solana-mainnet.md`](./deployment-solana-mainnet.md#current-live-state-verified-via-rpc-on-2026-04-10) so **Solana** shows as registered on BSC, opBNB, and Terra (done **2026-04-10**).
 - [ ] Smoke-test in the UI: **Solana → BSC**, **BSC → Solana**, **Solana → Terra**, **Terra → Solana** for **testa**, **testb**, and **tdec** (amount within Terra/EVM rate limits).
 
 ---
