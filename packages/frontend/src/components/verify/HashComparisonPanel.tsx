@@ -82,11 +82,11 @@ export function HashComparisonPanel({
 
       {dest?.cancelled && (
         <CancelInfo
-          canceledAt={
-            dest.approvedAt > 0n
-              ? Number(dest.approvedAt) * 1000
-              : Number(dest.submittedAt) * 1000
-          }
+          canceledAt={(() => {
+            if (dest.approvedAt > 0n) return Number(dest.approvedAt) * 1000
+            if (dest.submittedAt > 0n) return Number(dest.submittedAt) * 1000
+            return undefined
+          })()}
         />
       )}
 

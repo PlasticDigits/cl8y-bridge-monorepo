@@ -87,7 +87,8 @@ export function parseSolanaPendingWithdrawAccount(
     token: pubkeySubToBytes32Hex(tokenPk),
     amount,
     nonce,
-    submittedAt: 1n,
+    /** Solana `PendingWithdraw` has no submit timestamp field (unlike EVM/Terra). Presence of this account implies submitted. */
+    submittedAt: 0n,
     approvedAt: approvedAt >= 0n ? approvedAt : 0n,
     approved,
     cancelled,

@@ -62,12 +62,20 @@ export function DestHashCard({ data, chainName, chainConfig }: DestHashCardProps
           <span className="text-gray-400">Dest account:</span>{' '}
           <span className="text-white font-mono text-xs">{data.destAccount.slice(0, 10)}...{data.destAccount.slice(-8)}</span>
         </p>
-        {data.submittedAt > 0n && (
+        {chainConfig?.type === 'solana' ? (
+          <p>
+            <span className="text-gray-400">Submitted:</span>{' '}
+            <span className="text-gray-300">
+              Not stored on-chain — the Solana bridge does not persist a withdraw submit time on this account (approval time
+              is shown after the operator approves).
+            </span>
+          </p>
+        ) : data.submittedAt > 0n ? (
           <p>
             <span className="text-gray-400">Submitted:</span>{' '}
             <span className="text-white">{new Date(Number(data.submittedAt) * 1000).toLocaleString()}</span>
           </p>
-        )}
+        ) : null}
       </div>
     </div>
   )

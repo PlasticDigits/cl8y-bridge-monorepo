@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DestHashCard } from './DestHashCard'
 import type { PendingWithdrawData } from '../../hooks/useTransferLookup'
+import type { BridgeChainConfig } from '../../types/chain'
 import type { Hex } from 'viem'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -68,5 +69,26 @@ describe('DestHashCard', () => {
   it('should show submitted timestamp when present', () => {
     render(wrap(<DestHashCard data={mkWithdraw()} />))
     expect(screen.getByText(/Submitted:/)).toBeInTheDocument()
+  })
+
+  it('should explain missing submit time for Solana destination', () => {
+    const solConfig: BridgeChainConfig = {
+      chainId: 5,
+      type: 'solana',
+      name: 'Solana',
+      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      bridgeAddress: 'HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD',
+      bytes4ChainId: '0x00000005',
+      programId: '4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt',
+    }
+    render(
+      wrap(
+        <DestHashCard
+          data={mkWithdraw({ chainId: 5, submittedAt: 0n })}
+          chainConfig={solConfig}
+        />,
+      ),
+    )
+    expect(screen.getByText(/Not stored on-chain/)).toBeInTheDocument()
   })
 })
