@@ -21,13 +21,13 @@ use std::collections::HashMap;
 
 use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::ProviderBuilder;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use eyre::Result;
 use multichain_rs::solana::run_with_solana_rpc_fallback;
 use solana_client::client_error::{ClientError, ClientErrorKind};
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcProgramAccountsConfig;
-use solana_client::rpc_filter::{Memcmp, RpcFilterType};
+use solana_client::rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
@@ -174,9 +174,11 @@ impl SolanaWriter {
         const MAX_APPROVAL_ATTEMPTS_PER_TICK: usize = 10;
 
         let disc = anchor_account_discriminator("PendingWithdraw");
+        // Many hosted RPCs reject memcmp `bytes` as raw JSON; Base64 matches Solana RPC docs / examples.
+        let disc_b64 = B64.encode(disc);
         let filters = vec![
             RpcFilterType::DataSize(PENDING_WITHDRAW_DATA_LEN),
-            RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, disc.to_vec())),
+            RpcFilterType::Memcmp(Memcmp::new(0, MemcmpEncodedBytes::Base64(disc_b64))),
         ];
         let cfg = RpcProgramAccountsConfig {
             filters: Some(filters),
