@@ -597,6 +597,15 @@ impl ApprovalVerifier {
                             continue;
                         }
                     };
+                    if !json["error"].is_null() {
+                        warn!(
+                            error = %json["error"],
+                            rpc = %rpc_url,
+                            hash = %bytes32_to_hex(&approval.xchain_hash_id),
+                            "Solana JSON-RPC error during deposit verification — trying next endpoint"
+                        );
+                        continue;
+                    }
                     let result = &json["result"]["value"];
 
                     if result.is_null() {
