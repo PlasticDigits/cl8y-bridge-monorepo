@@ -40,6 +40,14 @@ describe('solana/transaction helpers', () => {
     expect(formatSolanaUserFacingError(new Error('403 Forbidden'))).toContain('custom RPC')
   })
 
+  it('formatSolanaUserFacingError maps wallet destructure TypeError to RPC guidance (#102)', () => {
+    const msg = formatSolanaUserFacingError(
+      new TypeError("Cannot destructure property 'err' of 'r' as it is undefined."),
+    )
+    expect(msg).toContain('Cannot destructure')
+    expect(msg).toContain('bridge-configured RPCs')
+  })
+
   it('buildWithdrawSubmitInstruction rejects srcAccount that is not exactly 32 bytes', () => {
     const programId = new PublicKey('11111111111111111111111111111112')
     const payer = new PublicKey('11111111111111111111111111111112')

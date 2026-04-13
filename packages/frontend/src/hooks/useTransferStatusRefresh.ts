@@ -17,6 +17,9 @@ import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { getEvmClient } from '../services/evmClient'
 import { BRIDGE_WITHDRAW_VIEW_ABI } from '../services/evm/withdrawSubmit'
 import { queryTerraPendingWithdraw } from '../services/terraBridgeQueries'
+import { querySolanaPendingWithdraw } from '../services/solana/solanaBridgeQueries'
+import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
+import { solanaRpcUrlsForBridgeChain } from '../services/solana/solanaRpcUrls'
 
 const LIFECYCLE_RANK: Record<TransferLifecycle, number> = {
   deposited: 0,
@@ -81,6 +84,18 @@ async function queryOnChainLifecycle(
       if (result?.approved) return 'approved'
       if (result) return 'hash-submitted'
       return null
+    }
+
+    if (destConfig.type === 'solana') {
+      const programId = getSolanaProgramIdString(destConfig)
+      const rpcUrls = solanaRpcUrlsForBridgeChain(destConfig)
+      if (!programId || rpcUrls.length === 0) return null
+
+      const result = await querySolanaPendingWithdraw(destConfig, transfer.xchainHashId as Hex)
+      if (!result) return null
+      if (result.executed) return 'executed'
+      if (result.approved) return 'approved'
+      return 'hash-submitted'
     }
   } catch {
     // RPC/LCD error — skip this cycle

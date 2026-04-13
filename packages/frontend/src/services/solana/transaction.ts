@@ -18,6 +18,7 @@ import { getSolanaBrowserProvider } from "./solanaProvider";
 import {
   isSolanaPublicRpcHttp403,
   SOLANA_PUBLIC_RPC_403_USER_MESSAGE,
+  SOLANA_WALLET_RPC_BAD_RESPONSE_USER_MESSAGE,
 } from "./solanaRpcUrls";
 
 const DEPOSIT_SEED = Buffer.from("deposit");
@@ -257,6 +258,11 @@ function appendPhantomLocalnetHint(message: string): string {
   return message;
 }
 
+/** True when `err` looks like Phantom/wallet code choking on an empty RPC JSON body (#102). */
+function looksLikeSolanaWalletRpcBadResponse(err: unknown): boolean {
+  return err instanceof Error && /cannot destructure/i.test(err.message);
+}
+
 /** Normalize wallet / RPC failures (wallets often reject with plain objects, not `Error`). */
 export function formatSolanaWalletError(err: unknown): string {
   if (typeof err === "string" && err.trim()) {
@@ -290,6 +296,9 @@ export function formatSolanaWalletError(err: unknown): string {
 /** Wallet / RPC failures with an explicit HTTP 403 / public-RPC ban message when applicable. */
 export function formatSolanaUserFacingError(err: unknown): string {
   if (isSolanaPublicRpcHttp403(err)) return SOLANA_PUBLIC_RPC_403_USER_MESSAGE;
+  if (looksLikeSolanaWalletRpcBadResponse(err)) {
+    return SOLANA_WALLET_RPC_BAD_RESPONSE_USER_MESSAGE;
+  }
   return formatSolanaWalletError(err);
 }
 

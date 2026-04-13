@@ -123,6 +123,16 @@ export const SOLANA_PUBLIC_RPC_403_USER_MESSAGE =
   "or try again from another network. This app uses backup RPC endpoints for its own chain calls; some wallets " +
   "still send requests only to Solana's public nodes, which can keep failing until you change the wallet RPC.";
 
+/**
+ * Wallets sometimes throw `TypeError: Cannot destructure property 'err' of 'r' as it is undefined`
+ * when the injected/default RPC returns an empty or non-JSON body (often alongside HTTP 403).
+ * Shown from {@link formatSolanaUserFacingError} so users see guidance instead of a raw stack fragment.
+ */
+export const SOLANA_WALLET_RPC_BAD_RESPONSE_USER_MESSAGE =
+  "Solana RPC returned an empty or invalid response (some wallets show a \"Cannot destructure…\" error when the " +
+  "endpoint is blocked or rate-limited). This app prefers bridge-configured RPCs for signing — retry, try another " +
+  "network, or use a wallet that allows a custom Solana RPC.";
+
 /** True when `err` looks like an HTTP 403 / Forbidden from an RPC or fetch layer. */
 export function isSolanaPublicRpcHttp403(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
