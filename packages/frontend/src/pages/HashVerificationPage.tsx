@@ -394,6 +394,7 @@ export default function HashVerificationPage() {
                 destAccountHex32={verifySolanaExecuteParams.destAccountHex32}
                 sourceSrcChainHex32={verifySolanaExecuteParams.sourceSrcChainHex32}
                 mappingSrcTokenKey={verifySolanaExecuteParams.mappingSrcTokenKey}
+                pendingWithdraw={dest}
                 canExecute={
                   verifySolanaCancelRem != null && verifySolanaCancelRem <= 0
                 }

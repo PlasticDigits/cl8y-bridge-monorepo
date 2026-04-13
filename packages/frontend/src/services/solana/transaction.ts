@@ -986,6 +986,12 @@ export function buildWithdrawSubmitInstruction(
   });
 }
 
+/** True when `pendingTokenHex32` is 32 zero bytes (native SOL mapping on `withdraw_execute_native`). */
+export function isSolanaNativeWithdrawTokenHex32(hex: string): boolean {
+  const h = hex.trim().replace(/^0x/i, "");
+  return h.length === 64 && /^0+$/.test(h);
+}
+
 /** Parse a 0x-prefixed 32-byte hex string into a Solana mint/recipient public key. */
 export function bytes32HexToPublicKey(hex: string): PublicKey {
   const bytes = hexToUint8Array(hex);

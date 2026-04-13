@@ -18,6 +18,7 @@ import {
   getSolanaProgramIdString,
   parseBridgeConfigFromAnchorAccount,
 } from '../services/solana/solanaBridgeAccounts'
+import { SOLANA_NATIVE_TOKEN_PUBKEY } from '../services/solana/transaction'
 import {
   fetchSolanaBridgeCancelerPubkeys,
   fetchSolanaBridgeTokenMappingRows,
@@ -27,6 +28,12 @@ import {
   solanaRpcUrlsForBridgeChain,
   withSolanaReadFallback,
 } from '../services/solana/solanaRpcUrls'
+import {
+  DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY,
+  fetchSolanaWithdrawRateLimitSnapshot,
+  SOLANA_RATE_LIMIT_WINDOW_SECS,
+  type SolanaWithdrawRateLimitSnapshot,
+} from '../services/solana/solanaWithdrawRateLimit'
 import { getTokenDisplaySymbol } from '../utils/tokenLogos'
 import { BRIDGE_CHAINS, getChainDisplayInfo, getBridgeChainEntryByBytes4, type NetworkTier } from '../utils/bridgeChains'
 import { DEFAULT_NETWORK } from '../utils/constants'
@@ -182,6 +189,8 @@ export interface WithdrawRateLimitInfo {
   fetchedAt: number // Chain timestamp when data was fetched
   fetchedAtWallMs: number // Wall clock ms (Date.now()) when fetched – for countdown extrapolation
   windowActive: boolean // true when used > 0 (an active rate-limit window exists)
+  /** Solana withdraw-execute minimum (normalized payout base units, u128 string). */
+  minPerTransaction?: string
 }
 
 export interface BridgeTokenDetails {
@@ -216,6 +225,55 @@ function base64ToHex(b64: string): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
+}
+
+function buildSolanaWithdrawRateLimitInfo(
+  snapshot: SolanaWithdrawRateLimitSnapshot,
+  chainNowSec: number,
+): WithdrawRateLimitInfo | null {
+  const hugeImplicitNativePeriod =
+    snapshot.effectiveMaxPeriod >= DEFAULT_RATE_LIMIT_IF_ZERO_SUPPLY
+  const show24hWindow =
+    snapshot.effectiveMaxPeriod > 0n && !hugeImplicitNativePeriod
+
+  const minPart: Partial<Pick<WithdrawRateLimitInfo, 'minPerTransaction'>> =
+    snapshot.effectiveMin > 0n
+      ? { minPerTransaction: snapshot.effectiveMin.toString() }
+      : {}
+
+  if (!show24hWindow && snapshot.effectiveMin === 0n) return null
+
+  if (!show24hWindow) {
+    return {
+      maxPerPeriod: '0',
+      usedAmount: '0',
+      remainingAmount: '0',
+      periodEndsAt: chainNowSec,
+      fetchedAt: chainNowSec,
+      fetchedAtWallMs: Date.now(),
+      windowActive: false,
+      ...minPart,
+    }
+  }
+
+  const maxP = snapshot.effectiveMaxPeriod
+  const used = snapshot.used
+  const remaining = maxP > used ? maxP - used : 0n
+  let periodEndsAt = chainNowSec + SOLANA_RATE_LIMIT_WINDOW_SECS
+  if (snapshot.windowStart > 0n) {
+    periodEndsAt = Number(snapshot.windowStart) + SOLANA_RATE_LIMIT_WINDOW_SECS
+  }
+
+  return {
+    maxPerPeriod: maxP.toString(),
+    usedAmount: used.toString(),
+    remainingAmount: remaining.toString(),
+    periodEndsAt,
+    fetchedAt: chainNowSec,
+    fetchedAtWallMs: Date.now(),
+    windowActive: used > 0n,
+    ...minPart,
+  }
 }
 
 /** Parse CosmWasm Timestamp to Unix seconds */
@@ -787,8 +845,21 @@ export function useTokenDetails(
           } else {
             destAddr = destTokenHex
           }
+          const programPk = new PublicKey(pidStr)
+          const isNativeMapping = parsed.localMint.equals(SOLANA_NATIVE_TOKEN_PUBKEY)
+          const chainNowSec = Math.floor(Date.now() / 1000)
+          const snap = await fetchSolanaWithdrawRateLimitSnapshot(
+            c,
+            programPk,
+            parsed.localMint,
+            isNativeMapping,
+          )
+          const withdrawRateLimit = buildSolanaWithdrawRateLimitInfo(snap, chainNowSec)
+          const minTransfer =
+            snap.effectiveMin > 0n ? snap.effectiveMin.toString() : null
+
           return {
-            minTransfer: null,
+            minTransfer,
             maxTransfer: null,
             localAddress: localMint,
             destinations: [
@@ -799,7 +870,7 @@ export function useTokenDetails(
                 address: destAddr,
               },
             ],
-            withdrawRateLimit: null,
+            withdrawRateLimit,
           }
         })
       }

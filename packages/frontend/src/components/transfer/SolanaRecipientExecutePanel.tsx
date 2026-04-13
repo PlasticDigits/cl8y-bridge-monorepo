@@ -1,6 +1,24 @@
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { PublicKey } from "@solana/web3.js";
 import type { BridgeChainConfig } from "../../types/chain";
 import { useSolanaWithdrawExecute } from "../../hooks/useSolanaWithdrawExecute";
 import { useSolanaWallet } from "../../hooks/useSolanaWallet";
+import type { PendingWithdrawData } from "../../hooks/useTransferLookup";
+import {
+  bytes32HexToPublicKey,
+  isSolanaNativeWithdrawTokenHex32,
+} from "../../services/solana/transaction";
+import { getSolanaProgramIdString } from "../../services/solana/solanaBridgeAccounts";
+import {
+  pickSolanaConnection,
+  solanaRpcUrlsForBridgeChain,
+} from "../../services/solana/solanaRpcUrls";
+import {
+  fetchSolanaWithdrawRateLimitSnapshot,
+  normalizeDecimalsBigInt,
+} from "../../services/solana/solanaWithdrawRateLimit";
+import { formatAmount } from "../../utils/format";
 
 export interface SolanaRecipientExecutePanelProps {
   destChainConfig: BridgeChainConfig;
@@ -12,6 +30,8 @@ export interface SolanaRecipientExecutePanelProps {
   /** When false, panel explains user must wait for the withdraw delay after approval. */
   canExecute: boolean;
   cancelWindowHint?: string | null;
+  /** Destination pending withdraw (for payout amount + rate-limit gate). */
+  pendingWithdraw?: PendingWithdrawData | null;
 }
 
 /**
@@ -27,9 +47,74 @@ export function SolanaRecipientExecutePanel({
   mappingSrcTokenKey,
   canExecute,
   cancelWindowHint,
+  pendingWithdraw,
 }: SolanaRecipientExecutePanelProps) {
   const { address, connected, setShowWalletModal } = useSolanaWallet();
   const { execute, status, error, lastSignature } = useSolanaWithdrawExecute();
+
+  const srcDecimals = pendingWithdraw?.srcDecimals ?? 0;
+  const destDecimals = pendingWithdraw?.destDecimals ?? 9;
+
+  const normalizedPayout = useMemo(() => {
+    if (!pendingWithdraw) return null;
+    return normalizeDecimalsBigInt(
+      pendingWithdraw.amount,
+      srcDecimals,
+      destDecimals,
+    );
+  }, [pendingWithdraw, srcDecimals, destDecimals]);
+
+  const rateQuery = useQuery({
+    queryKey: [
+      "solanaWithdrawExecuteRate",
+      destChainConfig.chainId,
+      pendingTokenHex32,
+      xchainHashId,
+      pendingWithdraw?.amount?.toString(),
+      srcDecimals,
+      destDecimals,
+    ],
+    queryFn: async () => {
+      if (destChainConfig.type !== "solana") return null;
+      const pidStr = getSolanaProgramIdString(destChainConfig);
+      const rpcUrls = solanaRpcUrlsForBridgeChain(destChainConfig);
+      if (!pidStr || rpcUrls.length === 0) return null;
+      const connection = await pickSolanaConnection(rpcUrls);
+      const programId = new PublicKey(pidStr);
+      const isNative = isSolanaNativeWithdrawTokenHex32(pendingTokenHex32);
+      const mint = isNative
+        ? new PublicKey(new Uint8Array(32))
+        : bytes32HexToPublicKey(pendingTokenHex32);
+      return fetchSolanaWithdrawRateLimitSnapshot(
+        connection,
+        programId,
+        mint,
+        isNative,
+      );
+    },
+    enabled:
+      destChainConfig.type === "solana" &&
+      !!pendingWithdraw &&
+      !!getSolanaProgramIdString(destChainConfig) &&
+      solanaRpcUrlsForBridgeChain(destChainConfig).length > 0,
+    staleTime: 15_000,
+  });
+
+  const snap = rateQuery.data;
+  const belowMin =
+    snap != null &&
+    normalizedPayout != null &&
+    snap.effectiveMin > 0n &&
+    normalizedPayout < snap.effectiveMin;
+  const aboveMaxTx =
+    snap != null &&
+    normalizedPayout != null &&
+    snap.effectiveMaxTx > 0n &&
+    normalizedPayout > snap.effectiveMaxTx;
+
+  const executeBlocked = Boolean(belowMin || aboveMaxTx);
+  const implicitDefaultsBlock =
+    snap && !snap.explicitConfig && (belowMin || aboveMaxTx);
 
   if (destChainConfig.type !== "solana") return null;
 
@@ -43,6 +128,36 @@ export function SolanaRecipientExecutePanel({
         execute step to receive tokens. Lamports from closing the pending-withdraw account go to your
         wallet (along with any new accounts you pay to create).
       </p>
+      {pendingWithdraw && rateQuery.isSuccess && snap && (
+        <div className="text-violet-200/85 text-xs mt-2 space-y-1">
+          {snap.effectiveMin > 0n && (
+            <p>
+              Minimum payout (this transfer, normalized to destination decimals):{" "}
+              <span className="font-mono text-violet-100">
+                {formatAmount(snap.effectiveMin.toString(), destDecimals)}
+              </span>
+            </p>
+          )}
+          {snap.effectiveMaxTx > 0n && (
+            <p>
+              Maximum per withdrawal:{" "}
+              <span className="font-mono text-violet-100">
+                {formatAmount(snap.effectiveMaxTx.toString(), destDecimals)}
+              </span>
+            </p>
+          )}
+        </div>
+      )}
+      {pendingWithdraw && rateQuery.isSuccess && executeBlocked && (
+        <p className="text-amber-300 text-xs mt-2">
+          {belowMin
+            ? `This payout is below the on-chain minimum. It cannot be executed until the bridge admin sets lower withdraw limits (for example via the set-mainnet-withdraw-rate-limits script) or the amount meets the minimum.`
+            : `This payout exceeds the on-chain maximum per withdrawal.`}
+          {implicitDefaultsBlock
+            ? " Current limits follow implicit mint-supply defaults because no explicit WithdrawRateLimit configuration was found for this token."
+            : ""}
+        </p>
+      )}
       {!canExecute && (
         <p className="text-violet-300/80 text-xs mt-2">
           {cancelWindowHint ??
@@ -63,7 +178,11 @@ export function SolanaRecipientExecutePanel({
           <button
             type="button"
             className="btn-primary text-xs"
-            disabled={status === "sending"}
+            disabled={
+              status === "sending" ||
+              rateQuery.isLoading ||
+              executeBlocked
+            }
             onClick={() =>
               void execute({
                 chain: destChainConfig,

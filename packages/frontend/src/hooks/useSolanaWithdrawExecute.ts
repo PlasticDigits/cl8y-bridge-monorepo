@@ -9,6 +9,7 @@ import {
   buildWithdrawExecuteNativeInstruction,
   bytes32HexToPublicKey,
   formatSolanaUserFacingError,
+  isSolanaNativeWithdrawTokenHex32,
   resolveSplTokenProgramForMint,
   sendSolanaTransaction,
 } from "../services/solana/transaction";
@@ -26,11 +27,6 @@ function xchainHexToHashBytes32(hex: string): Uint8Array {
     throw new Error("Invalid xchain hash (expected 64 hex chars)");
   }
   return hexToUint8Array(`0x${h}` as Hex);
-}
-
-function bytes32HexIsAllZero(hex: string): boolean {
-  if (!hex.startsWith("0x") || hex.length !== 66) return false;
-  return /^0x0+$/i.test(hex);
 }
 
 /** Extract bytes4 from left-padded bytes32 chain id. */
@@ -110,7 +106,7 @@ export function useSolanaWithdrawExecute() {
         );
 
         let ixs;
-        if (bytes32HexIsAllZero(params.pendingTokenHex32)) {
+        if (isSolanaNativeWithdrawTokenHex32(params.pendingTokenHex32)) {
           ixs = [
             buildWithdrawExecuteNativeInstruction(
               programId,

@@ -1576,6 +1576,7 @@ export default function TransferStatusPage() {
                         destAccountHex32={solanaExecuteParams.destAccountHex32}
                         sourceSrcChainHex32={solanaExecuteParams.sourceSrcChainHex32}
                         mappingSrcTokenKey={solanaExecuteParams.mappingSrcTokenKey}
+                        pendingWithdraw={dest}
                         canExecute={
                           effectiveCancelWindowRemaining != null &&
                           effectiveCancelWindowRemaining <= 0

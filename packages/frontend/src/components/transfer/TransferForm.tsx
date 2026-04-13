@@ -722,9 +722,19 @@ export function TransferForm() {
       effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
 
     let effectiveMin: bigint | null = null
+    const minCandidates: bigint[] = []
     if (destTokenDetails?.minTransfer) {
       const raw = bigintFromBaseUnitsString(destTokenDetails.minTransfer)
-      if (raw > 0n) effectiveMin = toSourceUnits(raw)
+      if (raw > 0n) minCandidates.push(toSourceUnits(raw))
+    }
+    if (destTokenDetails?.withdrawRateLimit?.minPerTransaction) {
+      const raw = bigintFromBaseUnitsString(
+        destTokenDetails.withdrawRateLimit.minPerTransaction,
+      )
+      if (raw > 0n) minCandidates.push(toSourceUnits(raw))
+    }
+    if (minCandidates.length) {
+      effectiveMin = minCandidates.reduce((a, b) => (a > b ? a : b))
     }
 
     const bridgeLimit = bridgeRemainingInSrc ?? maxTransferInSrc
@@ -745,6 +755,7 @@ export function TransferForm() {
     tokenConfig,
     destTokenDetails?.maxTransfer,
     destTokenDetails?.minTransfer,
+    destTokenDetails?.withdrawRateLimit?.minPerTransaction,
     destTokenDetails?.withdrawRateLimit?.remainingAmount,
     amountDecimals,
     toSourceUnits,

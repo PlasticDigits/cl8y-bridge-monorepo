@@ -283,6 +283,11 @@ function WithdrawRateLimitDisplay({
   return (
     <div className="mt-1.5 pl-1 border-l border-amber-500/30 space-y-1">
       <p className="text-[10px] uppercase text-amber-400/80">Withdraw limit (24h)</p>
+      {info?.minPerTransaction != null && info.minPerTransaction !== '0' && (
+        <p className="text-gray-400">
+          Min payout (execute): {formatAmount(info.minPerTransaction, decimals)}
+        </p>
+      )}
       <p className="text-gray-400">
         Limit: {info ? formatAmount(info.maxPerPeriod, decimals) : '—'}
       </p>
