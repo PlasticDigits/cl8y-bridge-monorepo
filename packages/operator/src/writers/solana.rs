@@ -23,6 +23,7 @@ use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::ProviderBuilder;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use eyre::Result;
+use multichain_rs::hash::{encode_terra_address_to_bytes32, keccak256};
 use multichain_rs::solana::run_with_solana_rpc_fallback;
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_client::client_error::{ClientError, ClientErrorKind};
@@ -43,6 +44,18 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::contracts::evm_bridge::Bridge;
+
+/// 32-byte Solana `TokenMapping` / `withdraw_submit` seed for a Terra local token id (CosmWasm `encode_token_address`).
+fn terra_local_token_id_to_mapping_key_bytes(token: &str) -> Option<[u8; 32]> {
+    let t = token.trim();
+    if t.starts_with("terra1") && (t.len() == 44 || t.len() == 64) {
+        return encode_terra_address_to_bytes32(t).ok();
+    }
+    if t.is_empty() {
+        return None;
+    }
+    Some(keccak256(t.as_bytes()))
+}
 
 /// Parsed `PendingWithdraw` account body (matches `packages/contracts-solana/.../pending_withdraw.rs`).
 #[derive(Debug, Clone)]
@@ -249,7 +262,12 @@ impl SolanaWriter {
                 )
                 .await
             {
-                Ok(true) => {}
+                Ok(true) => {
+                    self.warn_if_solana_token_mapping_missing_for_terra_execute(
+                        &pending, &hash_hex,
+                    )
+                    .await;
+                }
                 Ok(false) => {
                     warn!(
                         nonce,
@@ -346,6 +364,118 @@ impl SolanaWriter {
         .map_err(|e| eyre::eyre!("mark terra_deposits processed by transfer_hash: {}", e))?;
 
         Ok(())
+    }
+
+    /// After Terra source verification: ensure the Solana `TokenMapping` PDA exists for
+    /// `(src_chain, encode_token_address(local_token))` so the recipient can `withdraw_execute` (#104).
+    /// Does not block `withdraw_approve` — logs only.
+    async fn warn_if_solana_token_mapping_missing_for_terra_execute(
+        &self,
+        pending: &ParsedOnChainPendingWithdraw,
+        transfer_hash_hex: &str,
+    ) {
+        if self.terra_lcd.is_none() || self.source_chain_endpoints.contains_key(&pending.src_chain)
+        {
+            return;
+        }
+        let Some((lcd_url, bridge_addr)) = &self.terra_lcd else {
+            return;
+        };
+        let token_id = match Self::query_terra_bridge_transaction_token(
+            &self.http,
+            lcd_url,
+            bridge_addr,
+            pending.nonce,
+        )
+        .await
+        {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                debug!(
+                    nonce = pending.nonce,
+                    hash = %transfer_hash_hex,
+                    "Terra transaction query returned no token — skipping TokenMapping preflight"
+                );
+                return;
+            }
+            Err(e) => {
+                debug!(
+                    nonce = pending.nonce,
+                    error = %e,
+                    "Terra transaction query failed — skipping TokenMapping preflight"
+                );
+                return;
+            }
+        };
+        let Some(mapping_key) = terra_local_token_id_to_mapping_key_bytes(&token_id) else {
+            warn!(
+                hash = %transfer_hash_hex,
+                token = %token_id,
+                "Could not derive Solana TokenMapping key from Terra bridge token id"
+            );
+            return;
+        };
+        let (pda, _) = Pubkey::find_program_address(
+            &[b"token", pending.src_chain.as_ref(), mapping_key.as_ref()],
+            &self.program_id,
+        );
+        let mut exists = false;
+        for c in &self.rpc_clients {
+            if let Ok(acc) = c.get_account(&pda) {
+                if !acc.data.is_empty() {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if !exists {
+            warn!(
+                hash = %transfer_hash_hex,
+                nonce = pending.nonce,
+                src_chain = %format!("0x{}", hex::encode(pending.src_chain)),
+                terra_token = %token_id,
+                token_mapping_pda = %pda,
+                program_id = %self.program_id,
+                "Solana TokenMapping account missing for Terra→Solana execute (#104). \
+                 Run `register_token` / register-mainnet-tokens.ts for this (src_chain, encode_token_address(Terra token)). \
+                 Recipient withdraw_execute uses SPL mint from PendingWithdraw, but the mapping PDA seeds use the locked Terra CW20/denom — not LCD dest_token_address (SPL bytes32)."
+            );
+        } else {
+            debug!(
+                hash = %transfer_hash_hex,
+                token_mapping_pda = %pda,
+                "Solana TokenMapping present for Terra source token (withdraw_execute preflight OK)"
+            );
+        }
+    }
+
+    async fn query_terra_bridge_transaction_token(
+        http: &reqwest::Client,
+        lcd_url: &str,
+        bridge_addr: &str,
+        nonce: u64,
+    ) -> Result<Option<String>> {
+        let query = serde_json::json!({ "transaction": { "nonce": nonce } });
+        let query_b64 = B64.encode(serde_json::to_string(&query)?);
+        let url = format!(
+            "{}/cosmwasm/wasm/v1/contract/{}/smart/{}",
+            lcd_url.trim_end_matches('/'),
+            bridge_addr,
+            query_b64
+        );
+        let resp = http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            return Err(eyre::eyre!(
+                "Terra LCD transaction query HTTP {}",
+                resp.status()
+            ));
+        }
+        let json: serde_json::Value = resp.json().await?;
+        Ok(json
+            .get("data")
+            .and_then(|d| d.get("token"))
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string))
     }
 
     /// Query Terra bridge `DepositHash` smart query (same as canceler verifier).
@@ -569,6 +699,15 @@ mod tests {
             anchor_account_discriminator("PendingWithdraw"),
             [0xd7, 0x7d, 0x3e, 0x52, 0x0c, 0x8f, 0x70, 0x85]
         );
+    }
+
+    #[test]
+    fn terra_local_token_mapping_key_matches_mainnet_testa_encoding() {
+        let cw20 = "terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh";
+        let got = terra_local_token_id_to_mapping_key_bytes(cw20).expect("cw20");
+        let want_hex = "d76fb2de745e7a45abb089ea24c79c6a00cdedddb81377b0b98dbb0fdf917fce";
+        let got_hex = hex::encode(got);
+        assert_eq!(got_hex, want_hex);
     }
 
     #[test]

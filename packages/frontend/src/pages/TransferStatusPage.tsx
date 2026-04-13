@@ -693,7 +693,7 @@ export default function TransferStatusPage() {
   }, [transfer?.lifecycle])
 
   // --- Terra nonce resolution ---
-  // For terra-to-evm transfers that lack a depositNonce, parse it from LCD.
+  // For terra→EVM / terra→Solana transfers that lack a depositNonce, parse it from the lock tx (LCD).
   // Uses state (not ref) so the user can retry if the LCD was unreachable.
   const [nonceStatus, setNonceStatus] = useState<NonceResolutionStatus>('idle')
   const nonceResolving = useRef(false)
@@ -705,7 +705,7 @@ export default function TransferStatusPage() {
 
   useEffect(() => {
     if (!transfer) return
-    if (transfer.direction !== 'terra-to-evm') return
+    if (transfer.direction !== 'terra-to-evm' && transfer.direction !== 'terra-to-solana') return
     if (transfer.depositNonce !== undefined) {
       if (nonceStatus !== 'resolved') setNonceStatus('resolved')
       return
@@ -731,10 +731,17 @@ export default function TransferStatusPage() {
         const tier = DEFAULT_NETWORK as NetworkTier
         const chains = BRIDGE_CHAINS[tier]
         const destChainConfig = chains[transfer.destChain]
+        const sourceChainConfig = chains[transfer.sourceChain]
 
         if (destChainConfig?.bytes4ChainId) {
-          const srcChainB32 = chainIdToBytes32(2) // Terra = chain ID 2
-          const destChainIdNum = parseInt(destChainConfig.bytes4ChainId.slice(2), 16)
+          const srcChainIdNum = sourceChainConfig?.bytes4ChainId
+            ? parseInt(sourceChainConfig.bytes4ChainId.slice(2).slice(0, 8), 16)
+            : 2
+          const srcChainB32 = chainIdToBytes32(srcChainIdNum)
+          const destChainIdNum = parseInt(
+            destChainConfig.bytes4ChainId.slice(2).slice(0, 8),
+            16,
+          )
           const destChainB32 = chainIdToBytes32(destChainIdNum)
 
           // Encode accounts -- they may already be bytes32 (66 chars) or raw addresses

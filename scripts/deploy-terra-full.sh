@@ -5,11 +5,16 @@
 #   1. Bridge contract (store + instantiate)
 #   2. CW20 test tokens (testa 18dec, testb 18dec, tdec 6dec) with bridge as minter
 #   3. Faucet contract (store + instantiate) with minter permissions on CW20s
-#   4. Register EVM chains (BSC + opBNB)
+#   4. Register peer chains (BSC + opBNB + Solana mainnet-beta)
 #   5. Add tokens (uluna native + 3 CW20 tokens)
-#   6. Set token destinations (outgoing to BSC + opBNB)
+#   6. Set token destinations (outgoing to BSC + opBNB + Solana SPL mints)
 #   7. Set incoming token mappings (from BSC + opBNB)
 #   8. Register operator + cancelers
+#
+# After Terra-only steps, run Solana bridge token registration separately (not invoked here):
+#   anchor build && npx tsx packages/contracts-solana/scripts/register-mainnet-tokens.ts
+# Verify TokenMapping PDAs + Terra dest mappings:
+#   ./scripts/verify-terra-solana-token-mappings.sh
 #
 # Prerequisites:
 #   - terrad CLI installed
@@ -71,6 +76,7 @@ TX_FLAGS="--chain-id $CHAIN_ID --node $NODE --keyring-backend $KEYRING"
 BRIDGE_BSC_CHAIN_ID_B64="AAAAOA=="    # 0x00000038
 BRIDGE_OPBNB_CHAIN_ID_B64="AAAAzA=="  # 0x000000cc
 BRIDGE_TERRA_CHAIN_ID_B64="AAAAAQ=="  # 0x00000001
+BRIDGE_SOLANA_CHAIN_ID_B64="AAAABQ==" # 0x00000005 (Solana V2; matches ChainRegistry / Solana program)
 
 # Bridge configuration
 WITHDRAW_DELAY=300
@@ -426,7 +432,7 @@ EOFMSG
 
 # ─── Phase 4: Register EVM chains ────────────────────────────────────────────
 register_chains() {
-    log_header "Phase 4: Register EVM Chains"
+    log_header "Phase 4: Register Peer Chains (EVM + Solana)"
 
     terra_admin_execute "$TERRA_BRIDGE" \
         '{"register_chain":{"identifier":"evm_56","chain_id":"'"$BRIDGE_BSC_CHAIN_ID_B64"'"}}' \
@@ -435,6 +441,10 @@ register_chains() {
     terra_admin_execute "$TERRA_BRIDGE" \
         '{"register_chain":{"identifier":"evm_204","chain_id":"'"$BRIDGE_OPBNB_CHAIN_ID_B64"'"}}' \
         "Register opBNB (0x000000cc)"
+
+    terra_admin_execute "$TERRA_BRIDGE" \
+        '{"register_chain":{"identifier":"solana_mainnet-beta","chain_id":"'"$BRIDGE_SOLANA_CHAIN_ID_B64"'"}}' \
+        "Register Solana (0x00000005)"
 }
 
 # ─── Phase 5: Add tokens ─────────────────────────────────────────────────────
@@ -465,6 +475,12 @@ add_tokens() {
 # ─── Phase 6: Set token destinations (outgoing) ──────────────────────────────
 set_token_destinations() {
     log_header "Phase 6: Token Destinations (Outgoing)"
+
+    # SPL mint pubkeys as 64-char hex (raw 32 bytes, no 0x) — same bytes32 as EVM/Solana bridge + LCD queries.
+    # Override with SOLANA_*_DEST_TOKEN_HEX if you use different noneconomic test mints.
+    SOLANA_TESTA_DEST_TOKEN_HEX="${SOLANA_TESTA_DEST_TOKEN_HEX:-5229ead89ed62241eecb9d876fcc2b5c613e8fe1a7f42ca282c9e7c8acd16cd1}"
+    SOLANA_TESTB_DEST_TOKEN_HEX="${SOLANA_TESTB_DEST_TOKEN_HEX:-cec677e2be6a6fa63f38381b578a07e5438a324a472a0214a26f612f310e8568}"
+    SOLANA_TDEC_DEST_TOKEN_HEX="${SOLANA_TDEC_DEST_TOKEN_HEX:-018f38b5187a52d81baab1034a584f413289ca4b27828babca407cad74e63558}"
 
     if [ -z "$BSC_TESTA" ]; then
         prompt_value "BSC_TESTA" "BSC tokena address (0x...)"
@@ -522,6 +538,19 @@ set_token_destinations() {
     terra_admin_execute "$TERRA_BRIDGE" \
         '{"set_token_destination":{"token":"'"$TERRA_TDEC"'","dest_chain":"'"$BRIDGE_OPBNB_CHAIN_ID_B64"'","dest_token":"'"$OPBNB_TDEC_B32"'","dest_decimals":12}}' \
         "tdec → opBNB (dest dec: 12)"
+
+    # ─── Outgoing to Solana (SPL mint bytes32; decimals = SPL side) ───
+    terra_admin_execute "$TERRA_BRIDGE" \
+        '{"set_token_destination":{"token":"'"$TERRA_TESTA"'","dest_chain":"'"$BRIDGE_SOLANA_CHAIN_ID_B64"'","dest_token":"'"$SOLANA_TESTA_DEST_TOKEN_HEX"'","dest_decimals":9}}' \
+        "testa → Solana SPL (dest dec: 9)"
+
+    terra_admin_execute "$TERRA_BRIDGE" \
+        '{"set_token_destination":{"token":"'"$TERRA_TESTB"'","dest_chain":"'"$BRIDGE_SOLANA_CHAIN_ID_B64"'","dest_token":"'"$SOLANA_TESTB_DEST_TOKEN_HEX"'","dest_decimals":9}}' \
+        "testb → Solana SPL (dest dec: 9)"
+
+    terra_admin_execute "$TERRA_BRIDGE" \
+        '{"set_token_destination":{"token":"'"$TERRA_TDEC"'","dest_chain":"'"$BRIDGE_SOLANA_CHAIN_ID_B64"'","dest_token":"'"$SOLANA_TDEC_DEST_TOKEN_HEX"'","dest_decimals":6}}' \
+        "tdec → Solana SPL (dest dec: 6)"
 }
 
 # ─── Phase 7: Set incoming token mappings ─────────────────────────────────────
@@ -686,9 +715,14 @@ main() {
     echo "Next steps:"
     echo "  1. Set Terra ↔ EVM mappings on EVM side:"
     echo "     ./scripts/deploy-evm-full.sh --terra-mappings"
-    echo "  2. Update operator config with new Terra bridge address"
-    echo "  3. Update canceler config with new Terra bridge address"
-    echo "  4. Update frontend .env with new addresses"
+    echo "  2. On Solana: register peer chains + TokenMapping rows (see docs/deployment-solana-mainnet.md):"
+    echo "       cd packages/contracts-solana && anchor build && npx tsx scripts/register-mainnet-chains.ts"
+    echo "       npx tsx scripts/register-mainnet-tokens.ts"
+    echo "  3. Verify Terra LCD + Solana TokenMapping PDAs for Terra→Solana:"
+    echo "       ./scripts/verify-terra-solana-token-mappings.sh"
+    echo "  4. Update operator config with new Terra bridge address"
+    echo "  5. Update canceler config with new Terra bridge address"
+    echo "  6. Update frontend .env with new addresses"
     echo ""
 }
 
