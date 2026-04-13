@@ -45,7 +45,7 @@ import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
 import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
-import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
+import { resolveSolanaMappingSrcTokenKey } from '../services/solana/resolveSolanaMappingSrcTokenKey'
 import type { Hex } from 'viem'
 
 const LOG = '[TransferStatus]'
@@ -609,6 +609,64 @@ export default function TransferStatusPage() {
     }
   }, [xchainHashId, dest, lookupLoading, getTransferByXchainHashId, updateTransferRecord])
 
+  // Terra→Solana: LCD deposit `source.token` is hash `dest_token_address` (SPL mint bytes32), not the
+  // Terra CW20/denom used for Solana TokenMapping PDA seeds. Enrich `transfer.token` from bridge tx by nonce (#104).
+  useEffect(() => {
+    if (!transfer || destChain?.type !== 'solana') return
+    if (sourceChain?.type !== 'cosmos') return
+    const nonce = transfer.depositNonce
+    if (nonce === undefined || nonce === null) return
+    const tr = (transfer.token ?? '').trim()
+    if (tr && !/^0x[a-fA-F0-9]{64}$/i.test(tr)) return
+
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const srcCfg = BRIDGE_CHAINS[tier][transfer.sourceChain]
+    if (!srcCfg || srcCfg.type !== 'cosmos' || !srcCfg.bridgeAddress) return
+    const lcdUrls = srcCfg.lcdFallbacks?.length
+      ? [...srcCfg.lcdFallbacks]
+      : srcCfg.lcdUrl
+        ? [srcCfg.lcdUrl]
+        : []
+    if (lcdUrls.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const { queryTerraBridgeTransactionByNonce } = await import('../services/terraBridgeQueries')
+        const row = await queryTerraBridgeTransactionByNonce(
+          lcdUrls,
+          srcCfg.bridgeAddress,
+          nonce,
+        )
+        if (cancelled || !row?.token?.trim()) return
+        const tok = row.token.trim()
+        if (/^0x[a-fA-F0-9]{64}$/i.test(tok)) return
+
+        const hashKey = xchainHashId ? normalizeXchainHashId(xchainHashId) : null
+        const stored = hashKey ? getTransferByXchainHashId(hashKey) : null
+        if (stored) {
+          updateTransferRecord(stored.id, { token: row.token })
+        }
+        setTransfer((prev) => (prev ? { ...prev, token: row.token } : null))
+      } catch {
+        // ignore LCD errors
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    transfer,
+    destChain?.type,
+    sourceChain?.type,
+    transfer?.depositNonce,
+    transfer?.token,
+    transfer?.sourceChain,
+    xchainHashId,
+    getTransferByXchainHashId,
+    updateTransferRecord,
+  ])
+
   // Listen for store updates
   useEffect(() => {
     const handler = () => {
@@ -1113,15 +1171,15 @@ export default function TransferStatusPage() {
     ) {
       return null
     }
-    const srcTokKey = ((source?.srcToken ?? source?.token ?? transfer.token) ?? '') as string
-    if (!srcTokKey || !resolveWithdrawSrcTokenBytesForSolana(srcTokKey)) return null
+    const srcTokKey = resolveSolanaMappingSrcTokenKey(sourceChain, source, transfer.token)
+    if (!srcTokKey) return null
     return {
       pendingTokenHex32: pendingToken,
       destAccountHex32: destAcc,
       sourceSrcChainHex32: srcChain,
       mappingSrcTokenKey: srcTokKey,
     }
-  }, [transfer, destChain, dest, source])
+  }, [transfer, destChain, dest, source, sourceChain])
 
   if (!transfer) {
     const isValidHash = xchainHashId && isValidXchainHashId(xchainHashId)

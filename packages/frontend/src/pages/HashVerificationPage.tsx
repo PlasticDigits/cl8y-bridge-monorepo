@@ -18,7 +18,13 @@ import {
 } from '../components/verify'
 import { HashWithBlockie } from '../components/ui'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
-import { getBridgeChainByBytes4, getChainKeyByConfig } from '../utils/bridgeChains'
+import {
+  BRIDGE_CHAINS,
+  getBridgeChainByBytes4,
+  getChainKeyByConfig,
+  type NetworkTier,
+} from '../utils/bridgeChains'
+import { DEFAULT_NETWORK } from '../utils/constants'
 import { bytes32ToAddress } from '../services/evm/tokenRegistry'
 import { bytes32ToTerraAddress, resolveTokenFromBytes32 } from '../services/hashVerification'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
@@ -28,7 +34,7 @@ import type { Hex, Address } from 'viem'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
-import { resolveWithdrawSrcTokenBytesForSolana } from '../services/solana/resolveWithdrawSrcTokenBytes'
+import { resolveSolanaMappingSrcTokenKey } from '../services/solana/resolveSolanaMappingSrcTokenKey'
 
 /** Extract bytes4 from bytes32 (left-aligned) */
 function bytes32ToBytes4(bytes32: Hex): string {
@@ -216,6 +222,55 @@ export default function HashVerificationPage() {
 
   // Check if this hash has a local transfer record that needs submission
   const localTransfer = inputHash ? getTransferByXchainHashId(inputHash) : null
+  const [terraSolanaMappingTok, setTerraSolanaMappingTok] = useState<string | null>(null)
+
+  useEffect(() => {
+    setTerraSolanaMappingTok(null)
+  }, [inputHash])
+
+  useEffect(() => {
+    if (!source || !sourceChain || sourceChain.type !== 'cosmos') return
+    if (!destChain || destChain.type !== 'solana') return
+    const ltTok = localTransfer?.token?.trim()
+    if (ltTok && !/^0x[a-fA-F0-9]{64}$/i.test(ltTok)) return
+
+    const dep = String(source.token ?? '').trim()
+    if (!/^0x[a-fA-F0-9]{64}$/i.test(dep)) return
+
+    const chainKey = getChainKeyByConfig(sourceChain)
+    if (!chainKey) return
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const srcCfg = BRIDGE_CHAINS[tier][chainKey]
+    if (!srcCfg || srcCfg.type !== 'cosmos' || !srcCfg.bridgeAddress) return
+    const lcdUrls = srcCfg.lcdFallbacks?.length
+      ? [...srcCfg.lcdFallbacks]
+      : srcCfg.lcdUrl
+        ? [srcCfg.lcdUrl]
+        : []
+    if (lcdUrls.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const { queryTerraBridgeTransactionByNonce } = await import('../services/terraBridgeQueries')
+        const row = await queryTerraBridgeTransactionByNonce(
+          lcdUrls,
+          srcCfg.bridgeAddress,
+          Number(source.nonce),
+        )
+        if (cancelled || !row?.token?.trim()) return
+        const tok = row.token.trim()
+        if (/^0x[a-fA-F0-9]{64}$/i.test(tok)) return
+        setTerraSolanaMappingTok(tok)
+      } catch {
+        // ignore LCD errors
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [source, sourceChain, destChain, localTransfer?.token])
+
   const needsSubmit = localTransfer?.lifecycle === 'deposited'
   const destChainFromSource = source ? getBridgeChainByBytes4(bytes32ToBytes4(source.destChain)) : null
   /** SubmitHashButton only supports EVM/Terra destinations; Solana must use Transfer Status. */
@@ -252,14 +307,18 @@ export default function HashVerificationPage() {
     const pendingToken = dest.token as string
     const destAcc = dest.destAccount as string
     const srcChain = source.srcChain as `0x${string}`
-    const srcTokKey = ((source.srcToken ?? source.token) ?? '') as string
+    const srcTokKey = resolveSolanaMappingSrcTokenKey(
+      sourceChain,
+      source,
+      localTransfer?.token ?? terraSolanaMappingTok,
+    )
     if (
       !pendingToken.startsWith('0x') ||
       pendingToken.length !== 66 ||
       !destAcc.startsWith('0x') ||
       destAcc.length !== 66 ||
       !srcChain.startsWith('0x') ||
-      !resolveWithdrawSrcTokenBytesForSolana(srcTokKey)
+      !srcTokKey
     ) {
       return null
     }
@@ -269,7 +328,7 @@ export default function HashVerificationPage() {
       sourceSrcChainHex32: srcChain,
       mappingSrcTokenKey: srcTokKey,
     }
-  }, [inputHash, source, dest, destChain])
+  }, [inputHash, source, dest, destChain, sourceChain, localTransfer?.token, terraSolanaMappingTok])
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
