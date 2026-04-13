@@ -1,0 +1,92 @@
+diff --git a/node_modules/rpc-websockets/dist/index.browser.cjs b/node_modules/rpc-websockets/dist/index.browser.cjs
+index 60e7a61..6e1548f 100644
+--- a/node_modules/rpc-websockets/dist/index.browser.cjs
++++ b/node_modules/rpc-websockets/dist/index.browser.cjs
+@@ -361,12 +361,17 @@ var CommonClient = class extends eventemitter3.EventEmitter {
+         }
+         return;
+       }
+-      if ("error" in message === "result" in message)
++      if (!Object.prototype.hasOwnProperty.call(message, "error") && !Object.prototype.hasOwnProperty.call(message, "result")) {
+         this.queue[message.id].promise[1](
+           new Error(
+             'Server response malformed. Response must include either "result" or "error", but not both.'
+           )
+         );
++        if (this.queue[message.id].timeout)
++          clearTimeout(this.queue[message.id].timeout);
++        delete this.queue[message.id];
++        return;
++      }
+       if (this.queue[message.id].timeout)
+         clearTimeout(this.queue[message.id].timeout);
+       if (message.error) this.queue[message.id].promise[1](message.error);
+diff --git a/node_modules/rpc-websockets/dist/index.browser.mjs b/node_modules/rpc-websockets/dist/index.browser.mjs
+index f901b03..5ff6f1b 100644
+--- a/node_modules/rpc-websockets/dist/index.browser.mjs
++++ b/node_modules/rpc-websockets/dist/index.browser.mjs
+@@ -359,12 +359,17 @@ var CommonClient = class extends EventEmitter {
+         }
+         return;
+       }
+-      if ("error" in message === "result" in message)
++      if (!Object.prototype.hasOwnProperty.call(message, "error") && !Object.prototype.hasOwnProperty.call(message, "result")) {
+         this.queue[message.id].promise[1](
+           new Error(
+             'Server response malformed. Response must include either "result" or "error", but not both.'
+           )
+         );
++        if (this.queue[message.id].timeout)
++          clearTimeout(this.queue[message.id].timeout);
++        delete this.queue[message.id];
++        return;
++      }
+       if (this.queue[message.id].timeout)
+         clearTimeout(this.queue[message.id].timeout);
+       if (message.error) this.queue[message.id].promise[1](message.error);
+diff --git a/node_modules/rpc-websockets/dist/index.cjs b/node_modules/rpc-websockets/dist/index.cjs
+index ac2c4fc..7cfbc12 100644
+--- a/node_modules/rpc-websockets/dist/index.cjs
++++ b/node_modules/rpc-websockets/dist/index.cjs
+@@ -318,12 +318,17 @@ var CommonClient = class extends eventemitter3.EventEmitter {
+         }
+         return;
+       }
+-      if ("error" in message === "result" in message)
++      if (!Object.prototype.hasOwnProperty.call(message, "error") && !Object.prototype.hasOwnProperty.call(message, "result")) {
+         this.queue[message.id].promise[1](
+           new Error(
+             'Server response malformed. Response must include either "result" or "error", but not both.'
+           )
+         );
++        if (this.queue[message.id].timeout)
++          clearTimeout(this.queue[message.id].timeout);
++        delete this.queue[message.id];
++        return;
++      }
+       if (this.queue[message.id].timeout)
+         clearTimeout(this.queue[message.id].timeout);
+       if (message.error) this.queue[message.id].promise[1](message.error);
+diff --git a/node_modules/rpc-websockets/dist/index.mjs b/node_modules/rpc-websockets/dist/index.mjs
+index 9dddf41..c122304 100644
+--- a/node_modules/rpc-websockets/dist/index.mjs
++++ b/node_modules/rpc-websockets/dist/index.mjs
+@@ -311,12 +311,17 @@ var CommonClient = class extends EventEmitter {
+         }
+         return;
+       }
+-      if ("error" in message === "result" in message)
++      if (!Object.prototype.hasOwnProperty.call(message, "error") && !Object.prototype.hasOwnProperty.call(message, "result")) {
+         this.queue[message.id].promise[1](
+           new Error(
+             'Server response malformed. Response must include either "result" or "error", but not both.'
+           )
+         );
++        if (this.queue[message.id].timeout)
++          clearTimeout(this.queue[message.id].timeout);
++        delete this.queue[message.id];
++        return;
++      }
+       if (this.queue[message.id].timeout)
+         clearTimeout(this.queue[message.id].timeout);
+       if (message.error) this.queue[message.id].promise[1](message.error);

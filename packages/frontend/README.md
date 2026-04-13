@@ -49,6 +49,10 @@ Mainnet Solana: set `VITE_SOLANA_PROGRAM_ID`, `VITE_SOLANA_RPC_URL`, and nonecon
 - **Bridge Form**: Transfer tokens between Terra Classic and EVM chains
 - **Transaction History**: Track your bridge transactions (stored locally)
 
+### Dependency patches (`patch-package`)
+
+The app ships a [patch for `rpc-websockets`](./patches/rpc-websockets+9.3.3.patch) (a dependency of `@solana/web3.js`). Without it, some Solana JSON-RPC WebSocket responses that include both `error: null` and `result` are misclassified as malformed, which breaks `confirmTransaction` / `signatureSubscribe` in the browser (see GitLab #106). Regression coverage lives in `src/services/solana/jsonRpcWebsocketResponse.test.ts`.
+
 ### Solana as source chain
 
 When bridging **from Solana**, the app loads `TokenMapping.local_mint` for the route. If it is the **wrapped SOL** mint, the transaction uses **`deposit_native`** (lamports). For any other SPL mint, it uses **`deposit_spl`** from the user’s ATA (and may create the ATA first). See [docs/SOLANA_BRIDGE_DEPOSITS.md](../../docs/SOLANA_BRIDGE_DEPOSITS.md).
