@@ -1,4 +1,5 @@
 use eyre::{eyre, Result, WrapErr};
+use multichain_rs::terra::lcd_get_txs_event_url_contract_at_height;
 use serde::{de, Deserialize, Deserializer};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -219,11 +220,9 @@ impl TerraWatcher {
 
     /// Process transactions in a block
     async fn process_block(&self, height: u64) -> Result<()> {
-        // Query via LCD for transaction details
-        let url = format!(
-            "{}/cosmos/tx/v1beta1/txs?events=wasm._contract_address='{}'&events=tx.height={}",
-            self.lcd_url, self.bridge_address, height
-        );
+        // Query via LCD for transaction details (Cosmos SDK ≥0.53: `query=` TM expression, not legacy `events=`)
+        let url =
+            lcd_get_txs_event_url_contract_at_height(&self.lcd_url, &self.bridge_address, height)?;
 
         let response =
             self.http.get(&url).send().await.wrap_err_with(|| {

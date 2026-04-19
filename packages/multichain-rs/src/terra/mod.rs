@@ -28,6 +28,6 @@ pub use events::{
     TerraDepositEvent, TerraWithdrawApproveEvent, TerraWithdrawCancelEvent,
     TerraWithdrawExecuteEvent, TerraWithdrawSubmitEvent, WasmEvent,
 };
-pub use queries::TerraQueryClient;
+pub use queries::{lcd_get_txs_event_url_contract_at_height, TerraQueryClient};
 pub use signer::{TerraRetryConfig, TerraSigner, TerraSignerConfig};
 pub use watcher::{TerraBridgeEvent, TerraEventWatcher, TerraWatcherConfig};

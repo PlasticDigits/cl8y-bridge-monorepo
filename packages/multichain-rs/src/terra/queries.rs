@@ -7,6 +7,7 @@ use eyre::{eyre, Result, WrapErr};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use url::Url;
 
 use crate::terra::contracts::{
     CancelWindowResponse, ConfigResponse, IsCancelerResponse, IsOperatorResponse,
@@ -14,6 +15,27 @@ use crate::terra::contracts::{
 };
 use crate::terra::tokens::{query_cw20_balance, query_native_balance};
 use crate::types::ChainId;
+
+/// Builds `GET /cosmos/tx/v1beta1/txs` for wasm contract activity at a single block height.
+///
+/// Cosmos SDK ≥0.53 (Terra Classic core v4) expects a Tendermint-style expression in the `query`
+/// parameter (`key='value' AND tx.height=N`). The legacy repeated `events=...&events=...` query form
+/// is rejected with gRPC code 13: `"query cannot be empty"`.
+pub fn lcd_get_txs_event_url_contract_at_height(
+    lcd_url: &str,
+    contract_address: &str,
+    height: u64,
+) -> Result<String> {
+    let base = format!("{}/cosmos/tx/v1beta1/txs", lcd_url.trim_end_matches('/'));
+    let mut url =
+        Url::parse(&base).wrap_err_with(|| format!("invalid LCD URL for tx search: {base}"))?;
+    let tm_query = format!(
+        "wasm._contract_address='{}' AND tx.height={}",
+        contract_address, height
+    );
+    url.query_pairs_mut().append_pair("query", &tm_query);
+    Ok(url.into())
+}
 
 /// Terra bridge query client
 ///
@@ -328,10 +350,8 @@ impl TerraQueryClient {
         contract_address: &str,
         height: u64,
     ) -> Result<Vec<serde_json::Value>> {
-        let url = format!(
-            "{}/cosmos/tx/v1beta1/txs?events=wasm._contract_address='{}'&events=tx.height={}",
-            self.lcd_url, contract_address, height
-        );
+        let url =
+            lcd_get_txs_event_url_contract_at_height(&self.lcd_url, contract_address, height)?;
 
         let response = self
             .client
@@ -365,6 +385,28 @@ pub struct CoinBalance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lcd_get_txs_event_url_uses_query_param_sdk_053() {
+        let u = lcd_get_txs_event_url_contract_at_height(
+            "https://lcd.example",
+            "terra1testcontractaddress000000000000",
+            26220490,
+        )
+        .unwrap();
+        assert!(
+            u.starts_with("https://lcd.example/cosmos/tx/v1beta1/txs?query="),
+            "{u}"
+        );
+        let qpart = u.split("query=").nth(1).expect("query param");
+        assert!(qpart.contains("wasm._contract_address"), "{u}");
+        assert!(qpart.contains("AND"), "{u}");
+        assert!(qpart.contains("26220490"), "{u}");
+        assert!(
+            !u.contains("events="),
+            "must not use legacy events= form: {u}"
+        );
+    }
 
     #[test]
     fn test_query_client_creation() {

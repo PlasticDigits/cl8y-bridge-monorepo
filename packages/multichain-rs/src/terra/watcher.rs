@@ -20,6 +20,7 @@ use crate::terra::events::{
     TerraDepositEvent, TerraWithdrawApproveEvent, TerraWithdrawCancelEvent,
     TerraWithdrawExecuteEvent, TerraWithdrawSubmitEvent, TxEvent, WasmEvent,
 };
+use crate::terra::queries::lcd_get_txs_event_url_contract_at_height;
 
 /// Terra watcher configuration
 #[derive(Debug, Clone)]
@@ -149,10 +150,8 @@ impl TerraEventWatcher {
 
     /// Fetch all wasm events from the bridge contract at a specific block height
     pub async fn get_events_at_height(&self, height: u64) -> Result<Vec<(WasmEvent, String, u64)>> {
-        let url = format!(
-            "{}/cosmos/tx/v1beta1/txs?events=wasm._contract_address='{}'&events=tx.height={}",
-            self.lcd_url, self.bridge_address, height
-        );
+        let url =
+            lcd_get_txs_event_url_contract_at_height(&self.lcd_url, &self.bridge_address, height)?;
 
         let response = self
             .client
