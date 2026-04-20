@@ -252,15 +252,14 @@ pub(crate) async fn is_chain_key_registered(
     Ok(bytes.last().copied().unwrap_or(0) != 0)
 }
 
-/// Query if account has role from AccessManager
-pub(crate) async fn query_has_role(
+/// `AccessManager.hasRole` — for factory/minter/guard **role IDs** only (not Bridge withdraw RBAC).
+pub(crate) async fn query_access_manager_has_role(
     config: &E2eConfig,
     role_id: u64,
     account: Address,
 ) -> eyre::Result<bool> {
     let client = reqwest::Client::new();
 
-    // Encode hasRole(uint64,address) function call
     let sel = selector("hasRole(uint64,address)");
     let role_padded = format!("{:064x}", role_id);
     let addr_padded = format!("{:0>64}", hex::encode(account.as_slice()));
@@ -293,10 +292,100 @@ pub(crate) async fn query_has_role(
         .as_str()
         .ok_or_else(|| eyre::eyre!("No result in response"))?;
 
-    // The result is (bool, uint32), we just check the first 32 bytes for the bool
     let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
     if bytes.len() >= 32 {
-        // First 32 bytes is the bool (padded)
+        Ok(bytes[31] != 0)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Whether the address is a Bridge operator for `withdrawApprove` (`Bridge.isOperator`).
+pub(crate) async fn query_bridge_is_operator(
+    config: &E2eConfig,
+    account: Address,
+) -> eyre::Result<bool> {
+    let client = reqwest::Client::new();
+
+    let sel = selector("isOperator(address)");
+    let addr_padded = format!("{:0>64}", hex::encode(account.as_slice()));
+    let call_data = format!("0x{}{}", sel, addr_padded);
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(eyre::eyre!(
+            "EVM RPC returned status: {}",
+            response.status()
+        ));
+    }
+
+    let body: serde_json::Value = response.json().await?;
+
+    let hex_result = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+
+    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
+    if bytes.len() >= 32 {
+        Ok(bytes[31] != 0)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Whether the address may call `withdrawCancel` on Bridge (`Bridge.isCanceler`).
+pub(crate) async fn query_bridge_is_canceler(
+    config: &E2eConfig,
+    account: Address,
+) -> eyre::Result<bool> {
+    let client = reqwest::Client::new();
+
+    let sel = selector("isCanceler(address)");
+    let addr_padded = format!("{:0>64}", hex::encode(account.as_slice()));
+    let call_data = format!("0x{}{}", sel, addr_padded);
+
+    let response = client
+        .post(config.evm.rpc_url.as_str())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{
+                "to": format!("{}", config.evm.contracts.bridge),
+                "data": call_data
+            }, "latest"],
+            "id": 1
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(eyre::eyre!(
+            "EVM RPC returned status: {}",
+            response.status()
+        ));
+    }
+
+    let body: serde_json::Value = response.json().await?;
+
+    let hex_result = body["result"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("No result in response"))?;
+
+    let bytes = hex::decode(hex_result.trim_start_matches("0x"))?;
+    if bytes.len() >= 32 {
         Ok(bytes[31] != 0)
     } else {
         Ok(false)

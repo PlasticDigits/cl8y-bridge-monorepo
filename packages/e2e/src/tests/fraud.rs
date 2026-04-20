@@ -6,16 +6,16 @@ use crate::{E2eConfig, TestResult};
 use alloy::primitives::Address;
 use std::time::Instant;
 
-use super::helpers::{query_cancel_window, query_contract_code, query_has_role};
+use super::helpers::{query_bridge_is_canceler, query_cancel_window, query_contract_code};
 
 /// Test fraud detection mechanism
 ///
 /// Verifies that the fraud detection infrastructure is properly configured:
-/// 1. AccessManager has CANCELER_ROLE defined
+/// 1. Bridge `isCanceler` allows the test EOA to cancel (owner or `addCanceler`)
 /// 2. Bridge contract can be queried for approval status
 /// 3. Withdraw delay is sufficient for watchtower detection
 ///
-/// SECURITY HARDENED: Withdraw delay and CANCELER_ROLE query failures now cause test failure.
+/// SECURITY HARDENED: Withdraw delay and `isCanceler` query failures now cause test failure.
 ///
 /// Note: Full fraud detection testing requires the canceler service running.
 /// Returns a `TestResult` indicating success or failure.
@@ -71,50 +71,27 @@ pub async fn test_fraud_detection(config: &E2eConfig) -> TestResult {
         }
     }
 
-    // Step 3: Verify AccessManager is deployed (needed for cancel permissions)
-    if config.evm.contracts.access_manager == Address::ZERO {
-        return TestResult::fail(
-            name,
-            "AccessManager address not configured",
-            start.elapsed(),
-        );
-    }
-
-    match query_contract_code(config, config.evm.contracts.access_manager).await {
+    // Step 3: Verify a Bridge cancel path exists (owner or registered canceler — not AccessManager)
+    let test_address = config.test_accounts.evm_address;
+    match query_bridge_is_canceler(config, test_address).await {
         Ok(true) => {
             tracing::info!(
-                "AccessManager deployed at {}",
-                config.evm.contracts.access_manager
+                "Test account {} passes Bridge.isCanceler (may withdrawCancel)",
+                test_address
             );
         }
         Ok(false) => {
-            return TestResult::fail(name, "AccessManager has no code deployed", start.elapsed());
-        }
-        Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Cannot query AccessManager: {}", e),
+                "Test account cannot cancel on Bridge — use Bridge.addCanceler or deploy as owner",
                 start.elapsed(),
             );
-        }
-    }
-
-    // Step 4: Check if test account has CANCELER_ROLE (role id 2)
-    // SECURITY HARDENED: Convert WARN to FAIL
-    let test_address = config.test_accounts.evm_address;
-    match query_has_role(config, 2, test_address).await {
-        Ok(true) => {
-            tracing::info!("Test account {} has CANCELER_ROLE", test_address);
-        }
-        Ok(false) => {
-            tracing::info!("Test account {} does not have CANCELER_ROLE", test_address);
-            tracing::info!("Grant CANCELER_ROLE for full fraud detection testing");
         }
         Err(e) => {
             return TestResult::fail(
                 name,
                 format!(
-                    "CANCELER_ROLE query failed (role verification is security-critical): {}",
+                    "Bridge isCanceler query failed (needed to verify fraud response path): {}",
                     e
                 ),
                 start.elapsed(),

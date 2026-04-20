@@ -1,7 +1,7 @@
 //! Chain configuration and contract setup module
 //!
 //! This module handles:
-//! - Optional `AccessManager.grantRole` calls using numeric IDs **1** and **2** (historical / fraud-test helpers)
+//! - Bridge `addOperator` / `addCanceler` for E2E (withdraw RBAC — **not** `AccessManager` roles)
 //! - Chain key registration via ChainRegistry
 //! - Token registration via TokenRegistry
 //!
@@ -25,21 +25,6 @@ pub use crate::cw20_deploy::{
 // Constants
 // =============================================================================
 
-/// Numeric role ID used when calling `AccessManager.grantRole` in E2E setup (currently **1**).
-///
-/// **Not** the production Bridge operator: `Bridge` does **not**
-/// read `AccessManager` for `withdrawApprove` / `withdrawCancel`. Production uses
-/// `Bridge.addOperator` / `addCanceler`. On mainnet, `AccessManager` role **1** is already used for
-/// MintBurn/minter flows—do not copy these IDs to production Bridge RBAC.
-pub const OPERATOR_ROLE_ID: u64 = 1;
-
-/// Numeric role ID used when calling `AccessManager.grantRole` in E2E setup (currently **2**).
-///
-/// **Not** the production Bridge canceler: see [`OPERATOR_ROLE_ID`]. Production cancelers are
-/// registered with `Bridge.addCanceler(address)`. Guard-stack docs reserve mainnet `AccessManager`
-/// role **2** for `TokenRateLimit` / `GuardBridge` admin—unrelated to this constant’s *name*.
-pub const CANCELER_ROLE_ID: u64 = 2;
-
 /// Bridge type for TokenRegistry
 ///
 /// IMPORTANT: Must match Solidity ITokenRegistry.TokenType enum ordering:
@@ -53,210 +38,178 @@ pub enum BridgeType {
 }
 
 // =============================================================================
-// Role Management (AccessManager)
+// Bridge operator / canceler (withdraw RBAC)
 // =============================================================================
 
-/// Grant OPERATOR_ROLE to an account via AccessManager.grantRole()
-///
-/// Uses `cast send` to call the contract directly, matching the bash script behavior.
-///
-/// # Arguments
-/// * `access_manager` - Address of the AccessManager contract
-/// * `account` - Address to grant the role to
-/// * `rpc_url` - EVM RPC URL
-/// * `private_key` - Private key for signing (hex string with 0x prefix)
-pub async fn grant_operator_role(
-    access_manager: Address,
-    account: Address,
-    rpc_url: &str,
-    private_key: &str,
-) -> Result<()> {
-    info!("Granting OPERATOR_ROLE to {}", account);
-
-    // First check if already has role
-    if has_role(access_manager, OPERATOR_ROLE_ID, account, rpc_url).await? {
-        info!("Account {} already has OPERATOR_ROLE", account);
-        return Ok(());
-    }
-
-    // Grant role: grantRole(uint64 roleId, address account, uint32 delay)
-    // Set FOUNDRY_DISABLE_NIGHTLY_WARNING to suppress nightly warnings
-    let output = std::process::Command::new("cast")
-        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
-        .args([
-            "send",
-            "--rpc-url",
-            rpc_url,
-            "--private-key",
-            private_key,
-            &format!("{}", access_manager),
-            "grantRole(uint64,address,uint32)",
-            &OPERATOR_ROLE_ID.to_string(),
-            &format!("{}", account),
-            "0", // no delay
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Check if it's just "already granted" error
-        if stderr.contains("already") || stdout.contains("already") {
-            info!("OPERATOR_ROLE already granted to {}", account);
-            return Ok(());
-        }
-        // Ignore warnings that don't indicate actual failure
-        if stderr.contains("nightly") && stdout.contains("transactionHash") {
-            info!("OPERATOR_ROLE granted (ignoring nightly warning)");
-            return Ok(());
-        }
-        return Err(eyre!("Failed to grant OPERATOR_ROLE: {}", stderr));
-    }
-
-    info!("OPERATOR_ROLE granted to {}", account);
-    Ok(())
-}
-
-/// Grant CANCELER_ROLE to an account via AccessManager.grantRole()
-///
-/// # Arguments
-/// * `access_manager` - Address of the AccessManager contract
-/// * `account` - Address to grant the role to
-/// * `rpc_url` - EVM RPC URL
-/// * `private_key` - Private key for signing (hex string with 0x prefix)
-pub async fn grant_canceler_role(
-    access_manager: Address,
-    account: Address,
-    rpc_url: &str,
-    private_key: &str,
-) -> Result<()> {
-    info!("Granting CANCELER_ROLE to {}", account);
-
-    // First check if already has role
-    if has_role(access_manager, CANCELER_ROLE_ID, account, rpc_url).await? {
-        info!("Account {} already has CANCELER_ROLE", account);
-        return Ok(());
-    }
-
-    // Grant role: grantRole(uint64 roleId, address account, uint32 delay)
-    // Set FOUNDRY_DISABLE_NIGHTLY_WARNING to suppress nightly warnings
-    let output = std::process::Command::new("cast")
-        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
-        .args([
-            "send",
-            "--rpc-url",
-            rpc_url,
-            "--private-key",
-            private_key,
-            &format!("{}", access_manager),
-            "grantRole(uint64,address,uint32)",
-            &CANCELER_ROLE_ID.to_string(),
-            &format!("{}", account),
-            "0", // no delay
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stderr.contains("already") || stdout.contains("already") {
-            info!("CANCELER_ROLE already granted to {}", account);
-            return Ok(());
-        }
-        // Ignore warnings that don't indicate actual failure
-        if stderr.contains("nightly") && stdout.contains("transactionHash") {
-            info!("CANCELER_ROLE granted (ignoring nightly warning)");
-            return Ok(());
-        }
-        return Err(eyre!("Failed to grant CANCELER_ROLE: {}", stderr));
-    }
-
-    info!("CANCELER_ROLE granted to {}", account);
-    Ok(())
-}
-
-/// Check if an account has a specific role
-///
-/// # Arguments
-/// * `access_manager` - Address of the AccessManager contract
-/// * `role_id` - The role ID to check
-/// * `account` - The account to check
-/// * `rpc_url` - EVM RPC URL
-pub async fn has_role(
-    access_manager: Address,
-    role_id: u64,
+async fn bridge_call_bool(
+    bridge: Address,
+    signature: &str,
     account: Address,
     rpc_url: &str,
 ) -> Result<bool> {
-    // hasRole(uint64,address) returns (bool,uint32)
     let output = std::process::Command::new("cast")
         .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
         .args([
             "call",
             "--rpc-url",
             rpc_url,
-            &format!("{}", access_manager),
-            "hasRole(uint64,address)(bool,uint32)",
-            &role_id.to_string(),
+            &format!("{}", bridge),
+            signature,
             &format!("{}", account),
         ])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Failed to query hasRole: {}", stderr));
+        return Err(eyre!("Bridge call {} failed: {}", signature, stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Output format is "true 0" or "false 0" (bool, uint32)
-    Ok(stdout.trim().starts_with("true"))
+    Ok(stdout.trim().eq_ignore_ascii_case("true"))
 }
 
-/// Grant both OPERATOR_ROLE and CANCELER_ROLE to the test account
-///
-/// This is the main entry point for role configuration, matching the bash script's
-/// `grant_operator_role()` function.
-///
-/// IMPORTANT: Also grants CANCELER_ROLE to the canceler service's derived address
-/// (from config.evm.private_key), not just the test account. This ensures the
-/// canceler service can submit cancel transactions.
-pub async fn grant_test_account_roles(config: &E2eConfig) -> Result<()> {
-    info!("Granting roles to test account for E2E testing");
+/// Whether `account` may call `withdrawApprove`-gated functions (`Bridge.isOperator`).
+pub async fn bridge_is_operator(bridge: Address, account: Address, rpc_url: &str) -> Result<bool> {
+    bridge_call_bool(bridge, "isOperator(address)(bool)", account, rpc_url).await
+}
 
-    let access_manager = config.evm.contracts.access_manager;
+/// Whether `account` may call `withdrawCancel` (`Bridge.isCanceler`).
+pub async fn bridge_is_canceler(bridge: Address, account: Address, rpc_url: &str) -> Result<bool> {
+    bridge_call_bool(bridge, "isCanceler(address)(bool)", account, rpc_url).await
+}
+
+async fn bridge_add_operator(
+    bridge: Address,
+    account: Address,
+    rpc_url: &str,
+    owner_private_key: &str,
+) -> Result<()> {
+    info!("Bridge addOperator({})", account);
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            owner_private_key,
+            &format!("{}", bridge),
+            "addOperator(address)",
+            &format!("{}", account),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("nightly") && stdout.contains("transactionHash") {
+            info!("addOperator sent (ignoring nightly warning)");
+            return Ok(());
+        }
+        return Err(eyre!("addOperator failed: {}", stderr));
+    }
+    Ok(())
+}
+
+async fn bridge_add_canceler(
+    bridge: Address,
+    account: Address,
+    rpc_url: &str,
+    owner_private_key: &str,
+) -> Result<()> {
+    info!("Bridge addCanceler({})", account);
+    let output = std::process::Command::new("cast")
+        .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            owner_private_key,
+            &format!("{}", bridge),
+            "addCanceler(address)",
+            &format!("{}", account),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("nightly") && stdout.contains("transactionHash") {
+            info!("addCanceler sent (ignoring nightly warning)");
+            return Ok(());
+        }
+        return Err(eyre!("addCanceler failed: {}", stderr));
+    }
+    Ok(())
+}
+
+/// Register Bridge operator/canceler for E2E — mirrors production (`addOperator` / `addCanceler`), not `AccessManager`.
+///
+/// `owner_private_key` must sign as **`Bridge` owner**. Ensures the wallet derived from
+/// `canceler_private_key` (see `services.rs` / `build_canceler_env`) may cancel when not already `isCanceler`.
+pub async fn ensure_bridge_rbac_for_e2e(
+    bridge: Address,
+    test_account: Address,
+    canceler_private_key: &B256,
+    rpc_url: &str,
+    owner_private_key: &str,
+) -> Result<()> {
+    if bridge == Address::ZERO {
+        return Err(eyre!("Bridge address is zero"));
+    }
+
+    if !bridge_is_operator(bridge, test_account, rpc_url).await? {
+        bridge_add_operator(bridge, test_account, rpc_url, owner_private_key).await?;
+    } else {
+        debug!(
+            "Bridge: test account {} already passes isOperator; skipping addOperator",
+            test_account
+        );
+    }
+
+    let canceler_address = derive_address_from_private_key(canceler_private_key)?;
+    if !bridge_is_canceler(bridge, canceler_address, rpc_url).await? {
+        info!(
+            "Registering canceler wallet {} on Bridge (isCanceler was false)",
+            canceler_address
+        );
+        bridge_add_canceler(bridge, canceler_address, rpc_url, owner_private_key).await?;
+    } else {
+        debug!(
+            "Bridge: {} already passes isCanceler; skipping addCanceler",
+            canceler_address
+        );
+    }
+
+    Ok(())
+}
+
+/// Configure Bridge RBAC for integration tests that rely on `E2eConfig`.
+pub async fn grant_test_account_roles(config: &E2eConfig) -> Result<()> {
+    info!("Configuring Bridge operator/canceler for E2E");
+
+    let bridge = config.evm.contracts.bridge;
     let test_account = config.test_accounts.evm_address;
     let rpc_url = config.evm.rpc_url.as_str();
-    let private_key = format!("0x{:x}", config.evm.private_key);
+    let owner_private_key = format!("0x{:x}", config.evm.private_key);
 
-    // Grant OPERATOR_ROLE to test account
-    grant_operator_role(access_manager, test_account, rpc_url, &private_key).await?;
-
-    // Grant CANCELER_ROLE to test account (for fraud testing)
-    grant_canceler_role(access_manager, test_account, rpc_url, &private_key).await?;
-
-    // Also grant CANCELER_ROLE to the canceler service's derived address
-    // The canceler service uses evm.private_key if set, otherwise test_accounts.evm_private_key
-    // This matches the logic in services.rs build_canceler_env()
     let canceler_key = if config.evm.private_key == B256::ZERO {
         config.test_accounts.evm_private_key
     } else {
         config.evm.private_key
     };
-    let canceler_address = derive_address_from_private_key(&canceler_key)?;
-    if canceler_address != test_account {
-        info!(
-            "Granting CANCELER_ROLE to canceler service address {} (different from test account {})",
-            canceler_address, test_account
-        );
-        grant_canceler_role(access_manager, canceler_address, rpc_url, &private_key).await?;
-    } else {
-        debug!(
-            "Canceler address {} matches test account, no additional grant needed",
-            canceler_address
-        );
-    }
 
-    info!("All roles granted to test account and canceler service");
+    ensure_bridge_rbac_for_e2e(
+        bridge,
+        test_account,
+        &canceler_key,
+        rpc_url,
+        &owner_private_key,
+    )
+    .await?;
+
+    info!("Bridge operator/canceler setup complete for E2E");
     Ok(())
 }
 
@@ -1019,7 +972,7 @@ pub struct ChainConfigResult {
 /// Perform complete chain configuration for E2E testing
 ///
 /// This function performs all 4 setup steps:
-/// 1. Grant OPERATOR_ROLE and CANCELER_ROLE to test accounts
+/// 1. Configure Bridge `addOperator` / `addCanceler` for the test and canceler wallets
 /// 2. Register Terra chain via ChainRegistry.registerChain()
 /// 3. Register test tokens on TokenRegistry with destination chain mappings
 /// 4. Deploy CW20 test token on LocalTerra (optional)

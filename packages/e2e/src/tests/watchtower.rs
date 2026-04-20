@@ -242,34 +242,23 @@ pub async fn test_approval_cancellation_blocks_withdraw(config: &E2eConfig) -> T
     let start = Instant::now();
     let name = "approval_cancellation_blocks_withdraw";
 
-    // Verify the CANCELER_ROLE is properly configured and can cancel approvals.
-    let canceler_role: u64 = 2; // CANCELER_ROLE constant
+    let can_cancel =
+        match super::helpers::query_bridge_is_canceler(config, config.test_accounts.evm_address)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return TestResult::fail(
+                    name,
+                    format!("Failed to query Bridge.isCanceler: {}", e),
+                    start.elapsed(),
+                );
+            }
+        };
 
-    // Check if the test account or operator has canceler role
-    let has_role = match super::helpers::query_has_role(
-        config,
-        canceler_role,
-        config.test_accounts.evm_address,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return TestResult::fail(
-                name,
-                format!("Failed to query CANCELER_ROLE: {}", e),
-                start.elapsed(),
-            )
-        }
-    };
-
-    // The test account should have canceler role for fraud testing
-    // If not, the canceler service account should have it
-    if !has_role {
-        // This is acceptable - the canceler service has its own account
-        // Just verify we can query the role system
+    if !can_cancel {
         tracing::info!(
-            "Test account does not have CANCELER_ROLE - canceler service will handle cancellations"
+            "Test account does not pass Bridge.isCanceler — canceler service EOA should be registered via addCanceler"
         );
     }
 

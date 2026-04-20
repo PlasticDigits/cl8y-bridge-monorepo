@@ -7,7 +7,7 @@
 //! 1. Docker services (Anvil, LocalTerra, PostgreSQL)
 //! 2. EVM contract deployment via forge script
 //! 3. Terra contract deployment (bridge WASM)
-//! 4. Role grants (OPERATOR_ROLE, CANCELER_ROLE)
+//! 4. Bridge `addOperator` / `addCanceler` for E2E test and canceler EOAs
 //! 5. Chain key registration (Terra on EVM ChainRegistry)
 //! 6. Token registration (test tokens with destination mappings)
 //! 7. CW20 deployment on LocalTerra
@@ -546,7 +546,7 @@ impl E2eSetup {
         }
         on_step(SetupStep::DeployCw20Token, true);
 
-        // Grant Roles (OPERATOR_ROLE and CANCELER_ROLE to test account)
+        // Bridge RBAC (addOperator / addCanceler for test and canceler service EOAs)
         on_step(SetupStep::GrantRoles, true);
         self.grant_roles(&deployed).await?;
         on_step(SetupStep::GrantRoles, true);

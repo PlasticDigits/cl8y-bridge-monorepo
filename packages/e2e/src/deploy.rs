@@ -13,14 +13,6 @@ use tracing::{debug, info, warn};
 
 // Define contract ABIs using alloy::sol! macro
 sol! {
-    /// Access Manager contract ABI
-    #[derive(Debug)]
-    #[sol(rpc)]
-    contract IAccessManager {
-        function grantRole(uint64 roleId, address account, uint32 delay) external;
-        function hasRole(uint64 roleId, address account) public view returns (bool, uint32);
-    }
-
     /// Chain Registry contract ABI (V2 - uses bytes4 chain IDs)
     ///
     /// IMPORTANT: registerChain takes (string, bytes4) and returns nothing.
@@ -58,10 +50,6 @@ sol! {
         function approve(address spender, uint256 amount) external returns (bool);
     }
 }
-
-/// Role constants for Access Manager
-pub const OPERATOR_ROLE_ID: u64 = 1;
-pub const CANCELER_ROLE_ID: u64 = 2;
 
 /// Bridge type enum
 #[derive(Debug, Clone, Copy)]
@@ -277,60 +265,6 @@ impl EvmDeployment {
             broadcast_file: path.to_path_buf(),
         })
     }
-}
-
-/// Grant operator role to an address
-pub async fn grant_operator_role(
-    access_manager: Address,
-    account: Address,
-    rpc_url: &str,
-    _private_key: B256,
-) -> Result<()> {
-    info!("Granting operator role to: 0x{}", account);
-
-    let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
-
-    let am = IAccessManager::new(access_manager, &provider);
-
-    // Check if already has role
-    let result = am.hasRole(OPERATOR_ROLE_ID, account).call().await?;
-
-    if result._0 {
-        info!("Account already has operator role");
-        return Ok(());
-    }
-
-    // Grant role with default delay
-    let _ = am.grantRole(OPERATOR_ROLE_ID, account, 0).send().await?;
-
-    Ok(())
-}
-
-/// Grant canceler role to an address
-pub async fn grant_canceler_role(
-    access_manager: Address,
-    account: Address,
-    rpc_url: &str,
-    _private_key: B256,
-) -> Result<()> {
-    info!("Granting canceler role to: 0x{}", account);
-
-    let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
-
-    let am = IAccessManager::new(access_manager, &provider);
-
-    // Check if already has role
-    let result = am.hasRole(CANCELER_ROLE_ID, account).call().await?;
-
-    if result._0 {
-        info!("Account already has canceler role");
-        return Ok(());
-    }
-
-    // Grant role with default delay
-    let _ = am.grantRole(CANCELER_ROLE_ID, account, 0).send().await?;
-
-    Ok(())
 }
 
 /// Register a COSMW chain on ChainRegistry V2

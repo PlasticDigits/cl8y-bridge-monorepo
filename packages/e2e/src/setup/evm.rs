@@ -184,47 +184,34 @@ impl E2eSetup {
         }
     }
 
-    /// Call `AccessManager.grantRole` with IDs 1 and 2 for the EVM test account (fraud / config checks).
-    ///
-    /// **Does not** register the account on `Bridge` as operator or canceler—`Bridge` ignores
-    /// `AccessManager` for `withdrawApprove` / `withdrawCancel` (see `Bridge.onlyOperator` /
-    /// `onlyCanceler`). Local tests usually pass because the deploy wallet is `Bridge.owner()` or the
-    /// initial `initialize(operator)` already added the operator.
+    /// Register `Bridge` operator/canceler for the test and canceler service addresses (`addOperator` /
+    /// `addCanceler`). Signs as the test deployer key, which must be `Bridge.owner()` on local Anvil.
     pub async fn grant_roles(&self, deployed: &DeployedContracts) -> Result<()> {
-        info!("Granting roles to test accounts");
+        info!("Configuring Bridge operator/canceler for E2E");
 
-        // Use test account's private key (Anvil's default account)
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let test_address = self.config.test_accounts.evm_address;
         let rpc_url = self.config.evm.rpc_url.as_str();
 
-        // Grant OPERATOR_ROLE to test account
-        match chain_config::grant_operator_role(
-            deployed.access_manager,
+        let canceler_key = if self.config.evm.private_key == B256::ZERO {
+            self.config.test_accounts.evm_private_key
+        } else {
+            self.config.evm.private_key
+        };
+
+        match chain_config::ensure_bridge_rbac_for_e2e(
+            deployed.bridge,
             test_address,
+            &canceler_key,
             rpc_url,
             &private_key,
         )
         .await
         {
-            Ok(()) => info!("OPERATOR_ROLE granted to test account"),
-            Err(e) => warn!("Failed to grant OPERATOR_ROLE: {}", e),
+            Ok(()) => info!("Bridge addOperator/addCanceler completed for E2E"),
+            Err(e) => warn!("Bridge RBAC setup failed: {}", e),
         }
 
-        // Grant CANCELER_ROLE to test account (for fraud detection testing)
-        match chain_config::grant_canceler_role(
-            deployed.access_manager,
-            test_address,
-            rpc_url,
-            &private_key,
-        )
-        .await
-        {
-            Ok(()) => info!("CANCELER_ROLE granted to test account"),
-            Err(e) => warn!("Failed to grant CANCELER_ROLE: {}", e),
-        }
-
-        info!("Role grants complete");
         Ok(())
     }
 
@@ -466,28 +453,27 @@ impl E2eSetup {
             .as_ref()
             .ok_or_else(|| eyre!("evm2 config not set"))?;
 
-        info!("Granting roles on anvil1 peer chain");
+        info!("Configuring Bridge operator/canceler on anvil1 peer chain");
         let private_key = format!("0x{:x}", self.config.test_accounts.evm_private_key);
         let test_address = self.config.test_accounts.evm_address;
         let rpc_url = evm2.rpc_url.as_str();
 
-        let _ = chain_config::grant_operator_role(
-            deployed.access_manager,
+        let canceler_key = if self.config.evm.private_key == B256::ZERO {
+            self.config.test_accounts.evm_private_key
+        } else {
+            self.config.evm.private_key
+        };
+
+        let _ = chain_config::ensure_bridge_rbac_for_e2e(
+            deployed.bridge,
             test_address,
+            &canceler_key,
             rpc_url,
             &private_key,
         )
         .await;
 
-        let _ = chain_config::grant_canceler_role(
-            deployed.access_manager,
-            test_address,
-            rpc_url,
-            &private_key,
-        )
-        .await;
-
-        info!("Roles granted on anvil1 peer chain");
+        info!("Bridge RBAC applied on anvil1 peer chain");
         Ok(())
     }
 

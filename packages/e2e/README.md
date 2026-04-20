@@ -66,12 +66,12 @@ make e2e-full-rust
 - `deposit_nonce` - Query and verify deposit nonce tracking
 - `token_registry` - Verify TokenRegistry contract is operational
 - `chain_registry` - Verify ChainRegistry contract is operational
-- `access_manager` - Verify AccessManager and role permissions
+- `access_manager` - Verify AccessManager is reachable and that `Bridge.isOperator` / `AccessManager.hasRole(1,…)` are queryable (role 1 here is the minter stack per deployment docs—not Bridge RBAC)
 
 ### Integration Tests (Infrastructure Verification)
 - `evm_to_terra_transfer` - Verify EVM → Terra transfer infrastructure
 - `terra_to_evm_transfer` - Verify Terra → EVM transfer infrastructure
-- `fraud_detection` - Verify watchtower fraud detection infrastructure
+- `fraud_detection` - Verify cancel window, Bridge cancel path (`isCanceler`), and related infra
 
 ### Real Transfer Tests (Sprint 16+)
 - `real_evm_to_terra_transfer` - Execute actual EVM → Terra transfer with balance verification
@@ -127,7 +127,7 @@ Verify cross-chain transfer infrastructure:
 ### Security Tests
 
 Verify watchtower security pattern:
-- Fraud detection: withdraw delay, CANCELER_ROLE
+- Fraud detection: withdraw delay, Bridge cancel path (`isCanceler`)
 - Access manager: role-based permissions
 
 ### Registry Tests

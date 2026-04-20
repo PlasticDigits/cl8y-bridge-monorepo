@@ -18,10 +18,10 @@ pub mod transfer_helpers;
 pub mod utils;
 
 pub use chain_config::{
-    configure_chains, deploy_cw20_token, deploy_test_cw20, grant_canceler_role,
-    grant_operator_role, grant_test_account_roles, is_localterra_running, register_cosmw_chain_key,
-    register_terra_chain_key, register_test_tokens, register_token, BridgeType, ChainConfigResult,
-    Cw20DeployResult, CANCELER_ROLE_ID, OPERATOR_ROLE_ID,
+    bridge_is_canceler, bridge_is_operator, configure_chains, deploy_cw20_token, deploy_test_cw20,
+    ensure_bridge_rbac_for_e2e, grant_test_account_roles, is_localterra_running,
+    register_cosmw_chain_key, register_terra_chain_key, register_test_tokens, register_token,
+    BridgeType, ChainConfigResult, Cw20DeployResult,
 };
 pub use config::E2eConfig;
 pub use deploy::{

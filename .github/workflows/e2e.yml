@@ -225,29 +225,21 @@ jobs:
           echo "Database migrations complete"
 
       # ========================================================================
-      # Grant Roles
+      # Bridge withdraw RBAC (not AccessManager role 1/2)
       # ========================================================================
-      - name: Grant Test Account Roles
+      - name: Register Bridge canceler for test EOA
         env:
           EVM_RPC_URL: http://localhost:8545
-          ACCESS_MANAGER_ADDRESS: ${{ steps.evm_contracts.outputs.ACCESS_MANAGER_ADDRESS }}
+          EVM_BRIDGE_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_BRIDGE_ADDRESS }}
           EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         run: |
           TEST_ACCOUNT="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-          
-          echo "Granting OPERATOR_ROLE (ID 1)..."
-          cast send "$ACCESS_MANAGER_ADDRESS" \
-            "grantRole(uint64,address,uint32)" 1 "$TEST_ACCOUNT" 0 \
+          echo "Bridge addCanceler (withdrawCancel path — see Bridge.sol)..."
+          cast send "$EVM_BRIDGE_ADDRESS" \
+            "addCanceler(address)" "$TEST_ACCOUNT" \
             --rpc-url "$EVM_RPC_URL" \
             --private-key "$EVM_PRIVATE_KEY"
-          
-          echo "Granting CANCELER_ROLE (ID 2)..."
-          cast send "$ACCESS_MANAGER_ADDRESS" \
-            "grantRole(uint64,address,uint32)" 2 "$TEST_ACCOUNT" 0 \
-            --rpc-url "$EVM_RPC_URL" \
-            --private-key "$EVM_PRIVATE_KEY"
-          
-          echo "Roles granted successfully"
+          echo "Bridge canceler registration complete"
 
       # ========================================================================
       # Build Rust E2E Package

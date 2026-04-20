@@ -291,6 +291,8 @@ export BSC_ACCESS_MANAGER=0x...
 export OPBNB_ACCESS_MANAGER=0x...
 ```
 
+**`AccessManager` numeric roles (not Bridge withdraw RBAC):** On mainnet BSC/opBNB, **`role 1`** is used for **MintBurn / factory token `mint` & `burn`** (see §4.8 and [OPERATIONAL_NOTES.md](../packages/contracts-evm/OPERATIONAL_NOTES.md)). **`Role 2`** is reserved for **guard-stack admin** (`TokenRateLimit` / `GuardBridge`)—see [deployment-solana-mainnet.md](./deployment-solana-mainnet.md) §3.2. **Bridge** **`withdrawApprove`** / **`withdrawCancel`** use **`Bridge.addOperator`** / **`addCanceler`** only; do not confuse AM `1`/`2` with Bridge operator/canceler.
+
 ### 4.7 Deploy Token Factory
 
 Deploy `FactoryTokenCl8yBridged` on each chain, pointing at the chain's AccessManager.

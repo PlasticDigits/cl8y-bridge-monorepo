@@ -225,7 +225,7 @@ pub async fn create_withdraw_submit_only(
     })
 }
 
-/// Approve a pending withdrawal on EVM (`withdrawApprove(bytes32)`), using the test account (must hold `OPERATOR_ROLE`).
+/// Approve a pending withdrawal on EVM (`withdrawApprove(bytes32)`), using the test account (`Bridge.isOperator`).
 pub async fn approve_pending_withdraw(
     config: &E2eConfig,
     xchain_hash_id: B256,
@@ -461,7 +461,7 @@ pub async fn check_canceler_health() -> bool {
     }
 }
 
-/// Cancel an approval directly via contract call (requires CANCELER_ROLE)
+/// Cancel an approval directly via contract call (`Bridge.isCanceler`)
 pub async fn cancel_approval_directly(
     config: &E2eConfig,
     xchain_hash_id: B256,

@@ -96,25 +96,20 @@ pub async fn test_canceler_autonomous_detection(config: &E2eConfig) -> TestResul
     let canceler_running = manager.is_canceler_running();
     tracing::info!("Canceler running: {}", canceler_running);
 
-    // Verify CANCELER_ROLE is properly configured
-    let canceler_role: u64 = 2; // CANCELER_ROLE constant
-
-    // Check if the canceler service account has the role
-    // We'll use the test account as a proxy check
-    match super::helpers::query_has_role(config, canceler_role, config.test_accounts.evm_address)
-        .await
-    {
-        Ok(has_role) => {
-            if has_role {
-                tracing::info!("Test account has CANCELER_ROLE");
+    match super::helpers::query_bridge_is_canceler(config, config.test_accounts.evm_address).await {
+        Ok(is_canceler) => {
+            if is_canceler {
+                tracing::info!("Test account passes Bridge.isCanceler");
             } else {
-                tracing::info!("Test account does not have CANCELER_ROLE (canceler service has its own account)");
+                tracing::info!(
+                    "Test account does not pass Bridge.isCanceler (canceler service may use another EOA)"
+                );
             }
         }
         Err(e) => {
             return TestResult::fail(
                 name,
-                format!("Failed to query CANCELER_ROLE: {}", e),
+                format!("Failed to query Bridge.isCanceler: {}", e),
                 start.elapsed(),
             );
         }

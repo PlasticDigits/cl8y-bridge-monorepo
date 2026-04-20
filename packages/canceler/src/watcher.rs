@@ -1863,7 +1863,7 @@ impl CancelerWatcher {
                                 error = %e,
                                 hash = %bytes32_to_hex(&xchain_hash_id),
                                 canceler_address = %self.evm_client.address(),
-                                "EVM cancellation FAILED - check if canceler has CANCELER_ROLE"
+                                "EVM cancellation FAILED - check Bridge.cancelers or Bridge.isCanceler for this EOA"
                             );
                         }
                     }

@@ -72,10 +72,6 @@ sol! {
     }
 }
 
-/// Role constants for Access Manager
-pub const OPERATOR_ROLE: u64 = 1;
-pub const CANCELER_ROLE: u64 = 2;
-
 /// EVM Bridge interaction helper
 pub struct EvmBridgeClient<P> {
     provider: P,
@@ -113,7 +109,7 @@ impl<P: Provider + Clone> EvmBridgeClient<P> {
     }
 }
 
-/// Access Manager helper for role management
+/// Access Manager helper (`hasRole(roleId, …)` for factory/minter/guard role IDs — not Bridge `withdrawApprove` / `withdrawCancel`).
 pub struct AccessManagerClient<P> {
     provider: P,
     address: Address,

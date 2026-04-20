@@ -53,7 +53,7 @@ async fn async_main() -> eyre::Result<()> {
     let config = Config::load()?;
 
     // Derive and log the EVM address from the private key
-    // This helps verify the address matches the one granted CANCELER_ROLE
+    // This helps verify the address matches Bridge canceler registration (addCanceler / owner)
     let evm_address = derive_evm_address(&config.evm_private_key);
     info!(
         canceler_id = %config.canceler_id,
@@ -62,7 +62,7 @@ async fn async_main() -> eyre::Result<()> {
         evm_bridge = %config.evm_bridge_address,
         terra_lcd = %config.terra_lcd_url,
         health_port = %config.health_port,
-        "Configuration loaded - ENSURE this address has CANCELER_ROLE on the bridge"
+        "Configuration loaded - ENSURE this address may cancel on Bridge (addCanceler or owner)"
     );
 
     // Create shared stats for health endpoint

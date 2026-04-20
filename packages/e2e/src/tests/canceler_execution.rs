@@ -6,7 +6,7 @@
 //! These tests require:
 //! - Running canceler service
 //! - Running Anvil (EVM) node
-//! - Deployed bridge contracts with CANCELER_ROLE granted
+//! - Deployed bridge contracts with canceler EOA registered (`addCanceler` / owner)
 //! - Test accounts with appropriate permissions
 
 use crate::evm::AnvilTimeClient;
@@ -44,7 +44,7 @@ const OPERATOR_NO_APPROVE_WINDOW: Duration = Duration::from_secs(30);
 /// Test canceler live fraud detection and cancel transaction submission
 ///
 /// This test verifies the complete fraud detection flow:
-/// 1. Verify canceler service is running with CANCELER_ROLE
+/// 1. Verify canceler service is running with a wallet that passes `Bridge.isCanceler`
 /// 2. Create a fraudulent approval (no matching deposit on source chain)
 /// 3. Wait for canceler to detect the fraud
 /// 4. Verify canceler submits cancel transaction

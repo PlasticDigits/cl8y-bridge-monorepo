@@ -414,10 +414,10 @@ impl ServiceManager {
     /// Build environment variables for operator
     ///
     /// NOTE: Uses test_accounts.evm_private_key for the operator's EVM key,
-    /// which is the Anvil test account that has OPERATOR_ROLE granted.
+    /// which is the Anvil test account configured as a Bridge operator (`isOperator`).
     fn build_operator_env(&self, config: &E2eConfig) -> Vec<(String, String)> {
         // Use the test account's private key for the operator
-        // This ensures the operator has OPERATOR_ROLE (granted during setup)
+        // Setup grants Bridge operator/canceler via addOperator/addCanceler as needed
         let operator_private_key = if config.evm.private_key == B256::ZERO {
             debug!("Using test account private key for operator (evm.private_key is ZERO)");
             config.test_accounts.evm_private_key
@@ -529,11 +529,11 @@ impl ServiceManager {
     /// Build environment variables for canceler
     ///
     /// NOTE: Uses test_accounts.evm_private_key for the canceler's EVM key,
-    /// which is the Anvil test account that has CANCELER_ROLE granted.
+    /// which is the Anvil test account that may cancel (`Bridge.isCanceler`).
     /// The config.evm.private_key may be B256::ZERO if not explicitly set.
     fn build_canceler_env(&self, config: &E2eConfig) -> Vec<(String, String)> {
         // Use the test account's private key for the canceler
-        // This ensures the canceler has CANCELER_ROLE (granted during setup)
+        // Setup registers Bridge canceler via addCanceler when needed
         let canceler_private_key = if config.evm.private_key == B256::ZERO {
             // If evm.private_key is zero, use the test account's key
             debug!("Using test account private key for canceler (evm.private_key is ZERO)");

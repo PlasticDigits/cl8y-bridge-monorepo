@@ -7,7 +7,8 @@ use alloy::primitives::Address;
 use std::time::Instant;
 
 use super::helpers::{
-    query_contract_code, query_deposit_nonce, query_evm_chain_key, query_has_role,
+    query_access_manager_has_role, query_bridge_is_operator, query_contract_code,
+    query_deposit_nonce, query_evm_chain_key,
 };
 
 /// Test that EVM contracts are deployed
@@ -202,12 +203,12 @@ pub async fn test_chain_registry(config: &E2eConfig) -> TestResult {
     }
 }
 
-/// Test access manager permissions
+/// Test AccessManager reachability and Bridge operator mapping
 ///
-/// Verifies that the access manager contract is accessible and can query roles.
-/// Returns a `TestResult` indicating success or failure.
+/// Confirms `AccessManager` responds to `hasRole` (role **1** = MintBurn/minter wiring on mainnet per docs —
+/// **not** Bridge `withdrawApprove`). Separately checks `Bridge.isOperator` for the test EOA.
 ///
-/// SECURITY HARDENED: Role query failures now cause test failure.
+/// SECURITY HARDENED: RPC query failures now cause test failure.
 pub async fn test_access_manager(config: &E2eConfig) -> TestResult {
     let start = Instant::now();
     let name = "access_manager";
@@ -226,28 +227,39 @@ pub async fn test_access_manager(config: &E2eConfig) -> TestResult {
                     config.evm.contracts.access_manager
                 );
 
-                // Try to query if test account has OPERATOR_ROLE (role id 1)
                 let test_address = config.test_accounts.evm_address;
-                match query_has_role(config, 1, test_address).await {
-                    Ok(has_role) => {
-                        if has_role {
-                            tracing::info!("Test account {} has OPERATOR_ROLE", test_address);
-                        } else {
+
+                if config.evm.contracts.bridge != Address::ZERO {
+                    match query_bridge_is_operator(config, test_address).await {
+                        Ok(is_op) => {
                             tracing::info!(
-                                "Test account {} does not have OPERATOR_ROLE",
-                                test_address
+                                "Bridge.isOperator({}): {} — withdraw RBAC via Bridge, not AccessManager role 1",
+                                test_address, is_op
                             );
                         }
+                        Err(e) => {
+                            return TestResult::fail(
+                                name,
+                                format!("Bridge isOperator query failed: {}", e),
+                                start.elapsed(),
+                            );
+                        }
+                    }
+                }
+
+                match query_access_manager_has_role(config, 1, test_address).await {
+                    Ok(has_am_role_1) => {
+                        tracing::info!(
+                            "AccessManager.hasRole(1, {}): {} (role 1 = MintBurn/minter stack per deployment guide — not Bridge operator)",
+                            test_address, has_am_role_1
+                        );
                         TestResult::pass(name, start.elapsed())
                     }
-                    Err(e) => {
-                        // SECURITY HARDENED: Convert WARN to FAIL
-                        TestResult::fail(
-                            name,
-                            format!("Role query failed (security-critical): {}", e),
-                            start.elapsed(),
-                        )
-                    }
+                    Err(e) => TestResult::fail(
+                        name,
+                        format!("AccessManager hasRole query failed: {}", e),
+                        start.elapsed(),
+                    ),
                 }
             } else {
                 TestResult::fail(name, "AccessManager has no code deployed", start.elapsed())
