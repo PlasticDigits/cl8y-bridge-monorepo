@@ -22,6 +22,7 @@ import {
   fetchDepositNonce,
   fetchSplMintDecimals,
   fetchTokenMappingLocalMint,
+  findTokenMappingPda,
   formatSolanaWalletError,
 } from '../../services/solana/transaction'
 import {
@@ -32,6 +33,7 @@ import {
 import { getSolanaProgramIdString } from '../../services/solana/solanaBridgeAccounts'
 import { bytes32ToSolanaAddress, solanaAddressToBytes32 } from '../../services/solana/address'
 import { hexToUint8Array } from '../../services/terra/withdrawSubmit'
+import { resolveWithdrawSrcTokenBytesForSolana } from '../../services/solana/resolveWithdrawSrcTokenBytes'
 import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
 import { PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
@@ -511,8 +513,42 @@ export function TransferForm() {
     () => bridgeConfigData?.find((c) => c.chainId === destChain) ?? null,
     [bridgeConfigData, destChain]
   )
-  const destTokenIdForDetails =
-    destChainConfig?.type === 'cosmos' ? selectedTokenId : destTokenAddr || null
+
+  /** TokenMapping PDA on Solana for inbound routes (seeds: token, src_chain, src_token). Required for useTokenDetails. */
+  const solanaDestMappingPdaForDetails = useMemo(() => {
+    if (destChainConfig?.type !== 'solana') return null
+    const pidStr = getSolanaProgramIdString(destChainConfig)
+    if (!pidStr || !sourceChainBytes4) return null
+    const programId = new PublicKey(pidStr)
+    const chainBytes = bytes4HexToUint8Array(sourceChainBytes4)
+    if (direction === 'evm-to-solana') {
+      if (!tokenConfig?.address) return null
+      const srcTok = resolveWithdrawSrcTokenBytesForSolana(tokenConfig.address)
+      if (!srcTok || srcTok.length !== 32) return null
+      return findTokenMappingPda(programId, chainBytes, srcTok).toBase58()
+    }
+    if (direction === 'terra-to-solana') {
+      if (!selectedTokenId) return null
+      const srcTok = resolveWithdrawSrcTokenBytesForSolana(selectedTokenId)
+      if (!srcTok || srcTok.length !== 32) return null
+      return findTokenMappingPda(programId, chainBytes, srcTok).toBase58()
+    }
+    return null
+  }, [
+    destChainConfig,
+    direction,
+    sourceChainBytes4,
+    tokenConfig?.address,
+    selectedTokenId,
+  ])
+
+  const destTokenIdForDetails = useMemo(() => {
+    if (destChainConfig?.type === 'cosmos') return selectedTokenId
+    if (destChainConfig?.type === 'evm') return destTokenAddr || null
+    if (destChainConfig?.type === 'solana') return solanaDestMappingPdaForDetails
+    return null
+  }, [destChainConfig?.type, selectedTokenId, destTokenAddr, solanaDestMappingPdaForDetails])
+
   const { data: destTokenDetails } = useTokenDetails(
     destChainUnifiedConfig,
     destTokenIdForDetails,
@@ -671,7 +707,11 @@ export function TransferForm() {
     ? (destChainDecimals?.[selectedTokenId]
         ?? registryTokens?.find((t) => t.token === selectedTokenId)?.evm_decimals
         ?? 18)
-    : terraDecimals
+    : isDestSolanaChain
+      ? (destChainDecimals?.[selectedTokenId] ??
+          destTokenDetails?.destTokenDecimals ??
+          9)
+      : terraDecimals
 
   const toSourceUnits = useCallback(
     (destBaseUnits: bigint) => {

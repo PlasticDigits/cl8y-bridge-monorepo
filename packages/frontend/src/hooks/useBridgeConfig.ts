@@ -199,6 +199,8 @@ export interface BridgeTokenDetails {
   localAddress: string
   destinations: BridgeTokenDest[]
   withdrawRateLimit: WithdrawRateLimitInfo | null
+  /** SPL decimals on Solana for this mapping (TokenMapping account). */
+  destTokenDecimals?: number
 }
 
 // --- Helpers ---
@@ -862,6 +864,7 @@ export function useTokenDetails(
             minTransfer,
             maxTransfer: null,
             localAddress: localMint,
+            destTokenDecimals: parsed.decimals,
             destinations: [
               {
                 chainKey: entry?.[0] ?? destHex4,
