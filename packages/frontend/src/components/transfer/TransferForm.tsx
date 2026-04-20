@@ -761,15 +761,16 @@ export function TransferForm() {
     toSourceUnits,
   ])
 
-  /** Smallest send amount (gross) so net after bridge fee is at least min + 1 base unit (avoids withdraw min edge cases). */
+  /** Smallest send amount (gross) so net after bridge fee is at least the destination minimum (matches validation). */
   const { minSendGrossInSrc, displayMinLabel } = useMemo(() => {
     if (effectiveMinInSrc == null || effectiveMinInSrc <= 0n) {
       return { minSendGrossInSrc: null as bigint | null, displayMinLabel: undefined as string | undefined }
     }
-    const gross = minGrossForMinNet(effectiveMinInSrc + 1n, bridgeFeeBps)
+    const gross = minGrossForMinNet(effectiveMinInSrc, bridgeFeeBps)
     return {
       minSendGrossInSrc: gross,
-      displayMinLabel: formatCompact(gross.toString(), amountDecimals),
+      // Full precision: compact sigfigs round e.g. 1.005025 → "1.005", so typing the label would fail isBelowMin.
+      displayMinLabel: formatAmountForNumberInput(gross.toString(), amountDecimals, amountDecimals),
     }
   }, [effectiveMinInSrc, bridgeFeeBps, amountDecimals])
 

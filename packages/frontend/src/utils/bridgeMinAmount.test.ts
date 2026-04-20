@@ -26,4 +26,14 @@ describe('minGrossForMinNet', () => {
     expect(netOf(withBuffer, feeBps)).toBeGreaterThanOrEqual(minNet + 1n)
     expect(withBuffer).toBeGreaterThanOrEqual(withoutBuffer)
   })
+
+  /** GitLab #101: 0.5% fee, 1.00 token min net (6 dp) → gross must be 1.005025, not a rounded "1.005" label. */
+  it('50 bps minimum gross for 1e6 min net (6 decimals scenario)', () => {
+    const feeBps = 50n
+    const minNet = 1_000_000n
+    const gross = minGrossForMinNet(minNet, feeBps)
+    expect(netOf(gross, feeBps)).toBeGreaterThanOrEqual(minNet)
+    expect(netOf(gross - 1n, feeBps)).toBeLessThan(minNet)
+    expect(gross).toBe(1_005_025n)
+  })
 })
