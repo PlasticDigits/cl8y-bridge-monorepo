@@ -16,6 +16,11 @@ import {
 /** 8-byte Anchor disc + Borsh body (through `bump`); matches on-chain `PendingWithdraw` account size. */
 const PENDING_WITHDRAW_MIN_LEN = 186;
 
+/** 8-byte disc + 1-byte bump; matches `ExecutedHash` in `executed_hash.rs`. */
+const EXECUTED_HASH_MIN_LEN = 9;
+
+const ZERO_B32 = (`0x${"0".repeat(64)}`) as Hex;
+
 function bytes4ToBytes32Left(b: `0x${string}`): Hex {
   const hex = b.slice(2).toLowerCase();
   return (`0x${hex.padEnd(64, "0")}`) as Hex;
@@ -29,6 +34,43 @@ function readU128LE(buf: Buffer, offset: number): bigint {
 
 function pubkeySubToBytes32Hex(slice: Buffer): Hex {
   return (`0x${slice.toString("hex")}`) as Hex;
+}
+
+/**
+ * True if `raw` is a valid `ExecutedHash` marker account (withdraw_execute closed PendingWithdraw).
+ */
+export function isSolanaExecutedHashAccount(raw: Uint8Array | Buffer): boolean {
+  const data = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+  if (data.length < EXECUTED_HASH_MIN_LEN) return false;
+  const expectDisc = anchorAccountDiscriminator("ExecutedHash");
+  return data.subarray(0, 8).equals(expectDisc);
+}
+
+/**
+ * When `PendingWithdraw` is closed after execute, return a minimal row so UI polls treat the transfer as done.
+ * Amount / accounts are unknown here — multi-chain lookup still fills source deposit for display.
+ */
+function syntheticExecutedPendingWithdraw(
+  chainNumericId: number,
+  destChainBytes4: `0x${string}`,
+): PendingWithdrawData {
+  return {
+    chainId: chainNumericId,
+    srcChain: ZERO_B32,
+    destChain: bytes4ToBytes32Left(destChainBytes4),
+    srcAccount: ZERO_B32,
+    destAccount: ZERO_B32,
+    token: ZERO_B32,
+    amount: 0n,
+    nonce: 0n,
+    submittedAt: 0n,
+    approvedAt: 0n,
+    approved: true,
+    cancelled: false,
+    executed: true,
+    srcDecimals: 0,
+    destDecimals: 0,
+  };
 }
 
 /**
@@ -129,13 +171,25 @@ export async function querySolanaPendingWithdraw(
     [Buffer.from("withdraw"), Buffer.from(hashBytes)],
     programId,
   );
+  const [executedPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("executed"), Buffer.from(hashBytes)],
+    programId,
+  );
 
   try {
     const account = await withSolanaReadFallback(rpcUrls, (connection) =>
       connection.getAccountInfo(pendingPda),
     );
-    if (!account?.data) return null;
-    return parseSolanaPendingWithdrawAccount(account.data, bytes4, chainNumericId);
+    if (account?.data) {
+      return parseSolanaPendingWithdrawAccount(account.data, bytes4, chainNumericId);
+    }
+    const executedInfo = await withSolanaReadFallback(rpcUrls, (connection) =>
+      connection.getAccountInfo(executedPda),
+    );
+    if (executedInfo?.data && isSolanaExecutedHashAccount(executedInfo.data)) {
+      return syntheticExecutedPendingWithdraw(chainNumericId, bytes4);
+    }
+    return null;
   } catch {
     return null;
   }
