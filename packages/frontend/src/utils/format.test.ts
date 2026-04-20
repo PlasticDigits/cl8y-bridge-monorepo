@@ -112,6 +112,15 @@ describe('formatAmountForNumberInput', () => {
     expect(formatAmountForNumberInput('1234567', 6, 2)).toBe('1.23')
   })
 
+  it('defaults to at most 6 display decimals unless displayDecimals is set (GitLab #101 MIN preset vs label)', () => {
+    const gross18 = BigInt('1005025125628140703') // 1.005025125628140703 in 18 dp base units
+    const d = 18
+    const full = formatAmountForNumberInput(gross18, d, d)
+    expect(full).toBe('1.005025125628140703')
+    expect(formatAmountForNumberInput(gross18, d)).toBe('1.005025')
+    expect(formatAmountForNumberInput(gross18, d, d)).toBe(full)
+  })
+
   it('returns empty sentinel for unparseable micro amount', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(formatAmountForNumberInput('bogus', 6)).toBe(UNPARSEABLE_AMOUNT_NUMBER_INPUT)

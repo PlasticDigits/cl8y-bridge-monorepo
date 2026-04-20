@@ -853,7 +853,7 @@ export function TransferForm() {
 
   const handleMin = useCallback(() => {
     if (minSendGrossInSrc == null || minSendGrossInSrc <= 0n) return
-    setAmount(formatAmountForNumberInput(minSendGrossInSrc, amountDecimals))
+    setAmount(formatAmountForNumberInput(minSendGrossInSrc, amountDecimals, amountDecimals))
   }, [minSendGrossInSrc, amountDecimals])
 
   // EVM deposit success: parse receipt, compute transfer hash, store record, redirect.
