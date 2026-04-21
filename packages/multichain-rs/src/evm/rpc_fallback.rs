@@ -86,12 +86,12 @@ mod tests {
     #[test]
     fn test_parse_multiple_urls() {
         let urls = parse_comma_separated_rpc_urls(
-            "https://bsc.publicnode.com,https://bsc-dataseed1.binance.org,https://binance.llamarpc.com",
+            "https://bsc.publicnode.com,https://bsc-dataseed1.binance.org,https://bsc.drpc.org",
         );
         assert_eq!(urls.len(), 3);
         assert_eq!(urls[0], "https://bsc.publicnode.com");
         assert_eq!(urls[1], "https://bsc-dataseed1.binance.org");
-        assert_eq!(urls[2], "https://binance.llamarpc.com");
+        assert_eq!(urls[2], "https://bsc.drpc.org");
     }
 
     #[test]

@@ -54,7 +54,7 @@ export const NETWORKS = {
       lcd: 'https://terra-classic-lcd.publicnode.com',
       lcdFallbacks: [
         'https://terra-classic-lcd.publicnode.com',
-        'https://columbus-lcd.terra.dev',
+        'https://api-lunc-lcd.binodes.com',
         'https://lcd.terra-classic.hexxagon.io',
       ],
       scanner: 'https://finder.terraclassic.community/mainnet',

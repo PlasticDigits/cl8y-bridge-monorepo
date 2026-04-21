@@ -27,6 +27,8 @@ Related docs: [SOLANA_INTEGRATION_PLAN.md](./SOLANA_INTEGRATION_PLAN.md), [deplo
 
 Checks below were run against public endpoints (`cast`, Solana RPC, Terra LCD with a normal `User-Agent`; Python `urllib` alone may get HTTP 403 from some CDNs).
 
+**Browser / SPA note:** For the frontend, use CORS-friendly Solana JSON-RPC URLs (for example `https://solana-rpc.publicnode.com/`). The public `api.mainnet-beta.solana.com` host often returns HTTP 403 from browsers; demo keys (for example Blockeden) may return HTTP 429. See [deployment-guide §10](./deployment-guide.md#10-environment-variable-reference) and `packages/frontend/src/utils/solanaMainnetRpcDefaults.ts`.
+
 | Item | Verified |
 |------|:--------:|
 | Solana `0x00000005` on BSC `ChainRegistry` (`registeredChains` → `true`) | ✓ |

@@ -1514,6 +1514,14 @@ journalctl -u cl8y-canceler -f
 
 ## 10. Environment Variable Reference
 
+### Public RPC and LCD endpoints (browser + services)
+
+These notes complement the defaults in `packages/frontend/src/utils/bridgeChains.ts`, `packages/frontend/src/utils/solanaMainnetRpcDefaults.ts`, and `packages/multichain-rs/src/terra/client.rs`. Re-check endpoints periodically; public infrastructure changes without notice.
+
+- **Terra Classic (`columbus-5`):** Prefer `https://terra-classic-lcd.publicnode.com` (LCD) and `https://terra-classic-rpc.publicnode.com` (Tendermint RPC). Additional LCD fallbacks that report `columbus-5` on `/cosmos/base/tendermint/v1beta1/node_info`: `https://api-lunc-lcd.binodes.com`, `https://lcd.terra-classic.hexxagon.io`. Additional RPC fallbacks: `https://api-lunc-rpc.binodes.com`, `https://rpc.terra-classic.hexxagon.io`. Do **not** point mainnet configs at `https://lcd.terra-classic.hexxagon.dev` or `https://rpc.terra-classic.hexxagon.dev` (those serve **`rebel-2`** testnet). Avoid `https://columbus-lcd.terra.dev` for new deployments (intermittent upstream “no provider” errors).
+- **BNB Chain (browser):** Drop `binance.llamarpc.com` (fails DNS) and `public-bsc-mainnet.fastnode.io` (CORS from typical web origins) from user-facing fallback lists; keep `bsc.publicnode.com`, Binance seeds, DRPC, and similar.
+- **Solana mainnet (browser):** Prefer CORS-friendly URLs such as `https://solana-rpc.publicnode.com/`. `api.mainnet-beta.solana.com` and many third-party demo keys often return HTTP 403 or 429 from browser contexts (see gitlab#109 and `solanaMainnetRpcDefaults.ts`).
+
 ### Operator (`packages/operator/.env`)
 
 | Variable | Required | Description |

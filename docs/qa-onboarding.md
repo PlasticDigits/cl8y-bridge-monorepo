@@ -113,7 +113,7 @@ VITE_LOCK_UNLOCK_ADDRESS=0xd7b3bf05987052009c350874e810df98da95d258
 VITE_EVM_RPC_URL=https://bsc-dataseed1.binance.org
 VITE_TERRA_LCD_URL=https://terra-classic-lcd.publicnode.com
 VITE_TERRA_RPC_URL=https://terra-classic-rpc.publicnode.com
-VITE_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+VITE_SOLANA_RPC_URL=https://solana-rpc.publicnode.com/
 
 # Solana bridge + noneconomic test SPL mints (Settings → Faucet / Solana routes)
 VITE_SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt

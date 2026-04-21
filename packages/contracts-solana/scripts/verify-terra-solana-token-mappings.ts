@@ -13,7 +13,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { terraTokenIdToSrcTokenBytesStrict } from "../../frontend/src/services/terraTokenEncoding.ts";
 
 const SOLANA_RPC =
-  process.env.SOLANA_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
+  process.env.SOLANA_RPC_URL?.trim() || "https://solana-rpc.publicnode.com/";
 const TERRA_LCD =
   process.env.TERRA_LCD?.trim() || "https://terra-classic-fcd.publicnode.com";
 const TERRA_BRIDGE =

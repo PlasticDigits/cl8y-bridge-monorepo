@@ -41,14 +41,14 @@ Use the **exact commands and addresses** in the main runbook; this section is **
 
 ### Phase 1 — SPL mints + MintBurn authority
 
-Use a **real mainnet JSON-RPC URL**. Prefer `https://api.mainnet-beta.solana.com` or `https://api.mainnet.solana.com`. Do **not** use `https://mainnet.solana.com` (wrong host; often fails DNS or looks like “account not found”).
+Use a **real mainnet JSON-RPC URL**. For **CLI** (`spl-token`, `solana` CLI) from a server, `https://api.mainnet-beta.solana.com` can work; for **browser** traffic, prefer CORS-friendly hosts such as `https://solana-rpc.publicnode.com/` (see `solanaMainnetRpcDefaults.ts`). Do **not** use `https://mainnet.solana.com` (wrong host; often fails DNS or looks like “account not found”).
 
 - [ ] All three mints exist on-chain and **Mint authority** is the **BridgeConfig PDA** `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (not the program id). If authority is wrong, follow runbook [MintBurn mint authority](./deployment-solana-mainnet.md#mintburn-mint-authority-must-be-the-bridgeconfig-pda-not-the-program-id) (`spl-token authorize`).
 
 **Copy-paste — display all three mints and assert mint authority (expects `OK` ×3):**
 
 ```bash
-SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://solana-rpc.publicnode.com/}"
 BRIDGE_PDA="HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD"
 
 while IFS=: read -r label mint; do
@@ -123,7 +123,7 @@ echo
 **2.4 — BSC, opBNB, Terra registered on Solana program** (`ChainEntry` PDAs: seeds **`["chain", chain_id_u32_be]`** under program id **`4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`**). Expect `OK` ×3 (account exists, **owner = program id**):
 
 ```bash
-SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://solana-rpc.publicnode.com/}"
 SOLANA_PROGRAM_ID="4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt"
 # PDAs for this program id + chain ids 0x00000038, 0x000000cc, 0x00000001 (re-derive via register-mainnet-chains.ts / findChainPda if program id changes)
 
@@ -305,7 +305,7 @@ sys.exit(0 if ok_all else 1)
 `TokenMapping` layout: 8-byte discriminator, then **32-byte `local_mint`**. The PDA seeds use the **remote** chain’s `dest_token` (BSC/opBNB: left-padded ERC20; Terra: `encode_token_address` of the CW20 — same as [`register-mainnet-tokens.ts`](../packages/contracts-solana/scripts/register-mainnet-tokens.ts)). Below decodes **`solana account --output json`** (no `anchor` needed). Expect **OK** ×9:
 
 ```bash
-SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}"
+SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://solana-rpc.publicnode.com/}"
 
 while IFS='|' read -r label want_mint_hex pda; do
   echo "======== Solana TokenMapping ${label} → local_mint ========"
@@ -367,7 +367,7 @@ curl -sS 'https://terra-classic-lcd.publicnode.com/cosmwasm/wasm/v1/contract/ter
 
 ```bash
 VITE_SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
-VITE_SOLANA_RPC_URL=https://api.mainnet.solana.com,https://solana-rpc.publicnode.com/,https://solana-mainnet.gateway.tatum.io/,https://api.blockeden.xyz/solana/KeCh6p22EX5AeRHxMSmc,https://solana.leorpc.com/?api_key=FREE,https://solana.api.pocket.network/,https://public.rpc.solanavibestation.com/,https://solana.rpc.subquery.network/public
+VITE_SOLANA_RPC_URL=https://solana-rpc.publicnode.com/,https://solana-mainnet.gateway.tatum.io/,https://solana.api.pocket.network/,https://public.rpc.solanavibestation.com/,https://solana.rpc.subquery.network/public
 VITE_SOLANA_TESTA_MINT=6XjWBbRJW5uhd8csCiDivXGPF42yYoyDARtxEtX3oP7E
 VITE_SOLANA_TESTB_MINT=EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX
 VITE_SOLANA_TDEC_MINT=765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR

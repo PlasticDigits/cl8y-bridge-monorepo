@@ -101,7 +101,7 @@
       "chainId": "solana",
       "type": "solana",
       "icon": "/chains/solana-icon.png",
-      "rpcUrl": "https://api.mainnet-beta.solana.com",
+      "rpcUrl": "https://solana-rpc.publicnode.com/",
       "explorerUrl": "https://explorer.solana.com",
       "tier": "mainnet"
     },
