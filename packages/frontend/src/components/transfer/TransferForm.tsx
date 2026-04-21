@@ -1802,6 +1802,50 @@ export function TransferForm() {
       ? routeValidationError
       : null)
 
+  /** Explains why the Bridge action is disabled (tooltip + inline where the banner does not already apply). */
+  const bridgeButtonBlockTooltip = useMemo(() => {
+    if (isChainsLoading || isSubmitting || isTokenInfoLoading || isRouteValidationLoading) return undefined
+    if (submitGuardError) return submitGuardError
+    if (!isWalletConnected) return `Connect your ${walletLabel} wallet to continue`
+    if (!amount || !isValidAmount(amount)) return 'Enter a valid amount greater than zero'
+    if (isBelowMin) {
+      return `Amount below minimum (${displayMinLabel ?? '—'} ${selectedSymbol})`
+    }
+    if (isAboveMax) {
+      return `Amount exceeds the maximum${displayMaxLabel ? ` (${displayMaxLabel} ${selectedSymbol})` : ''}`
+    }
+    if (!isRouteValid && routeValidationError) return routeValidationError
+    return undefined
+  }, [
+    isChainsLoading,
+    isSubmitting,
+    isTokenInfoLoading,
+    isRouteValidationLoading,
+    submitGuardError,
+    isWalletConnected,
+    walletLabel,
+    amount,
+    isBelowMin,
+    isAboveMax,
+    displayMinLabel,
+    displayMaxLabel,
+    selectedSymbol,
+    isRouteValid,
+    routeValidationError,
+  ])
+
+  const amountFieldValidationHint =
+    !submitGuardError && isBelowMin
+      ? `Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel} ${selectedSymbol})` : ''}`
+      : !submitGuardError && isAboveMax
+        ? `Amount exceeds the maximum${displayMaxLabel ? ` (${displayMaxLabel} ${selectedSymbol})` : ''}`
+        : undefined
+
+  const bridgeInlineHintBelowButton =
+    bridgeButtonBlockTooltip && !submitGuardError && !isBelowMin && !isAboveMax
+      ? bridgeButtonBlockTooltip
+      : undefined
+
   const buttonText = isChainsLoading
     ? 'Discovering chains...'
     : !isWalletConnected
@@ -1954,6 +1998,7 @@ export function TransferForm() {
         }
         maxLabel={displayMaxLabel}
         minLabel={displayMinLabel}
+        validationHint={amountFieldValidationHint}
       />
       <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled || isSubmitting} />
       <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} disabled={isSubmitting} />
@@ -1982,26 +2027,40 @@ export function TransferForm() {
         tokenExplorerUrl={feeBreakdownProps.tokenExplorerUrl}
       />
 
-      <button
-        type="submit"
-        data-testid="submit-transfer"
-        disabled={
-          isChainsLoading ||
-          !isWalletConnected ||
-          !amount ||
-          !isValidAmount(amount) ||
-          isBelowMin ||
-          isAboveMax ||
-          isSubmitting ||
-          isTokenInfoLoading ||
-          isRouteValidationLoading ||
-          !isRouteValid
-        }
-        onClick={() => sounds.playButtonPress()}
-        className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
-      >
-        {buttonText}
-      </button>
+      <span className="block w-full" title={bridgeButtonBlockTooltip}>
+        <button
+          type="submit"
+          data-testid="submit-transfer"
+          disabled={
+            isChainsLoading ||
+            !isWalletConnected ||
+            !amount ||
+            !isValidAmount(amount) ||
+            isBelowMin ||
+            isAboveMax ||
+            isSubmitting ||
+            isTokenInfoLoading ||
+            isRouteValidationLoading ||
+            !isRouteValid
+          }
+          onClick={() => sounds.playButtonPress()}
+          aria-describedby={
+            bridgeInlineHintBelowButton
+              ? 'bridge-submit-inline-hint'
+              : amountFieldValidationHint
+                ? 'transfer-amount-validation-hint'
+                : undefined
+          }
+          className="btn-primary btn-cta w-full justify-center py-3 disabled:bg-gray-700 disabled:text-gray-400 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed"
+        >
+          {buttonText}
+        </button>
+      </span>
+      {bridgeInlineHintBelowButton ? (
+        <p id="bridge-submit-inline-hint" className="mt-2 text-sm text-rose-300/90" role="status">
+          {bridgeInlineHintBelowButton}
+        </p>
+      ) : null}
     </form>
   )
 }

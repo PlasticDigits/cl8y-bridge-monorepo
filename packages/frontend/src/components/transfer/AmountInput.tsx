@@ -24,6 +24,8 @@ export interface AmountInputProps {
   maxLabel?: string
   /** Compact-formatted min amount for label (e.g. "0.001" or "1e-5") */
   minLabel?: string
+  /** Optional validation hint below the field (e.g. below-min / above-max) */
+  validationHint?: string
 }
 
 export function AmountInput({
@@ -40,6 +42,7 @@ export function AmountInput({
   sourceChainConfigOrRpcUrl,
   maxLabel,
   minLabel,
+  validationHint,
 }: AmountInputProps) {
   const hasTokenSelector = tokens && tokens.length > 0 && onTokenChange
   const selectedToken = tokens?.find((t) => t.id === selectedTokenId)
@@ -139,6 +142,11 @@ export function AmountInput({
           )}
         </div>
       </div>
+      {validationHint ? (
+        <p id="transfer-amount-validation-hint" className="mt-1.5 text-sm text-rose-300/90" role="status">
+          {validationHint}
+        </p>
+      ) : null}
     </div>
   )
 }
