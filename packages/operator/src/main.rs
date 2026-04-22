@@ -7,6 +7,7 @@ mod contracts;
 mod db;
 mod discovery;
 pub mod hash;
+mod liveness;
 mod metrics;
 mod multi_evm;
 mod terra_client;
@@ -63,6 +64,7 @@ async fn async_main() -> eyre::Result<()> {
 
     // Load configuration
     let config = Config::load()?;
+    config.verify_evm_jsonrpc_chain_ids().await?;
     tracing::info!(
         evm_chain_id = config.evm.chain_id,
         terra_chain_id = %config.terra.chain_id,

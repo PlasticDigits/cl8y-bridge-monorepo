@@ -73,7 +73,9 @@ impl SolanaWatcher {
 
         loop {
             match self.poll_deposits().await {
-                Ok(()) => {}
+                Ok(()) => {
+                    crate::liveness::touch_activity();
+                }
                 Err(e) => {
                     error!(error = %e, "Error polling Solana deposits");
                 }

@@ -2,10 +2,12 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::State,
     http::header,
+    http::StatusCode,
     response::{IntoResponse, Json, Response},
     routing::get,
     Router,
@@ -29,6 +31,8 @@ pub struct CancelerStats {
     pub last_evm_block: u64,
     /// Last polled Terra height
     pub last_terra_height: u64,
+    /// Unix time of last successful end-to-end poll cycle (`poll_approvals` completed).
+    pub last_activity_unix_secs: u64,
     /// Canceler instance ID
     pub canceler_id: String,
 }
@@ -205,6 +209,8 @@ pub type SharedMetrics = Arc<Metrics>;
 pub struct AppState {
     pub stats: SharedStats,
     pub metrics: SharedMetrics,
+    /// Unix timestamp when the HTTP server started (for startup grace in health checks).
+    pub health_started_unix_secs: u64,
 }
 
 /// Health check response
@@ -217,35 +223,85 @@ pub struct HealthResponse {
     pub cancelled_count: u64,
     pub last_evm_block: u64,
     pub last_terra_height: u64,
+    pub last_activity_unix_secs: u64,
+}
+
+fn canceler_now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn canceler_health_max_idle_secs() -> u64 {
+    std::env::var("CANCELER_HEALTH_MAX_IDLE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8 * 3600)
+}
+
+fn canceler_health_startup_grace_secs() -> u64 {
+    std::env::var("CANCELER_HEALTH_STARTUP_GRACE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300)
+}
+
+fn canceler_health_is_stale(state: &AppState, stats: &CancelerStats) -> bool {
+    let now = canceler_now_unix_secs();
+    let since_start = now.saturating_sub(state.health_started_unix_secs);
+    if since_start <= canceler_health_startup_grace_secs() {
+        return false;
+    }
+    let last = stats.last_activity_unix_secs;
+    if last == 0 {
+        return true;
+    }
+    now.saturating_sub(last) > canceler_health_max_idle_secs()
 }
 
 /// Health check endpoint handler
-async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
+async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let stats = state.stats.read().await;
-    Json(HealthResponse {
-        status: "healthy".to_string(),
+    let stale = canceler_health_is_stale(&state, &stats);
+    let status_code = if stale {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
+    let body = HealthResponse {
+        status: if stale {
+            "unhealthy".to_string()
+        } else {
+            "healthy".to_string()
+        },
         canceler_id: stats.canceler_id.clone(),
         verified_valid: stats.verified_valid,
         verified_invalid: stats.verified_invalid,
         cancelled_count: stats.cancelled_count,
         last_evm_block: stats.last_evm_block,
         last_terra_height: stats.last_terra_height,
-    })
+        last_activity_unix_secs: stats.last_activity_unix_secs,
+    };
+    (status_code, Json(body))
 }
 
-/// Liveness probe (always returns OK if server is running)
+/// Liveness probe (process is up; use `/health` for stall detection)
 async fn liveness() -> &'static str {
     "OK"
 }
 
-/// Readiness probe (checks if watcher has started processing)
-async fn readiness(State(state): State<AppState>) -> &'static str {
+/// Readiness probe (started polling and not stale)
+async fn readiness(State(state): State<AppState>) -> StatusCode {
     let stats = state.stats.read().await;
-    // Ready if we've polled at least one block on either chain
-    if stats.last_evm_block > 0 || stats.last_terra_height > 0 {
-        "OK"
+    let started = stats.last_evm_block > 0 || stats.last_terra_height > 0;
+    if !started {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    if canceler_health_is_stale(&state, &stats) {
+        StatusCode::SERVICE_UNAVAILABLE
     } else {
-        "NOT_READY"
+        StatusCode::OK
     }
 }
 
@@ -296,9 +352,14 @@ pub async fn start_server(
     stats: SharedStats,
     prom_metrics: SharedMetrics,
 ) -> eyre::Result<()> {
+    let health_started_unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let state = AppState {
         stats,
         metrics: prom_metrics,
+        health_started_unix_secs,
     };
 
     let app = Router::new()

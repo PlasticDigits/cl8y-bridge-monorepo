@@ -142,9 +142,17 @@ pub async fn start_api_server(addr: SocketAddr, db: PgPool) -> Result<()> {
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
-/// Health check — public, always returns 200 OK.
-async fn health_handler() -> &'static str {
-    "OK"
+/// Health check — public; returns 503 if watchers report extended idle (see `liveness` module).
+async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
+    if crate::liveness::health_is_stale(state.start_time.elapsed().as_secs()) {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "UNHEALTHY: no successful watcher poll within HEALTH_MAX_IDLE_SECS",
+        )
+            .into_response()
+    } else {
+        (StatusCode::OK, "OK").into_response()
+    }
 }
 
 /// Prometheus metrics — public.

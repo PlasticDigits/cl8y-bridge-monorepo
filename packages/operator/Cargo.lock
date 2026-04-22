@@ -4205,6 +4205,7 @@ dependencies = [
  "cosmrs",
  "cosmwasm-std",
  "eyre",
+ "futures-util",
  "hex",
  "reqwest 0.12.28",
  "serde",

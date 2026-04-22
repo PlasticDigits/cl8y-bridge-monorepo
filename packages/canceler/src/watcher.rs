@@ -25,12 +25,12 @@ use std::time::Duration;
 use crate::bounded_cache::{BoundedHashCache, BoundedMapCache};
 
 use alloy::primitives::{Address, FixedBytes};
-use alloy::providers::{Provider, ProviderBuilder, RootProvider};
+use alloy::providers::{ProviderBuilder, RootProvider};
 use alloy::sol;
 use alloy::transports::http::{Client, Http};
 use base64::Engine as _;
 use eyre::{eyre, Result, WrapErr};
-use multichain_rs::run_with_evm_rpc_url_fallback;
+use multichain_rs::{evm_consensus_latest_block, EvmRpcReadPolicy};
 use std::str::FromStr;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -382,19 +382,17 @@ impl CancelerWatcher {
         })
     }
 
-    /// First JSON-RPC URL that answers `eth_blockNumber`; used for polling on a stable endpoint.
-    async fn first_evm_http_provider(urls: &[String]) -> Result<RootProvider<Http<Client>>> {
-        run_with_evm_rpc_url_fallback(urls, |url| async move {
-            let parsed = url
-                .parse()
-                .wrap_err_with(|| format!("Invalid EVM RPC URL: {url}"))?;
-            let p = ProviderBuilder::new().on_http(parsed);
-            p.get_block_number()
-                .await
-                .wrap_err_with(|| format!("get_block_number failed for {url}"))?;
-            Ok(p)
-        })
-        .await
+    /// HTTP provider at the RPC endpoint that agrees with the multi-endpoint `eth_blockNumber` quorum.
+    async fn evm_read_provider_and_head(
+        urls: &[String],
+    ) -> Result<(RootProvider<Http<Client>>, u64)> {
+        let policy = EvmRpcReadPolicy::from_env_for_url_count(urls.len())?;
+        let head = evm_consensus_latest_block(urls, &policy).await?;
+        let url = urls[head.provider_index].clone();
+        let parsed = url
+            .parse()
+            .wrap_err_with(|| format!("Invalid EVM RPC URL: {url}"))?;
+        Ok((ProviderBuilder::new().on_http(parsed), head.latest_block))
     }
 
     /// C6: Validate that the verifier's chain IDs match what the bridge contract reports.
@@ -492,18 +490,17 @@ impl CancelerWatcher {
         let bridge_address =
             Address::from_str(&config.evm_bridge_address).wrap_err("Invalid EVM bridge address")?;
 
-        run_with_evm_rpc_url_fallback(&urls, |url| async move {
-            let provider =
-                ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid EVM RPC URL")?);
-            let contract = Bridge::new(bridge_address, &provider);
-            let result = contract
-                .getThisChainId()
-                .call()
-                .await
-                .map_err(|e| eyre!("getThisChainId() call failed: {}", e))?;
-            Ok(result.chainId.0)
-        })
-        .await
+        let policy = EvmRpcReadPolicy::from_env_for_url_count(urls.len())?;
+        let head = evm_consensus_latest_block(&urls, &policy).await?;
+        let url = urls[head.provider_index].clone();
+        let provider = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid EVM RPC URL")?);
+        let contract = Bridge::new(bridge_address, &provider);
+        let result = contract
+            .getThisChainId()
+            .call()
+            .await
+            .map_err(|e| eyre!("getThisChainId() call failed: {}", e))?;
+        Ok(result.chainId.0)
     }
 
     /// Main run loop
@@ -595,6 +592,14 @@ impl CancelerWatcher {
             .pending_retry_queue_size
             .set(self.pending_retry_queue.len() as i64);
 
+        {
+            let mut s = self.stats.write().await;
+            s.last_activity_unix_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+        }
+
         Ok(())
     }
 
@@ -638,7 +643,7 @@ impl CancelerWatcher {
     /// polling because it queries current contract state directly — no block ranges,
     /// no chunking, no missed events from RPC errors.
     async fn poll_evm_enumeration(&mut self) -> Result<()> {
-        let provider = Self::first_evm_http_provider(&self.config.all_evm_rpc_urls())
+        let (provider, _) = Self::evm_read_provider_and_head(&self.config.all_evm_rpc_urls())
             .await
             .wrap_err("No reachable EVM RPC for enumeration")?;
 
@@ -750,43 +755,41 @@ impl CancelerWatcher {
             "Polling EVM approvals"
         );
 
-        let provider = Self::first_evm_http_provider(&self.config.all_evm_rpc_urls())
-            .await
-            .map_err(|e| eyre!("No reachable EVM RPC for event poll: {}", e))?;
+        let (provider, rpc_head) =
+            Self::evm_read_provider_and_head(&self.config.all_evm_rpc_urls())
+                .await
+                .map_err(|e| eyre!("No reachable EVM RPC for event poll: {}", e))?;
 
-        let current_block = provider
-            .get_block_number()
-            .await
-            .map_err(|e| eyre!("Failed to get block number: {}", e))?;
+        let safe_head = rpc_head.saturating_sub(self.config.evm_confirmation_blocks);
 
         if self.last_evm_block == 0 {
             let lookback = self.config.evm_poll_lookback_blocks;
-            self.last_evm_block = current_block.saturating_sub(lookback);
+            self.last_evm_block = safe_head.saturating_sub(lookback);
             info!(
-                current_block = current_block,
+                rpc_head,
+                safe_head,
                 lookback_blocks = lookback,
                 start_block = self.last_evm_block,
-                "First poll — looking back {} blocks from head",
+                "First poll — looking back {} blocks from confirmed head",
                 lookback
             );
         }
 
-        if current_block < self.last_evm_block {
+        if safe_head < self.last_evm_block {
             warn!(
-                current_block = current_block,
+                safe_head,
                 last_polled = self.last_evm_block,
                 "Chain reset detected — resetting to lookback window"
             );
-            self.last_evm_block =
-                current_block.saturating_sub(self.config.evm_poll_lookback_blocks);
+            self.last_evm_block = safe_head.saturating_sub(self.config.evm_poll_lookback_blocks);
             self.verified_hashes.clear();
             self.cancelled_hashes.clear();
             self.pending_retry_queue.clear();
         }
 
-        if current_block <= self.last_evm_block {
+        if safe_head <= self.last_evm_block {
             debug!(
-                current_block = current_block,
+                safe_head,
                 last_polled = self.last_evm_block,
                 "No new blocks to poll"
             );
@@ -794,7 +797,7 @@ impl CancelerWatcher {
         }
 
         let from_block = self.last_evm_block + 1;
-        let to_block = current_block;
+        let to_block = safe_head;
         let total_range = to_block - from_block + 1;
         let chunk_size = self.config.evm_poll_chunk_size.max(1);
 
@@ -968,7 +971,8 @@ impl CancelerWatcher {
             let bridge_addr_str = &chain_state.bridge_address;
             let chain_v2_id = chain_state.v2_chain_id;
 
-            let provider = match Self::first_evm_http_provider(&chain_state.rpc_urls).await {
+            let (provider, _) = match Self::evm_read_provider_and_head(&chain_state.rpc_urls).await
+            {
                 Ok(p) => p,
                 Err(e) => {
                     warn!(
@@ -1093,32 +1097,28 @@ impl CancelerWatcher {
             let bridge_addr_str = &chain_state.bridge_address;
             let chain_v2_id = chain_state.v2_chain_id;
 
-            let provider = match Self::first_evm_http_provider(&chain_state.rpc_urls).await {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!(
-                        chain = %chain_name,
-                        error = %e,
-                        "No reachable RPC for additional chain event poll"
-                    );
-                    continue;
-                }
-            };
+            let (provider, rpc_head) =
+                match Self::evm_read_provider_and_head(&chain_state.rpc_urls).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(
+                            chain = %chain_name,
+                            error = %e,
+                            "No reachable RPC for additional chain event poll"
+                        );
+                        continue;
+                    }
+                };
 
-            let current_block = match provider.get_block_number().await {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!(chain = %chain_name, error = %e, "Failed to get block number");
-                    continue;
-                }
-            };
+            let safe_head = rpc_head.saturating_sub(self.config.evm_confirmation_blocks);
 
             let effective_last =
-                if chain_state.last_block == 0 || current_block < chain_state.last_block {
-                    let start = current_block.saturating_sub(lookback);
+                if chain_state.last_block == 0 || safe_head < chain_state.last_block {
+                    let start = safe_head.saturating_sub(lookback);
                     info!(
                         chain = %chain_name,
-                        current_block = current_block,
+                        rpc_head,
+                        safe_head,
                         lookback_blocks = lookback,
                         start_block = start,
                         "Additional chain first poll / reset — looking back {} blocks",
@@ -1129,12 +1129,12 @@ impl CancelerWatcher {
                     chain_state.last_block
                 };
 
-            if current_block <= effective_last {
+            if safe_head <= effective_last {
                 continue;
             }
 
             let from_block = effective_last + 1;
-            let to_block = current_block;
+            let to_block = safe_head;
 
             let bridge_address = match Address::from_str(bridge_addr_str) {
                 Ok(a) => a,

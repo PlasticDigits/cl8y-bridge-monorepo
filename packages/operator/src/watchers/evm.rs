@@ -35,9 +35,10 @@ const DEFAULT_CHUNK_SIZE: u64 = 5_000;
 /// );
 /// ```
 pub struct EvmWatcher {
-    /// All RPC providers (primary + fallbacks), tried in order on failure
+    /// All RPC providers (primary + fallbacks), aligned with `rpc_urls` indices
     providers: Vec<RootProvider<Http<Client>>>,
     rpc_urls: Vec<String>,
+    read_policy: multichain_rs::EvmRpcReadPolicy,
     bridge_address: Address,
     token_registry_address: Address,
     chain_id: u64,
@@ -54,6 +55,7 @@ impl EvmWatcher {
     /// Create a new EVM watcher
     pub async fn new(config: &crate::config::EvmConfig, db: PgPool) -> Result<Self> {
         let rpc_urls = config.all_rpc_urls();
+        let read_policy = multichain_rs::EvmRpcReadPolicy::from_env_for_url_count(rpc_urls.len())?;
         let providers = multichain_rs::create_alloy_http_providers(&rpc_urls)?;
 
         if rpc_urls.len() > 1 {
@@ -148,6 +150,7 @@ impl EvmWatcher {
         Ok(Self {
             providers,
             rpc_urls,
+            read_policy,
             bridge_address,
             token_registry_address,
             chain_id: config.chain_id,
@@ -221,6 +224,7 @@ impl EvmWatcher {
 
             // Skip if no new blocks
             if current_block <= effective_last {
+                crate::liveness::touch_activity();
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
@@ -242,6 +246,7 @@ impl EvmWatcher {
 
             update_last_evm_block(&self.db, self.chain_id as i64, last_successful as i64).await?;
 
+            crate::liveness::touch_activity();
             tokio::time::sleep(poll_interval).await;
         }
     }
@@ -706,76 +711,52 @@ impl EvmWatcher {
         }
     }
 
-    /// Get the current finalized block number, trying all RPC providers.
+    /// Finalized block number (`eth_blockNumber` quorum minus `finality_blocks`).
     async fn get_finalized_block(&self) -> Result<u64> {
-        let mut last_err = None;
-        for (i, provider) in self.providers.iter().enumerate() {
-            match provider.get_block_number().await {
-                Ok(block) => {
-                    if i > 0 {
-                        tracing::info!(
-                            chain_id = self.chain_id,
-                            rpc_url = %self.rpc_urls[i],
-                            "get_block_number succeeded on fallback RPC #{}", i + 1
-                        );
-                    }
-                    return Ok(block.saturating_sub(self.finality_blocks));
-                }
-                Err(e) => {
-                    if self.providers.len() > 1 {
-                        tracing::warn!(
-                            chain_id = self.chain_id,
-                            rpc_url = %self.rpc_urls[i],
-                            error = %e,
-                            remaining = self.providers.len() - i - 1,
-                            "get_block_number failed on RPC #{}", i + 1
-                        );
-                    }
-                    last_err = Some(e);
-                }
-            }
-        }
-        Err(eyre::eyre!(
-            "Failed to get block number from all {} RPC endpoints: {}",
-            self.providers.len(),
-            last_err.unwrap()
-        ))
+        let head =
+            multichain_rs::evm_consensus_latest_block(&self.rpc_urls, &self.read_policy).await?;
+        Ok(head.latest_block.saturating_sub(self.finality_blocks))
     }
 
-    /// Query logs from all providers with fallback.
+    /// `eth_getLogs` on the RPC endpoint that matched the consensus head.
     async fn get_logs_with_fallback(&self, filter: &Filter) -> Result<Vec<Log>> {
-        let mut last_err = None;
-        for (i, provider) in self.providers.iter().enumerate() {
-            match provider.get_logs(filter).await {
-                Ok(logs) => {
-                    if i > 0 {
-                        tracing::info!(
-                            chain_id = self.chain_id,
-                            rpc_url = %self.rpc_urls[i],
-                            "get_logs succeeded on fallback RPC #{}", i + 1
-                        );
+        let head =
+            multichain_rs::evm_consensus_latest_block(&self.rpc_urls, &self.read_policy).await?;
+        let idx = head.provider_index;
+        let provider = self
+            .providers
+            .get(idx)
+            .ok_or_else(|| eyre::eyre!("consensus provider index {} out of range", idx))?;
+        match provider.get_logs(filter).await {
+            Ok(logs) => Ok(logs),
+            Err(e) if self.rpc_urls.len() > 1 => {
+                tracing::warn!(
+                    chain_id = self.chain_id,
+                    rpc_url = %self.rpc_urls[idx],
+                    error = %e,
+                    "get_logs failed on consensus RPC; retrying other endpoints once each"
+                );
+                let mut last_err = eyre::eyre!(e);
+                for (i, provider) in self.providers.iter().enumerate() {
+                    if i == idx {
+                        continue;
                     }
-                    return Ok(logs);
-                }
-                Err(e) => {
-                    if self.providers.len() > 1 {
-                        tracing::warn!(
-                            chain_id = self.chain_id,
-                            rpc_url = %self.rpc_urls[i],
-                            error = %e,
-                            remaining = self.providers.len() - i - 1,
-                            "get_logs failed on RPC #{}", i + 1
-                        );
+                    match provider.get_logs(filter).await {
+                        Ok(logs) => {
+                            tracing::info!(
+                                chain_id = self.chain_id,
+                                rpc_url = %self.rpc_urls[i],
+                                "get_logs succeeded on alternate RPC after consensus endpoint failed"
+                            );
+                            return Ok(logs);
+                        }
+                        Err(err) => last_err = eyre::eyre!(err),
                     }
-                    last_err = Some(e);
                 }
+                Err(last_err.wrap_err("get_logs failed on all RPC endpoints"))
             }
+            Err(e) => Err(eyre::eyre!(e).wrap_err("get_logs failed")),
         }
-        Err(eyre::eyre!(
-            "Failed to get logs from all {} RPC endpoints: {}",
-            self.providers.len(),
-            last_err.unwrap()
-        ))
     }
 
     /// Compute the V1 DepositRequest event signature hash

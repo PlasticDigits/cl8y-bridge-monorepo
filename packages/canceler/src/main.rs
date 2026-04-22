@@ -51,6 +51,7 @@ async fn async_main() -> eyre::Result<()> {
     info!("Starting CL8Y Bridge Canceler Node");
 
     let config = Config::load()?;
+    config.verify_evm_jsonrpc_chain_ids().await?;
 
     // Derive and log the EVM address from the private key
     // This helps verify the address matches Bridge canceler registration (addCanceler / owner)

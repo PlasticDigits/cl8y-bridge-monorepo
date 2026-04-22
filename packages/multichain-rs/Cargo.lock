@@ -3837,6 +3837,7 @@ dependencies = [
  "cosmrs",
  "cosmwasm-std",
  "eyre",
+ "futures-util",
  "hex",
  "proptest",
  "reqwest 0.12.28",

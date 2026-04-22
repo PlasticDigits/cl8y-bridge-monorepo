@@ -5,7 +5,6 @@ use solana_sdk::signature::Keypair;
 use solana_sdk::signer::SeedDerivable;
 use std::env;
 use std::fmt;
-use url::Url;
 
 fn parse_one_u32_chain_bytes(s: &str) -> Result<[u8; 4]> {
     let s = s.trim().trim_start_matches("0x");
@@ -207,6 +206,9 @@ pub struct Config {
     /// to stay within RPC provider limits.
     pub evm_poll_chunk_size: u64,
 
+    /// Subtract this many blocks from the latest EVM head when polling approvals (reorg safety).
+    pub evm_confirmation_blocks: u64,
+
     /// Optional multi-EVM chain configuration for cross-EVM fraud detection.
     /// When set, the canceler monitors all configured EVM chains for approvals
     /// and can verify deposits on any known source chain.
@@ -287,37 +289,19 @@ impl fmt::Debug for Config {
             .field("pending_retry_ttl_secs", &self.pending_retry_ttl_secs)
             .field("evm_poll_lookback_blocks", &self.evm_poll_lookback_blocks)
             .field("evm_poll_chunk_size", &self.evm_poll_chunk_size)
+            .field("evm_confirmation_blocks", &self.evm_confirmation_blocks)
             .field("multi_evm", &self.multi_evm)
             .field("solana", &self.solana)
             .finish()
     }
 }
 
-/// Validates that a URL uses http/https and has a host (C5: URL hardening).
-pub(crate) fn validate_rpc_url(url_str: &str, name: &str) -> Result<()> {
-    let parsed = Url::parse(url_str).map_err(|e| eyre!("{} must be a valid URL: {}", name, e))?;
-
-    let scheme = parsed.scheme();
-    if scheme != "http" && scheme != "https" {
-        return Err(eyre!(
-            "{} must use http:// or https:// scheme, got {}",
-            name,
-            scheme
-        ));
+fn default_evm_confirmation_blocks(chain_id: u64) -> u64 {
+    match chain_id {
+        56 => 15,
+        204 => 20,
+        _ => 12,
     }
-
-    if parsed.host_str().is_none() {
-        return Err(eyre!("{} must have a host component", name));
-    }
-
-    if scheme == "http" {
-        tracing::warn!(
-            "{} uses unencrypted http:// — use https:// in production",
-            name
-        );
-    }
-
-    Ok(())
 }
 
 impl Config {
@@ -362,18 +346,18 @@ impl Config {
             return Err(eyre!("EVM_RPC_URL cannot be empty"));
         }
         for (i, u) in evm_rpc_parts.iter().enumerate() {
-            validate_rpc_url(u, &format!("EVM_RPC_URL[{i}]"))?;
+            multichain_rs::validate_rpc_url(u, &format!("EVM_RPC_URL[{i}]"))?;
         }
         let evm_rpc_url = evm_rpc_parts[0].clone();
         let evm_rpc_fallback_urls = evm_rpc_parts[1..].to_vec();
 
         let terra_lcd_url =
             env::var("TERRA_LCD_URL").map_err(|_| eyre!("TERRA_LCD_URL required"))?;
-        validate_rpc_url(&terra_lcd_url, "TERRA_LCD_URL")?;
+        multichain_rs::validate_rpc_url(&terra_lcd_url, "TERRA_LCD_URL")?;
 
         let terra_rpc_url =
             env::var("TERRA_RPC_URL").map_err(|_| eyre!("TERRA_RPC_URL required"))?;
-        validate_rpc_url(&terra_rpc_url, "TERRA_RPC_URL")?;
+        multichain_rs::validate_rpc_url(&terra_rpc_url, "TERRA_RPC_URL")?;
 
         let health_bind_address =
             env::var("HEALTH_BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -419,7 +403,7 @@ impl Config {
                     return Err(eyre!("SOLANA_RPC_URL / SOLANA_MAINNET_RPC cannot be empty"));
                 }
                 for (i, u) in urls.iter().enumerate() {
-                    validate_rpc_url(u, &format!("SOLANA_RPC[{i}]"))?;
+                    multichain_rs::validate_rpc_url(u, &format!("SOLANA_RPC[{i}]"))?;
                 }
                 let rpc_url = urls[0].clone();
                 let rpc_fallback_urls = urls[1..].to_vec();
@@ -458,15 +442,21 @@ impl Config {
             }
         };
 
-        Ok(Self {
+        let evm_chain_id: u64 = env::var("EVM_CHAIN_ID")
+            .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
+            .parse()
+            .map_err(|_| eyre!("Invalid EVM_CHAIN_ID"))?;
+        let evm_confirmation_blocks: u64 = env::var("EVM_CONFIRMATION_BLOCKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| default_evm_confirmation_blocks(evm_chain_id));
+
+        let config = Self {
             canceler_id: env::var("CANCELER_ID").unwrap_or(default_id),
 
             evm_rpc_url,
             evm_rpc_fallback_urls,
-            evm_chain_id: env::var("EVM_CHAIN_ID")
-                .map_err(|_| eyre!("EVM_CHAIN_ID required"))?
-                .parse()
-                .map_err(|_| eyre!("Invalid EVM_CHAIN_ID"))?,
+            evm_chain_id,
             evm_bridge_address: env::var("EVM_BRIDGE_ADDRESS")
                 .map_err(|_| eyre!("EVM_BRIDGE_ADDRESS required"))?,
             evm_private_key: env::var("EVM_PRIVATE_KEY")
@@ -546,10 +536,15 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5_000),
 
+            evm_confirmation_blocks,
+
             multi_evm,
 
             solana,
-        })
+        };
+
+        config.check_bridge_allowlist()?;
+        Ok(config)
     }
 
     /// Primary then fallback EVM JSON-RPC URLs (comma-separated `EVM_RPC_URL`).
@@ -558,11 +553,55 @@ impl Config {
             .chain(self.evm_rpc_fallback_urls.iter().cloned())
             .collect()
     }
+
+    fn check_bridge_allowlist(&self) -> Result<()> {
+        if let Ok(raw) = env::var("EVM_CANONICAL_BRIDGE_ADDRESSES") {
+            let allowed: Vec<String> = raw
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !allowed.is_empty() {
+                let addr = self.evm_bridge_address.to_lowercase();
+                if !allowed.iter().any(|a| a == &addr) {
+                    return Err(eyre!(
+                        "EVM_BRIDGE_ADDRESS {} is not listed in EVM_CANONICAL_BRIDGE_ADDRESSES",
+                        self.evm_bridge_address
+                    ));
+                }
+                if let Some(ref multi) = self.multi_evm {
+                    for c in multi.enabled_chains() {
+                        let ba = c.bridge_address.to_lowercase();
+                        if !allowed.iter().any(|a| a == &ba) {
+                            return Err(eyre!(
+                                "EVM multi chain {} bridge {} is not listed in EVM_CANONICAL_BRIDGE_ADDRESSES",
+                                c.name,
+                                c.bridge_address
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify every configured EVM JSON-RPC endpoint reports `eth_chainId` matching config.
+    pub async fn verify_evm_jsonrpc_chain_ids(&self) -> Result<()> {
+        multichain_rs::verify_evm_rpc_chain_ids(&self.all_evm_rpc_urls(), self.evm_chain_id)
+            .await?;
+        if let Some(ref multi) = self.multi_evm {
+            for c in multi.enabled_chains() {
+                multichain_rs::verify_evm_rpc_chain_ids(&c.all_rpc_urls(), c.chain_id).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_rpc_url, Config};
+    use super::Config;
     use serial_test::serial;
 
     #[test]
@@ -637,36 +676,36 @@ mod tests {
 
     #[test]
     fn test_validate_rpc_url_accepts_http() {
-        assert!(validate_rpc_url("http://localhost:8545", "TEST").is_ok());
-        assert!(validate_rpc_url("http://127.0.0.1:1317", "TEST").is_ok());
+        assert!(multichain_rs::validate_rpc_url("http://localhost:8545", "TEST").is_ok());
+        assert!(multichain_rs::validate_rpc_url("http://127.0.0.1:1317", "TEST").is_ok());
     }
 
     #[test]
     fn test_validate_rpc_url_accepts_https() {
-        assert!(validate_rpc_url("https://rpc.example.com", "TEST").is_ok());
+        assert!(multichain_rs::validate_rpc_url("https://rpc.example.com", "TEST").is_ok());
     }
 
     #[test]
     fn test_validate_rpc_url_rejects_file_scheme() {
-        let err = validate_rpc_url("file:///etc/passwd", "TEST").unwrap_err();
+        let err = multichain_rs::validate_rpc_url("file:///etc/passwd", "TEST").unwrap_err();
         assert!(err.to_string().contains("http:// or https://"));
     }
 
     #[test]
     fn test_validate_rpc_url_rejects_ftp_scheme() {
-        let err = validate_rpc_url("ftp://example.com", "TEST").unwrap_err();
+        let err = multichain_rs::validate_rpc_url("ftp://example.com", "TEST").unwrap_err();
         assert!(err.to_string().contains("http:// or https://"));
     }
 
     #[test]
     fn test_validate_rpc_url_rejects_empty_host() {
-        let err = validate_rpc_url("http://", "TEST").unwrap_err();
+        let err = multichain_rs::validate_rpc_url("http://", "TEST").unwrap_err();
         assert!(err.to_string().contains("host"));
     }
 
     #[test]
     fn test_validate_rpc_url_rejects_invalid_url() {
-        let err = validate_rpc_url("not-a-url", "TEST").unwrap_err();
+        let err = multichain_rs::validate_rpc_url("not-a-url", "TEST").unwrap_err();
         assert!(err.to_string().contains("valid URL"));
     }
 

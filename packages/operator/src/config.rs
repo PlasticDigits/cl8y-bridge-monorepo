@@ -138,7 +138,7 @@ pub struct EvmConfig {
     pub chain_id: u64,
     pub bridge_address: String,
     pub private_key: String,
-    #[serde(default = "default_finality_blocks")]
+    #[serde(default = "default_finality_blocks_for_deserialize")]
     pub finality_blocks: u64,
     /// This chain's registered chain ID (4-byte V2 format)
     /// If not set, defaults to 1
@@ -294,8 +294,16 @@ pub struct FeeConfig {
 }
 
 /// Default functions
-fn default_finality_blocks() -> u64 {
-    1
+fn default_finality_for_native_chain(chain_id: u64) -> u64 {
+    match chain_id {
+        56 => 15,  // BSC
+        204 => 12, // opBNB mainnet
+        _ => 12,
+    }
+}
+
+fn default_finality_blocks_for_deserialize() -> u64 {
+    12
 }
 
 fn default_poll_interval() -> u64 {
@@ -343,14 +351,19 @@ impl Config {
         if evm_rpc_urls.is_empty() {
             return Err(eyre!("EVM_RPC_URL cannot be empty"));
         }
+        for (i, u) in evm_rpc_urls.iter().enumerate() {
+            multichain_rs::validate_rpc_url(u, &format!("EVM_RPC_URL[{i}]"))?;
+        }
+
+        let evm_chain_id: u64 = env::var("EVM_CHAIN_ID")
+            .map_err(|_| eyre!("EVM_CHAIN_ID environment variable is required"))?
+            .parse()
+            .wrap_err("EVM_CHAIN_ID must be a valid u64")?;
 
         let evm = EvmConfig {
             rpc_url: evm_rpc_urls[0].clone(),
             rpc_fallback_urls: evm_rpc_urls[1..].to_vec(),
-            chain_id: env::var("EVM_CHAIN_ID")
-                .map_err(|_| eyre!("EVM_CHAIN_ID environment variable is required"))?
-                .parse()
-                .wrap_err("EVM_CHAIN_ID must be a valid u64")?,
+            chain_id: evm_chain_id,
             bridge_address: env::var("EVM_BRIDGE_ADDRESS")
                 .map_err(|_| eyre!("EVM_BRIDGE_ADDRESS environment variable is required"))?,
             private_key: env::var("EVM_PRIVATE_KEY")
@@ -358,7 +371,7 @@ impl Config {
             finality_blocks: env::var("FINALITY_BLOCKS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(default_finality_blocks()),
+                .unwrap_or_else(|| default_finality_for_native_chain(evm_chain_id)),
             // V2 configuration
             this_chain_id: env::var("EVM_THIS_CHAIN_ID")
                 .ok()
@@ -368,11 +381,16 @@ impl Config {
                 .and_then(|v| v.parse().ok()),
         };
 
+        let terra_rpc = env::var("TERRA_RPC_URL")
+            .map_err(|_| eyre!("TERRA_RPC_URL environment variable is required"))?;
+        multichain_rs::validate_rpc_url(&terra_rpc, "TERRA_RPC_URL")?;
+        let terra_lcd = env::var("TERRA_LCD_URL")
+            .map_err(|_| eyre!("TERRA_LCD_URL environment variable is required"))?;
+        multichain_rs::validate_rpc_url(&terra_lcd, "TERRA_LCD_URL")?;
+
         let terra = TerraConfig {
-            rpc_url: env::var("TERRA_RPC_URL")
-                .map_err(|_| eyre!("TERRA_RPC_URL environment variable is required"))?,
-            lcd_url: env::var("TERRA_LCD_URL")
-                .map_err(|_| eyre!("TERRA_LCD_URL environment variable is required"))?,
+            rpc_url: terra_rpc,
+            lcd_url: terra_lcd,
             chain_id: env::var("TERRA_CHAIN_ID")
                 .map_err(|_| eyre!("TERRA_CHAIN_ID environment variable is required"))?,
             bridge_address: env::var("TERRA_BRIDGE_ADDRESS")
@@ -566,6 +584,47 @@ impl Config {
             }
         }
 
+        if let Ok(raw) = std::env::var("EVM_CANONICAL_BRIDGE_ADDRESSES") {
+            let allowed: Vec<String> = raw
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !allowed.is_empty() {
+                let addr = self.evm.bridge_address.to_lowercase();
+                if !allowed.iter().any(|a| a == &addr) {
+                    return Err(eyre!(
+                        "EVM_BRIDGE_ADDRESS {} is not listed in EVM_CANONICAL_BRIDGE_ADDRESSES",
+                        self.evm.bridge_address
+                    ));
+                }
+                if let Some(ref multi) = self.multi_evm {
+                    for c in multi.enabled_chains() {
+                        let ba = c.bridge_address.to_lowercase();
+                        if !allowed.iter().any(|a| a == &ba) {
+                            return Err(eyre!(
+                                "EVM multi chain {} bridge {} is not listed in EVM_CANONICAL_BRIDGE_ADDRESSES",
+                                c.name,
+                                c.bridge_address
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Verify every configured EVM JSON-RPC endpoint reports `eth_chainId` matching config.
+    pub async fn verify_evm_jsonrpc_chain_ids(&self) -> eyre::Result<()> {
+        multichain_rs::verify_evm_rpc_chain_ids(&self.evm.all_rpc_urls(), self.evm.chain_id)
+            .await?;
+        if let Some(ref multi) = self.multi_evm {
+            for c in multi.enabled_chains() {
+                multichain_rs::verify_evm_rpc_chain_ids(&c.all_rpc_urls(), c.chain_id).await?;
+            }
+        }
         Ok(())
     }
 }
@@ -575,8 +634,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_finality_blocks() {
-        assert_eq!(default_finality_blocks(), 1);
+    fn test_default_finality_for_native_chain() {
+        assert_eq!(default_finality_for_native_chain(56), 15);
+        assert_eq!(default_finality_for_native_chain(204), 12);
+        assert_eq!(default_finality_for_native_chain(1), 12);
     }
 
     #[test]

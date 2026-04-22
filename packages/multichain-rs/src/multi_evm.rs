@@ -28,9 +28,25 @@ use crate::types::ChainId;
 // URL Validation
 // ============================================================================
 
+fn dev_allow_http() -> bool {
+    std::env::var("DEV_ALLOW_HTTP")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn http_allowed_without_tls(parsed: &url::Url) -> bool {
+    if dev_allow_http() {
+        return true;
+    }
+    matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+}
+
 /// Validates that a URL uses http/https and has a host component.
 ///
 /// Shared between operator and canceler for consistent URL validation.
+///
+/// Non-TLS `http://` is rejected unless `DEV_ALLOW_HTTP=1`/`true` or the host is loopback
+/// (`localhost`, `127.0.0.1`, `::1`).
 pub fn validate_rpc_url(url_str: &str, name: &str) -> Result<()> {
     // Basic parse
     let parsed =
@@ -49,11 +65,11 @@ pub fn validate_rpc_url(url_str: &str, name: &str) -> Result<()> {
         return Err(eyre!("{} must have a host component", name));
     }
 
-    if scheme == "http" {
-        tracing::warn!(
-            "{} uses unencrypted http:// — use https:// in production",
+    if scheme == "http" && !http_allowed_without_tls(&parsed) {
+        return Err(eyre!(
+            "{} uses unencrypted http:// — use https:// in production or set DEV_ALLOW_HTTP=1 for development",
             name
-        );
+        ));
     }
 
     Ok(())
@@ -100,12 +116,21 @@ impl Default for EvmChainConfig {
 }
 
 impl EvmChainConfig {
+    /// Primary RPC followed by fallbacks (same order as `EVM_CHAIN_N_RPC_URL` comma list).
+    pub fn all_rpc_urls(&self) -> Vec<String> {
+        let mut v = vec![self.rpc_url.clone()];
+        v.extend(self.rpc_fallback_urls.iter().cloned());
+        v
+    }
+
     /// Validate the chain configuration
     pub fn validate(&self) -> Result<()> {
         if self.rpc_url.is_empty() {
             return Err(eyre!("RPC URL is empty for chain {}", self.name));
         }
-        validate_rpc_url(&self.rpc_url, &format!("{}_RPC_URL", self.name))?;
+        for (i, u) in self.all_rpc_urls().iter().enumerate() {
+            validate_rpc_url(u, &format!("{}_RPC_URL[{i}]", self.name))?;
+        }
 
         if self.bridge_address.len() != 42 || !self.bridge_address.starts_with("0x") {
             return Err(eyre!(
@@ -636,6 +661,18 @@ mod tests {
     #[test]
     fn test_validate_rpc_url_accepts_https() {
         assert!(validate_rpc_url("https://rpc.example.com", "TEST").is_ok());
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_public_http_without_dev_flag() {
+        std::env::remove_var("DEV_ALLOW_HTTP");
+        let err = validate_rpc_url("http://203.0.113.1:8545", "TEST").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("https://") || msg.contains("DEV_ALLOW_HTTP"),
+            "{}",
+            msg
+        );
     }
 
     #[test]

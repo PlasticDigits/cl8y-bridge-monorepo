@@ -438,6 +438,7 @@ impl ServiceManager {
                 "DATABASE_URL".to_string(),
                 config.operator.database_url.clone(),
             ),
+            ("DEV_ALLOW_HTTP".to_string(), "1".to_string()),
             ("EVM_RPC_URL".to_string(), config.evm.rpc_url.to_string()),
             (
                 "EVM_BRIDGE_ADDRESS".to_string(),
@@ -557,6 +558,7 @@ impl ServiceManager {
                 "DATABASE_URL".to_string(),
                 config.operator.database_url.clone(),
             ),
+            ("DEV_ALLOW_HTTP".to_string(), "1".to_string()),
             ("EVM_RPC_URL".to_string(), config.evm.rpc_url.to_string()),
             (
                 "EVM_BRIDGE_ADDRESS".to_string(),

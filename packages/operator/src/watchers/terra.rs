@@ -138,6 +138,7 @@ impl TerraWatcher {
             };
 
             if current_height <= last_height as u64 {
+                crate::liveness::touch_activity();
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
@@ -214,6 +215,7 @@ impl TerraWatcher {
                 }
             }
 
+            crate::liveness::touch_activity();
             tokio::time::sleep(poll_interval).await;
         }
     }

@@ -20,7 +20,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
 use eyre::{eyre, Result, WrapErr};
-use multichain_rs::run_with_evm_rpc_url_fallback;
+use multichain_rs::{evm_consensus_latest_block, EvmRpcReadPolicy};
 use std::str::FromStr;
 use tracing::{debug, info, warn};
 
@@ -232,12 +232,28 @@ impl EvmClient {
         Ok(format!("0x{:x}", tx_hash))
     }
 
-    /// Cancel a withdraw approval on EVM (tries each configured RPC URL in order).
+    /// Cancel a withdraw approval on EVM (consensus primary first, then remaining URLs for broadcast resilience).
     pub async fn cancel_withdraw_approval(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
-        run_with_evm_rpc_url_fallback(&self.rpc_urls, |url| async move {
-            self.try_cancel_on_url(&url, xchain_hash_id).await
-        })
-        .await
+        let policy = EvmRpcReadPolicy::from_env_for_url_count(self.rpc_urls.len())?;
+        let head = evm_consensus_latest_block(&self.rpc_urls, &policy).await?;
+        let mut order: Vec<usize> = Vec::with_capacity(self.rpc_urls.len());
+        order.push(head.provider_index);
+        for i in 0..self.rpc_urls.len() {
+            if i != head.provider_index {
+                order.push(i);
+            }
+        }
+        let mut last_err: Option<eyre::Report> = None;
+        for i in order {
+            match self
+                .try_cancel_on_url(&self.rpc_urls[i], xchain_hash_id)
+                .await
+            {
+                Ok(v) => return Ok(v),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.expect("non-empty rpc urls"))
     }
 
     async fn try_can_cancel_on_url(&self, rpc_url: &str, xchain_hash_id: [u8; 32]) -> Result<bool> {
@@ -274,12 +290,12 @@ impl EvmClient {
         Ok(cancellable)
     }
 
-    /// Check if a withdrawal can be cancelled (tries each RPC URL until one responds).
+    /// Check if a withdrawal can be cancelled (uses RPC head quorum — same truth as polling).
     pub async fn can_cancel(&self, xchain_hash_id: [u8; 32]) -> Result<bool> {
-        run_with_evm_rpc_url_fallback(&self.rpc_urls, |url| async move {
-            self.try_can_cancel_on_url(&url, xchain_hash_id).await
-        })
-        .await
+        let policy = EvmRpcReadPolicy::from_env_for_url_count(self.rpc_urls.len())?;
+        let head = evm_consensus_latest_block(&self.rpc_urls, &policy).await?;
+        let url = self.rpc_urls[head.provider_index].clone();
+        self.try_can_cancel_on_url(&url, xchain_hash_id).await
     }
 
     /// Get the canceler's address
