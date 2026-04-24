@@ -23,4 +23,4 @@ When changing the transfer UI, deposits, or address parsing, preserve **INV-RCP1
 ## Tracking issues
 
 - GitLab **117** — launch blocker; extended scope covers Terra + EVM + Solana in one recipient pass.
-- GitLab **119** — CTA / receive quote / MAX / amount `step` UX; see **INV-UX1** in `docs/FRONTEND_BRIDGE_INVARIANTS.md`.
+- GitLab **119** — CTA / receive quote / MAX / amount field UX: **INV-UX1** in `docs/FRONTEND_BRIDGE_INVARIANTS.md` (text + `inputMode=decimal` amount input to avoid native `step` conflicts; excess-precision line shows exact floored `parseAmount` value).

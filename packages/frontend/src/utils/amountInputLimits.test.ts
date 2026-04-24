@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { parseAmountAsBigInt } from './format'
-import { humanAmountHasExcessFractionDigits, formatCappedGrossForAmountInput } from './amountInputLimits'
+import {
+  formatBaseUnitsAsExactDecimalString,
+  humanAmountHasExcessFractionDigits,
+  formatCappedGrossForAmountInput,
+} from './amountInputLimits'
 
 describe('humanAmountHasExcessFractionDigits', () => {
   it('returns false when within precision', () => {
@@ -24,5 +28,12 @@ describe('formatCappedGrossForAmountInput', () => {
     const s = formatCappedGrossForAmountInput(cap, 6)
     expect(s).not.toBe('')
     expect(parseAmountAsBigInt(s, 6) <= cap).toBe(true)
+  })
+})
+
+describe('formatBaseUnitsAsExactDecimalString', () => {
+  it('preserves full fractional width (matches floored parse)', () => {
+    expect(formatBaseUnitsAsExactDecimalString(1_000_000n, 6)).toBe('1.000000')
+    expect(formatBaseUnitsAsExactDecimalString(1n, 6)).toBe('0.000001')
   })
 })
