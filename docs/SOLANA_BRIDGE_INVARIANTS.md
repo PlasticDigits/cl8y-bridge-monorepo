@@ -1,6 +1,6 @@
 # Solana bridge invariants and test evidence
 
-This document lists security and correctness invariants for the Anchor programs under `packages/contracts-solana/programs/`, with cross-links to automated tests. Governance (admin, operator, canceler keys) is assumed honest unless noted.
+This document lists security and correctness invariants for the Anchor programs under `packages/contracts-solana/programs/`, with cross-links to automated tests. Governance (admin, operator, canceler keys) is assumed honest unless noted. **UI:** Solana *recipient* strings on the web bridge must be valid ed25519 *on-curve* public keys, not just decodable 32-byte base58 — see [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) (**INV-RCP1**), [skills/agent-bridge-recipient-validation.md](../skills/agent-bridge-recipient-validation.md), and GitLab **117** (on-curve enforcement for address typos that remain valid base58).
 
 **Reference branch for EVM / TerraClassic hash specs:** `main` (there is no `master` branch in this repo). As of the Solana integration work:
 
