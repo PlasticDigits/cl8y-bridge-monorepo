@@ -12,13 +12,13 @@ The Bridge **submit** control and ancillary UI must not imply a ready-to-submit 
 | **Aggregate validity for CTA** | The button stays disabled unless the wallet is connected, the route validates, the recipient field is valid for the destination chain (see INV-RCP1), the amount is a positive valid gross, and gross is within min/max (destination limits + balance / bridge caps). |
 | **Receive quote** | The **You will receive** net estimate is shown only when the same aggregate amount + recipient conditions pass. Otherwise the row shows an em dash (no misleading net). |
 | **MAX amount** | MAX sets a gross string that **parses** to no more than the effective cap (balance ∧ bridge limits), using full token precision in formatting and a base-unit clamp so display rounding cannot exceed the cap. |
-| **HTML `step` on amount** | The amount input uses `step="any"` so native HTML5 stepping does not reject token-accurate MIN/MAX values; min/max enforcement remains in JS (`parseAmountAsBigInt`, destination rules). |
-| **Precision feedback** | If the user enters more fractional digits than the source token allows, an inline message states that extra digits are ignored for the transfer calculation. |
+| **Amount field native validation** | The amount field uses `type="text"` with `inputMode="decimal"` (not `type="number"`) so the browser does not apply HTML5 `min` / `step` constraint validation. MIN presets token-accurate values without "nearest valid value" popups. Min/max and positivity remain enforced in JS (`parseAmountAsBigInt`, route rules). |
+| **Precision feedback** | If the user enters more fractional digits than the source token allows, the field is visually emphasized, an inline message states that extra digits are ignored, and a line shows the **exact floored** amount used (same as `parseAmount`), e.g. `1.000000` for 6-decimal tokens. |
 
 | Evidence | Location |
 |----------|----------|
 | Form wiring | `packages/frontend/src/components/transfer/TransferForm.tsx` |
-| Amount helpers | `packages/frontend/src/utils/amountInputLimits.ts` |
+| Amount helpers | `packages/frontend/src/utils/amountInputLimits.ts` (includes `formatBaseUnitsAsExactDecimalString` for excess-precision UX) |
 | Amount input | `packages/frontend/src/components/transfer/AmountInput.tsx` |
 | Fee / receive panel | `packages/frontend/src/components/transfer/FeeBreakdown.tsx` |
 

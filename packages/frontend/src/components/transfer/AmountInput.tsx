@@ -27,9 +27,13 @@ export interface AmountInputProps {
   /** Optional validation hint below the field (e.g. below-min / above-max) */
   validationHint?: string
   /**
-   * Native `step` for `type="number"`. Use `any` to avoid HTML5 rejecting token-accurate MIN/MAX values (GitLab #119).
+   * When the typed string has more fractional digits than the token allows, highlight the field and
+   * optionally show the floored value used for `parseAmount` (GitLab #119 polish).
    */
-  htmlStep?: string
+  excessFractionDigits?: boolean
+  /** Human string equal to `parseAmount` (floored) for the current input; shown when `excessFractionDigits`. */
+  precisionUsedAmountHuman?: string
+  precisionSymbol?: string
 }
 
 export function AmountInput({
@@ -47,7 +51,9 @@ export function AmountInput({
   maxLabel,
   minLabel,
   validationHint,
-  htmlStep = 'any',
+  excessFractionDigits = false,
+  precisionUsedAmountHuman,
+  precisionSymbol,
 }: AmountInputProps) {
   const hasTokenSelector = tokens && tokens.length > 0 && onTokenChange
   const selectedToken = tokens?.find((t) => t.id === selectedTokenId)
@@ -64,6 +70,15 @@ export function AmountInput({
         : isAddressLike(symbol)
           ? symbol
           : undefined
+
+  const detailId = 'transfer-amount-precision-detail'
+  const hintId = 'transfer-amount-validation-hint'
+  const describedBy = [
+    excessFractionDigits && precisionUsedAmountHuman ? detailId : null,
+    validationHint ? hintId : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   return (
     <div>
@@ -95,15 +110,24 @@ export function AmountInput({
       </label>
       <div className="relative">
         <input
-          type="number"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
           data-testid="amount-input"
+          name="bridge-amount"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          step={htmlStep}
-          min="0"
           disabled={disabled}
-          className="w-full border-2 border-white/20 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:border-cyan-300 focus:outline-none disabled:opacity-50"
+          aria-invalid={excessFractionDigits || undefined}
+          aria-describedby={describedBy || undefined}
+          enterKeyHint="done"
+          className={
+            'w-full border-2 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:outline-none disabled:opacity-50 ' +
+            (excessFractionDigits
+              ? 'border-amber-400/80 ring-2 ring-amber-500/30 focus:border-amber-300'
+              : 'border-white/20 focus:border-cyan-300')
+          }
         />
         <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 flex items-center gap-2">
           {onMin && (
@@ -147,8 +171,26 @@ export function AmountInput({
           )}
         </div>
       </div>
+      {excessFractionDigits && precisionUsedAmountHuman != null && precisionUsedAmountHuman !== '' ? (
+        <p
+          id={detailId}
+          className="mt-1.5 text-xs text-amber-200/90 tabular-nums"
+          data-testid="amount-precision-effective"
+          role="status"
+        >
+          <span className="text-gray-400">Transfer uses</span>{' '}
+          <span className="font-mono text-amber-100/95">{precisionUsedAmountHuman}</span>
+          {precisionSymbol != null && precisionSymbol !== '' ? (
+            <>
+              {' '}
+              <span className="uppercase tracking-wide text-gray-300">{precisionSymbol}</span>
+            </>
+          ) : null}
+          <span className="text-gray-500"> — floored to token precision</span>
+        </p>
+      ) : null}
       {validationHint ? (
-        <p id="transfer-amount-validation-hint" className="mt-1.5 text-sm text-rose-300/90" role="status">
+        <p id={hintId} className="mt-1.5 text-sm text-rose-300/90" role="status">
           {validationHint}
         </p>
       ) : null}

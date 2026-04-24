@@ -166,8 +166,10 @@ describe('TransferForm', () => {
       expect(screen.getByText('Amount')).toBeInTheDocument()
       const amountInput = screen.getByPlaceholderText('0.0')
       expect(amountInput).toBeInTheDocument()
-      expect(amountInput).toHaveAttribute('type', 'number')
-      expect(amountInput).toHaveAttribute('step', 'any')
+      // text + inputMode:decimal avoids HTML5 min/step conflicts on MIN (GL-119), no native stepping
+      expect(amountInput).toHaveAttribute('type', 'text')
+      expect(amountInput).toHaveAttribute('inputMode', 'decimal')
+      expect(amountInput).not.toHaveAttribute('step')
     })
 
     it('should render recipient address input', () => {
@@ -229,7 +231,7 @@ describe('TransferForm', () => {
       renderWithRouter(<TransferForm />)
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
-      expect(amountInput).toHaveValue(100)
+      expect(amountInput).toHaveValue('100')
     })
 
     it('should show LUNC label', () => {
@@ -254,6 +256,21 @@ describe('TransferForm', () => {
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
       expect(screen.queryByText(/99\.\d+/)).not.toBeInTheDocument()
+    })
+
+    it('shows floored-amount line and field emphasis when typing excess fractional digits (GL-119)', async () => {
+      const user = userEvent.setup()
+      renderWithRouter(<TransferForm />)
+      const recipientInput = screen.getByTestId('recipient-input')
+      await user.type(recipientInput, '0x0000000000000000000000000000000000000001')
+      const amountInput = screen.getByPlaceholderText('0.0')
+      await user.type(amountInput, '1.0000001')
+      expect(
+        screen.getByText(/This token supports at most 6 decimal places/),
+      ).toBeInTheDocument()
+      expect(screen.getByTestId('amount-precision-effective')).toHaveTextContent('Transfer uses')
+      expect(screen.getByTestId('amount-precision-effective')).toHaveTextContent('1.000000')
+      expect(screen.getByTestId('amount-input')).toHaveAttribute('aria-invalid', 'true')
     })
   })
 

@@ -72,7 +72,11 @@ import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { isValidAmount, isValidEvmAddress, isValidTerraAddress } from '../../utils/validation'
 import { isValidSolanaAddress } from '../../services/solana/address'
 import { minGrossForMinNet } from '../../utils/bridgeMinAmount'
-import { formatCappedGrossForAmountInput, humanAmountHasExcessFractionDigits } from '../../utils/amountInputLimits'
+import {
+  formatBaseUnitsAsExactDecimalString,
+  formatCappedGrossForAmountInput,
+  humanAmountHasExcessFractionDigits,
+} from '../../utils/amountInputLimits'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
 import { DestChainSelector } from './DestChainSelector'
@@ -1884,6 +1888,18 @@ export function TransferForm() {
           ? `This token supports at most ${amountDecimals} decimal places; extra digits are ignored when calculating the transfer.`
           : undefined
 
+  const showExcessPrecisionFieldUx =
+    !submitGuardError &&
+    !!amount &&
+    isValidAmount(amount) &&
+    amountHasExcessFractionDigits &&
+    !isBelowMin &&
+    !isAboveMax
+
+  const precisionUsedAmountHumanForField = showExcessPrecisionFieldUx
+    ? formatBaseUnitsAsExactDecimalString(parseAmountAsBigInt(amount, amountDecimals), amountDecimals)
+    : undefined
+
   const bridgeInlineHintBelowButton =
     bridgeButtonBlockTooltip && !submitGuardError && !isBelowMin && !isAboveMax
       ? bridgeButtonBlockTooltip
@@ -2042,6 +2058,9 @@ export function TransferForm() {
         maxLabel={displayMaxLabel}
         minLabel={displayMinLabel}
         validationHint={amountFieldValidationHint}
+        excessFractionDigits={showExcessPrecisionFieldUx}
+        precisionUsedAmountHuman={precisionUsedAmountHumanForField}
+        precisionSymbol={selectedSymbol}
       />
       <SwapDirectionButton onClick={handleSwap} disabled={isSwapDisabled || isSubmitting} />
       <DestChainSelector chains={destChains} value={destChain} onChange={setDestChain} disabled={isSubmitting} />

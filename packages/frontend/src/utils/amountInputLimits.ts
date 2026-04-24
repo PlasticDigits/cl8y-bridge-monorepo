@@ -4,6 +4,7 @@
 
 import { expandScientificNotationToDecimalString } from './scientificDecimal'
 import { formatAmountForNumberInput, parseAmountAsBigInt } from './format'
+import { pow10BigInt } from './pow10'
 
 /**
  * True when the human-entered string has more fractional digits than the token allows.
@@ -27,6 +28,24 @@ export function humanAmountHasExcessFractionDigits(raw: string, maxDecimals: num
   frac = frac.replace(/0+$/, '')
   if (frac.length === 0) return false
   return frac.length > maxDecimals
+}
+
+/**
+ * Exact en-US human decimal for base units (no rounding); trailing fractional zeros preserved.
+ * Use for "transfer uses" lines so users see the same floored value as `parseAmount` (GL-119).
+ */
+export function formatBaseUnitsAsExactDecimalString(base: bigint, decimals: number): string {
+  if (decimals <= 0) return base.toString()
+  if (base === 0n) {
+    if (decimals === 0) return '0'
+    return `0.${'0'.repeat(decimals)}`
+  }
+  const neg = base < 0n
+  const n = neg ? -base : base
+  const d = pow10BigInt(decimals)
+  const intPart = n / d
+  const frac = (n % d).toString().padStart(decimals, '0')
+  return `${neg ? '-' : ''}${intPart.toString()}.${frac}`
 }
 
 /**
