@@ -40,7 +40,8 @@ vi.mock('../../hooks/useWallet', () => ({
   useWallet: () => ({
     connected: false,
     address: undefined,
-    luncBalance: '0',
+    /** 100 LUNC in micro units — avoids "above max" when typing 100 in amount tests (GL-119). */
+    luncBalance: '100000000',
     setShowWalletModal: vi.fn(),
   }),
 }))
@@ -166,6 +167,7 @@ describe('TransferForm', () => {
       const amountInput = screen.getByPlaceholderText('0.0')
       expect(amountInput).toBeInTheDocument()
       expect(amountInput).toHaveAttribute('type', 'number')
+      expect(amountInput).toHaveAttribute('step', 'any')
     })
 
     it('should render recipient address input', () => {
@@ -235,13 +237,23 @@ describe('TransferForm', () => {
       expect(screen.getAllByText('LUNC').length).toBeGreaterThan(0)
     })
 
-    it('should update receive amount after fees', async () => {
+    it('should update receive amount after fees when recipient is valid', async () => {
       const user = userEvent.setup()
       renderWithRouter(<TransferForm />)
+      const recipientInput = screen.getByTestId('recipient-input')
+      await user.type(recipientInput, '0x0000000000000000000000000000000000000001')
       const amountInput = screen.getByPlaceholderText('0.0')
       await user.type(amountInput, '100')
       expect(screen.getByText(/99\.\d+/)).toBeInTheDocument()
       expect(screen.getAllByText('LUNC').length).toBeGreaterThan(0)
+    })
+
+    it('should hide net receive quote until recipient is valid', async () => {
+      const user = userEvent.setup()
+      renderWithRouter(<TransferForm />)
+      const amountInput = screen.getByPlaceholderText('0.0')
+      await user.type(amountInput, '100')
+      expect(screen.queryByText(/99\.\d+/)).not.toBeInTheDocument()
     })
   })
 

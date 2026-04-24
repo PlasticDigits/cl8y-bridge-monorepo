@@ -26,6 +26,10 @@ export interface AmountInputProps {
   minLabel?: string
   /** Optional validation hint below the field (e.g. below-min / above-max) */
   validationHint?: string
+  /**
+   * Native `step` for `type="number"`. Use `any` to avoid HTML5 rejecting token-accurate MIN/MAX values (GitLab #119).
+   */
+  htmlStep?: string
 }
 
 export function AmountInput({
@@ -43,6 +47,7 @@ export function AmountInput({
   maxLabel,
   minLabel,
   validationHint,
+  htmlStep = 'any',
 }: AmountInputProps) {
   const hasTokenSelector = tokens && tokens.length > 0 && onTokenChange
   const selectedToken = tokens?.find((t) => t.id === selectedTokenId)
@@ -95,7 +100,7 @@ export function AmountInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          step="0.000001"
+          step={htmlStep}
           min="0"
           disabled={disabled}
           className="w-full border-2 border-white/20 bg-[#161616] px-3 py-2 pr-20 text-lg text-white focus:border-cyan-300 focus:outline-none disabled:opacity-50"
