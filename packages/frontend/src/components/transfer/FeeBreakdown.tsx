@@ -3,6 +3,10 @@ import { TokenDisplay } from '../ui'
 
 export interface FeeBreakdownProps {
   receiveAmount: string
+  /**
+   * When false, the receive row shows an em dash instead of a computed quote (invalid or incomplete form — GitLab #119).
+   */
+  showReceiveEstimate?: boolean
   /** Display symbol when known (avoids async lookup) */
   symbol?: string
   /** Token id (denom, CW20 addr, or EVM addr) for logo + symbol resolution */
@@ -15,14 +19,20 @@ export interface FeeBreakdownProps {
 
 export function FeeBreakdown({
   receiveAmount,
+  showReceiveEstimate = true,
   symbol = 'LUNC',
   tokenId,
   destChain,
   tokenExplorerUrl,
 }: FeeBreakdownProps) {
-  const tokenContent = (
+  const tokenContent = showReceiveEstimate ? (
     <span className="inline-flex items-center gap-1.5">
       {receiveAmount}{' '}
+      <TokenDisplay tokenId={tokenId} symbol={symbol} sourceChain={destChain} size={16} />
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1.5 text-gray-500">
+      —{' '}
       <TokenDisplay tokenId={tokenId} symbol={symbol} sourceChain={destChain} size={16} />
     </span>
   )
@@ -39,7 +49,7 @@ export function FeeBreakdown({
       </div>
       <div className="flex justify-between items-center gap-2 border-t border-white/20 pt-2 text-xs uppercase tracking-wide">
         <span className="text-gray-300">You will receive</span>
-        {tokenExplorerUrl ? (
+        {showReceiveEstimate && tokenExplorerUrl ? (
           <a
             href={tokenExplorerUrl}
             target="_blank"
@@ -49,7 +59,11 @@ export function FeeBreakdown({
             {tokenContent}
           </a>
         ) : (
-          <span className="flex items-center gap-1.5 font-semibold text-[#b8ff3d]">{tokenContent}</span>
+          <span
+            className={`flex items-center gap-1.5 font-semibold ${showReceiveEstimate ? 'text-[#b8ff3d]' : 'text-gray-500'}`}
+          >
+            {tokenContent}
+          </span>
         )}
       </div>
     </div>

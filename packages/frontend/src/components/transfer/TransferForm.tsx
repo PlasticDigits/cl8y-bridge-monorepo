@@ -72,6 +72,7 @@ import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
 import { isValidAmount, isValidEvmAddress, isValidTerraAddress } from '../../utils/validation'
 import { isValidSolanaAddress } from '../../services/solana/address'
 import { minGrossForMinNet } from '../../utils/bridgeMinAmount'
+import { formatCappedGrossForAmountInput, humanAmountHasExcessFractionDigits } from '../../utils/amountInputLimits'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
 import { DestChainSelector } from './DestChainSelector'
@@ -660,21 +661,18 @@ export function TransferForm() {
 
   const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
 
-  // Auto-fill recipient from connected wallet on the destination side
-  const recipientAddr = useMemo(() => {
-    if (recipient) return recipient
-    if (isDestSolana) return solanaAddress ?? ''
-    if (isDestEvm) return evmAddress ?? ''
-    return terraAddress ?? ''
-  }, [recipient, isDestEvm, isDestSolana, evmAddress, terraAddress, solanaAddress])
+  /**
+   * Explicit recipient field only for validation and submit (GitLab #119).
+   * Autofill sets `recipient` state; we do not silently substitute the connected wallet address.
+   */
+  const recipientAddr = recipient.trim()
 
-  /** Require checksum-valid addresses so the Bridge CTA cannot proceed on typos (GL-117). */
+  /** Require non-empty field + checksum-valid addresses (GL-117, GL-119). */
   const isRecipientValidForRoute = useMemo(() => {
-    const addr = recipientAddr.trim()
-    if (!addr) return false
-    if (isDestEvm) return isValidEvmAddress(addr)
-    if (isDestSolana) return isValidSolanaAddress(addr)
-    return isValidTerraAddress(addr)
+    if (!recipientAddr) return false
+    if (isDestEvm) return isValidEvmAddress(recipientAddr)
+    if (isDestSolana) return isValidSolanaAddress(recipientAddr)
+    return isValidTerraAddress(recipientAddr)
   }, [recipientAddr, isDestEvm, isDestSolana])
 
   const isSubmitting =
@@ -857,6 +855,22 @@ export function TransferForm() {
     tokenConfig,
   ])
 
+  const amountHasExcessFractionDigits = useMemo(
+    () => humanAmountHasExcessFractionDigits(amount, amountDecimals),
+    [amount, amountDecimals],
+  )
+
+  /** Net receive quote only when amount + recipient are valid (GitLab #119). */
+  const canShowReceiveQuote = useMemo(
+    () =>
+      isRecipientValidForRoute &&
+      !!amount &&
+      isValidAmount(amount) &&
+      !isBelowMin &&
+      !isAboveMax,
+    [isRecipientValidForRoute, amount, isBelowMin, isAboveMax],
+  )
+
   const handleMax = useCallback(() => {
     const srcDecimals = amountDecimals
     let balanceStr: string
@@ -887,7 +901,7 @@ export function TransferForm() {
       effectiveMax = effectiveMax < maxTransferInSrc ? effectiveMax : maxTransferInSrc
     if (bridgeRemainingInSrc != null && bridgeRemainingInSrc > 0n)
       effectiveMax = effectiveMax < bridgeRemainingInSrc ? effectiveMax : bridgeRemainingInSrc
-    setAmount(formatAmountForNumberInput(effectiveMax, srcDecimals))
+    setAmount(formatCappedGrossForAmountInput(effectiveMax, srcDecimals))
   }, [
     isSourceTerra,
     isSourceSolana,
@@ -1438,6 +1452,14 @@ export function TransferForm() {
       setError(`Connect your ${walletLabel} wallet to continue`)
       return
     }
+    if (!recipientAddr || !isRecipientValidForRoute) {
+      setError(
+        !recipientAddr
+          ? 'Enter a recipient address or use autofill with your connected wallet'
+          : 'Invalid recipient address for this destination chain',
+      )
+      return
+    }
     if (!amount || !isValidAmount(amount)) {
       setError('Enter a valid amount greater than zero')
       return
@@ -1814,7 +1836,7 @@ export function TransferForm() {
     if (submitGuardError) return submitGuardError
     if (!isWalletConnected) return `Connect your ${walletLabel} wallet to continue`
     if (!isRecipientValidForRoute) {
-      if (!recipientAddr.trim()) return 'Enter a recipient address or use autofill'
+      if (!recipientAddr) return 'Enter a recipient address or use autofill'
       if (isDestEvm) return 'Invalid EVM recipient address (check EIP-55 checksum if using mixed case)'
       if (isDestSolana) return 'Invalid Solana recipient address'
       return 'Invalid Terra recipient address (check for typos — bech32 checksum)'
@@ -1855,7 +1877,12 @@ export function TransferForm() {
       ? `Amount is below the minimum transfer amount${displayMinLabel ? ` (${displayMinLabel} ${selectedSymbol})` : ''}`
       : !submitGuardError && isAboveMax
         ? `Amount exceeds the maximum${displayMaxLabel ? ` (${displayMaxLabel} ${selectedSymbol})` : ''}`
-        : undefined
+        : !submitGuardError &&
+            amount &&
+            isValidAmount(amount) &&
+            amountHasExcessFractionDigits
+          ? `This token supports at most ${amountDecimals} decimal places; extra digits are ignored when calculating the transfer.`
+          : undefined
 
   const bridgeInlineHintBelowButton =
     bridgeButtonBlockTooltip && !submitGuardError && !isBelowMin && !isAboveMax
@@ -2037,6 +2064,7 @@ export function TransferForm() {
       />
       <FeeBreakdown
         receiveAmount={receiveAmount}
+        showReceiveEstimate={canShowReceiveQuote}
         symbol={feeBreakdownProps.destDisplaySymbol}
         tokenId={feeBreakdownProps.tokenId}
         destChain={destChain}

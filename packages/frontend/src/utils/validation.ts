@@ -4,7 +4,7 @@
  * `isValidXchainHashId` / `normalizeXchainHashId` are permissive for URL and form input.
  * For strict comparisons to on-chain values, use `normalizeHash` in `services/hashVerification.ts`.
  * See `docs/SOLANA_BRIDGE_INVARIANTS.md` (INV-HFE1).
- * Recipient-field rules (Terra bech32 + EVM EIP-55 + Solana ed25519): `docs/FRONTEND_BRIDGE_INVARIANTS.md` (INV-RCP1).
+ * Recipient-field rules (Terra bech32 + EVM EIP-55 + Solana ed25519): `docs/FRONTEND_BRIDGE_INVARIANTS.md` (INV-RCP1, INV-UX1).
  */
 
 import { isAddress } from 'viem'
