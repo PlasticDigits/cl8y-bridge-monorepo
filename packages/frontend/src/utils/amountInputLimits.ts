@@ -49,7 +49,7 @@ export function formatBaseUnitsAsExactDecimalString(base: bigint, decimals: numb
 }
 
 /**
- * Format a gross cap (base units) for `type="number"` such that parsing rounds down to ≤ cap.
+ * Format a gross cap (base units) for the amount field string such that parsing rounds down to ≤ cap.
  * Guards display rounding that could otherwise exceed the wallet / bridge limit (GitLab #119).
  */
 export function formatCappedGrossForAmountInput(cap: bigint, decimals: number): string {
