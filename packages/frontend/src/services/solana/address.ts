@@ -22,6 +22,7 @@ export function bytes32ToSolanaAddress(bytes32: `0x${string}`): string {
 
 /**
  * Check if a string is a valid Solana address.
+ * `PublicKey` decodes base58 and verifies the point is on the Ed25519 curve (GL-117 / recipient pass).
  */
 export function isValidSolanaAddress(address: string): boolean {
   try {

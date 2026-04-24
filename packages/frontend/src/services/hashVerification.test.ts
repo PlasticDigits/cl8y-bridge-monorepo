@@ -388,6 +388,12 @@ describe('hashVerification', () => {
     it('should reject non-terra prefix', () => {
       expect(() => terraAddressToBytes32('cosmos1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v')).toThrow('Invalid Terra address format')
     })
+
+    it('should reject invalid bech32 checksum (GL-117)', () => {
+      expect(() => terraAddressToBytes32('terra17ks3ncgx9q4q9d2rpfv0uafs732derhxvx0wny')).toThrow(
+        'Invalid bech32 checksum',
+      )
+    })
   })
 
   describe('normalizeHash', () => {

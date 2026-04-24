@@ -4,6 +4,8 @@
  * Computes transfer hashes matching HashLib.computeXchainHashId (Solidity) and
  * multichain-rs compute_xchain_hash_id (Rust). Used for cross-chain verification.
  *
+ * Terra bech32 decoding enforces BIP173 checksum (see `docs/FRONTEND_BRIDGE_INVARIANTS.md` INV-RCP1).
+ *
  * V2 Format: keccak256(abi.encode(
  *   bytes32(srcChain), bytes32(destChain), srcAccount, destAccount, token, amount, uint256(nonce)
  * ))
@@ -232,7 +234,9 @@ export function hexToBase64(hex: Hex): string {
 const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 
 /**
- * Decode bech32 data part to 5-bit values.
+ * Decode bech32 data part to 5-bit payload (checksum excluded).
+ * Verifies BIP173 checksum (`polymod(hrp_expand(hrp) || data) === 1`).
+ * Terra Classic uses bech32 (not bech32m).
  */
 function bech32Decode(bech32Str: string): { hrp: string; data5bit: number[] } {
   const lower = bech32Str.toLowerCase()
@@ -249,7 +253,14 @@ function bech32Decode(bech32Str: string): { hrp: string; data5bit: number[] } {
     values.push(idx)
   }
 
-  // Last 6 values are checksum, skip them
+  if (values.length < 6) {
+    throw new Error('Invalid bech32: data too short')
+  }
+
+  if (bech32Polymod([...bech32HrpExpand(hrp), ...values]) !== 1) {
+    throw new Error('Invalid bech32 checksum')
+  }
+
   return { hrp, data5bit: values.slice(0, values.length - 6) }
 }
 

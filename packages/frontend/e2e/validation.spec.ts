@@ -88,4 +88,25 @@ test.describe('Form Validation', () => {
       expect(value).toBe('terra1invalid')
     }
   })
+
+  test('should reject Terra recipient with valid length but bad bech32 checksum (GL-117)', async ({ page }) => {
+    await connectBothWallets(page)
+    // Assumes default route is EVM → Terra (Terra as destination); same as manual GL-117 repro.
+    const recipientInput = page.locator('[data-testid="recipient-input"]')
+    if (!(await recipientInput.isVisible())) return
+
+    await recipientInput.fill('terra17ks3ncgx9q4q9d2rpfv0uafs732derhxvx0wny')
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Invalid address').first()).toBeVisible({ timeout: 3_000 })
+  })
+
+  test('should reject EVM recipient with bad EIP-55 checksum when mixed case (GL-117)', async ({ page }) => {
+    await connectBothWallets(page)
+    const recipientInput = page.locator('[data-testid="recipient-input"]')
+    if (!(await recipientInput.isVisible())) return
+
+    await recipientInput.fill('0xc46b15f4B56489a16F561c22D5F0BA8bdCa80651')
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Invalid address').first()).toBeVisible({ timeout: 3_000 })
+  })
 })

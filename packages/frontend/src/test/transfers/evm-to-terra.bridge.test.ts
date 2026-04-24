@@ -44,6 +44,7 @@ import {
   TERRA_ACCOUNTS,
   mintTestTokens,
 } from '../../../e2e/fixtures/transfer-helpers'
+import { terraAddressToBytes32 } from '../../services/hashVerification'
 
 const ROOT_DIR = resolve(__dirname, '../../../../..')
 const ENV_FILE = resolve(ROOT_DIR, '.env.e2e.local')
@@ -125,16 +126,8 @@ describe('EVM → Terra Bridge Transfer', () => {
 
       // Destination chain for Terra = 0x00000002
       const destChain = '0x00000002'
-      // Encode Terra address as bytes32 (bech32 decode + left-pad to 32 bytes)
-      // terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v decodes to 20-byte canonical form
-      // For the bridge, we need it left-padded to 32 bytes as a hex bytes32.
-      // We'll use the bech32 library to decode, but for the test we can use a hardcoded value.
-      // terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v -> canonical 20 bytes:
-      // We compute it inline: bech32 decode of the data part (after "terra1")
-      const bech32Lib = await import('bech32')
-      const decoded = bech32Lib.decode(terraRecipient)
-      const canonical = Buffer.from(bech32Lib.fromWords(decoded.words))
-      const destAccount = '0x' + canonical.toString('hex').padStart(64, '0')
+      // Encode Terra address as bytes32 (bech32 decode + checksum verify + left-pad)
+      const destAccount = terraAddressToBytes32(terraRecipient)
 
       const { txHash } = depositErc20ViaCast({
         rpcUrl: ANVIL_RPC,

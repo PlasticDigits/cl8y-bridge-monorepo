@@ -12,6 +12,17 @@ describe('validation', () => {
     it('accepts valid EVM address', () => {
       expect(isValidEvmAddress('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266')).toBe(true)
     })
+    it('accepts all-lowercase hex (EIP-55 optional checksum)', () => {
+      expect(isValidEvmAddress('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266')).toBe(true)
+    })
+    it('rejects wrong EIP-55 when mixed case (GL-117)', () => {
+      expect(
+        isValidEvmAddress('0xc46b15f4B56489a16F561c22D5F0BA8bdCa80651'),
+      ).toBe(false)
+      expect(
+        isValidEvmAddress('0xc46b15f4B56489a16F561c22D5F0BA8bdCa80650'),
+      ).toBe(true)
+    })
     it('rejects address without 0x prefix', () => {
       expect(isValidEvmAddress('f39Fd6e51aad88F6F4ce6aB8827279cffFb92266')).toBe(false)
     })
@@ -24,8 +35,12 @@ describe('validation', () => {
   })
 
   describe('isValidTerraAddress', () => {
-    it('accepts valid Terra address (terra1 + 38 chars)', () => {
-      expect(isValidTerraAddress('terra1xhf7lmvxqd8gcxezm27xl2wy0rn42m7h4e6s9x')).toBe(true)
+    it('accepts valid Terra address (bech32 checksum ok)', () => {
+      expect(isValidTerraAddress('terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v')).toBe(true)
+    })
+    it('rejects bech32 checksum typo (GL-117)', () => {
+      expect(isValidTerraAddress('terra17ks3ncgx9q4q9d2rpfv0uafs732derhxvx0wnt')).toBe(true)
+      expect(isValidTerraAddress('terra17ks3ncgx9q4q9d2rpfv0uafs732derhxvx0wny')).toBe(false)
     })
     it('rejects non-terra1 prefix', () => {
       expect(isValidTerraAddress('cosmos1abc123')).toBe(false)

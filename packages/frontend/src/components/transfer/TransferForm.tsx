@@ -69,7 +69,8 @@ import {
 } from '../../utils/format'
 import { pow10BigInt } from '../../utils/pow10'
 import { bigintFromBaseUnitsString } from '../../utils/scientificDecimal'
-import { isValidAmount } from '../../utils/validation'
+import { isValidAmount, isValidEvmAddress, isValidTerraAddress } from '../../utils/validation'
+import { isValidSolanaAddress } from '../../services/solana/address'
 import { minGrossForMinNet } from '../../utils/bridgeMinAmount'
 import { sounds } from '../../lib/sounds'
 import { SourceChainSelector } from './SourceChainSelector'
@@ -666,6 +667,15 @@ export function TransferForm() {
     if (isDestEvm) return evmAddress ?? ''
     return terraAddress ?? ''
   }, [recipient, isDestEvm, isDestSolana, evmAddress, terraAddress, solanaAddress])
+
+  /** Require checksum-valid addresses so the Bridge CTA cannot proceed on typos (GL-117). */
+  const isRecipientValidForRoute = useMemo(() => {
+    const addr = recipientAddr.trim()
+    if (!addr) return false
+    if (isDestEvm) return isValidEvmAddress(addr)
+    if (isDestSolana) return isValidSolanaAddress(addr)
+    return isValidTerraAddress(addr)
+  }, [recipientAddr, isDestEvm, isDestSolana])
 
   const isSubmitting =
     evmStatus === 'switching-chain' ||
@@ -1506,8 +1516,9 @@ export function TransferForm() {
           for (let i = 0; i < 20 && i * 2 < hex.length; i++) {
             destAccountBytes[12 + i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
           }
+        } else if (recipientAddr.startsWith('terra1')) {
+          destAccountBytes.set(hexToBytes(terraAddressToBytes32(recipientAddr)))
         } else {
-          // Solana base58 or Terra address — encode as raw bytes
           try {
             const pk = new PublicKey(recipientAddr)
             destAccountBytes.set(pk.toBytes())
@@ -1556,15 +1567,8 @@ export function TransferForm() {
     }
 
     if (direction === 'terra-to-solana') {
-      if (!recipientAddr?.trim()) {
-        setError('Please provide a Solana recipient address or connect your Solana wallet')
-        frozenChainsRef.current = null
-        return
-      }
-      try {
-        new PublicKey(recipientAddr)
-      } catch {
-        setError('Please provide a Solana recipient address or connect your Solana wallet')
+      if (!recipientAddr?.trim() || !isValidSolanaAddress(recipientAddr)) {
+        setError('Please provide a valid Solana recipient address or connect your Solana wallet')
         frozenChainsRef.current = null
         return
       }
@@ -1597,8 +1601,10 @@ export function TransferForm() {
 
     if (direction === 'terra-to-evm') {
       // Terra → EVM: deposit on Terra bridge (V2)
-      if (!recipientAddr || !recipientAddr.startsWith('0x')) {
-        setError('Please provide an EVM recipient address or connect your EVM wallet')
+      if (!recipientAddr || !isValidEvmAddress(recipientAddr)) {
+        setError(
+          'Please provide a valid EVM recipient address (wrong EIP-55 checksum?) or connect your EVM wallet',
+        )
         frozenChainsRef.current = null
         return
       }
@@ -1631,6 +1637,11 @@ export function TransferForm() {
         setError('Please provide a Terra recipient address or connect your Terra wallet')
         return
       }
+      if (!isValidTerraAddress(recipientAddr)) {
+        setError('Invalid Terra recipient address — check for typos (bech32 checksum failed).')
+        frozenChainsRef.current = null
+        return
+      }
       if (!tokenConfig) {
         setError('Token configuration not available for this network')
         return
@@ -1645,15 +1656,8 @@ export function TransferForm() {
       await evmDeposit(amount, destChainBytes4, destAccount, tokenConfig.decimals)
     } else if (direction === 'evm-to-solana') {
       // EVM → Solana: same Bridge.depositERC20 path; dest account is pubkey as bytes32
-      if (!recipientAddr?.trim()) {
-        setError('Please provide a Solana recipient address or connect your Solana wallet')
-        frozenChainsRef.current = null
-        return
-      }
-      try {
-        new PublicKey(recipientAddr)
-      } catch {
-        setError('Please provide a Solana recipient address or connect your Solana wallet')
+      if (!recipientAddr?.trim() || !isValidSolanaAddress(recipientAddr)) {
+        setError('Please provide a valid Solana recipient address or connect your Solana wallet')
         frozenChainsRef.current = null
         return
       }
@@ -1672,8 +1676,10 @@ export function TransferForm() {
       await evmDeposit(amount, destChainBytes4Sol, destAccountSol, tokenConfig.decimals)
     } else {
       // EVM → EVM: depositERC20 on Bridge (V2) with bytes4 dest chain ID
-      if (!recipientAddr || !recipientAddr.startsWith('0x')) {
-        setError('Please provide an EVM recipient address or connect your EVM wallet')
+      if (!recipientAddr || !isValidEvmAddress(recipientAddr)) {
+        setError(
+          'Please provide a valid EVM recipient address (wrong EIP-55 checksum?) or connect your EVM wallet',
+        )
         return
       }
       if (!tokenConfig) {
@@ -1807,6 +1813,12 @@ export function TransferForm() {
     if (isChainsLoading || isSubmitting || isTokenInfoLoading || isRouteValidationLoading) return undefined
     if (submitGuardError) return submitGuardError
     if (!isWalletConnected) return `Connect your ${walletLabel} wallet to continue`
+    if (!isRecipientValidForRoute) {
+      if (!recipientAddr.trim()) return 'Enter a recipient address or use autofill'
+      if (isDestEvm) return 'Invalid EVM recipient address (check EIP-55 checksum if using mixed case)'
+      if (isDestSolana) return 'Invalid Solana recipient address'
+      return 'Invalid Terra recipient address (check for typos — bech32 checksum)'
+    }
     if (!amount || !isValidAmount(amount)) return 'Enter a valid amount greater than zero'
     if (isBelowMin) {
       return `Amount below minimum (${displayMinLabel ?? '—'} ${selectedSymbol})`
@@ -1824,6 +1836,10 @@ export function TransferForm() {
     submitGuardError,
     isWalletConnected,
     walletLabel,
+    isRecipientValidForRoute,
+    recipientAddr,
+    isDestEvm,
+    isDestSolana,
     amount,
     isBelowMin,
     isAboveMax,
@@ -2034,6 +2050,7 @@ export function TransferForm() {
           disabled={
             isChainsLoading ||
             !isWalletConnected ||
+            !isRecipientValidForRoute ||
             !amount ||
             !isValidAmount(amount) ||
             isBelowMin ||
