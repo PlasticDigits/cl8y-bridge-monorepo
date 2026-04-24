@@ -10,12 +10,13 @@
  */
 
 import { useState, useCallback } from 'react'
-import { PublicKey } from '@solana/web3.js'
+import { hexToBytes } from 'viem'
 import { executeContractWithCoins, executeCw20Send } from '../services/terra'
 import { queryContract } from '../services/lcdClient'
 import { CONTRACTS, DEFAULT_NETWORK, NETWORKS } from '../utils/constants'
 import { useTransferStore } from '../stores/transfer'
 import { terraAddressToBytes32 } from '../services/hashVerification'
+import { solanaAddressToBytes32 } from '../services/solana/address'
 import type { TransferDirection } from '../types/transfer'
 
 export type TerraDepositStatus = 'idle' | 'locking' | 'success' | 'error'
@@ -86,8 +87,7 @@ export function encodeDestAccountBase64(address: string): string {
     }
   } else {
     try {
-      const pk = new PublicKey(address)
-      rawBytes = new Uint8Array(pk.toBytes())
+      rawBytes = new Uint8Array(hexToBytes(solanaAddressToBytes32(address) as `0x${string}`))
     } catch {
       throw new Error(`Unsupported address format: ${address}`)
     }

@@ -111,6 +111,11 @@ describe('useTerraDeposit V2 encoding helpers', () => {
       expect(() => encodeDestAccountBase64('random-string')).toThrow('Unsupported address format')
     })
 
+    it('should reject off-curve Solana base58 (GL-117: same length, valid symbols, not a valid pubkey)', () => {
+      const badO = 'Cu6Q7uU5qHsFuzAkrcxAz1xqrpUNB7vtEFNuSuQ1aDBo'
+      expect(() => encodeDestAccountBase64(badO)).toThrow('Unsupported address format')
+    })
+
     it('should be deterministic', () => {
       const addr = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
       expect(encodeDestAccountBase64(addr)).toBe(encodeDestAccountBase64(addr))

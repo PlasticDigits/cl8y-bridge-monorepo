@@ -30,7 +30,7 @@ Before a user can submit a transfer, the **recipient** string for the active rou
 |-------------|------|----------------|
 | **Terra / CosmWasm** | BIP173 bech32 decode + checksum | `terraAddressToBytes32` → `bech32Decode` verifies `polymod === 1`; `isValidTerraAddress` delegates to that path |
 | **EVM** | `0x` + 20 bytes; **EIP-55** enforced when the input uses mixed case | `isValidEvmAddress` → `viem` `isAddress(addr, { strict: true })` |
-| **Solana** | Valid base58 **and** on-curve Ed25519 pubkey | `isValidSolanaAddress` → `@solana/web3.js` `PublicKey` constructor |
+| **Solana** | 32-byte base58 decode **and** on-curve ed25519 point | `isValidSolanaAddress` → `parseOnCurveUserPubkeyBase58` / `PublicKey.isOnCurve` (the `PublicKey` string ctor alone only checks base58+length) |
 
 **Rationale:** Format-only checks accept single-character typos in checksummed strings (wrong funds destination). See GL-117 (Terra bech32 + extended EVM EIP-55 scope).
 
@@ -41,8 +41,8 @@ Before a user can submit a transfer, the **recipient** string for the active rou
 | Shared validators | `packages/frontend/src/utils/validation.ts`, `packages/frontend/src/services/solana/address.ts` |
 | Bech32 verify | `packages/frontend/src/services/hashVerification.ts` (`bech32Decode`) |
 | Form + submit guards | `packages/frontend/src/components/transfer/TransferForm.tsx` |
-| Unit tests | `packages/frontend/src/utils/validation.test.ts`, `packages/frontend/src/services/hashVerification.test.ts` |
+| Unit tests | `packages/frontend/src/utils/validation.test.ts`, `packages/frontend/src/services/hashVerification.test.ts`, `packages/frontend/src/services/solana/address.test.ts` |
 
 **Note (EVM):** All-lowercase or all-uppercase 40-hex strings remain accepted per EIP-55 optional checksum; mixed-case strings must match EIP-55 exactly.
 
-**Note (Solana):** There is no separate bech32-style checksum; curve validation is the correctness check for pubkeys.
+**Note (Solana):** There is no separate bech32-style checksum; [ed25519 on-curve](https://en.wikipedia.org/wiki/EdDSA) checks (via `PublicKey.isOnCurve` / `@noble/curves` under the hood) are what reject typos that still decode to 32 bytes. Example: a last-character `y`→`o` swap in the Brouie repro keeps valid base58 but yields an off-curve byte string (see **INV-RCP1** Solana row, GL-117 follow-up).

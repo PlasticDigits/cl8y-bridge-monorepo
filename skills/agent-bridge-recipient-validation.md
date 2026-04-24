@@ -8,7 +8,7 @@ When changing the transfer UI, deposits, or address parsing, preserve **INV-RCP1
 
 1. **Terra** — Never validate `terra1…` with regex alone. Use `isValidTerraAddress` or `terraAddressToBytes32` so bech32 **checksum** is verified.
 2. **EVM** — Never validate `0x…` with regex alone for user-facing recipients. Use `isValidEvmAddress` (`viem` **strict** `isAddress`) so **EIP-55** typos in mixed-case input fail.
-3. **Solana** — Use `isValidSolanaAddress` (or `PublicKey` with the same semantics) so invalid base58 / off-curve keys fail.
+3. **Solana** — Use `isValidSolanaAddress` (which requires `PublicKey.isOnCurve`, not the `PublicKey` string constructor alone) so invalid base58 and 32-byte-but-off-curve byte strings fail; see `parseOnCurveUserPubkeyBase58` in `packages/frontend/src/services/solana/address.ts` (GL-117: last-char `y`→`o` typo repro).
 
 ## Where it lives
 

@@ -1541,14 +1541,13 @@ export function TransferForm() {
         } else if (recipientAddr.startsWith('terra1')) {
           destAccountBytes.set(hexToBytes(terraAddressToBytes32(recipientAddr)))
         } else {
-          try {
-            const pk = new PublicKey(recipientAddr)
-            destAccountBytes.set(pk.toBytes())
-          } catch {
-            setError('Invalid recipient address')
+          if (!isValidSolanaAddress(recipientAddr)) {
+            setError('Invalid Solana recipient address')
             frozenChainsRef.current = null
             return
           }
+          const pk = new PublicKey(recipientAddr)
+          destAccountBytes.set(pk.toBytes())
         }
 
         if (!solanaTokenMappingDest32) {
