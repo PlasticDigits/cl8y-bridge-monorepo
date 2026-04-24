@@ -14,6 +14,10 @@ When changing the transfer UI, deposits, or address parsing, preserve **INV-RCP1
 - Bech32: `packages/frontend/src/services/hashVerification.ts`
 - Form wiring: `packages/frontend/src/components/transfer/TransferForm.tsx`, `RecipientInput.tsx`
 
+## Related skills
+
+- MetaMask / Blockaid on BSC & opBNB: [`agent-metamask-blockaid-evm.md`](./agent-metamask-blockaid-evm.md) (GL-118, **INV-BLK1**)
+
 ## Tracking issue
 
 GitLab **117** — launch blocker; extended scope covers Terra + EVM + Solana in one recipient pass.

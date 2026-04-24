@@ -580,4 +580,5 @@ function MyComponent() {
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation
 - [Terra Contracts](./contracts-terraclassic.md) - CosmWasm documentation
+- [MetaMask / Blockaid (EVM)](./METAMASK_BLOCKAID_EVM.md) - Security alerts on BSC/opBNB bridge txs (GL-118); not a substitute for on-chain verification
 - [Operator](./operator.md) - Backend API documentation
