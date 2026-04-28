@@ -1729,6 +1729,7 @@ terrad query wasm contract-state smart $TERRA_BRIDGE_ADDRESS '{"cancelers":{}}' 
 
 ## Related Documentation
 
+- [MegaETH deployment runbook](./deployment-megaeth.md) — add MegaETH with BSC/opBNB address parity, Terra, Solana, and tokena
 - [Architecture Overview](./architecture.md)
 - [EVM Contracts](./contracts-evm.md)
 - [Terra Classic Contracts](./contracts-terraclassic.md)
