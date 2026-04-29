@@ -189,6 +189,16 @@ Record all deployed proxy addresses from the output. They are also saved to the 
 packages/contracts-evm/broadcast/Deploy.s.sol/56/run-latest.json
 ```
 
+### 4.2a Full 45-tx BSC parity replay (MegaETH / new chains)
+
+To replay the **historical BSC deployer** sequence (nonces **0–44**) for matching bytecode addresses on another EVM network, use the parity runbook and `EvmParityReplay` script:
+
+- **Dry-run (PASS/FAIL):** [deployment-megaeth.md §5.2](./deployment-megaeth.md#52-dry-run-parity_check-pass--fail)
+- **Golden data:** `packages/contracts-evm/script/bsc-parity-golden.json`
+- **Shell entrypoint:** `./scripts/evm/parity-replay.sh`
+
+The standard single-shot `Deploy.s.sol` flow in §4.2 remains the usual path when **address parity with the 45-tx BSC history is not required**.
+
 ### 4.3 Deploy to opBNB Mainnet (Chain ID: 204)
 
 ```bash
@@ -1729,7 +1739,7 @@ terrad query wasm contract-state smart $TERRA_BRIDGE_ADDRESS '{"cancelers":{}}' 
 
 ## Related Documentation
 
-- [MegaETH deployment runbook](./deployment-megaeth.md) — add MegaETH with BSC/opBNB address parity, Terra, Solana, and tokena
+- [MegaETH / BSC deployer parity](./deployment-megaeth.md) — 45-tx sequence, `runDryCheck`, segmented broadcast (`EvmParityReplay`)
 - [Architecture Overview](./architecture.md)
 - [EVM Contracts](./contracts-evm.md)
 - [Terra Classic Contracts](./contracts-terraclassic.md)

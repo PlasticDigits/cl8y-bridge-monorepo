@@ -1,0 +1,403 @@
+{
+  "schemaVersion": 1,
+  "description": "Canonical 45-tx BSC deployer sequence (historical deployer nonces 0-44). Rows match docs/export-transaction-list-1777384911253.csv chronological order after filtering to the historical deployer.",
+  "historicalDeployer": "0xd699ebc6930f593f0725d2a7dc58acc65b41a08e",
+  "invariants": [
+    "INV-PAR1: For each step with eoaCreatedContract, predicted = vm.computeCreateAddress(historicalDeployer, nonce) must match on any chain when replaying with the same deployer key and outer-tx order.",
+    "INV-PAR2: Deployer nonce cannot decrease; partial replay uses ENTRY_NONCE / TAIL_ENTRY_NONCE per runbook.",
+    "INV-PAR3: CREATE3-internal children (e.g. factory) are fork-verified after broadcast, not in runDryCheck, because historical BSC factory may not equal CREATE3.predict(salt) for the current FactoryTokenCl8yBridgedScript salt alone."
+  ],
+  "internalCreatesAfterOuterNonce39": {
+    "note": "Outer nonce 39 calls Create3Deployer at the canonical address; child contracts are not asserted in runDryCheck (init code/salt can differ from FactoryTokenCl8yBridgedScript while preserving bridge proxies). Verify factory and guard wiring on a fork after broadcast.",
+    "bscFactoryTokenRowInReadme": "0xd9731acfebd5b9c9b62943d1fe97eefafb0f150f",
+    "create3PredictWithStandardSalt": "0xe24083f29f6ac659bac94196f605649d6e1b2c45"
+  },
+  "steps": [
+    {
+      "step": 1,
+      "nonce": 0,
+      "txHash": "0xb9cfe13a8a519f75f700abb873da146957e6aecfd9d58c99816b1fe8f7b6bfc1",
+      "method": "0x60a08060",
+      "block": 82118516,
+      "explorerTo": "0xdf9c23ccca2af37fb99236965bda8f3c124536c8",
+      "eoaCreatedContract": "0xDF9C23CCCA2Af37fb99236965BDa8f3C124536c8"
+    },
+    {
+      "step": 2,
+      "nonce": 1,
+      "txHash": "0xe2511e5080fdc6e75a4a618241a5829807926dcdbadd9f3b8f8f9b8ccd57087b",
+      "method": "0x60806040",
+      "block": 82118521,
+      "explorerTo": "0x6f4c6f59540460faf717c2fea526316ae66c640c",
+      "eoaCreatedContract": "0x6f4C6F59540460faF717C2Fea526316ae66C640c"
+    },
+    {
+      "step": 3,
+      "nonce": 2,
+      "txHash": "0x25655fad7bb665a9c336b7afcc4446ddac5bb236314d74885ffcf68b39182c01",
+      "method": "Register Chain",
+      "block": 82118525,
+      "explorerTo": "0x6f4c6f59540460faf717c2fea526316ae66c640c"
+    },
+    {
+      "step": 4,
+      "nonce": 3,
+      "txHash": "0x69b91af8632739624acb243c67eab04573296e6f53ddea4e486b44b5ce1e7952",
+      "method": "0x60a08060",
+      "block": 82118530,
+      "explorerTo": "0xb3b3e2f121400bab14920498d2c4789bfa6f7d6b",
+      "eoaCreatedContract": "0xB3B3e2F121400BaB14920498d2c4789bfa6f7d6b"
+    },
+    {
+      "step": 5,
+      "nonce": 4,
+      "txHash": "0xad457a82ab53af917980b261fc2c2b47b6c5f45d5a843611269784c6f291d7f8",
+      "method": "0x60806040",
+      "block": 82118533,
+      "explorerTo": "0x50b54861b91be65a3de4a5cb9b0e37dad12b91c0",
+      "eoaCreatedContract": "0x50B54861B91be65A3De4A5Cb9B0e37Dad12B91C0"
+    },
+    {
+      "step": 6,
+      "nonce": 5,
+      "txHash": "0x91100666e07638b0872e218492bdfbfb7eee898cbd080c2415cd2e35478ee566",
+      "method": "0x60a08060",
+      "block": 82118538,
+      "explorerTo": "0x328b57099021d132f417e104eb18a78bd686d73f",
+      "eoaCreatedContract": "0x328b57099021d132F417e104EB18a78Bd686D73F"
+    },
+    {
+      "step": 7,
+      "nonce": 6,
+      "txHash": "0x72dce1d514889d329c44182b612a9dcdfb4a3f12bc9d221a75b28dac44f1fd2e",
+      "method": "0x60806040",
+      "block": 82118542,
+      "explorerTo": "0xa8a28bd164c6153cf27f51468c7930cebc0b2bf7",
+      "eoaCreatedContract": "0xa8A28bd164c6153cf27f51468C7930CebC0B2Bf7"
+    },
+    {
+      "step": 8,
+      "nonce": 7,
+      "txHash": "0xd6d0406a01a7006d27678bfa09b381bd7956b623ef02f7cab597383375535a81",
+      "method": "0x60a08060",
+      "block": 82118546,
+      "explorerTo": "0x807874cac6f2dfe2030d91645302d22091437b41",
+      "eoaCreatedContract": "0x807874cAC6f2dfe2030d91645302D22091437B41"
+    },
+    {
+      "step": 9,
+      "nonce": 8,
+      "txHash": "0xe8667dfb4e25fdf645774e92e49c4f909374b348ed645a4826fd2029d37d686e",
+      "method": "0x60806040",
+      "block": 82118550,
+      "explorerTo": "0x02c9dea9ff6b2bd0e01547c38ba0cbadbcfe54c9",
+      "eoaCreatedContract": "0x02c9dea9ff6B2Bd0E01547c38bA0CbadbCfe54C9"
+    },
+    {
+      "step": 10,
+      "nonce": 9,
+      "txHash": "0x73f1a6a169d3474deb1a1224c0124c0dabba9b8e0c889e87cadaf7132a5ec6ac",
+      "method": "0x60a08060",
+      "block": 82118554,
+      "explorerTo": "0x2b2c41db1e246cc4c90538aec95f8af63012da57",
+      "eoaCreatedContract": "0x2B2C41DB1e246cC4C90538AEC95f8af63012da57"
+    },
+    {
+      "step": 11,
+      "nonce": 10,
+      "txHash": "0x1653682a39d57fc95f43b1fde2c60ac0ec8c735600de9b9285732f27b1a417e0",
+      "method": "0x60806040",
+      "block": 82118558,
+      "explorerTo": "0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d",
+      "eoaCreatedContract": "0x7D3903d07C4267d2Ec5730Bc2340450e3fAa8F3D"
+    },
+    {
+      "step": 12,
+      "nonce": 11,
+      "txHash": "0xbac89e6fdb7731d8336d52d734df82b04f002b050471d07ae9e7c284b20b430e",
+      "method": "Add Authorized Caller",
+      "block": 82118563,
+      "explorerTo": "0xa8a28bd164c6153cf27f51468c7930cebc0b2bf7"
+    },
+    {
+      "step": 13,
+      "nonce": 12,
+      "txHash": "0xb969634848238e556f8924bc60b8c81bf8899b3b7b10c9a03c67c50061d7f285",
+      "method": "Add Authorized Caller",
+      "block": 82118568,
+      "explorerTo": "0x02c9dea9ff6b2bd0e01547c38ba0cbadbcfe54c9"
+    },
+    {
+      "step": 14,
+      "nonce": 13,
+      "txHash": "0xbb1e9cad537624034c2349231e887830ec4e8fcc4aed5a1e6c131addee980c3b",
+      "method": "Transfer Ownership",
+      "block": 82118571,
+      "explorerTo": "0x6f4c6f59540460faf717c2fea526316ae66c640c"
+    },
+    {
+      "step": 15,
+      "nonce": 14,
+      "txHash": "0x707e4de2e754b2b2d02a495df53c1f4f516942e778e297d4641184a0ae611c3a",
+      "method": "Transfer Ownership",
+      "block": 82118574,
+      "explorerTo": "0x50b54861b91be65a3de4a5cb9b0e37dad12b91c0"
+    },
+    {
+      "step": 16,
+      "nonce": 15,
+      "txHash": "0x1daa7e8f73233b986b52318c79ed8db0949e5da5aa5a173da818b8a44be4cd13",
+      "method": "Transfer Ownership",
+      "block": 82118578,
+      "explorerTo": "0xa8a28bd164c6153cf27f51468c7930cebc0b2bf7"
+    },
+    {
+      "step": 17,
+      "nonce": 16,
+      "txHash": "0x08934effb90679fc2ae42f6c23b738eac6e63b71deb3951032e7754721e4e4f8",
+      "method": "Transfer Ownership",
+      "block": 82118582,
+      "explorerTo": "0x02c9dea9ff6b2bd0e01547c38ba0cbadbcfe54c9"
+    },
+    {
+      "step": 18,
+      "nonce": 17,
+      "txHash": "0xb639b1418c612a39e1e97d1efd481fb3cd3c07c7ee36f8feb00f89a277318ee1",
+      "method": "Transfer Ownership",
+      "block": 82118587,
+      "explorerTo": "0x7d3903d07c4267d2ec5730bc2340450e3faa8f3d"
+    },
+    {
+      "step": 19,
+      "nonce": 18,
+      "txHash": "0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb",
+      "method": "0x22b830a5",
+      "block": 82120206,
+      "explorerTo": "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+    },
+    {
+      "step": 20,
+      "nonce": 19,
+      "txHash": "0x3bad445133b91d5641e6d0e700d627e87230b266e2d12848b011ac7debc1a9a8",
+      "method": "0x60808060",
+      "block": 82276457,
+      "explorerTo": "0xfab525ee1b14cc281903dea7583e568377279c1e",
+      "eoaCreatedContract": "0xFab525Ee1B14cC281903Dea7583E568377279c1E"
+    },
+    {
+      "step": 21,
+      "nonce": 20,
+      "txHash": "0x0d79f74b31b4e7735191f39ab5da544de7508d53e3b9f1bc2fd2a367284300b2",
+      "method": "0x60a08060",
+      "block": 82286393,
+      "explorerTo": "0x6b1aa0653d99d5dec84db4a0283efb41be826993",
+      "eoaCreatedContract": "0x6b1Aa0653D99D5Dec84db4A0283eFB41be826993"
+    },
+    {
+      "step": 22,
+      "nonce": 21,
+      "txHash": "0x6701541e7da7f1730b4393fe06bb4643c5b22d875fef28700d3d399b8a278efc",
+      "method": "0x60806040",
+      "block": 82286397,
+      "explorerTo": "0x2e5d36c46680a38e7ae156fc9d109084c58c688e",
+      "eoaCreatedContract": "0x2e5D36C46680A38e7Ae156fc9d109084C58c688e"
+    },
+    {
+      "step": 23,
+      "nonce": 22,
+      "txHash": "0xb8578834dd453d4603682cd15f6d3b1444f3c28f86af990cc4d2bc73fdd2d429",
+      "method": "Register Chain",
+      "block": 82286401,
+      "explorerTo": "0x2e5d36c46680a38e7ae156fc9d109084c58c688e"
+    },
+    {
+      "step": 24,
+      "nonce": 23,
+      "txHash": "0x2f83297791e1a44149cc7336a33bfba2945b3bebd771bc4bc5fa9c96c834d661",
+      "method": "0x60a08060",
+      "block": 82286406,
+      "explorerTo": "0x734d6d554a3f7762d0dbc5538cba8ae9e01338f7",
+      "eoaCreatedContract": "0x734d6D554A3f7762D0DbC5538cBa8Ae9e01338f7"
+    },
+    {
+      "step": 25,
+      "nonce": 24,
+      "txHash": "0xee820edf08f9b009c089140c8e30979716fc21f57cb2714e7cbdd7c1bb59c965",
+      "method": "0x60806040",
+      "block": 82286410,
+      "explorerTo": "0x3d8820ec93748fd4df8eee6b763834a23938b207",
+      "eoaCreatedContract": "0x3d8820EC93748fd4df8eee6B763834a23938B207"
+    },
+    {
+      "step": 26,
+      "nonce": 25,
+      "txHash": "0x18d312d69145fd5538cea448653d829c4aafd35ab5f7e23872cbb543ecf77f1b",
+      "method": "0x60a08060",
+      "block": 82286414,
+      "explorerTo": "0xb43c56d9920ea8ff1f7ea4b86261f6d59df04f66",
+      "eoaCreatedContract": "0xb43C56D9920Ea8fF1f7eA4B86261f6d59Df04f66"
+    },
+    {
+      "step": 27,
+      "nonce": 26,
+      "txHash": "0x9cf55d5c9beb4d137692c73ed98e60cb248188547ee45ba200fe86f8d985a378",
+      "method": "0x60806040",
+      "block": 82286418,
+      "explorerTo": "0xd7b3bf05987052009c350874e810df98da95d258",
+      "eoaCreatedContract": "0xD7b3Bf05987052009c350874E810Df98dA95D258"
+    },
+    {
+      "step": 28,
+      "nonce": 27,
+      "txHash": "0x79126384da2a183f2d1c2cc17997e35f49f7a92a2602bd1bc78301cb7e511ca9",
+      "method": "0x60a08060",
+      "block": 82286422,
+      "explorerTo": "0x54d67c0ec4cfe1d9eb945b35d1ebcc25c6abd2c9",
+      "eoaCreatedContract": "0x54D67c0Ec4cFe1d9eb945B35D1eBcc25c6abd2C9"
+    },
+    {
+      "step": 29,
+      "nonce": 28,
+      "txHash": "0x5a5548e32308603b5f1bf14bf6a1fca04250e6fd0ac9bfb84132c4d6bd545e85",
+      "method": "0x60806040",
+      "block": 82286426,
+      "explorerTo": "0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc",
+      "eoaCreatedContract": "0x0A1a4bd354983DBc7f487237CD1B408CD0003EBC"
+    },
+    {
+      "step": 30,
+      "nonce": 29,
+      "txHash": "0xa1ae39b46dd834c707cab22dd5d54e91aa20ec5f07374351b34abdd00d45148a",
+      "method": "0x60a08060",
+      "block": 82286430,
+      "explorerTo": "0x102a87e067aa4c6cc20d06207fb64e4a1a6cdbe6",
+      "eoaCreatedContract": "0x102a87e067aa4c6cc20D06207FB64E4A1A6CDbe6"
+    },
+    {
+      "step": 31,
+      "nonce": 30,
+      "txHash": "0x64c0eee41c839257acfc301ef5451ad977b1c2a7eeb9459d5ebe079cae51ff81",
+      "method": "0x60806040",
+      "block": 82286434,
+      "explorerTo": "0xb2a22c74da8e3642e0effc107d3ac362ce885369",
+      "eoaCreatedContract": "0xb2A22c74dA8E3642e0EffC107d3Ac362ce885369"
+    },
+    {
+      "step": 32,
+      "nonce": 31,
+      "txHash": "0xb67aa2d50759ec847c9acb4d6cdfa08c87570c73fc210e5cbfba2059bb08e6f8",
+      "method": "Add Authorized Caller",
+      "block": 82286438,
+      "explorerTo": "0xd7b3bf05987052009c350874e810df98da95d258"
+    },
+    {
+      "step": 33,
+      "nonce": 32,
+      "txHash": "0x47875521e4f2f00fa58a26c99d1762635764ff23c4a3dd795d8369adf643e8dc",
+      "method": "Add Authorized Caller",
+      "block": 82286442,
+      "explorerTo": "0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc"
+    },
+    {
+      "step": 34,
+      "nonce": 33,
+      "txHash": "0x21795b743ca585b9eaa999855e5d4532952a2a4798af0baeed5ef16b1a18e7e9",
+      "method": "Transfer Ownership",
+      "block": 82286446,
+      "explorerTo": "0x2e5d36c46680a38e7ae156fc9d109084c58c688e"
+    },
+    {
+      "step": 35,
+      "nonce": 34,
+      "txHash": "0xf2c38e9085a7bb60d4e4f7a8d3917ed84c1a7e7c4bddf526d70d14fd64468c95",
+      "method": "Transfer Ownership",
+      "block": 82286451,
+      "explorerTo": "0x3d8820ec93748fd4df8eee6b763834a23938b207"
+    },
+    {
+      "step": 36,
+      "nonce": 35,
+      "txHash": "0x0523c97965ea969fac568c33175cd792fb842ed6517d9cd43d58570ecfd284bc",
+      "method": "Transfer Ownership",
+      "block": 82286455,
+      "explorerTo": "0xd7b3bf05987052009c350874e810df98da95d258"
+    },
+    {
+      "step": 37,
+      "nonce": 36,
+      "txHash": "0xb83e02a47c1dab3a175d8df80d2f4394bbbcedbe79bfe014677c9a69398cac07",
+      "method": "Transfer Ownership",
+      "block": 82286458,
+      "explorerTo": "0x0a1a4bd354983dbc7f487237cd1b408cd0003ebc"
+    },
+    {
+      "step": 38,
+      "nonce": 37,
+      "txHash": "0xc58114fa3019b0853cb284af90097692efbb0edc6ddac4814b733c0a24b2c7df",
+      "method": "Transfer Ownership",
+      "block": 82286463,
+      "explorerTo": "0xb2a22c74da8e3642e0effc107d3ac362ce885369"
+    },
+    {
+      "step": 39,
+      "nonce": 38,
+      "txHash": "0xde9a431370029966bb72ffb006376c2f307fa7004b158b6d8b48f6a259913abd",
+      "method": "0x29d89b98",
+      "block": 82286867,
+      "explorerTo": "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+    },
+    {
+      "step": 40,
+      "nonce": 39,
+      "txHash": "0x723ad73cae9c7ccfa43a07df973e8ffae3aa160b30bb0f3f69144fb68a918cbb",
+      "method": "Deploy",
+      "block": 82286872,
+      "explorerTo": "0x375401aaab20b0827cfc7dbe822e352738d390a9"
+    },
+    {
+      "step": 41,
+      "nonce": 40,
+      "txHash": "0xf7550f09521636926fe55542979067e48cf48c0bb7d4665fbc3451e5ab26b9a9",
+      "method": "0x60808060",
+      "block": 82289432,
+      "explorerTo": "0x8446a9423adb131bdc124e84bf3d35ce53e4f482",
+      "eoaCreatedContract": "0x8446a9423Adb131Bdc124E84BF3D35CE53E4F482"
+    },
+    {
+      "step": 42,
+      "nonce": 41,
+      "txHash": "0xf77ef89668f219fd4daf3474bfacfb21ce8c06c208364cf3d764ba5d45267864",
+      "method": "0x60808060",
+      "block": 82300802,
+      "explorerTo": "0x1cb74534bc03facb2725eb47bd1652c22b5f0663",
+      "eoaCreatedContract": "0x1cb74534BC03fAcB2725eb47Bd1652c22b5f0663"
+    },
+    {
+      "step": 43,
+      "nonce": 42,
+      "txHash": "0x25e89e5309721fef6053a824a60f69541b6025a266cb83e67a3e9cf9e1590169",
+      "method": "0x60808060",
+      "block": 90890009,
+      "explorerTo": "0xeafe298387f800101f1b9263208a0bfdc934a63e",
+      "eoaCreatedContract": "0xeAFE298387F800101f1B9263208A0bfdc934A63e"
+    },
+    {
+      "step": 44,
+      "nonce": 43,
+      "txHash": "0x35999dca8584f2afdb15aaceffcb3daaa7ac08ef37d62c524814ed9439cfc391",
+      "method": "0x60803460",
+      "block": 90890817,
+      "explorerTo": "0xd72b2fe3012a2896aef7e3ca561ad11b1542a88c",
+      "eoaCreatedContract": "0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c"
+    },
+    {
+      "step": 45,
+      "nonce": 44,
+      "txHash": "0xc83e3042e211f49e15a107023bc92e5e51fc4978676e5ddcc7759b58ff20d96a",
+      "method": "0x60a03461",
+      "block": 90891005,
+      "explorerTo": "0x12fedd29e71f66157e985aa1aaae434253e39a22",
+      "eoaCreatedContract": "0x12FEDD29E71F66157E985AA1aAAE434253E39A22"
+    }
+  ]
+}
