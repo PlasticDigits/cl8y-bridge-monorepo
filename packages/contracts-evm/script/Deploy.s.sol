@@ -10,6 +10,8 @@ import {LockUnlock} from "../src/LockUnlock.sol";
 import {MintBurn} from "../src/MintBurn.sol";
 import {Bridge} from "../src/Bridge.sol";
 
+import {BridgeParityNonce10Outer} from "./BridgeParityNonce10Outer.sol";
+
 /// @title Deploy
 /// @notice Deployment script for all V2 bridge contracts
 /// @dev Deploys implementation contracts and proxies using UUPS pattern.
@@ -37,7 +39,7 @@ contract Deploy is Script {
 
         // Deploy all contracts with msg.sender as temporary owner
         (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(msg.sender, operator, feeRecipient, wrappedNative, chainIdentifier, thisChainId);
+            deployAll(msg.sender, operator, feeRecipient, wrappedNative, chainIdentifier, thisChainId, false);
 
         // Hand off ownership to the real admin
         _transferAllOwnership(admin);
@@ -78,6 +80,10 @@ contract Deploy is Script {
     /// @param operator The operator address
     /// @param feeRecipient The fee recipient address
     /// @param wrappedNative The WETH/WMATIC/etc address for native deposits (address(0) to disable)
+    /// @param chainIdentifier Human-readable chain label for `ChainRegistry.registerChain`
+    /// @param thisChainId This chain's registered ID (`bytes4` of `THIS_CHAIN_ID` / `PARITY_LEGACY_THIS_CHAIN_ID`)
+    /// @param bscParityOuterNonce10Bridge If true, deploy the bridge with one EOA `CREATE` (nonce 10) whose runtime
+    ///        is `ERC1967Proxy` + current `Bridge` (see `BridgeParityNonce10Outer`), matching `runBroadcastFull` nonces.
     /// @return chainRegistry_ The chain registry proxy address
     /// @return tokenRegistry_ The token registry proxy address
     /// @return lockUnlock_ The lock/unlock proxy address
@@ -89,7 +95,8 @@ contract Deploy is Script {
         address feeRecipient,
         address wrappedNative,
         string memory chainIdentifier,
-        bytes4 thisChainId
+        bytes4 thisChainId,
+        bool bscParityOuterNonce10Bridge
     )
         public
         returns (
@@ -116,17 +123,32 @@ contract Deploy is Script {
         mintBurn_ = deployMintBurn(initialOwner);
 
         // 6. Deploy Bridge
-        bridge_ = deployBridge(
-            initialOwner,
-            operator,
-            feeRecipient,
-            wrappedNative,
-            ChainRegistry(chainRegistry_),
-            TokenRegistry(tokenRegistry_),
-            LockUnlock(lockUnlock_),
-            MintBurn(mintBurn_),
-            thisChainId
-        );
+        if (bscParityOuterNonce10Bridge) {
+            bridge_ = _deployBridgeBscParityOuter(
+                initialOwner,
+                initialOwner,
+                operator,
+                feeRecipient,
+                wrappedNative,
+                thisChainId,
+                chainRegistry_,
+                tokenRegistry_,
+                lockUnlock_,
+                mintBurn_
+            );
+        } else {
+            bridge_ = deployBridge(
+                initialOwner,
+                operator,
+                feeRecipient,
+                wrappedNative,
+                ChainRegistry(chainRegistry_),
+                TokenRegistry(tokenRegistry_),
+                LockUnlock(lockUnlock_),
+                MintBurn(mintBurn_),
+                thisChainId
+            );
+        }
 
         // 7. Configure LockUnlock and MintBurn to authorize Bridge
         LockUnlock(lockUnlock_).addAuthorizedCaller(bridge_);
@@ -221,6 +243,49 @@ contract Deploy is Script {
 
         console2.log("Bridge Implementation:", address(implementation));
         console2.log("Bridge Proxy:", proxy);
+    }
+
+    /// @notice Single EOA `CREATE` for BSC parity (deployer nonce 10 is the Bridge proxy runtime only).
+    function _deployBridgeBscParityOuter(
+        address deployer,
+        address admin,
+        address operator,
+        address feeRecipient,
+        address wrappedNative,
+        bytes4 thisChainId,
+        address chainRegistryProxyAddr,
+        address tokenRegistryProxyAddr,
+        address lockUnlockProxyAddr,
+        address mintBurnProxyAddr
+    ) internal returns (address proxy) {
+        address parityDeployer = vm.envOr("DEPLOYER_ADDRESS", deployer);
+
+        bytes memory bytecode = abi.encodePacked(
+            type(BridgeParityNonce10Outer).creationCode,
+            abi.encode(
+                admin,
+                operator,
+                feeRecipient,
+                wrappedNative,
+                ChainRegistry(chainRegistryProxyAddr),
+                TokenRegistry(tokenRegistryProxyAddr),
+                LockUnlock(lockUnlockProxyAddr),
+                MintBurn(mintBurnProxyAddr),
+                thisChainId
+            )
+        );
+
+        proxy = _createFromInitcode(bytecode);
+        require(proxy == vm.computeCreateAddress(parityDeployer, 10), "parity bridge CREATE address");
+
+        console2.log("Bridge (BSC parity single-CREATE outer):", proxy);
+    }
+
+    function _createFromInitcode(bytes memory bytecode) private returns (address addr) {
+        assembly {
+            addr := create(callvalue(), add(bytecode, 0x20), mload(bytecode))
+        }
+        require(addr != address(0), "parity bridge CREATE failed");
     }
 }
 

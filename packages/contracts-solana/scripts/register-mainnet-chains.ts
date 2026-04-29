@@ -1,5 +1,5 @@
 /**
- * Mainnet: register BSC, opBNB, and Terra Classic as peer chains on the Solana bridge.
+ * Mainnet: register BSC, opBNB, Terra Classic, and MegaETH as peer chains on the Solana bridge.
  * Idempotent — skips each chain if its ChainEntry PDA already exists.
  *
  * Bytes4 IDs and identifiers must match EVM ChainRegistry / Terra bridge (see deploy-evm-full.sh,
@@ -27,6 +27,8 @@ const MAINNET_PEER_CHAINS: readonly {
   { chainId: [0, 0, 0, 0x38], identifier: "evm_56" },
   { chainId: [0, 0, 0, 0xcc], identifier: "evm_204" },
   { chainId: [0, 0, 0, 0x01], identifier: "terraclassic_columbus-5" },
+  /** MegaETH mainnet — bytes4(uint32(4326)) = 0x000010e6 (see scripts/megaeth/compute-megaeth-constants.sh). */
+  { chainId: [0, 0, 0x10, 0xe6], identifier: "evm_4326" },
 ];
 
 async function registerChainIfNeeded(

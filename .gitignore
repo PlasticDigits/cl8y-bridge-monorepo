@@ -21,6 +21,7 @@ packages/contracts-evm/bin/
 **/broadcast/**/dry-run/
 **/broadcast/**/run-*.json
 **/broadcast/**/run-latest.json
+**/broadcast/**/runBroadcast*-latest.json
 .operator.log
 
 # Coverage

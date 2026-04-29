@@ -2,6 +2,103 @@
 
 Operators adding **MegaETH** or another EVM chain often require **contract address parity** with BSC / opBNB: the same historical deployer wallet (`0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e` on BSC) must broadcast the **same 45 outer transactions in order** (deployer nonces **0–44** for a full greenfield run). This document ties the issue **GL-121** implementation to canonical exports and scripts.
 
+The **Quickstart** below is MegaETH-mainnet–specific: RPC from [Connect to MegaETH](https://docs.megaeth.com/user-guide/connect), canonical roles from §5.0, and **reverse registration** on BSC / Terra / Solana so those networks learn `evm_4326` / `0x000010e6`. Deeper rationale, failure playbooks, and references follow from §5.0 onward.
+
+---
+
+## Quickstart: MegaETH mainnet
+
+Prerequisites: **repository root**; deployer / operator / canceler funded on MegaETH (§5.0); a TTY for interactive forge signing. RPC defaults to [MegaETH public mainnet](https://docs.megaeth.com/user-guide/connect). The quickstart sets **`MIN_FULL_DEPLOY_BALANCE_WEI`** to **`15000000000000000`** (0.015 native at 18 decimals) when unset — derived from a MegaETH **fork** rehearsal of `runBroadcastHead` (Forge simulated head spend ~3.5×10⁻⁵ ETH; `parity-sum-broadcast-gas-limits.sh` × `cast gas-price` ≈ 1.75×10¹³ wei for head gas limits only) plus a large margin for **Nick + faucet + tail**; re-tune with that helper on a full `runBroadcastFull` `run-latest.json` when you have one.
+
+### Deploy on MegaETH (one copy-paste)
+
+Runs **GL-122 end-to-end**: gas preflight → `runDryCheck` → **`runBroadcastFull`** (single forge session: head + Nick step **18** from `packages/contracts-evm/script/bsc-parity-step18-input.bin` + faucet + tail). Canonical role and chain env are set inside the script (same values as §5.0 / §5.2a); override any variable by exporting it **before** the command.
+
+```bash
+./scripts/evm/megaeth-parity-quickstart.sh
+```
+
+**Ledger / custom forge flags:** pass them explicitly (then you must include `--rpc-url` and signing yourself; the script still exports chain/role env):
+
+```bash
+./scripts/evm/megaeth-parity-quickstart.sh --rpc-url https://mainnet.megaeth.com/rpc -vvv --ledger
+```
+
+**Optional second step — register BSC / Terra / Solana peers on this chain’s new `ChainRegistry`**
+
+After broadcast, set the proxy from `packages/contracts-evm/broadcast/EvmParityReplay.s.sol/4326/run-latest.json` (or forge logs), then:
+
+```bash
+CHAIN_REGISTRY_ADDRESS=0x… RPC_URL=https://mainnet.megaeth.com/rpc ./scripts/evm/register-parity-peers-on-registry.sh
+```
+
+Reverse registration (MegaETH **onto** BSC / Terra / Solana) stays the separate blocks below (**BSC run** / **Terraclassic run** / **Solana run**).
+
+**Resume / debug:** `USE_SEGMENTED_BROADCAST=1 ./scripts/evm/deploy-bsc-parity-orchestrate.sh …` or segmented `parity-replay.sh` entrypoints — §5.3.
+
+---
+
+### BSC run — register MegaETH on **BSC** `ChainRegistry`
+
+Registers **`evm_4326`** with bytes4 **`0x000010e6`** on live BSC (same proxy as [deployment-solana-mainnet.md](./deployment-solana-mainnet.md#current-live-state-verified-via-rpc-on-2026-04-10)). Signing: interactive `cast` (ChainRegistry owner).
+
+```bash
+source <(./scripts/megaeth/compute-megaeth-constants.sh)
+export CHAIN_REGISTRY_ADDRESS=0x2e5d36c46680a38e7ae156fc9d109084c58c688e
+export EVM_RPC_URL=https://bsc-dataseed1.binance.org
+./scripts/megaeth/register-megaeth-on-chain-registry.sh
+```
+
+**opBNB mirror** (same proxy address on opBNB):
+
+```bash
+source <(./scripts/megaeth/compute-megaeth-constants.sh)
+export CHAIN_REGISTRY_ADDRESS=0x2e5d36c46680a38e7ae156fc9d109084c58c688e
+export EVM_RPC_URL=https://opbnb-mainnet-rpc.bnbchain.org
+./scripts/megaeth/register-megaeth-on-chain-registry.sh
+```
+
+---
+
+### Terraclassic run — register MegaETH on **Terra Classic** bridge
+
+`MEGAETH_*` exports come from `compute-megaeth-constants.sh`. Bridge contract and admin key name match [deployment-solana-mainnet.md](./deployment-solana-mainnet.md#key-addresses-and-configuration) and [deployment-guide.md §6.2](./deployment-guide.md#62-register-chains-on-terra). Adjust `--from` / keyring if your operator keyring differs.
+
+```bash
+source <(./scripts/megaeth/compute-megaeth-constants.sh)
+export TERRA_NODE_URL=https://terra-classic-rpc.publicnode.com:443
+export BRIDGE_CONTRACT=terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la
+export TERRA_WALLET=cl8y2_admin
+
+terrad tx wasm execute "$BRIDGE_CONTRACT" \
+  "{\"register_chain\":{\"identifier\":\"${MEGAETH_IDENTIFIER}\",\"chain_id\":\"${MEGAETH_CHAIN_B64}\"}}" \
+  --from "$TERRA_WALLET" \
+  --chain-id columbus-5 \
+  --node "$TERRA_NODE_URL" \
+  --gas auto --gas-adjustment 1.5 \
+  --fees 10000000uluna \
+  --keyring-backend os -y
+```
+
+---
+
+### Solana run — register MegaETH on **Solana** bridge
+
+Registers peer **`evm_4326`** with chain id bytes **`[0,0,0x10,0xe6]`** (Anchor `register_chain`). Idempotent with existing peers: [`register-mainnet-chains.ts`](../packages/contracts-solana/scripts/register-mainnet-chains.ts) skips chains that already exist and adds MegaETH if missing.
+
+```bash
+cd packages/contracts-solana
+anchor build
+export SOLANA_PROGRAM_ID=4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt
+export ANCHOR_PROVIDER_URL=https://solana-rpc.publicnode.com
+export SOLANA_KEYPAIR="${HOME}/.config/solana/id-deployer.json"
+export ANCHOR_WALLET="${SOLANA_KEYPAIR}"
+
+npx tsx scripts/register-mainnet-chains.ts
+```
+
+Use the **bridge admin** keypair that initialized mainnet (see [deployment-solana-mainnet.md §2.4](./deployment-solana-mainnet.md#step-24-register-bsc-opbnb-and-terra-on-solana-bridge)). Prefer a public Solana JSON-RPC you trust (see [deployment-solana-mainnet.md — Current live state](./deployment-solana-mainnet.md#current-live-state-verified-via-rpc-on-2026-04-10)) if your environment blocks some hosts.
+
 ---
 
 ## 5.0 Canonical role addresses (mainnet parity) and gas preflight
@@ -13,22 +110,38 @@ For production-parity deploys to a new EVM chain, **`Deploy.s.sol` / `EvmParityR
 | Deployer (historical BSC CREATE ordering; **must** match golden) | `0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e` | `DEPLOYER_ADDRESS` |
 | Admin / owner (final ownership after `_transferAllOwnership`) | `0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c` | `ADMIN_ADDRESS` |
 | Operator | `0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD` | `OPERATOR_ADDRESS` |
+| Fee recipient | **Default:** same address as **Operator** (above); override only for a dedicated fee vault | `FEE_RECIPIENT_ADDRESS` — when unset, `deploy-bsc-parity-orchestrate.sh` exports `OPERATOR_ADDRESS` |
 | Canceler | `0x732A65b80F4625658EbD2B4214E4f8Cf3A67AEEB` | `CANCELER_ADDRESS` — deploy scripts may not consume it; **must** still be funded on target RPC for preflight |
 
-Set `FEE_RECIPIENT_ADDRESS` per org policy (often aligned with admin or a dedicated fee vault).
+For direct `forge script` / `parity-replay.sh` segments, set `FEE_RECIPIENT_ADDRESS` explicitly; use the operator address unless org policy requires a different receiver.
 
 **Gas preflight (required before broadcast):** deployer, operator, and canceler must each have **non-zero** native balance on the **target `RPC_URL`**. The deployer must additionally meet a **minimum balance** intended to cover the **full 45-tx sequence** (conservative default below; tune after `forge script` gas estimation on that chain).
 
 From repo root:
 
 ```bash
-export RPC_URL=https://your-meganet-rpc.example
+export RPC_URL=https://mainnet.megaeth.com/rpc
 ./scripts/evm/bsc-parity-preflight.sh
 ```
 
-Optional: `MIN_FULL_DEPLOY_BALANCE_WEI` (default `2000000000000000000` = 2 native units at 18 decimals). Lower only after you have a measured gas estimate for all segments including Nick CREATE2 step 18.
+Optional: `MIN_FULL_DEPLOY_BALANCE_WEI`. **`bsc-parity-preflight.sh`** alone defaults to **`2000000000000000000`** (2 native units at 18 decimals). **`megaeth-parity-quickstart.sh`** exports **`15000000000000000`** (0.015) when unset unless you already exported a value — see quickstart prerequisites for how that default was derived on a MegaETH fork; refine with **`parity-sum-broadcast-gas-limits.sh`** on a full **`runBroadcastFull`** artifact when available.
 
-The orchestrator **`scripts/evm/deploy-bsc-parity-orchestrate.sh`** applies these defaults (still overridable via env), invokes **`scripts/evm/bsc-parity-preflight.sh`** first, then continues with dry-check and segmented broadcast (see §5.2a).
+**Estimating gas instead of hardcoding the deployer floor**
+
+1. **`forge script` simulation on the real RPC:** If the historical deployer’s **on-chain nonce is 0**, `forge script … --sig runBroadcastFull --broadcast …` (same env as production, correct `--rpc-url` and `--sender`) runs **simulation before** any signing step; Foundry logs **per-transaction gas** for the bundle. You can stop after reading the simulation output if you only wanted numbers.
+2. **Fork rehearsal:** Run **`anvil --fork-url "$RPC_URL"`**, set the deployer nonce to **0** on the fork if needed (**`cast rpc anvil_setNonce <DEPLOYER> 0x0`**), fund with **`cast rpc anvil_setBalance …`**, then **`forge script … runBroadcastFull --broadcast`** against **`http://127.0.0.1:8545`**. Inspect or sum gas from the emitted **`broadcast/EvmParityReplay.s.sol/<chainId>/run-latest.json`**.
+3. **Sum gas limits from `run-latest.json`:** After any broadcast that produced that file:
+
+```bash
+./scripts/evm/parity-sum-broadcast-gas-limits.sh
+# optional rough native cap (sum of limits × cast gas-price) and a 1.2× MIN_FULL hint:
+RPC_URL=https://mainnet.megaeth.com/rpc \
+  ./scripts/evm/parity-sum-broadcast-gas-limits.sh packages/contracts-evm/broadcast/EvmParityReplay.s.sol/4326/run-latest.json
+```
+
+The helper sums each tx’s **`transaction.gas`** limit (an upper bound on gas units, not wei). With **`RPC_URL`** set it multiplies by **`cast gas-price`** for a **crude** native ceiling; on EIP-1559 chains refine with your expected **max fee** if you need a tighter budget.
+
+The orchestrator **`scripts/evm/deploy-bsc-parity-orchestrate.sh`** applies these defaults (still overridable via env), invokes **`scripts/evm/bsc-parity-preflight.sh`** first, then **`runDryCheck`**, then **`runBroadcastFull`** in a single forge session (or `USE_SEGMENTED_BROADCAST=1` for the legacy split + manual Nick gate; see §5.2a).
 
 ---
 
@@ -39,7 +152,7 @@ The orchestrator **`scripts/evm/deploy-bsc-parity-orchestrate.sh`** applies thes
 | [docs/export-transaction-list-1777384911253.csv](./export-transaction-list-1777384911253.csv) | Full BscScan export (filter `From ==` historical deployer; sort by `Blockno` ascending for nonces 0–44). |
 | [docs/reference/bsc-deployer-transaction-export-sample.csv](./reference/bsc-deployer-transaction-export-sample.csv) | Abbreviated sample aligned with the same ordering. |
 | `packages/contracts-evm/script/bsc-parity-golden.json` | Machine-readable golden: per-step `nonce`, `txHash`, optional `eoaCreatedContract` (EOA `CREATE` contracts only). |
-| `packages/contracts-evm/script/EvmParityReplay.s.sol` | `runDryCheck()` / segmented broadcast entrypoints. |
+| `packages/contracts-evm/script/EvmParityReplay.s.sol` | `runDryCheck()` / `runBroadcastFull()` (recommended) / segmented broadcast entrypoints. |
 
 **Invariants (INV-PAR\*)** are embedded in `bsc-parity-golden.json` under `invariants`.
 
@@ -51,18 +164,28 @@ One shell entrypoint runs:
 
 1. Gas **preflight** (`bsc-parity-preflight.sh`), aborting non-zero if balances fail.
 2. **`runDryCheck`** (`parity-replay.sh dry-check`).
-3. **`runBroadcastHead`** → manual **Nick CREATE2 step 18** (nonce **18** → **19**) → **`runBroadcastFaucet19`** → **`runBroadcastTail`** (same contracts/env semantics as §5.3).
+3. **`runBroadcastFull`** (`parity-replay.sh broadcast-full`) — one forge session: **`runBroadcastHead`** logic, Nick step **18** via `script/bsc-parity-step18-input.bin`, **`runBroadcastFaucet19`**, **`runBroadcastTail`** (same semantics as §5.3). For legacy four-segment + manual Nick, set **`USE_SEGMENTED_BROADCAST=1`** on **`deploy-bsc-parity-orchestrate.sh`**.
 4. Optional **ChainRegistry peer registration** on **this** new chain when `CHAIN_REGISTRY_ADDRESS` is set; otherwise operators run **`scripts/evm/register-parity-peers-on-registry.sh`** after extracting the proxy from `broadcast/EvmParityReplay.s.sol/<chainId>/run-latest.json`.
 
-Minimal invocation pattern:
+Minimal MegaETH invocation (same env as **`megaeth-parity-quickstart.sh`**): use that script, or export variables yourself and run **`deploy-bsc-parity-orchestrate.sh`** with **`--rpc-url`**, **`-vvv`**, and forge signing (**`-i 1 --sender $DEPLOYER_ADDRESS`** for interactive key). Example manual equivalent:
 
 ```bash
-export RPC_URL=...
-export PARITY_LEGACY_WETH_ADDRESS=... PARITY_LEGACY_CHAIN_IDENTIFIER=... PARITY_LEGACY_THIS_CHAIN_ID=...
-export WETH_ADDRESS=... CHAIN_IDENTIFIER=... THIS_CHAIN_ID=...
-export FEE_RECIPIENT_ADDRESS=... GUARD_STACK_ACCESS_MANAGER_ADMIN=...
-./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv
+export RPC_URL=https://mainnet.megaeth.com/rpc
+export PARITY_LEGACY_WETH_ADDRESS=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
+export PARITY_LEGACY_CHAIN_IDENTIFIER="BSC"
+export PARITY_LEGACY_THIS_CHAIN_ID=56
+export WETH_ADDRESS=0x4200000000000000000000000000000000000006
+export CHAIN_IDENTIFIER="evm_4326"
+export THIS_CHAIN_ID=4326
+export GUARD_STACK_ACCESS_MANAGER_ADMIN=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i 1 --sender 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
 ```
+
+(`DEPLOYER` / `ADMIN` / `OPERATOR` / `CANCELER` / `FEE_RECIPIENT` default inside the orchestrator — see script header.)
+
+**Forge binary (`FORGE`):** If `forge script … --broadcast` dies after simulation with **`Failed to decode constructor arguments`** on the deployer nonce **10** `CREATE` (`BridgeParityNonce10Outer` returns copied proxy runtime, so Foundry’s trace identifier can pick the wrong artifact on stock forge), build the patched binary: **`./scripts/evm/install-foundry-parity-fix.sh`**, then **`export FORGE=$HOME/.local/bin/forge-parity`** before **`deploy-bsc-parity-orchestrate.sh`** or **`parity-replay.sh`** (both propagate `FORGE`; default remains `forge`).
+
+Wrapped native `WETH_ADDRESS` is the standard predeploy at `0x4200…0006` on MegaETH mainnet (verify with `cast call 0x4200000000000000000000000000000000000006 "symbol()(string)" --rpc-url "$RPC_URL"` → `"WETH"`). Identifier `evm_4326` matches the production `(string, bytes4)` pair documented for MegaETH in §5.5 / `scripts/megaeth/` (`0x000010e6` on-chain = `bytes4(uint32(4326))`).
 
 **GL-122 orchestration invariants**
 
@@ -102,24 +225,64 @@ Or from repo root:
 
 ## 5.3 Segmented broadcast (same code paths as `Deploy.s.sol` where applicable)
 
-Outer **step 18** is a **Nick CREATE2 factory** transaction with custom init; it is **not** inlined in Solidity (large calldata). Between `runBroadcastHead` and `runBroadcastFaucet19`, replay **step 18** from BscScan or an internal runbook recording of raw calldata for tx `0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb`.
+**Default path:** `runBroadcastFull` (and the GL-122 orchestrator without `USE_SEGMENTED_BROADCAST`) runs head, Nick step **18**, faucet, and tail in **one** `vm.startBroadcast` session; Nick calldata is read from **`script/bsc-parity-step18-input.bin`** (same bytes as BSC [`0xb55a2348…`](https://bscscan.com/tx/0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb)).
+
+**Segmented / resume:** use `broadcast-head` → manual Nick `cast send` (or tooling) → `broadcast-faucet19` → `broadcast-tail`, or set **`USE_SEGMENTED_BROADCAST=1`** on **`deploy-bsc-parity-orchestrate.sh`**.
 
 | Entrypoint | Expected deployer nonce at entry | Role |
 |------------|----------------------------------|------|
+| `runBroadcastFull` | `0` (greenfield) | Head + Nick (`readFileBinary` bin) + faucet + tail in one session |
 | `runBroadcastHead` | `ENTRY_NONCE` (default `0`) | `new AccessManagerEnumerable`, legacy `deployAll` + `_transferAllOwnership` |
-| *(manual)* | `18` | CREATE2 (see §5.3 note above) |
+| *(manual, segmented only)* | `18` | Nick CREATE2 — same calldata as bin / BscScan tx above |
 | `runBroadcastFaucet19` | `19` | `new Faucet()` |
 | `runBroadcastTail` | `TAIL_ENTRY_NONCE` (default `20`) | Production V2 `deployAll`, Create3 + guard `AccessManagerEnumerable`, factory on canonical Create3, two faucets, `DatastoreSetAddress`, `TokenRateLimit`, `GuardBridge` |
 
-**Env (head):** `ADMIN_ADDRESS`, `OPERATOR_ADDRESS`, `FEE_RECIPIENT_ADDRESS`, `PARITY_LEGACY_WETH_ADDRESS`, `PARITY_LEGACY_CHAIN_IDENTIFIER`, `PARITY_LEGACY_THIS_CHAIN_ID`, optional `ENTRY_NONCE`.
+**Env (head):** `FORGE` (optional; path to `forge`, default `forge` — use patched `forge-parity` if broadcast fails after simulation; §5.2a), `ADMIN_ADDRESS`, `OPERATOR_ADDRESS`, `FEE_RECIPIENT_ADDRESS` (defaults to operator when using `deploy-bsc-parity-orchestrate.sh`; set explicitly for `parity-replay.sh` / `forge`), `PARITY_LEGACY_WETH_ADDRESS`, `PARITY_LEGACY_CHAIN_IDENTIFIER`, `PARITY_LEGACY_THIS_CHAIN_ID`, optional `ENTRY_NONCE`.
 
 **Env (tail):** same role vars as `Deploy.s.sol` (`WETH_ADDRESS`, `CHAIN_IDENTIFIER`, `THIS_CHAIN_ID`), plus `GUARD_STACK_ACCESS_MANAGER_ADMIN`, `DEPLOY_SALT` (default `Deploy v1.4` string, same as `AccessManagerEnumerable.s.sol`).
 
-Example (tail only, after nonces 0–19 completed on target RPC):
+Example (MegaETH mainnet, **tail only** — deployer nonce must be **20** unless you set `TAIL_ENTRY_NONCE`; same role and chain env as §5.2a). Run from **`packages/contracts-evm`**; `-i 1` prompts for the deployer key (same pattern as [deployment-guide.md §4.2](./deployment-guide.md#42-deploy-to-bsc-mainnet-chain-id-56)):
 
 ```bash
-forge script script/EvmParityReplay.s.sol:EvmParityReplay --sig runBroadcastTail \
-  --rpc-url "$RPC_URL" --broadcast -vvv ...
+cd packages/contracts-evm
+
+export RPC_URL=https://mainnet.megaeth.com/rpc
+export DEPLOYER_ADDRESS=0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
+export ADMIN_ADDRESS=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+export OPERATOR_ADDRESS=0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD
+export FEE_RECIPIENT_ADDRESS=0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD
+export WETH_ADDRESS=0x4200000000000000000000000000000000000006
+export CHAIN_IDENTIFIER="evm_4326"
+export THIS_CHAIN_ID=4326
+export GUARD_STACK_ACCESS_MANAGER_ADMIN=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+
+forge script script/EvmParityReplay.s.sol:EvmParityReplay \
+  --sig runBroadcastTail \
+  --rpc-url "$RPC_URL" \
+  --broadcast \
+  -vvv \
+  -i 1 \
+  --sender "$DEPLOYER_ADDRESS"
+```
+
+Equivalent from **repo root** (script `cd`s into `packages/contracts-evm` for you):
+
+```bash
+export RPC_URL=https://mainnet.megaeth.com/rpc
+export DEPLOYER_ADDRESS=0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
+export ADMIN_ADDRESS=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+export OPERATOR_ADDRESS=0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD
+export FEE_RECIPIENT_ADDRESS=0x1d9e02e0e8c000FE4575c4Aaea96B19De00404CD
+export WETH_ADDRESS=0x4200000000000000000000000000000000000006
+export CHAIN_IDENTIFIER="evm_4326"
+export THIS_CHAIN_ID=4326
+export GUARD_STACK_ACCESS_MANAGER_ADMIN=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
+
+./scripts/evm/parity-replay.sh broadcast-tail \
+  --rpc-url "$RPC_URL" \
+  -vvv \
+  -i 1 \
+  --sender "$DEPLOYER_ADDRESS"
 ```
 
 ---
@@ -148,5 +311,5 @@ Registering the **new** EVM chain on **other** networks is **not** folded into `
 - [deployment-guide.md §4.2](./deployment-guide.md#42-deploy-to-bsc-mainnet-chain-id-56) — standard single-shot `Deploy.s.sol`
 - [deployment-guide.md §4.2a](./deployment-guide.md#42a-full-45-tx-bsc-parity-replay-megaeth--new-chains) — parity checklist + GL-122 orchestrator
 - [skills/agent-evm-bsc-parity-replay.md](../skills/agent-evm-bsc-parity-replay.md) — third-party agent checklist (GL-121 + GL-122)
-- GitLab issue **GL-121** — parity replay deliverable (golden JSON, dry-check, segmented `EvmParityReplay`)
+- GitLab issue **GL-121** — parity replay deliverable (golden JSON, dry-check, `EvmParityReplay` including `runBroadcastFull`)
 - GitLab issue **GL-122** — orchestrated deploy (`deploy-bsc-parity-orchestrate.sh`), peers (`register-parity-peers-on-registry.sh`), preflight

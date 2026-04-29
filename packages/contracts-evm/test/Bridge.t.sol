@@ -318,8 +318,6 @@ contract BridgeTest is Test {
     }
 
     function test_DepositNative() public {
-
-
         uint256 fee = bridge.calculateFee(user, 100 ether);
         uint256 netAmount = 100 ether - fee;
         uint256 feeRecipientBefore = feeRecipient.balance;
@@ -607,9 +605,9 @@ contract BridgeTest is Test {
         bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
         vm.deal(recipient, 1 ether);
         vm.prank(recipient);
-        bridge.withdrawSubmit{
-            value: 0.01 ether
-        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(
+            destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1
+        );
 
         bytes32 xchainHashId =
             _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
@@ -1149,9 +1147,9 @@ contract BridgeTest is Test {
     function test_WithdrawSubmit_RevertsIfSrcChainIsSelf() public {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IBridge.SameChainTransfer.selector, thisChainId));
-        bridge.withdrawSubmit{
-            value: 0.01 ether
-        }(thisChainId, bytes32(uint256(uint160(user))), destAccount, address(token), 50 ether, 0);
+        bridge.withdrawSubmit{value: 0.01 ether}(
+            thisChainId, bytes32(uint256(uint160(user))), destAccount, address(token), 50 ether, 0
+        );
     }
 
     // ============================================================================
@@ -1165,9 +1163,9 @@ contract BridgeTest is Test {
         bytes32 recipientAccount = bytes32(uint256(uint160(recipient)));
         vm.deal(recipient, 1 ether);
         vm.prank(recipient);
-        bridge.withdrawSubmit{
-            value: 0.01 ether
-        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(
+            destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1
+        );
 
         bytes32 xchainHashId =
             _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 ether, 1);
@@ -1263,9 +1261,9 @@ contract BridgeTest is Test {
         vm.deal(recipient, 1 ether);
         vm.prank(recipient);
         // Amount in 12-decimal source: 50 * 10^12
-        bridge.withdrawSubmit{
-            value: 0.01 ether
-        }(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e12, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(
+            destChainId, srcAccount, recipientAccount, address(token), 50 * 1e12, 1
+        );
 
         bytes32 xchainHashId =
             _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(token), 50 * 1e12, 1);
@@ -1293,9 +1291,9 @@ contract BridgeTest is Test {
         vm.deal(recipient, 1 ether);
         vm.prank(recipient);
         // Amount in 6-decimal source: 50 * 10^6
-        bridge.withdrawSubmit{
-            value: 0.01 ether
-        }(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1);
+        bridge.withdrawSubmit{value: 0.01 ether}(
+            destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1
+        );
 
         bytes32 xchainHashId =
             _computeXchainHashId(destChainId, srcAccount, recipientAccount, address(mintableToken), 50 * 1e6, 1);

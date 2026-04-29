@@ -8,6 +8,7 @@
 # Optional:
 #   MIN_FULL_DEPLOY_BALANCE_WEI — minimum deployer balance (wei). Default: 2e18 (2 native units, 18 decimals).
 #                                 Override lower for cheap/funded testnets after you have a measured estimate.
+#                                 See docs/deployment-megaeth.md §5.0 and scripts/evm/parity-sum-broadcast-gas-limits.sh.
 #
 # Exit 1 if any check fails.
 

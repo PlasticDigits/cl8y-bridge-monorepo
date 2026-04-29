@@ -90,12 +90,11 @@ library FeeCalculatorLib {
     /// @param depositor The depositor address
     /// @param amount The amount to calculate fee on
     /// @return feeAmount The calculated fee amount
-    function calculateFee(
-        FeeConfig memory config,
-        CustomAccountFee memory customFee,
-        address depositor,
-        uint256 amount
-    ) internal view returns (uint256 feeAmount) {
+    function calculateFee(FeeConfig memory config, CustomAccountFee memory customFee, address depositor, uint256 amount)
+        internal
+        view
+        returns (uint256 feeAmount)
+    {
         uint256 feeBps = getEffectiveFeeBps(config, customFee, depositor);
         return (amount * feeBps) / BPS_DENOMINATOR;
     }

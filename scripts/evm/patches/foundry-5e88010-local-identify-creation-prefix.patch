@@ -1,0 +1,69 @@
+diff --git a/crates/evm/traces/src/identifier/local.rs b/crates/evm/traces/src/identifier/local.rs
+index 05dab2b..cc4c21e 100644
+--- a/crates/evm/traces/src/identifier/local.rs
++++ b/crates/evm/traces/src/identifier/local.rs
+@@ -112,6 +112,18 @@ pub fn identify_code(
+             }
+         }
+ 
++        // Artifacts whose JSON `deployedBytecode` length differs from the runtime returned from a
++        // CREATE trace (e.g. constructors that `return` unrelated code via assembly) are skipped by
++        // the length-indexed creation scan above. When we still have observed CREATE calldata, match
++        // by creation-code prefix + constructor args before falling back to runtime-only
++        // identification, which can mis-pick another artifact with identical deployed bytecode
++        // (EIP-1967 / minimal proxies).
++        if min_score >= 0.85 && !creation_code.is_empty() {
++            if let Some(found) = self.identify_by_creation_prefix(creation_code) {
++                return Some(found);
++            }
++        }
++
+         // Fallback to comparing deployed code if min score greater than threshold.
+         if min_score >= 0.85 {
+             for (artifact, _) in &self.ordered_ids {
+@@ -128,6 +140,45 @@ pub fn identify_code(
+         if min_score < 0.85 { min_score_id } else { None }
+     }
+ 
++    /// Picks the best artifact by matching compiled creation bytecode as a prefix of `creation_code`
++    /// and validating trailing bytes against the ABI constructor when present.
++    fn identify_by_creation_prefix(
++        &self,
++        creation_code: &[u8],
++    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
++        let mut best: Option<(&'a ArtifactId, &'a JsonAbi, usize)> = None;
++        for (id, contract) in self.known_contracts.iter() {
++            let Some(bytecode) = contract.bytecode_without_placeholders() else {
++                continue;
++            };
++            if bytecode.is_empty() || creation_code.len() < bytecode.len() {
++                continue;
++            }
++            let prefix = &creation_code[..bytecode.len()];
++            if bytecode_diff_score(bytecode.as_ref(), prefix) != 0.0 {
++                continue;
++            }
++            let ctor_args = &creation_code[bytecode.len()..];
++            match contract.abi.constructor() {
++                Some(constructor) => {
++                    if constructor.abi_decode_input(ctor_args).is_err() {
++                        continue;
++                    }
++                }
++                None => {
++                    if !ctor_args.is_empty() {
++                        continue;
++                    }
++                }
++            }
++            let n = bytecode.len();
++            if best.map_or(true, |(_, _, best_n)| n > best_n) {
++                best = Some((id, &contract.abi, n));
++            }
++        }
++        best.map(|(id, abi, _)| (id, abi))
++    }
++
+     /// Returns the index of the artifact with the given code length, or the index of the first
+     /// artifact with a greater code length if the exact code length is not found.
+     fn find_index(&self, len: usize) -> usize {

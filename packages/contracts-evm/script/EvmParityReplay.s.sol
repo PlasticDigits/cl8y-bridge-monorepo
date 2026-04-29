@@ -7,8 +7,11 @@ pragma solidity ^0.8.30;
 ///         for address parity on new EVM chains. See `docs/deployment-megaeth.md` §5.1, golden
 ///         `script/bsc-parity-golden.json`, and `docs/export-transaction-list-1777384911253.csv`.
 /// @dev Invariants (INV-PAR*) are documented in the golden JSON. Dry-run compares EOA CREATE
-///      predictions via `vm.computeCreateAddress` and CREATE3 factory prediction. Broadcast is split:
-///      `runBroadcastHead` (0–17), manual CREATE2 step 18, `runBroadcastFaucet19`, `runBroadcastTail` (20–44).
+///      predictions via `vm.computeCreateAddress` and CREATE3 factory prediction. Broadcast options:
+///      - **`runBroadcastFull`** (recommended): one session — head (0–17), Nick step 18 (calldata from
+///        `script/bsc-parity-step18-input.bin`), faucet (19), tail (20–44).
+///      - **Segmented**: `runBroadcastHead`, manual Nick / tooling, `runBroadcastFaucet19`, `runBroadcastTail`
+///        (for resume or debugging).
 
 import {Script, console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
@@ -68,7 +71,8 @@ contract EvmParityReplay is Deploy {
     }
 
     /// @notice Nonces 0–17 after `ENTRY_NONCE` (default 0): AccessManager + legacy `deployAll` + `_transferAllOwnership`.
-    /// @dev Env: `ENTRY_NONCE`, `PARITY_LEGACY_*`, same role env vars as `Deploy.s.sol`.
+    /// @dev Env: `DEPLOYER_ADDRESS` (EOA whose nonce must match `ENTRY_NONCE`; defaults to `msg.sender` in plain scripts),
+    ///         `ENTRY_NONCE`, `PARITY_LEGACY_*`, same role env vars as `Deploy.s.sol`.
     function runBroadcastHead() public {
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address operator = vm.envAddress("OPERATOR_ADDRESS");
@@ -78,26 +82,82 @@ contract EvmParityReplay is Deploy {
         bytes4 legacyChainId = bytes4(uint32(vm.envUint("PARITY_LEGACY_THIS_CHAIN_ID")));
 
         uint256 n0 = vm.envOr("ENTRY_NONCE", uint256(0));
-        require(vm.getNonce(msg.sender) == n0, "runBroadcastHead: ENTRY_NONCE mismatch");
+        address deployer = vm.envOr("DEPLOYER_ADDRESS", msg.sender);
+        require(vm.getNonce(deployer) == n0, "runBroadcastHead: ENTRY_NONCE mismatch");
 
-        vm.startBroadcast();
-        new AccessManagerEnumerable(msg.sender);
-        (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(msg.sender, operator, feeRecipient, legacyWeth, legacyLabel, legacyChainId);
-        _transferAllOwnership(admin);
+        vm.startBroadcast(deployer);
+        _broadcastLegacyHead(deployer, admin, operator, feeRecipient, legacyWeth, legacyLabel, legacyChainId);
         vm.stopBroadcast();
 
         console2.log("runBroadcastHead done. Next: outer tx 18 (CREATE2 to Nick factory) then runBroadcastFaucet19");
-        console2.log("deployer nonce now:", vm.getNonce(msg.sender));
+        console2.log("deployer nonce now:", vm.getNonce(deployer));
+    }
+
+    /// @notice Greenfield only: head → Nick step 18 (from `script/bsc-parity-step18-input.bin`) → faucet → tail in **one** broadcast session.
+    /// @dev `ENTRY_NONCE` must be `0`. For partial replays use segmented entrypoints. Calldata is byte-identical to BSC tx `0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb`.
+    function runBroadcastFull() public {
+        require(vm.envOr("ENTRY_NONCE", uint256(0)) == 0, "runBroadcastFull: ENTRY_NONCE must be 0");
+        require(vm.envOr("TAIL_ENTRY_NONCE", uint256(20)) == 20, "runBroadcastFull: TAIL_ENTRY_NONCE must be 20");
+
+        address admin = vm.envAddress("ADMIN_ADDRESS");
+        address operator = vm.envAddress("OPERATOR_ADDRESS");
+        address feeRecipient = vm.envAddress("FEE_RECIPIENT_ADDRESS");
+        address legacyWeth = vm.envAddress("PARITY_LEGACY_WETH_ADDRESS");
+        string memory legacyLabel = vm.envString("PARITY_LEGACY_CHAIN_IDENTIFIER");
+        bytes4 legacyChainId = bytes4(uint32(vm.envUint("PARITY_LEGACY_THIS_CHAIN_ID")));
+
+        address weth = vm.envAddress("WETH_ADDRESS");
+        string memory label = vm.envString("CHAIN_IDENTIFIER");
+        bytes4 chainId = bytes4(uint32(vm.envUint("THIS_CHAIN_ID")));
+
+        address deployer = vm.envOr("DEPLOYER_ADDRESS", msg.sender);
+        require(vm.getNonce(deployer) == 0, "runBroadcastFull: deployer nonce must be 0 at start");
+
+        vm.startBroadcast(deployer);
+
+        _broadcastLegacyHead(deployer, admin, operator, feeRecipient, legacyWeth, legacyLabel, legacyChainId);
+        require(vm.getNonce(deployer) == 18, "runBroadcastFull: expected nonce 18 after head");
+
+        bytes memory nickCalldata = vm.readFileBinary("script/bsc-parity-step18-input.bin");
+        (bool nickOk,) = NICK_CREATE2_FACTORY.call(nickCalldata);
+        require(nickOk, "runBroadcastFull: Nick CREATE2 factory call failed");
+
+        require(vm.getNonce(deployer) == 19, "runBroadcastFull: expected nonce 19 after Nick step");
+
+        new Faucet();
+
+        require(vm.getNonce(deployer) == 20, "runBroadcastFull: expected nonce 20 before tail");
+
+        _broadcastTailCore(deployer, admin, operator, feeRecipient, weth, label, chainId);
+
+        vm.stopBroadcast();
+
+        console2.log("runBroadcastFull done; deployer nonce:", vm.getNonce(deployer));
     }
 
     /// @notice Historical outer step 19 — `new Faucet()` (requires deployer nonce 19).
     function runBroadcastFaucet19() public {
-        require(vm.getNonce(msg.sender) == 19, "runBroadcastFaucet19: need nonce 19");
-        vm.startBroadcast();
+        address deployer = vm.envOr("DEPLOYER_ADDRESS", msg.sender);
+        require(vm.getNonce(deployer) == 19, "runBroadcastFaucet19: need nonce 19");
+        vm.startBroadcast(deployer);
         new Faucet();
         vm.stopBroadcast();
-        console2.log("runBroadcastFaucet19 done; next nonce:", vm.getNonce(msg.sender));
+        console2.log("runBroadcastFaucet19 done; next nonce:", vm.getNonce(deployer));
+    }
+
+    function _broadcastLegacyHead(
+        address deployer,
+        address admin,
+        address operator,
+        address feeRecipient,
+        address legacyWeth,
+        string memory legacyLabel,
+        bytes4 legacyChainId
+    ) internal {
+        new AccessManagerEnumerable(deployer);
+        (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
+            deployAll(deployer, operator, feeRecipient, legacyWeth, legacyLabel, legacyChainId, true);
+        _transferAllOwnership(admin);
     }
 
     /// @notice From `TAIL_ENTRY_NONCE` (default 20): production V2 `deployAll`, Create3 + guard AccessManager, factory, faucets, guard stack.
@@ -111,11 +171,27 @@ contract EvmParityReplay is Deploy {
         bytes4 chainId = bytes4(uint32(vm.envUint("THIS_CHAIN_ID")));
 
         uint256 nt = vm.envOr("TAIL_ENTRY_NONCE", uint256(20));
-        require(vm.getNonce(msg.sender) == nt, "runBroadcastTail: TAIL_ENTRY_NONCE mismatch");
+        address deployer = vm.envOr("DEPLOYER_ADDRESS", msg.sender);
+        require(vm.getNonce(deployer) == nt, "runBroadcastTail: TAIL_ENTRY_NONCE mismatch");
 
-        vm.startBroadcast();
+        vm.startBroadcast(deployer);
+        _broadcastTailCore(deployer, admin, operator, feeRecipient, weth, label, chainId);
+        vm.stopBroadcast();
+
+        console2.log("runBroadcastTail done; deployer nonce:", vm.getNonce(deployer));
+    }
+
+    function _broadcastTailCore(
+        address deployer,
+        address admin,
+        address operator,
+        address feeRecipient,
+        address weth,
+        string memory label,
+        bytes4 chainId
+    ) internal {
         (chainRegistryProxy, tokenRegistryProxy, lockUnlockProxy, mintBurnProxy, bridgeProxy) =
-            deployAll(msg.sender, operator, feeRecipient, weth, label, chainId);
+            deployAll(deployer, operator, feeRecipient, weth, label, chainId, false);
         _transferAllOwnership(admin);
 
         address guardAm = _deployGuardStackAccessManagerAndCreate3();
@@ -127,9 +203,6 @@ contract EvmParityReplay is Deploy {
         DatastoreSetAddress datastore = new DatastoreSetAddress();
         new TokenRateLimit(guardAm);
         new GuardBridge(guardAm, datastore);
-        vm.stopBroadcast();
-
-        console2.log("runBroadcastTail done; deployer nonce:", vm.getNonce(msg.sender));
     }
 
     function _predictCreate2(bytes memory creationCode, bytes32 salt) internal pure returns (address predicted) {

@@ -14,7 +14,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Local Development](./docs/local-development.md) | Setting up local testnets |
 | [Testing Guide](./docs/testing.md) | Unit, integration, and E2E tests |
 | [Deployment Guide](./docs/deployment-guide.md) | Production deployment (Render, Terra Classic, opBNB, BSC) |
-| [MegaETH / BSC parity replay](./docs/deployment-megaeth.md) | 45-tx historical deployer sequence; dry-run vs golden JSON; GL-121 |
+| [MegaETH / BSC parity replay](./docs/deployment-megaeth.md) | GL-121/122: 45-tx parity vs golden JSON; MegaETH one-shot: `scripts/evm/megaeth-parity-quickstart.sh` (see doc) |
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
