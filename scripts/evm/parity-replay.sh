@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # GL-121: BSC / opBNB parity — dry-run vs golden JSON, or segmented broadcast entrypoints.
+# GL-122: For full preflight + orchestrated sequence (including step 18 gate + optional peers),
+#          see scripts/evm/deploy-bsc-parity-orchestrate.sh and docs/deployment-megaeth.md §5.2a.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PKG="$ROOT/packages/contracts-evm"
