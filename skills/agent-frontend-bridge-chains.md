@@ -32,3 +32,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 
 - Frontend env cheat sheet — [`docs/deployment-megaeth.md`](../docs/deployment-megaeth.md) § **Frontend**.
 - Deploy / parity tooling — [`agent-evm-bsc-parity-replay.md`](./agent-evm-bsc-parity-replay.md).
+
+## See also
+
+- Shell spacing / sticky header overlap on phones — [`agent-frontend-mobile-layout.md`](./agent-frontend-mobile-layout.md) (**INV-MOB1**, [GL-126](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/126)).
