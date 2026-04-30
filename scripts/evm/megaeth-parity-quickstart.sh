@@ -9,12 +9,10 @@
 #
 # Preflight: `bsc-parity-preflight.sh` defaults `MIN_FULL_DEPLOY_BALANCE_WEI` to 2e18 wei when unset;
 # this script **exports** `MIN_FULL_DEPLOY_BALANCE_WEI=15000000000000000` (0.015 native) for MegaETH unless you override.
-# MegaETH (measured 2026-04 on anvil --fork-url mainnet.megaeth.com/rpc, deployer nonce reset to 0):
-#   - `forge script … runBroadcastHead --broadcast` reported ~3.5e-5 ETH simulated head spend.
-#   - `RPC_URL=… ./scripts/evm/parity-sum-broadcast-gas-limits.sh …/runBroadcastHead-latest.json` gave
-#     sum(gas limits)×gas-price ≈ 1.75e13 wei for the 19-tx head bundle (limits are loose upper bounds).
-# Full `runBroadcastFull` adds Nick + faucet + a much heavier tail — default floor below is ~850× that head-only
-# crude bound so small wallets still pass preflight; tighten with MIN_FULL after a full `run-latest.json` sum.
+# MegaETH (measured 2026-04 on local anvil, chain id 4326, deployer nonce reset to 0):
+#   - `runBroadcastFull` emits 45 transactions with summed gas limits of 38,020,544 gas units.
+#   - At MegaETH's then-current `cast gas-price` of 1,000,000 wei, the crude upper bound is
+#     ~3.9e13 wei; the default floor below is deliberately much higher to absorb gas-price drift.
 # Override: export MIN_FULL_DEPLOY_BALANCE_WEI=… before invoking this script.
 #
 # Patched forge (optional): export FORGE=$HOME/.local/bin/forge-parity after install-foundry-parity-fix.sh
@@ -23,7 +21,28 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export FORGE="${FORGE:-forge}"
+if [[ -z "${FORGE:-}" && -x "$HOME/.local/bin/forge-parity" ]]; then
+  export FORGE="$HOME/.local/bin/forge-parity"
+  echo "Using patched Forge for parity replay: $FORGE"
+else
+  export FORGE="${FORGE:-forge}"
+  if [[ "$FORGE" == "forge" ]]; then
+    forge_version="$("$FORGE" --version 2>/dev/null || true)"
+    if [[ "$forge_version" == *"5e88010a83d1b87b8f4d13058e42a2949d3e9dc0"* ]]; then
+      cat >&2 <<'EOF'
+Stock forge at commit 5e88010 is known to fail this parity broadcast after simulation
+with "Failed to decode constructor arguments" on the nonce-10 Bridge parity CREATE.
+
+Install the patched binary first:
+  ./scripts/evm/install-foundry-parity-fix.sh
+
+Then rerun this quickstart, or explicitly override FORGE if you have a fixed forge:
+  FORGE=/path/to/forge ./scripts/evm/megaeth-parity-quickstart.sh ...
+EOF
+      exit 1
+    fi
+  fi
+fi
 
 export RPC_URL="${RPC_URL:-https://mainnet.megaeth.com/rpc}"
 

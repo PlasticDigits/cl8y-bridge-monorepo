@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sum per-tx `transaction.gas` limits from a forge `run-latest.json` (parity replay bundle).
+# Sum per-tx `transaction.gas` limits from a forge `runBroadcastFull-latest.json` (parity replay bundle).
 # Use after `runBroadcastFull` (or fork rehearsal) to size MIN_FULL_DEPLOY_BALANCE_WEI without guessing.
 #
 # Usage (repo root):
-#   ./scripts/evm/parity-sum-broadcast-gas-limits.sh [path/to/run-latest.json]
+#   ./scripts/evm/parity-sum-broadcast-gas-limits.sh [path/to/runBroadcastFull-latest.json]
 #
 # Optional: export RPC_URL=... — multiplies total gas limits by `cast gas-price` for a crude native
 # upper bound (legacy-style; refine with maxFee on EIP-1559 if you need tighter numbers).
@@ -11,11 +11,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-JSON="${1:-$ROOT/packages/contracts-evm/broadcast/EvmParityReplay.s.sol/4326/run-latest.json}"
+JSON="${1:-$ROOT/packages/contracts-evm/broadcast/EvmParityReplay.s.sol/4326/runBroadcastFull-latest.json}"
 
 if [[ ! -f "$JSON" ]]; then
   echo "No file: $JSON" >&2
-  echo "Run a fork rehearsal or real broadcast first, or pass an explicit run-latest.json path." >&2
+  echo "Run a fork rehearsal or real broadcast first, or pass an explicit runBroadcastFull-latest.json path." >&2
   exit 1
 fi
 

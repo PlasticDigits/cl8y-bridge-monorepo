@@ -113,7 +113,7 @@ phase_register_peers() {
     cat <<EOF
 
 CHAIN_REGISTRY_ADDRESS is unset — skipping interactive peer registration.
-Export the ChainRegistry proxy from packages/contracts-evm/broadcast/EvmParityReplay.s.sol/<chainId>/run-latest.json
+Export the ChainRegistry proxy from packages/contracts-evm/broadcast/EvmParityReplay.s.sol/<chainId>/runBroadcastFull-latest.json
 (or script logs), then run:
 
   CHAIN_REGISTRY_ADDRESS=0x... RPC_URL=$RPC_URL \\

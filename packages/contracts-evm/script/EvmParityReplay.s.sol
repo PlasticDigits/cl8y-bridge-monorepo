@@ -19,7 +19,6 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {Deploy} from "./Deploy.s.sol";
 import {AccessManagerEnumerable} from "../src/AccessManagerEnumerable.sol";
 import {Create3Deployer} from "../src/Create3Deployer.sol";
-import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {Faucet} from "../src/Faucet.sol";
 import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
@@ -31,7 +30,6 @@ contract EvmParityReplay is Deploy {
     address internal constant HISTORICAL_DEPLOYER = 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e;
     address internal constant NICK_CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant CANONICAL_CREATE3_DEPLOYER = 0x375401aaAB20b0827CFC7DBE822e352738D390a9;
-    bytes32 internal constant FACTORY_SALT = keccak256("FACTORY_TOKEN_CL8Y_BRIDGED_V1");
 
     /// @notice Dry-run: load `script/bsc-parity-golden.json`, print per-step predictions, require all matches.
     /// @dev Env: `DEPLOYER_ADDRESS` must equal the historical BSC deployer unless `PARITY_RELAX_DEPLOYER_CHECK=true`.
@@ -160,7 +158,7 @@ contract EvmParityReplay is Deploy {
         _transferAllOwnership(admin);
     }
 
-    /// @notice From `TAIL_ENTRY_NONCE` (default 20): production V2 `deployAll`, Create3 + guard AccessManager, factory, faucets, guard stack.
+    /// @notice From `TAIL_ENTRY_NONCE` (default 20): production V2 `deployAll`, Create3 + guard AccessManager, faucets, guard stack.
     /// @dev Env: `GUARD_STACK_ACCESS_MANAGER_ADMIN` (initial AccessManager admin), `DEPLOY_SALT` (default "Deploy v1.4"), standard `Deploy.s.sol` vars.
     function runBroadcastTail() public {
         address admin = vm.envAddress("ADMIN_ADDRESS");
@@ -195,7 +193,6 @@ contract EvmParityReplay is Deploy {
         _transferAllOwnership(admin);
 
         address guardAm = _deployGuardStackAccessManagerAndCreate3();
-        _deployFactoryOnCanonicalCreate3(guardAm);
 
         new Faucet();
         new Faucet();
@@ -228,15 +225,6 @@ contract EvmParityReplay is Deploy {
         guardAmAddr = create3_.predict(saltAm);
         if (guardAmAddr.code.length == 0) {
             create3_.deploy(saltAm, abi.encodePacked(type(AccessManagerEnumerable).creationCode, abi.encode(amAdmin)));
-        }
-    }
-
-    function _deployFactoryOnCanonicalCreate3(address accessManager) internal {
-        Create3Deployer c3 = Create3Deployer(CANONICAL_CREATE3_DEPLOYER);
-        bytes memory initCode = abi.encodePacked(type(FactoryTokenCl8yBridged).creationCode, abi.encode(accessManager));
-        address predicted = c3.predict(FACTORY_SALT);
-        if (predicted.code.length == 0) {
-            c3.deploy(FACTORY_SALT, initCode);
         }
     }
 }
