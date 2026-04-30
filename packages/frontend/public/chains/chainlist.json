@@ -100,7 +100,7 @@
       "name": "MegaETH",
       "chainId": 4326,
       "type": "evm",
-      "icon": "/chains/ethereum-icon.png",
+      "icon": "/chains/mega.png",
       "rpcUrl": "https://mainnet.megaeth.com/rpc",
       "explorerUrl": "https://mega.etherscan.io",
       "tier": "mainnet"
