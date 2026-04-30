@@ -62,5 +62,6 @@ CI: `forge test --match-contract BscParityReplayDryRun`
 
 ## Related skills
 
+- [agent-frontend-bridge-chains.md](./agent-frontend-bridge-chains.md) — GL-124 SPA bridge env, `VITE_MEGAETH_*`, and option B manifest (future)
 - [agent-metamask-blockaid-evm.md](./agent-metamask-blockaid-evm.md) — production proxy addresses (guard stack context)
 - [agent-bridge-recipient-validation.md](./agent-bridge-recipient-validation.md) — unrelated domain; listed for discoverability only

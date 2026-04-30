@@ -1,6 +1,7 @@
 import { http, createConfig } from 'wagmi'
 import { mainnet, bsc, opBNB } from 'wagmi/chains'
 import { walletConnect, coinbaseWallet, mock } from 'wagmi/connectors'
+import { megaeth as megaEthChain } from './megaethMainnet'
 import { WC_PROJECT_ID, DEV_MODE } from '../utils/constants'
 
 // Custom Anvil chains for local development
@@ -77,8 +78,8 @@ const connectors = [
 // to Anvil (the first chain) instead of mainnet. This ensures dev wallet
 // transactions target the local devnet rather than a production chain.
 const chains = DEV_MODE
-  ? ([anvil, anvil1, mainnet, bsc, opBNB] as const)
-  : ([mainnet, bsc, opBNB, anvil, anvil1] as const)
+  ? ([anvil, anvil1, mainnet, bsc, opBNB, megaEthChain] as const)
+  : ([mainnet, bsc, opBNB, megaEthChain, anvil, anvil1] as const)
 
 export const config = createConfig({
   chains,
@@ -88,6 +89,7 @@ export const config = createConfig({
     [mainnet.id]: http(),
     [bsc.id]: http(),
     [opBNB.id]: http(),
+    [megaEthChain.id]: http(megaEthChain.rpcUrls.default.http[0]),
     [anvil.id]: http('http://localhost:8545'),
     [anvil1.id]: http('http://localhost:8546'),
   },

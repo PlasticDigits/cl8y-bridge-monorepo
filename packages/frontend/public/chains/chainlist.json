@@ -96,6 +96,16 @@
       "tier": "mainnet"
     },
     {
+      "id": "megaeth",
+      "name": "MegaETH",
+      "chainId": 4326,
+      "type": "evm",
+      "icon": "/chains/ethereum-icon.png",
+      "rpcUrl": "https://mainnet.megaeth.com/rpc",
+      "explorerUrl": "https://mega.etherscan.io",
+      "tier": "mainnet"
+    },
+    {
       "id": "solana",
       "name": "Solana",
       "chainId": "solana",

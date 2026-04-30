@@ -4,9 +4,23 @@
  * Per-network configuration for all supported bridge chains.
  * Used by multi-chain hash verification to query deposits/withdraws across chains.
  * Display info (name, icon) comes from chainlist.json when available.
+ *
+ * **Invariants (GL-124, option A):**
+ *
+ * - **INV-BRIDGE-UI-1:** EVM chains in `BRIDGE_CHAINS.mainnet` with `bridgeAddress` + `bytes4ChainId`
+ *   appear in `getChainsForTransfer()` and Settings → Registered Chains. MegaETH keys off `VITE_MEGAETH_*`;
+ *   bare `MEGAETH_*` (no `VITE_`) is not exposed by Vite to the bundle—duplicate operators’ values under `VITE_` for frontend builds.
+ * - **INV-BRIDGE-UI-2:** `VITE_EVM_*` remains **legacy single-primary EVM fallback** for BSC/opBNB routes only; MegaETH uses **only**
+ *   `VITE_MEGAETH_BRIDGE_ADDRESS` (no overload onto `VITE_EVM_BRIDGE_ADDRESS`).
+ * - **INV-BRIDGE-FUTURE-1:** Env-driven discovery / manifest (**option B**, issue #124) is not implemented yet; adding chain #6+ will need that or codegen.
  */
 
 import type { BridgeChainConfig, ChainInfo } from '../types/chain'
+import {
+  MEGAETH_MAINNET_CHAIN_ID,
+  MEGAETH_V2_BYTES4,
+  MEGAETH_DEFAULT_RPC_URL,
+} from '../lib/megaethMainnet'
 import { bridgeConfigPdaBase58 } from '../services/solana/solanaBridgeAccounts'
 import { DEFAULT_SOLANA_MAINNET_RPC_URLS } from './solanaMainnetRpcDefaults'
 import { DEFAULT_NETWORK, LOCAL_TERRA_LCD_URL, LOCAL_TERRA_RPC_URL } from './constants'
@@ -165,6 +179,15 @@ export const BRIDGE_CHAINS: Record<NetworkTier, Record<string, BridgeChainConfig
       programId: VITE_SOLANA_PROGRAM_ID,
       bytes4ChainId: '0x00000005',
     },
+    megaeth: {
+      chainId: MEGAETH_MAINNET_CHAIN_ID,
+      type: 'evm',
+      name: 'MegaETH',
+      rpcUrl:
+        import.meta.env.VITE_MEGAETH_RPC_URL?.trim() || MEGAETH_DEFAULT_RPC_URL,
+      bridgeAddress: import.meta.env.VITE_MEGAETH_BRIDGE_ADDRESS?.trim() || '',
+      bytes4ChainId: MEGAETH_V2_BYTES4,
+    },
   },
 }
 
@@ -180,6 +203,11 @@ const CHAIN_DISPLAY: Record<string, { icon: string; explorerUrl: string; nativeC
   solana: { icon: '◎', explorerUrl: 'https://explorer.solana.com', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
   'solana-devnet': { icon: '◎', explorerUrl: 'https://explorer.solana.com/?cluster=devnet', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
   'solana-localnet': { icon: '◎', explorerUrl: '', nativeCurrency: { name: 'SOL', symbol: 'SOL', decimals: 9 } },
+  megaeth: {
+    icon: '⚡',
+    explorerUrl: 'https://mega.etherscan.io',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  },
 }
 
 /**

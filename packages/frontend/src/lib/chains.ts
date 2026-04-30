@@ -1,4 +1,9 @@
 import type { ChainInfo } from '../types/chain'
+import {
+  MEGAETH_EXPLORER_URL,
+  MEGAETH_MAINNET_CHAIN_ID,
+  MEGAETH_DEFAULT_RPC_URL,
+} from './megaethMainnet'
 
 export type { ChainInfo }
 
@@ -42,6 +47,20 @@ export const supportedChains: ChainInfo[] = [
     nativeCurrency: {
       name: 'BNB',
       symbol: 'BNB',
+      decimals: 18,
+    },
+  },
+  {
+    id: 'megaeth',
+    name: 'MegaETH',
+    chainId: MEGAETH_MAINNET_CHAIN_ID,
+    type: 'evm',
+    icon: '⚡',
+    rpcUrl: MEGAETH_DEFAULT_RPC_URL,
+    explorerUrl: MEGAETH_EXPLORER_URL,
+    nativeCurrency: {
+      name: 'Ether',
+      symbol: 'ETH',
       decimals: 18,
     },
   },
