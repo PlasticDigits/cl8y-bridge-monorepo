@@ -1,4 +1,4 @@
-# Agent skill: Frontend bridge chains and env exposure (GL-124)
+# Agent skill: Frontend bridge chains and env exposure (GL-124, GL-125)
 
 Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debugging **Registered Chains** or **`getChainsForTransfer`**, or explaining why **operator-only `MEGAETH_*`** (no `VITE_`) never reaches **`import.meta.env`**.
 
@@ -11,6 +11,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 | Explorer merge for Settings cards | [`packages/frontend/src/lib/chains.ts`](../packages/frontend/src/lib/chains.ts) [`ChainsPanel`](../packages/frontend/src/components/settings/ChainsPanel.tsx) |
 | Display metadata overlay | [`packages/frontend/public/chains/chainlist.json`](../packages/frontend/public/chains/chainlist.json) |
 | Wallet chain list | [`packages/frontend/src/lib/wagmi.ts`](../packages/frontend/src/lib/wagmi.ts) |
+| Transfer route EVM preflight + client cache | [`useTransferRouteValidation`](../packages/frontend/src/hooks/useTransferRouteValidation.ts), [`evmTransferTokenPresence`](../packages/frontend/src/services/evm/evmTransferTokenPresence.ts), [`evmClient`](../packages/frontend/src/services/evmClient.ts) |
 
 ## Invariants
 
@@ -18,6 +19,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 - **INV-FE-MEGAETH-1 / INV-FE-MEGAETH-2** — See **`megaethMainnet.ts`** (numeric chain id `4326`, bytes4 **`0x000010e6`** aligned with ChainRegistry peers).
 - **INV-BRIDGE-UI-1 / INV-BRIDGE-UI-2** — **`getChainsForTransfer`** drops chains missing **`bridgeAddress`** or (**EVM** without **`bytes4ChainId`**). Documented in **`bridgeChains.ts`** header.
 - **`VITE_EVM_*`** is **legacy single-primary EVM fallback** for **BSC/opBNB** only; MegaETH bridge address reads **`VITE_MEGAETH_BRIDGE_ADDRESS`** only (**no** `VITE_EVM_BRIDGE_ADDRESS` fallback).
+- **INV-FE-TRANSFER-EVM-1:** Transfer preflight on EVM uses **`TokenRegistry.isTokenRegistered`** (same signal as Settings → Tokens → Verify) **before** `eth_getCode`; empty bytecode vs RPC failure yield different user-visible errors. **`getEvmClient`** cache keys include **`chainId`** and **`bridgeAddress`**, not RPC URL alone — see **[GL-125](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/125)**.
 
 ## Implemented vs future work (same issue scope)
 

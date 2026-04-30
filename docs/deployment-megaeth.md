@@ -441,12 +441,15 @@ If the canceler watches several EVM chains, also add the same `EVM_CHAIN_N_NAME=
 
 **Status — [GL-124](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/124) option A (minimal MegaETH):** `megaeth` is in `BRIDGE_CHAINS.mainnet` with chain id **4326** and V2 bytes4 **`0x000010e6`**, reads **`VITE_MEGAETH_RPC_URL`** / **`VITE_MEGAETH_BRIDGE_ADDRESS`**, appears in **`public/chains/chainlist.json`**, **`supportedChains`** / Settings merge, and wagmi (wallet network switch). **Option B** (comma-separated `VITE_BRIDGE_CHAINS` + per-key manifest) is **not** implemented; it remains future work on the **same issue** — see [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
 
+**Transfer vs Settings (see [GL-125](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/125)):** The Transfer screen’s EVM route check now aligns with Settings token verification by consulting **`isTokenRegistered`** on the chain bridge before **`eth_getCode`**, and the viem client cache keys chain identity so shared RPC URLs cannot mix chain metadata. Third-party agents: **`INV-FE-TRANSFER-EVM-1`** in [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
+
 **Invariants (do not drift without registry verification):**
 
 - **INV-FE-MEGAETH-1:** Native EVM id **4326** matches production `eth_chainId`.
 - **INV-FE-MEGAETH-2:** Bytes4 **`0x000010e6`** matches `bytes4(uint32(4326))` and live peer registration (BSC / Terra / Solana).
 - **INV-FE-VITE:** Only **`VITE_*`** is exposed to the browser bundle; duplicate operator **`MEGAETH_*`** into **`VITE_MEGAETH_*`** for frontend builds.
 - **`VITE_EVM_*`** overload is **legacy single-primary EVM** for BSC/opBNB; MegaETH bridge address does **not** fall back to **`VITE_EVM_BRIDGE_ADDRESS`**.
+- **INV-FE-TRANSFER-EVM-1:** EVM Transfer preflight treats **`TokenRegistry.isTokenRegistered`** as authoritative when Settings would pass; **`getEvmClient`** cache includes **`chainId|bridgeAddress|…`** (GL-125).
 
 Populate at least RPC + bridge for Registered Chains / transfer lists to include MegaETH (see also `packages/frontend/.env.example`):
 

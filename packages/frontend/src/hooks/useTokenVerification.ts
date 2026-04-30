@@ -2,6 +2,8 @@
  * useTokenVerification - Cross-chain token registration verification.
  *
  * For each token, resolves the per-chain address then checks every chain pair:
+ * Transfer route validation on EVM reuses the same registration signal (`isTokenRegistered`) via
+ * `checkEvmTokenPresentForTransfer` — see GL-125 / INV-FE-TRANSFER-EVM-1 in `skills/agent-frontend-bridge-chains.md`.
  *   - Token registered on EVM chains
  *   - Outgoing dest mapping configured (token → other chain)
  *   - Incoming src decimals configured (other chain → token)

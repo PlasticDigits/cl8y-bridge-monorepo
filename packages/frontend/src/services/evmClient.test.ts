@@ -20,7 +20,7 @@ describe('evmClient', () => {
     expect(client).toBeDefined()
   })
 
-  it('should cache clients by RPC URL', () => {
+  it('should reuse client when chain id, bridge, and RPC URLs match', () => {
     const chain: BridgeChainConfig = {
       chainId: 31337,
       type: 'evm',
@@ -32,6 +32,28 @@ describe('evmClient', () => {
     const client1 = getEvmClient(chain)
     const client2 = getEvmClient(chain)
     expect(client1).toBe(client2)
+  })
+
+  it('should create separate clients when chain id differs but RPC URL matches', () => {
+    const chainA: BridgeChainConfig = {
+      chainId: 4326,
+      type: 'evm',
+      name: 'MegaETH',
+      rpcUrl: 'http://localhost:8545',
+      bridgeAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    }
+
+    const chainB: BridgeChainConfig = {
+      chainId: 56,
+      type: 'evm',
+      name: 'BSC',
+      rpcUrl: 'http://localhost:8545',
+      bridgeAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }
+
+    const clientA = getEvmClient(chainA)
+    const clientB = getEvmClient(chainB)
+    expect(clientA).not.toBe(clientB)
   })
 
   it('should create separate clients for different RPC URLs', () => {

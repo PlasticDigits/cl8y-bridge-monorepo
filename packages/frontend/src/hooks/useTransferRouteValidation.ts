@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { PublicKey } from '@solana/web3.js'
-import { getAddress, type Address } from 'viem'
 import { fetchLcd, queryContract } from '../services/lcdClient'
-import { getEvmClient } from '../services/evmClient'
+import { checkEvmTokenPresentForTransfer } from '../services/evm/evmTransferTokenPresence'
 import type { BridgeChainConfig } from '../types/chain'
 import { getSolanaProgramIdString } from '../services/solana/solanaBridgeAccounts'
 import {
@@ -63,16 +62,6 @@ function getTerraLcdUrls(chainConfig?: BridgeChainConfig): string[] {
 
   const terra = NETWORKS[DEFAULT_NETWORK].terra
   return terra.lcdFallbacks?.length ? [...terra.lcdFallbacks] : [terra.lcd]
-}
-
-async function evmContractExists(chainConfig: BridgeChainConfig, address: string): Promise<boolean> {
-  try {
-    const client = getEvmClient(chainConfig as BridgeChainConfig & { chainId: number })
-    const code = await client.getCode({ address: getAddress(address) as Address })
-    return !!code && code !== '0x'
-  } catch {
-    return false
-  }
 }
 
 async function terraTokenExists(chainConfig: BridgeChainConfig, tokenId: string): Promise<boolean> {
@@ -208,8 +197,16 @@ export function useTransferRouteValidation({
           return invalid(`The source token for ${tokenName} could not be resolved on ${sourceChainConfig.name}.`)
         }
 
-        const sourceExists = await evmContractExists(sourceChainConfig, sourceTokenAddress)
-        if (!sourceExists) {
+        const src = await checkEvmTokenPresentForTransfer(
+          sourceChainConfig as BridgeChainConfig & { chainId: number },
+          sourceTokenAddress,
+        )
+        if (!src.ok) {
+          if (src.failure.kind === 'rpc_error') {
+            return invalid(
+              `Could not verify the source token contract on ${sourceChainConfig.name} (RPC error: ${src.failure.detail}).`,
+            )
+          }
           return invalid(`The source token contract for ${tokenName} does not exist on ${sourceChainConfig.name}.`)
         }
       }
@@ -244,8 +241,16 @@ export function useTransferRouteValidation({
           return invalid(`The destination token for ${tokenName} could not be resolved on ${destChainConfig.name}.`)
         }
 
-        const destExists = await evmContractExists(destChainConfig, destTokenAddress)
-        if (!destExists) {
+        const dest = await checkEvmTokenPresentForTransfer(
+          destChainConfig as BridgeChainConfig & { chainId: number },
+          destTokenAddress,
+        )
+        if (!dest.ok) {
+          if (dest.failure.kind === 'rpc_error') {
+            return invalid(
+              `Could not verify the destination token contract on ${destChainConfig.name} (RPC error: ${dest.failure.detail}).`,
+            )
+          }
           return invalid(`The destination token contract for ${tokenName} does not exist on ${destChainConfig.name}.`)
         }
       } else if (destChainConfig.type === 'solana') {

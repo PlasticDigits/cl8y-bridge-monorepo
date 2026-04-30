@@ -5,6 +5,9 @@
  * Reuses clients per chain to avoid creating multiple instances.
  * Supports RPC fallbacks via viem's fallback() transport when
  * multiple URLs are configured.
+ *
+ * **Cache key:** `chainId|bridgeAddress|rpcUrl|…` — avoids reusing one viem client across
+ * different logical chains that share the same HTTP endpoint (see GL-125).
  */
 
 import { createPublicClient, http, fallback, type PublicClient } from 'viem'
@@ -23,7 +26,8 @@ export function getEvmClient(chain: BridgeChainConfig): PublicClient {
   }
 
   const urls = [chain.rpcUrl, ...(chain.rpcFallbacks ?? [])]
-  const cacheKey = urls.join('|')
+  // Include chain identity so shared RPC URLs cannot reuse a PublicClient built for another chain id/name.
+  const cacheKey = `${chain.chainId}|${chain.bridgeAddress}|${urls.join('|')}`
   const cached = clientCache.get(cacheKey)
 
   if (cached) {
