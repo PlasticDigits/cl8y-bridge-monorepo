@@ -2,7 +2,7 @@
 # MegaETH mainnet — one-shot GL-122: canonical parity env + deploy-bsc-parity-orchestrate.sh
 # (preflight → dry-check → runBroadcastFull). From repo root.
 #
-# With no arguments: passes --rpc-url (default MegaETH public RPC), -vvv, -i 1, --sender (historical deployer).
+# With no arguments: passes --rpc-url (default MegaETH public RPC), -vvv, -i, --sender (historical deployer).
 # With arguments: forwards only those to deploy-bsc-parity-orchestrate.sh (you must pass --rpc-url and signing).
 #
 # Override RPC: export RPC_URL=https://... before running, or pass --rpc-url in args mode.
@@ -17,6 +17,10 @@
 #
 # Patched forge (optional): export FORGE=$HOME/.local/bin/forge-parity after install-foundry-parity-fix.sh
 # if stock forge fails on parity broadcast metadata (see docs/deployment-megaeth.md §5.2a).
+#
+# Factory authority: runBroadcastFull rewrites the historical Nick CREATE2 factory authority to the
+# guard-stack AccessManager by default. Set PARITY_PRESERVE_HISTORICAL_FACTORY_AUTHORITY=true only
+# when you need byte-identical historical factory initcode.
 #
 set -euo pipefail
 
@@ -69,5 +73,5 @@ ORCH="$ROOT/scripts/evm/deploy-bsc-parity-orchestrate.sh"
 if [[ "$#" -gt 0 ]]; then
   exec "$ORCH" "$@"
 else
-  exec "$ORCH" --rpc-url "$RPC_URL" -vvv -i 1 --sender "$DEPLOYER_ADDRESS"
+  exec "$ORCH" --rpc-url "$RPC_URL" -vvv -i --sender "$DEPLOYER_ADDRESS"
 fi

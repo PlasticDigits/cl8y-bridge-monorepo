@@ -14,7 +14,7 @@
 #   export THIS_CHAIN_ID=...
 #   FEE_RECIPIENT_ADDRESS optional — defaults to OPERATOR_ADDRESS when unset
 #   export GUARD_STACK_ACCESS_MANAGER_ADMIN=...
-#   ./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i 1 --sender 0xYourDeployer
+#   ./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i --sender 0xYourDeployer
 #
 # Script arguments are forwarded to each `parity-replay.sh broadcast-*` forge invocation (typically --rpc-url, -vvv, signing).
 # `dry-check` does not receive them — it is local (golden JSON + `vm.computeCreateAddress` only).
@@ -29,6 +29,10 @@
 #   USE_SEGMENTED_BROADCAST=1 — legacy four forge segments + manual Nick gate (resume / debugging only).
 #   MIN_FULL_DEPLOY_BALANCE_WEI — forwarded to bsc-parity-preflight.sh (see docs/deployment-megaeth.md §5.0
 #                                and scripts/evm/parity-sum-broadcast-gas-limits.sh to estimate from a fork run).
+#   PARITY_FACTORY_AUTHORITY_ADDRESS — optional factory authority for Nick step 18. Defaults in
+#                                      EvmParityReplay to the guard-stack AccessManager prediction.
+#   PARITY_PRESERVE_HISTORICAL_FACTORY_AUTHORITY=true — opt out and use the byte-identical BSC
+#                                                       factory authority in Nick step 18.
 #
 set -euo pipefail
 

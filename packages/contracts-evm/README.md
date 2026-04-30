@@ -48,7 +48,7 @@ For lcov, add `--report lcov`
 Key variables are set in the script, and should be updated correctly for the network.
 
 Single-command deploy (DeployPart1):
-`forge script script/DeployPart1.s.sol:DeployPart1 --broadcast --verify -vvv --rpc-url $RPC_URL --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY -i 1 --sender $DEPLOYER_ADDRESS`
+`forge script script/DeployPart1.s.sol:DeployPart1 --broadcast --verify -vvv --rpc-url $RPC_URL --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY -i --sender $DEPLOYER_ADDRESS`
 
 Notes:
 

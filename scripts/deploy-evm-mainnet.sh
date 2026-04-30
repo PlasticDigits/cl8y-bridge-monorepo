@@ -200,7 +200,7 @@ deploy_contracts() {
     export OPERATOR_ADDRESS
     export FEE_RECIPIENT_ADDRESS
     
-    # Deploy using the deploy script (interactive key entry via -i 1)
+    # Deploy using the deploy script (interactive key entry via -i)
     log_info "Running deployment script..."
     log_info "WETH_ADDRESS=$WETH_ADDRESS"
     log_info "CHAIN_IDENTIFIER=$CHAIN_IDENTIFIER"
@@ -208,7 +208,7 @@ deploy_contracts() {
     forge script script/Deploy.s.sol:Deploy \
         --rpc-url "$RPC_URL" \
         --sender "$DEPLOYER_ADDRESS" \
-        -i 1 \
+        -i \
         --broadcast \
         --verify \
         --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \

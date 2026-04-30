@@ -177,7 +177,7 @@ One shell entrypoint runs:
 3. **`runBroadcastFull`** (`parity-replay.sh broadcast-full`) — one forge session: **`runBroadcastHead`** logic, Nick step **18** via `script/bsc-parity-step18-input.bin`, **`runBroadcastFaucet19`**, **`runBroadcastTail`** (same semantics as §5.3). For legacy four-segment + manual Nick, set **`USE_SEGMENTED_BROADCAST=1`** on **`deploy-bsc-parity-orchestrate.sh`**.
 4. Optional **ChainRegistry peer registration** on **this** new chain when `CHAIN_REGISTRY_ADDRESS` is set; otherwise operators run **`scripts/evm/register-parity-peers-on-registry.sh`** after extracting the proxy from `broadcast/EvmParityReplay.s.sol/<chainId>/runBroadcastFull-latest.json`.
 
-Minimal MegaETH invocation (same env as **`megaeth-parity-quickstart.sh`**): use that script, or export variables yourself and run **`deploy-bsc-parity-orchestrate.sh`** with **`--rpc-url`**, **`-vvv`**, and forge signing (**`-i 1 --sender $DEPLOYER_ADDRESS`** for interactive key). Example manual equivalent:
+Minimal MegaETH invocation (same env as **`megaeth-parity-quickstart.sh`**): use that script, or export variables yourself and run **`deploy-bsc-parity-orchestrate.sh`** with **`--rpc-url`**, **`-vvv`**, and forge signing (**`-i --sender $DEPLOYER_ADDRESS`** for interactive key). Example manual equivalent:
 
 ```bash
 export RPC_URL=https://mainnet.megaeth.com/rpc
@@ -188,7 +188,7 @@ export WETH_ADDRESS=0x4200000000000000000000000000000000000006
 export CHAIN_IDENTIFIER="evm_4326"
 export THIS_CHAIN_ID=4326
 export GUARD_STACK_ACCESS_MANAGER_ADMIN=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F39c
-./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i 1 --sender 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
+./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i --sender 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
 ```
 
 (`DEPLOYER` / `ADMIN` / `OPERATOR` / `CANCELER` / `FEE_RECIPIENT` default inside the orchestrator — see script header.)
@@ -235,7 +235,7 @@ Or from repo root:
 
 ## 5.3 Segmented broadcast (same code paths as `Deploy.s.sol` where applicable)
 
-**Default path:** `runBroadcastFull` (and the GL-122 orchestrator without `USE_SEGMENTED_BROADCAST`) runs head, Nick step **18**, faucet, and tail in **one** `vm.startBroadcast` session; Nick calldata is read from **`script/bsc-parity-step18-input.bin`** (same bytes as BSC [`0xb55a2348…`](https://bscscan.com/tx/0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb)).
+**Default path:** `runBroadcastFull` (and the GL-122 orchestrator without `USE_SEGMENTED_BROADCAST`) runs head, Nick step **18**, faucet, and tail in **one** `vm.startBroadcast` session. Nick calldata is read from **`script/bsc-parity-step18-input.bin`** (BSC reference [`0xb55a2348…`](https://bscscan.com/tx/0xb55a2348487d743bad8d1e4484e31ebebab2c1ee2b75dd17fb1e3b2d20036dfb)), then the factory constructor authority is rewritten by default from the historical BSC authority `0xeAaF…8aF` to the guard-stack `AccessManagerEnumerable` predicted from `DEPLOY_SALT` (default `0xa958…9676`). This keeps the single Nick outer transaction but avoids deploying future chains with a factory controlled by a missing historical authority. Set `PARITY_PRESERVE_HISTORICAL_FACTORY_AUTHORITY=true` to replay the byte-identical historical factory, or set `PARITY_FACTORY_AUTHORITY_ADDRESS=0x…` to choose another authority. The script logs the predicted `FactoryTokenCl8yBridged` address; carry that into `FACTORY_ADDRESS` for the manager follow-up if it differs from the current MegaETH address.
 
 **Segmented / resume:** use `broadcast-head` → manual Nick `cast send` (or tooling) → `broadcast-faucet19` → `broadcast-tail`, or set **`USE_SEGMENTED_BROADCAST=1`** on **`deploy-bsc-parity-orchestrate.sh`**.
 
@@ -251,7 +251,7 @@ Or from repo root:
 
 **Env (tail):** same role vars as `Deploy.s.sol` (`WETH_ADDRESS`, `CHAIN_IDENTIFIER`, `THIS_CHAIN_ID`), plus `GUARD_STACK_ACCESS_MANAGER_ADMIN`, `DEPLOY_SALT` (default `Deploy v1.4` string, same as `AccessManagerEnumerable.s.sol`).
 
-Example (MegaETH mainnet, **tail only** — deployer nonce must be **20** unless you set `TAIL_ENTRY_NONCE`; same role and chain env as §5.2a). Run from **`packages/contracts-evm`**; `-i 1` prompts for the deployer key (same pattern as [deployment-guide.md §4.2](./deployment-guide.md#42-deploy-to-bsc-mainnet-chain-id-56)):
+Example (MegaETH mainnet, **tail only** — deployer nonce must be **20** unless you set `TAIL_ENTRY_NONCE`; same role and chain env as §5.2a). Run from **`packages/contracts-evm`**; `-i` prompts for the deployer key (same pattern as [deployment-guide.md §4.2](./deployment-guide.md#42-deploy-to-bsc-mainnet-chain-id-56)):
 
 ```bash
 cd packages/contracts-evm
@@ -271,7 +271,7 @@ forge script script/EvmParityReplay.s.sol:EvmParityReplay \
   --rpc-url "$RPC_URL" \
   --broadcast \
   -vvv \
-  -i 1 \
+  -i \
   --sender "$DEPLOYER_ADDRESS"
 ```
 
@@ -291,7 +291,7 @@ export GUARD_STACK_ACCESS_MANAGER_ADMIN=0xCd4Eb82CFC16d5785b4f7E3bFC255E735e79F3
 ./scripts/evm/parity-replay.sh broadcast-tail \
   --rpc-url "$RPC_URL" \
   -vvv \
-  -i 1 \
+  -i \
   --sender "$DEPLOYER_ADDRESS"
 ```
 
@@ -316,8 +316,8 @@ Defaults are MegaETH production-parity values:
 | `MINT_BURN_ADDRESS` | `0x0A1a4bd354983DBc7f487237CD1B408CD0003EBC` | MegaETH `MintBurn` proxy. |
 | `BRIDGE_ADDRESS` | `0xb2A22c74dA8E3642e0EffC107d3Ac362ce885369` | MegaETH `Bridge` proxy. |
 | `FACTORY_ADDRESS` | `0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F` | Canonical factory deployed by the Nick CREATE2 step. |
-| `FACTORY_AUTHORITY_ADDRESS` | `0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF` | AccessManager that authorizes `createToken` and token mint/burn selectors. |
-| `GUARD_ACCESS_MANAGER_ADDRESS` | `0xa958d75c61227606df21e3261ba80dc399d19676` | Guard-stack `AccessManagerEnumerable`. |
+| `FACTORY_AUTHORITY_ADDRESS` | `0xa958d75c61227606df21e3261ba80dc399d19676` | AccessManager that authorizes `createToken` and token mint/burn selectors after the factory authority is migrated from the historical BSC authority address. |
+| `GUARD_ACCESS_MANAGER_ADDRESS` | `0xa958d75c61227606df21e3261ba80dc399d19676` | Guard-stack `AccessManagerEnumerable`; also the intended MegaETH factory authority. |
 | `TOKEN_RATE_LIMIT_ADDRESS` | `0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c` | `TokenRateLimit` guard module. |
 | `GUARD_BRIDGE_ADDRESS` | `0x12FEDD29E71F66157E985AA1aAAE434253E39A22` | `GuardBridge` module router. |
 
@@ -340,12 +340,24 @@ It also checks that the factory authority has code and that `MANAGER_ADDRESS` ca
 Expected outputs to save:
 
 ```bash
-export MEGAETH_TOKEN_A=0x...
-export MEGAETH_TOKEN_B=0x...
-export MEGAETH_TOKEN_C=0x...
+export MEGAETH_TOKEN_A=0x7deF34032CC5D06bA84A8889bdCA7ee153127B23
+export MEGAETH_TOKEN_B=0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1
+export MEGAETH_TOKEN_C=0x840b1515f586c2ea31d55C91B355AFf36eA7af54
 ```
 
-Follow-up token mappings still need destination-token data from the other networks. After BSC / Terra / Solana peers and token addresses are known, set `TokenRegistry.setTokenDestinationWithDecimals` and `setIncomingTokenMapping` for each production route using the same pattern as `deployment-guide.md` §6.1.
+Follow-up token mappings still need destination-token data from the other networks. After BSC / Terra / Solana peers and token addresses are known, set the EVM `TokenRegistry`, Terra Classic bridge, and Solana bridge mappings with:
+
+```bash
+./scripts/megaeth/register-megaeth-token-mappings.sh
+```
+
+The script maps MegaETH token A/B to BSC, opBNB, Terra Classic, and Solana token A/B, and maps MegaETH token C as the `tdec` counterpart. By default it:
+
+- sends EVM `cast` transactions for MegaETH / BSC / opBNB TokenRegistry metadata;
+- sends Terra Classic `terrad tx wasm execute` transactions with `--keyring-backend file`;
+- decrypts `~/.config/solana/id-deployer.json.gpg`, runs the Solana chain/token registration scripts, then shreds the plaintext keypair.
+
+Use `INCLUDE_EVM=0`, `INCLUDE_TERRA=0`, or `INCLUDE_SOLANA=0` to skip a phase.
 
 ---
 
@@ -436,9 +448,9 @@ VITE_MEGAETH_BRIDGE_ADDRESS=0xb2A22c74dA8E3642e0EffC107d3Ac362ce885369
 VITE_MEGAETH_TOKEN_REGISTRY_ADDRESS=0x3d8820EC93748fd4df8eee6B763834a23938B207
 VITE_MEGAETH_LOCK_UNLOCK_ADDRESS=0xD7b3Bf05987052009c350874E810Df98dA95D258
 VITE_MEGAETH_MINT_BURN_ADDRESS=0x0A1a4bd354983DBc7f487237CD1B408CD0003EBC
-VITE_MEGAETH_TOKEN_A=$MEGAETH_TOKEN_A
-VITE_MEGAETH_TOKEN_B=$MEGAETH_TOKEN_B
-VITE_MEGAETH_TOKEN_C=$MEGAETH_TOKEN_C
+VITE_MEGAETH_TOKEN_A=0x7deF34032CC5D06bA84A8889bdCA7ee153127B23
+VITE_MEGAETH_TOKEN_B=0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1
+VITE_MEGAETH_TOKEN_C=0x840b1515f586c2ea31d55C91B355AFf36eA7af54
 ```
 
 For the current single-EVM frontend fallback, set `VITE_EVM_BRIDGE_ADDRESS`, `VITE_EVM_RPC_URL`, `VITE_BRIDGE_TOKEN_ADDRESS`, and `VITE_LOCK_UNLOCK_ADDRESS` to the MegaETH values only if MegaETH is the selected primary EVM route.

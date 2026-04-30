@@ -26,7 +26,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 
 ## Live Deployments
 
-**Deployment in progress — cross-chain registration and token mappings remaining.**
+**Deployment in progress — MegaETH contracts and cross-chain registration complete; token mappings remaining.**
 
 ### Supported Chains
 
@@ -34,6 +34,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 |-------|------|-----------------|---------------|----------|--------|
 | BNB Smart Chain (BSC) | EVM | 56 | `0x00000038` | [bscscan.com](https://bscscan.com) | Contracts + tokens deployed |
 | opBNB | EVM (L2) | 204 | `0x000000cc` | [opbnbscan.com](https://opbnbscan.com) | Contracts + tokens deployed |
+| MegaETH | EVM | 4326 | `0x000010e6` | [mega.etherscan.io](https://mega.etherscan.io) | Contracts + tokens deployed |
 | Terra Classic | Cosmos / CosmWasm | `columbus-5` | `0x00000001` | [finder.terra.money](https://finder.terra.money/classic) | Bridge + tokens deployed |
 | Solana | SVM | `mainnet-beta` | `0x00000005` | [solscan.io](https://solscan.io) | Bridge program ([program](https://solscan.io/account/4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt)), BridgeConfig PDA ([account](https://solscan.io/account/HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD)) |
 
@@ -79,6 +80,35 @@ Proxy addresses are identical on BSC and opBNB (same deployer, same nonce order)
 | Token A V2 | [`0xF073d5685594F465a66EA54516f0D2f76b6cc6F3`](https://opbnbscan.com/address/0xF073d5685594F465a66EA54516f0D2f76b6cc6F3) | `tokena-cb` | 18 |
 | Token B V2 | [`0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e`](https://opbnbscan.com/address/0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e) | `tokenb-cb` | 18 |
 | Token Dec V2 | [`0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd`](https://opbnbscan.com/address/0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd) | `tdec-cb` | 12 |
+
+### MegaETH Mainnet
+
+MegaETH was deployed with the BSC parity sequence (historical deployer nonces 0-44), then post-deploy manager wiring registered peers, guard modules, canceler, and test tokens.
+
+| Contract | Proxy | Implementation | Role |
+|----------|-------|----------------|------|
+| ChainRegistry | [`0x2e5D36C46680A38e7Ae156fc9d109084C58c688e`](https://mega.etherscan.io/address/0x2e5D36C46680A38e7Ae156fc9d109084C58c688e) | `0x6b1Aa0653D99D5Dec84db4A0283eFB41be826993` | Chain registration |
+| TokenRegistry | [`0x3d8820EC93748fd4df8eee6B763834a23938B207`](https://mega.etherscan.io/address/0x3d8820EC93748fd4df8eee6B763834a23938B207) | `0x734d6D554A3f7762D0DbC5538cBa8Ae9e01338f7` | Token registration & decimal mappings |
+| LockUnlock | [`0xD7b3Bf05987052009c350874E810Df98dA95D258`](https://mega.etherscan.io/address/0xD7b3Bf05987052009c350874E810Df98dA95D258) | `0xb43C56D9920Ea8fF1f7eA4B86261f6d59Df04f66` | Lock/unlock handler for ERC20 |
+| MintBurn | [`0x0A1a4bd354983DBc7f487237CD1B408CD0003EBC`](https://mega.etherscan.io/address/0x0A1a4bd354983DBc7f487237CD1B408CD0003EBC) | `0x54D67c0Ec4cFe1d9eb945B35D1eBcc25c6abd2C9` | Mint/burn handler for bridged tokens |
+| Bridge | [`0xb2A22c74dA8E3642e0EffC107d3Ac362ce885369`](https://mega.etherscan.io/address/0xb2A22c74dA8E3642e0EffC107d3Ac362ce885369) | `0x102a87e067aa4c6cc20D06207FB64E4A1A6CDbe6` | Core bridge state machine |
+
+| Contract | Address | Role |
+|----------|---------|------|
+| AccessManagerEnumerable | [`0xa958d75c61227606df21e3261ba80dc399d19676`](https://mega.etherscan.io/address/0xa958d75c61227606df21e3261ba80dc399d19676) | Role-based access control for token factories and guard stack |
+| Create3Deployer | [`0x375401aaAB20b0827CFC7DBE822e352738D390a9`](https://mega.etherscan.io/address/0x375401aaAB20b0827CFC7DBE822e352738D390a9) | Deterministic CREATE3 deployer |
+| FactoryTokenCl8yBridged | [`0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F`](https://mega.etherscan.io/address/0xD9731AcFebD5B9C9b62943D1fE97EeFAFb0F150F) | Bridged token factory (`authority` migrated to `0xa958...9676`) |
+| DatastoreSetAddress | [`0xeAFE298387F800101f1B9263208A0bfdc934A63e`](https://mega.etherscan.io/address/0xeAFE298387F800101f1B9263208A0bfdc934A63e) | Module allowlists for `GuardBridge` |
+| TokenRateLimit | [`0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c`](https://mega.etherscan.io/address/0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c) | 24h deposit/withdraw caps |
+| GuardBridge | [`0x12FEDD29E71F66157E985AA1aAAE434253E39A22`](https://mega.etherscan.io/address/0x12FEDD29E71F66157E985AA1aAAE434253E39A22) | Guard orchestration |
+
+**MegaETH Test Tokens:**
+
+| Token | Address | Symbol | Decimals |
+|-------|---------|--------|----------|
+| Token A V2 | [`0x7deF34032CC5D06bA84A8889bdCA7ee153127B23`](https://mega.etherscan.io/address/0x7deF34032CC5D06bA84A8889bdCA7ee153127B23) | `tokena-cb` | 18 |
+| Token B V2 | [`0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1`](https://mega.etherscan.io/address/0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1) | `tokenb-cb` | 18 |
+| Token C V2 | [`0x840b1515f586c2ea31d55C91B355AFf36eA7af54`](https://mega.etherscan.io/address/0x840b1515f586c2ea31d55C91B355AFf36eA7af54) | `tokenc-cb` | 18 |
 
 **Configuration:**
 

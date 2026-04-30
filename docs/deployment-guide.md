@@ -126,7 +126,7 @@ The release binaries are at:
 
 ### 4.1 Set Environment Variables
 
-The deployer private key is **never** exported as an environment variable. Forge uses `-i 1`
+The deployer private key is **never** exported as an environment variable. Forge uses `-i`
 and cast uses `--interactive` to prompt for the key interactively in the terminal, keeping it
 out of shell history and process lists.
 
@@ -171,7 +171,7 @@ forge script script/Deploy.s.sol:Deploy \
   --rpc-url https://bsc-dataseed1.binance.org \
   --verifier etherscan \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 # You will be prompted to enter the private key interactively.
 ```
@@ -197,7 +197,7 @@ To replay the **historical BSC deployer** sequence (nonces **0–44**) for match
 - **Dry-run (PASS/FAIL):** [deployment-megaeth.md §5.2](./deployment-megaeth.md#52-dry-run-parity_check-pass--fail)
 - **Golden data:** `packages/contracts-evm/script/bsc-parity-golden.json`
 - **Segmented shell entrypoint:** `./scripts/evm/parity-replay.sh`
-- **Single orchestrated flow (GL-122):** [`scripts/evm/megaeth-parity-quickstart.sh`](../scripts/evm/megaeth-parity-quickstart.sh) — one command from repo root (preflight → dry-check → **`runBroadcastFull`**) with MegaETH defaults; or **`deploy-bsc-parity-orchestrate.sh`** with exports + **`--rpc-url`**, **`-vvv`**, and signing (**`-i 1 --sender …`**) — set **`USE_SEGMENTED_BROADCAST=1`** for the legacy split + manual Nick gate — optional `CHAIN_REGISTRY_ADDRESS` peer registration — plus **`register-parity-peers-on-registry.sh`** when the registry is supplied later
+- **Single orchestrated flow (GL-122):** [`scripts/evm/megaeth-parity-quickstart.sh`](../scripts/evm/megaeth-parity-quickstart.sh) — one command from repo root (preflight → dry-check → **`runBroadcastFull`**) with MegaETH defaults; or **`deploy-bsc-parity-orchestrate.sh`** with exports + **`--rpc-url`**, **`-vvv`**, and signing (**`-i --sender …`**) — set **`USE_SEGMENTED_BROADCAST=1`** for the legacy split + manual Nick gate — optional `CHAIN_REGISTRY_ADDRESS` peer registration — plus **`register-parity-peers-on-registry.sh`** when the registry is supplied later
 - **Peers on new chain (BSC / Terra / Solana identifiers):** same production `(string, bytes4)` pairs as `deploy-evm-full.sh` Phase 6 + Solana helper; see §5.2a / §5.5 in the MegaETH doc for reverse registrations
 
 The standard single-shot `Deploy.s.sol` flow in §4.2 remains the usual path when **address parity with the 45-tx BSC history is not required**.
@@ -223,7 +223,7 @@ forge script script/Deploy.s.sol:Deploy \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
   --verifier etherscan \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 # You will be prompted to enter the private key interactively.
 ```
@@ -285,7 +285,7 @@ forge script script/AccessManagerEnumerable.s.sol:AccessManagerScript \
   --broadcast --verify -vvv \
   --rpc-url https://bsc-dataseed1.binance.org \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 
 # opBNB
@@ -293,7 +293,7 @@ forge script script/AccessManagerEnumerable.s.sol:AccessManagerScript \
   --broadcast --verify -vvv \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 ```
 
@@ -320,7 +320,7 @@ forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript 
   --broadcast --verify -vvv \
   --rpc-url https://bsc-dataseed1.binance.org \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 
 # opBNB
@@ -329,7 +329,7 @@ forge script script/FactoryTokenCl8yBridged.s.sol:FactoryTokenCl8yBridgedScript 
   --broadcast --verify -vvv \
   --rpc-url https://opbnb-mainnet-rpc.bnbchain.org \
   --etherscan-api-key $ETHERSCAN_API_KEY \
-  -i 1 \
+  -i \
   --sender $DEPLOYER_ADDRESS
 ```
 
@@ -1611,7 +1611,7 @@ These notes complement the defaults in `packages/frontend/src/utils/bridgeChains
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEPLOYER_ADDRESS` | Yes | Deployer wallet address (key entered interactively: `-i 1` for forge, `--interactive` for cast) |
+| `DEPLOYER_ADDRESS` | Yes | Deployer wallet address (key entered interactively: `-i` for forge, `--interactive` for cast) |
 | `ADMIN_ADDRESS` | Yes | Contract admin (multi-sig recommended) |
 | `OPERATOR_ADDRESS` | Yes | Operator wallet address |
 | `FEE_RECIPIENT_ADDRESS` | Yes | Fee collection address |

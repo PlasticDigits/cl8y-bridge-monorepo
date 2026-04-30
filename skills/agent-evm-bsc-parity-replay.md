@@ -21,7 +21,7 @@ Same flow, manual env:
 ```bash
 # Defaults DEPLOYER/ADMIN/OPERATOR/CANCELER addresses unless overridden — see docs/deployment-megaeth.md §5.0
 export RPC_URL=...
-./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i 1 --sender 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
+./scripts/evm/deploy-bsc-parity-orchestrate.sh --rpc-url "$RPC_URL" -vvv -i --sender 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e
 ```
 
 `deploy-bsc-parity-orchestrate.sh` invokes `bsc-parity-preflight.sh` before any broadcast. **`megaeth-parity-quickstart.sh`** exports `MIN_FULL_DEPLOY_BALANCE_WEI=15000000000000000` (0.015 native) when unset — fork-measured head spend + margin for Nick/faucet/tail (see `megaeth-parity-quickstart.sh` header); the standalone preflight script defaults to `2e18` unless you export otherwise. Sum gas limits from a fork or real `run-latest.json` with **`scripts/evm/parity-sum-broadcast-gas-limits.sh`** (see `docs/deployment-megaeth.md` §5.0).
@@ -43,7 +43,7 @@ forge script script/EvmParityReplay.s.sol:EvmParityReplay --sig runDryCheck -vvv
 Greenfield broadcast (one forge session — head + Nick step from `script/bsc-parity-step18-input.bin` + faucet + tail):
 
 ```bash
-./scripts/evm/parity-replay.sh broadcast-full --rpc-url "$RPC_URL" -vvv -i 1 --sender "$DEPLOYER_ADDRESS"
+./scripts/evm/parity-replay.sh broadcast-full --rpc-url "$RPC_URL" -vvv -i --sender "$DEPLOYER_ADDRESS"
 ```
 
 CI: `forge test --match-contract BscParityReplayDryRun`

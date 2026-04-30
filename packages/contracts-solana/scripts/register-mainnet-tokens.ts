@@ -1,11 +1,11 @@
 /**
- * Mainnet (noneconomic test tokens): register_token for each SPL mint × (BSC, opBNB, Terra).
+ * Mainnet (noneconomic test tokens): register_token for each SPL mint × (BSC, opBNB, Terra, MegaETH).
  * Mode: MintBurn — mint authority on each SPL mint must be the BridgeConfig PDA (see runbook).
  *
  * Prerequisites:
  *   - anchor build (target/idl/cl8y_bridge.json)
  *   - Bridge initialized; signer = bridge admin (same as register-mainnet-chains.ts)
- *   - Peer chains registered on Solana (Step 2.4): evm_56, evm_204, terraclassic_columbus-5
+ *   - Peer chains registered on Solana (Step 2.4): evm_56, evm_204, terraclassic_columbus-5, evm_4326
  *   - Creates bridge fee-collection ATAs for each mint (MintBurn still uses bridge_token_account for fees)
  *
  * Addresses match docs/deployment-solana-mainnet.md token matrix (live testa / testb / tdec).
@@ -27,6 +27,7 @@ import { terraDestTokenKeccakUtf8Bytes } from "../../frontend/src/services/terra
 const CHAIN_BSC = Buffer.from([0, 0, 0, 0x38]);
 const CHAIN_OPBNB = Buffer.from([0, 0, 0, 0xcc]);
 const CHAIN_TERRA = Buffer.from([0, 0, 0, 0x01]);
+const CHAIN_MEGAETH = Buffer.from([0, 0, 0x10, 0xe6]);
 
 /** Live mainnet noneconomic SPL mints */
 const MINT_TESTA = new PublicKey(
@@ -35,9 +36,7 @@ const MINT_TESTA = new PublicKey(
 const MINT_TESTB = new PublicKey(
   "EvAWhkKQzX8om5VDWjg8oEvCw9jhGGKsn3rdrNXmQScX"
 );
-const MINT_TDEC = new PublicKey(
-  "765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR"
-);
+const MINT_TDEC = new PublicKey("765GMcrKxfevfBhnJmZDhdyHDon2nTwGemcgqJApNBR");
 
 function evmAddrToDestToken32(addr: string): Buffer {
   const b = Buffer.alloc(32);
@@ -92,6 +91,23 @@ async function ensureBridgeSplVault(
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAccount(
+  connection: Connection,
+  account: PublicKey,
+  timeoutMs = 90_000
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await connection.getAccountInfo(account)) return true;
+    await sleep(3_000);
+  }
+  return false;
+}
+
 async function registerTokenIfNeeded(
   program: Program<Cl8yBridge>,
   bridgePda: PublicKey,
@@ -105,32 +121,53 @@ async function registerTokenIfNeeded(
   const [tokenPda] = findTokenPda(program.programId, destChain, destToken32);
   if (await program.provider.connection.getAccountInfo(tokenPda)) {
     console.log(
-      `[register-mainnet-tokens] skip exists ${localMint.toBase58().slice(0, 8)}… chain=${destChain.toString("hex")}`
+      `[register-mainnet-tokens] skip exists ${localMint
+        .toBase58()
+        .slice(0, 8)}… chain=${destChain.toString("hex")}`
     );
     return;
   }
 
-  await program.methods
-    .registerToken({
-      localMint,
-      destChain: Array.from(destChain),
-      destToken: Array.from(destToken32),
-      mode: { mintBurn: {} },
-      decimals,
-      srcDecimals,
-    })
-    .accounts({
-      bridge: bridgePda,
-      tokenMapping: tokenPda,
-      mint: localMint,
-      admin,
-      systemProgram: SystemProgram.programId,
-      // Anchor 0.32 strict ResolvedAccounts omits auto-filled PDAs; runtime still needs these.
-    } as never)
-    .rpc();
+  try {
+    await program.methods
+      .registerToken({
+        localMint,
+        destChain: Array.from(destChain),
+        destToken: Array.from(destToken32),
+        mode: { mintBurn: {} },
+        decimals,
+        srcDecimals,
+      })
+      .accounts({
+        bridge: bridgePda,
+        tokenMapping: tokenPda,
+        mint: localMint,
+        admin,
+        systemProgram: SystemProgram.programId,
+        // Anchor 0.32 strict ResolvedAccounts omits auto-filled PDAs; runtime still needs these.
+      } as never)
+      .rpc();
+  } catch (e) {
+    if (e instanceof Error && e.name === "TransactionExpiredTimeoutError") {
+      console.warn(
+        `[register-mainnet-tokens] confirmation timed out; waiting for ${tokenPda.toBase58()}`
+      );
+      if (await waitForAccount(program.provider.connection, tokenPda)) {
+        console.log(
+          `[register-mainnet-tokens] confirmed by account existence ${localMint
+            .toBase58()
+            .slice(0, 8)}… chain=${destChain.toString("hex")}`
+        );
+        return;
+      }
+    }
+    throw e;
+  }
 
   console.log(
-    `[register-mainnet-tokens] registered ${localMint.toBase58()} → chain 0x${destChain.toString("hex")}`
+    `[register-mainnet-tokens] registered ${localMint.toBase58()} → chain 0x${destChain.toString(
+      "hex"
+    )}`
   );
 }
 
@@ -216,15 +253,27 @@ async function main(): Promise<void> {
     "terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv"
   );
 
+  const megaethTokenA = evmAddrToDestToken32(
+    process.env.MEGAETH_TOKEN_A || "0x7deF34032CC5D06bA84A8889bdCA7ee153127B23"
+  );
+  const megaethTokenB = evmAddrToDestToken32(
+    process.env.MEGAETH_TOKEN_B || "0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1"
+  );
+  const megaethTokenC = evmAddrToDestToken32(
+    process.env.MEGAETH_TOKEN_C || "0x840b1515f586c2ea31d55C91B355AFf36eA7af54"
+  );
+
   type Row = {
     mint: PublicKey;
     splDecimals: number;
     bsc: Buffer;
     opbnb: Buffer;
     terra: Buffer;
+    megaeth: Buffer;
     srcBsc: number;
     srcOpbnb: number;
     srcTerra: number;
+    srcMegaeth: number;
   };
 
   const rows: Row[] = [
@@ -234,9 +283,11 @@ async function main(): Promise<void> {
       bsc: bscTesta,
       opbnb: opbnbTesta,
       terra: terraTesta,
+      megaeth: megaethTokenA,
       srcBsc: 18,
       srcOpbnb: 18,
       srcTerra: 18,
+      srcMegaeth: 18,
     },
     {
       mint: MINT_TESTB,
@@ -244,9 +295,11 @@ async function main(): Promise<void> {
       bsc: bscTestb,
       opbnb: opbnbTestb,
       terra: terraTestb,
+      megaeth: megaethTokenB,
       srcBsc: 18,
       srcOpbnb: 18,
       srcTerra: 18,
+      srcMegaeth: 18,
     },
     {
       mint: MINT_TDEC,
@@ -254,9 +307,11 @@ async function main(): Promise<void> {
       bsc: bscTdec,
       opbnb: opbnbTdec,
       terra: terraTdec,
+      megaeth: megaethTokenC,
       srcBsc: 18,
       srcOpbnb: 12,
       srcTerra: 6,
+      srcMegaeth: 18,
     },
   ];
 
@@ -294,6 +349,16 @@ async function main(): Promise<void> {
       r.terra,
       r.splDecimals,
       r.srcTerra
+    );
+    await registerTokenIfNeeded(
+      program,
+      bridgePda,
+      adminPk,
+      r.mint,
+      CHAIN_MEGAETH,
+      r.megaeth,
+      r.splDecimals,
+      r.srcMegaeth
     );
   }
 

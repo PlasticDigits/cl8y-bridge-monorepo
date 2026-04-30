@@ -152,7 +152,7 @@ deploy_core() {
     forge script script/Deploy.s.sol:Deploy \
         --rpc-url "$rpc" \
         --sender "$DEPLOYER_ADDRESS" \
-        -i 1 \
+        -i \
         --broadcast \
         --verify \
         --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \
@@ -209,7 +209,7 @@ deploy_access_manager() {
     forge script script/AccessManagerEnumerable.s.sol:AccessManagerScript \
         --rpc-url "$rpc" \
         --sender "$DEPLOYER_ADDRESS" \
-        -i 1 \
+        -i \
         --broadcast \
         --verify \
         --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \
@@ -263,7 +263,7 @@ deploy_tokens() {
     forge script script/DeployCustomDecimalToken.s.sol:DeployCustomDecimalToken \
         --rpc-url "$rpc" \
         --sender "$DEPLOYER_ADDRESS" \
-        -i 1 \
+        -i \
         --broadcast \
         --verify \
         --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \
@@ -317,7 +317,7 @@ deploy_faucet() {
     forge script script/DeployFaucet.s.sol:DeployFaucet \
         --rpc-url "$rpc" \
         --sender "$DEPLOYER_ADDRESS" \
-        -i 1 \
+        -i \
         --broadcast \
         --verify \
         --etherscan-api-key "${ETHERSCAN_API_KEY:-}" \

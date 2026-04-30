@@ -23,6 +23,7 @@ import {Faucet} from "../src/Faucet.sol";
 import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
 import {GuardBridge} from "../src/GuardBridge.sol";
+import {CREATE3} from "solady/utils/CREATE3.sol";
 
 contract EvmParityReplay is Deploy {
     using stdJson for string;
@@ -30,6 +31,7 @@ contract EvmParityReplay is Deploy {
     address internal constant HISTORICAL_DEPLOYER = 0xD699EbC6930F593f0725D2a7dC58ACC65b41a08e;
     address internal constant NICK_CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant CANONICAL_CREATE3_DEPLOYER = 0x375401aaAB20b0827CFC7DBE822e352738D390a9;
+    address internal constant HISTORICAL_FACTORY_AUTHORITY = 0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF;
 
     /// @notice Dry-run: load `script/bsc-parity-golden.json`, print per-step predictions, require all matches.
     /// @dev Env: `DEPLOYER_ADDRESS` must equal the historical BSC deployer unless `PARITY_RELAX_DEPLOYER_CHECK=true`.
@@ -116,7 +118,7 @@ contract EvmParityReplay is Deploy {
         _broadcastLegacyHead(deployer, admin, operator, feeRecipient, legacyWeth, legacyLabel, legacyChainId);
         require(vm.getNonce(deployer) == 18, "runBroadcastFull: expected nonce 18 after head");
 
-        bytes memory nickCalldata = vm.readFileBinary("script/bsc-parity-step18-input.bin");
+        bytes memory nickCalldata = _loadNickCalldataWithFactoryAuthorityPatch();
         (bool nickOk,) = NICK_CREATE2_FACTORY.call(nickCalldata);
         require(nickOk, "runBroadcastFull: Nick CREATE2 factory call failed");
 
@@ -200,6 +202,72 @@ contract EvmParityReplay is Deploy {
         DatastoreSetAddress datastore = new DatastoreSetAddress();
         new TokenRateLimit(guardAm);
         new GuardBridge(guardAm, datastore);
+    }
+
+    function _loadNickCalldataWithFactoryAuthorityPatch() internal returns (bytes memory nickCalldata) {
+        nickCalldata = vm.readFileBinary("script/bsc-parity-step18-input.bin");
+        address factoryAuthority = _nickFactoryAuthority();
+        if (factoryAuthority != HISTORICAL_FACTORY_AUTHORITY) {
+            _replaceAddressOnce(nickCalldata, HISTORICAL_FACTORY_AUTHORITY, factoryAuthority);
+        }
+
+        console2.log("Nick CREATE2 factory authority:", factoryAuthority);
+        console2.log("Predicted FactoryTokenCl8yBridged:", _predictNickCreate2Address(nickCalldata));
+    }
+
+    function _nickFactoryAuthority() internal view returns (address) {
+        if (vm.envOr("PARITY_PRESERVE_HISTORICAL_FACTORY_AUTHORITY", false)) {
+            return HISTORICAL_FACTORY_AUTHORITY;
+        }
+        return vm.envOr("PARITY_FACTORY_AUTHORITY_ADDRESS", _predictGuardStackAccessManager());
+    }
+
+    function _predictGuardStackAccessManager() internal view returns (address) {
+        bytes32 baseSalt = keccak256(bytes(vm.envOr("DEPLOY_SALT", string("Deploy v1.4"))));
+        bytes32 saltAm = keccak256(abi.encodePacked(baseSalt, "AccessManagerEnumerable"));
+        return CREATE3.predictDeterministicAddress(saltAm, CANONICAL_CREATE3_DEPLOYER);
+    }
+
+    function _replaceAddressOnce(bytes memory data, address from, address to) internal pure {
+        bytes20 fromBytes = bytes20(from);
+        bytes20 toBytes = bytes20(to);
+        uint256 matches;
+
+        for (uint256 i; i + 20 <= data.length; ++i) {
+            bool isMatch = true;
+            for (uint256 j; j < 20; ++j) {
+                if (data[i + j] != fromBytes[j]) {
+                    isMatch = false;
+                    break;
+                }
+            }
+            if (!isMatch) {
+                continue;
+            }
+
+            for (uint256 j; j < 20; ++j) {
+                data[i + j] = toBytes[j];
+            }
+            ++matches;
+        }
+
+        require(matches == 1, "Nick calldata authority patch count mismatch");
+    }
+
+    function _predictNickCreate2Address(bytes memory nickCalldata) internal pure returns (address predicted) {
+        require(nickCalldata.length > 32, "Nick calldata too short");
+        bytes32 salt;
+        assembly {
+            salt := mload(add(nickCalldata, 0x20))
+        }
+
+        bytes memory initCode = new bytes(nickCalldata.length - 32);
+        for (uint256 i; i < initCode.length; ++i) {
+            initCode[i] = nickCalldata[i + 32];
+        }
+
+        bytes32 digest = keccak256(abi.encodePacked(bytes1(0xff), NICK_CREATE2_FACTORY, salt, keccak256(initCode)));
+        predicted = address(uint160(uint256(digest)));
     }
 
     function _predictCreate2(bytes memory creationCode, bytes32 salt) internal pure returns (address predicted) {
