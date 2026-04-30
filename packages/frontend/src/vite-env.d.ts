@@ -13,6 +13,7 @@ interface ImportMetaEnv {
   /** MegaETH mainnet (GL-124); mirror operators’ `MEGAETH_*` for browser builds (`VITE_` prefix required). */
   readonly VITE_MEGAETH_RPC_URL?: string
   readonly VITE_MEGAETH_BRIDGE_ADDRESS?: string
+  readonly VITE_MEGAETH_FAUCET_ADDRESS?: string
 }
 
 interface ImportMeta {

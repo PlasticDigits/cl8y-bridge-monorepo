@@ -26,6 +26,7 @@ import {
   withSolanaReadFallback,
 } from '../../services/solana/solanaRpcUrls'
 import { getSolanaBridgeChains } from '../../utils/bridgeChains'
+import { MEGAETH_MAINNET_CHAIN_ID } from '../../lib/megaethMainnet'
 
 function faucetSolanaRpcUrls(): string[] {
   const chains = getSolanaBridgeChains()
@@ -96,6 +97,16 @@ const EVM_CHAINS: ChainConfig[] = [
     type: 'evm',
     faucetAddress: import.meta.env.VITE_OPBNB_FAUCET_ADDRESS || '',
     explorerTxUrl: 'https://opbnb.bscscan.com/tx/',
+  },
+  {
+    key: 'megaeth',
+    name: 'MegaETH',
+    chainId: MEGAETH_MAINNET_CHAIN_ID,
+    type: 'evm',
+    faucetAddress:
+      import.meta.env.VITE_MEGAETH_FAUCET_ADDRESS?.trim() ||
+      '0x1cb74534bc03facb2725eb47bd1652c22b5f0663',
+    explorerTxUrl: 'https://mega.etherscan.io/tx/',
   },
 ]
 
@@ -181,10 +192,11 @@ const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c',
       opbnb: '0xF073d5685594F465a66EA54516f0D2f76b6cc6F3',
+      megaeth: '0x7deF34032CC5D06bA84A8889bdCA7ee153127B23',
       terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
       solana: import.meta.env.VITE_SOLANA_TESTA_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
+    decimals: { bsc: 18, opbnb: 18, megaeth: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'testb',
@@ -192,10 +204,11 @@ const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52',
       opbnb: '0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e',
+      megaeth: '0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1',
       terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
       solana: import.meta.env.VITE_SOLANA_TESTB_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 18, terra: 18, solana: 9 },
+    decimals: { bsc: 18, opbnb: 18, megaeth: 18, terra: 18, solana: 9 },
   },
   {
     symbol: 'tdec',
@@ -203,10 +216,11 @@ const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
     addresses: {
       bsc: '0xe159c7a58d694fafba82221905d5a49e7f314330',
       opbnb: '0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd',
+      megaeth: '0x840b1515f586c2ea31d55C91B355AFf36eA7af54',
       terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
       solana: import.meta.env.VITE_SOLANA_TDEC_MINT || '',
     },
-    decimals: { bsc: 18, opbnb: 12, terra: 6, solana: 6 },
+    decimals: { bsc: 18, opbnb: 12, megaeth: 12, terra: 6, solana: 6 },
   },
 ]
 
@@ -992,6 +1006,7 @@ export function FaucetPanel() {
         <p className="text-sm text-yellow-300">
           No faucet contracts configured. Set <code className="text-xs">VITE_BSC_FAUCET_ADDRESS</code>,{' '}
           <code className="text-xs">VITE_OPBNB_FAUCET_ADDRESS</code>,{' '}
+          <code className="text-xs">VITE_MEGAETH_FAUCET_ADDRESS</code>,{' '}
           <code className="text-xs">VITE_TERRA_FAUCET_ADDRESS</code>, or enable Solana with{' '}
           <code className="text-xs">VITE_SOLANA_RPC_URL</code> / <code className="text-xs">VITE_SOLANA_FAUCET_ADDRESS</code>{' '}
           in your environment.
