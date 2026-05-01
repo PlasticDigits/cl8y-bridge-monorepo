@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Register MegaETH token mappings on EVM TokenRegistry contracts, Terra Classic, and Solana.
+# Register **noneconomic / test** MegaETH token mappings (testa, testb, tdec peers only).
+# For **economic CL8Y** (MegaETH CL8Y-cb <> BSC <> Terra), use
+#   scripts/megaeth/register-megaeth-economic-cl8y-mappings.sh
 #
 # Default scope:
 #   - EVM TokenRegistry mappings for tokena/tokenb/tdec across MegaETH, BSC, opBNB, Terra, Solana
-#   - Terra Classic set_token_destination + set_incoming_token_mapping for MegaETH
+#   - Terra Classic set_token_destination + set_incoming_token_mapping for those test tokens
 #   - Solana register_token mappings for MegaETH via register-mainnet-tokens.ts
 #
 # Token C is the MegaETH counterpart for the existing tdec token routes.

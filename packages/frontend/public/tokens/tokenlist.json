@@ -78,6 +78,15 @@
       "gradient": "from-amber-600 to-slate-800",
       "iconColor": "text-amber-500",
       "website": "https://ceramicliberty.com"
+    },
+    {
+      "symbol": "CL8Y-cb",
+      "name": "CL8Y.com cl8y.com/bridge",
+      "address": "0xfBAa45A537cF07dC768c469FfaC4e88208B0098D",
+      "type": "evm",
+      "chainId": 4326,
+      "decimals": 18,
+      "website": "https://cl8y.com"
     }
   ]
 }

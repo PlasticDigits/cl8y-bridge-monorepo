@@ -106,7 +106,8 @@ MegaETH was deployed with the BSC parity sequence (historical deployer nonces 0-
 
 | Token | Address | Symbol | Decimals |
 |-------|---------|--------|----------|
-| Token A V2 | [`0x7deF34032CC5D06bA84A8889bdCA7ee153127B23`](https://mega.etherscan.io/address/0x7deF34032CC5D06bA84A8889bdCA7ee153127B23) | `tokena-cb` | 18 |
+| Token A V2 (`testa`; Settings → Faucet) | [`0x7deF34032CC5D06bA84A8889bdCA7ee153127B23`](https://mega.etherscan.io/address/0x7deF34032CC5D06bA84A8889bdCA7ee153127B23) | `tokena-cb` | 18 |
+| CL8Y.com (economic CL8Y bridged mint; **not** faucet) | [`0xfBAa45A537cF07dC768c469FfaC4e88208B0098D`](https://mega.etherscan.io/address/0xfBAa45A537cF07dC768c469FfaC4e88208B0098D) | `CL8Y-cb` | 18 |
 | Token B V2 | [`0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1`](https://mega.etherscan.io/address/0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1) | `tokenb-cb` | 18 |
 | Token C V2 | [`0x840b1515f586c2ea31d55C91B355AFf36eA7af54`](https://mega.etherscan.io/address/0x840b1515f586c2ea31d55C91B355AFf36eA7af54) | `tokenc-cb` | 18 |
 

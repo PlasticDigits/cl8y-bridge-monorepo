@@ -8,7 +8,8 @@ export interface TokenlistEntry {
   name: string
   denom?: string
   address?: string
-  type: 'native' | 'cw20'
+  type: 'native' | 'cw20' | 'evm'
+  chainId?: number
   decimals?: number
 }
 
@@ -20,7 +21,8 @@ export interface TokenlistData {
     name: string
     denom?: string
     address?: string
-    type: 'native' | 'cw20'
+    type: 'native' | 'cw20' | 'evm'
+    chainId?: number
     decimals?: number
   }>
 }

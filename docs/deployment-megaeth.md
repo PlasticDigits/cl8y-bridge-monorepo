@@ -351,13 +351,25 @@ Follow-up token mappings still need destination-token data from the other networ
 ./scripts/megaeth/register-megaeth-token-mappings.sh
 ```
 
-The script maps MegaETH token A/B to BSC, opBNB, Terra Classic, and Solana token A/B, and maps MegaETH token C as the `tdec` counterpart. By default it:
+That script maps **noneconomic** MegaETH test tokens (token A/B and `tdec` peer) to BSC, opBNB, Terra Classic, and Solana. By default it:
 
 - sends EVM `cast` transactions for MegaETH / BSC / opBNB TokenRegistry metadata;
 - sends Terra Classic `terrad tx wasm execute` transactions with `--keyring-backend file`;
 - decrypts `~/.config/solana/id-deployer.json.gpg`, runs the Solana chain/token registration scripts, then shreds the plaintext keypair.
 
 Use `INCLUDE_EVM=0`, `INCLUDE_TERRA=0`, or `INCLUDE_SOLANA=0` to skip a phase.
+
+**Economic CL8Y** (MegaETH `CL8Y-cb` mint ↔ BSC CL8Y ↔ Terra CL8Y CW20) is **not** part of that script. Register it separately after the mint exists and addresses are final. **Prerequisite:** BSC CL8Y must already be `tokenRegistered` on BSC. On MegaETH, when **`INCLUDE_MEGAETH_CL8Y_REGISTRY=1`** (default), [`scripts/megaeth/register-megaeth-economic-cl8y-mappings.sh`](../scripts/megaeth/register-megaeth-economic-cl8y-mappings.sh) runs **`registerToken` + MintBurn `grantRole` / `setTargetFunctionRole`** for `MEGAETH_TOKEN_CL8Y` before mappings (same pattern as `megaeth-manager-followup.sh`). Set **`INCLUDE_MEGAETH_CL8Y_REGISTRY=0`** if you already registered manually.
+
+```bash
+./scripts/megaeth/register-megaeth-economic-cl8y-mappings.sh
+```
+
+**Rate limits only** (TokenRegistry + TokenRateLimit on MegaETH/BSC and Terra `set_rate_limit`; **no** `setTokenDestination`/mappings): [`scripts/megaeth/set-cl8y-economic-rate-limits.sh`](../scripts/megaeth/set-cl8y-economic-rate-limits.sh) — defaults **minPerTx=1 wei**, **1000 CL8Y** max per tx and per 24h on EVM; Terra sets **both** max fields to 1000 CL8Y (CosmWasm has no separate min). Skip a chain with `INCLUDE_MEGAETH=0`, `INCLUDE_BSC=0`, or `INCLUDE_TERRA=0`.
+
+Override token addresses and phases on the **mappings** script with `MEGAETH_TOKEN_CL8Y`, `BSC_TOKEN_CL8Y`, `TERRA_TOKEN_CL8Y`, `INCLUDE_EVM=0` / `INCLUDE_TERRA=0`, or `INCLUDE_RATE_LIMITS=0` (mappings only).
+
+With **`INCLUDE_RATE_LIMITS=1`** (default) on **`register-megaeth-economic-cl8y-mappings.sh`**, that script sets **TokenRegistry** `setRateLimit`, **`TokenRateLimit`** `setLimitsBatch` (guard deposit + withdraw caps — same address on BSC and MegaETH in parity deploys), and Terra **`set_rate_limit`**. It does **not** set `Bridge.guardBridge`, `TokenRegistry.rateLimitBridge`, or add guard modules — use **`megaeth-manager-followup.sh`** for chain-wide wiring. **`setLimitsBatch`** requires a signer with **`TokenRateLimit`** AccessManager permission (guard admin; see README / OPERATIONAL_NOTES). With **`VERIFY_CL8Y_ONCHAIN=1`**, it prints read-only `cast call` summaries at the end.
 
 ---
 
