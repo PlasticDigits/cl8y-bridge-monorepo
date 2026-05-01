@@ -1,6 +1,6 @@
 # Agent skill: Frontend bridge chains and env exposure (GL-124, GL-125)
 
-Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debugging **Registered Chains** or **`getChainsForTransfer`**, or explaining why **operator-only `MEGAETH_*`** (no `VITE_`) never reaches **`import.meta.env`**.
+Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debugging **Registered Chains** or **`getChainsForTransfer`**, or explaining why **operator-only `MEGAETH_*`** (no `VITE_`) never reaches **`import.meta.env`**. For **Solana wallet txs / blockhash / GL-128**, see [`agent-solana-tx-blockhash.md`](./agent-solana-tx-blockhash.md).
 
 ## Code map
 

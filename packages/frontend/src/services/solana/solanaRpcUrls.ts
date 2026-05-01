@@ -11,6 +11,10 @@
  * **Transactions:** by default the app uses these bridge URLs for `Connection` (blockhash,
  * `sendRawTransaction`, confirm). Set `VITE_SOLANA_TX_USE_BRIDGE_RPC=false` or
  * `VITE_SOLANA_TX_USE_WALLET_RPC=true` to try the wallet’s exposed RPC first (legacy).
+ *
+ * **Blockhash:** each signing path in `sendSolanaTransaction` refreshes `getLatestBlockhash` on a
+ * new `Transaction` (INV-FE-SOLANA-BH1, GL-128) so `signAndSend` ↔ `signTransaction` fallbacks
+ * do not reuse an expired `recentBlockhash`.
  */
 
 import { Connection, type Commitment } from "@solana/web3.js";

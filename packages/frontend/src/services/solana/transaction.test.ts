@@ -5,6 +5,7 @@ import {
   bytes4HexToUint8Array,
   formatSolanaUserFacingError,
   formatSolanaWalletError,
+  looksLikeSolanaExpiredBlockhashError,
   looksLikeSolanaLocalnetRpc,
   parseTokenMappingLocalMint,
   WSOL_MINT,
@@ -46,6 +47,20 @@ describe('solana/transaction helpers', () => {
     )
     expect(msg).toContain('Cannot destructure')
     expect(msg).toContain('bridge-configured RPCs')
+  })
+
+  it('looksLikeSolanaExpiredBlockhashError detects stale blockhash / height messages (GL-128)', () => {
+    expect(
+      looksLikeSolanaExpiredBlockhashError(
+        new Error('Signature has expired: block height exceeded'),
+      ),
+    ).toBe(true)
+    expect(
+      looksLikeSolanaExpiredBlockhashError(
+        new Error('Transaction simulation failed: TransactionExpiredBlockheightExceededError'),
+      ),
+    ).toBe(true)
+    expect(looksLikeSolanaExpiredBlockhashError(new Error('User rejected'))).toBe(false)
   })
 
   it('buildWithdrawSubmitInstruction rejects srcAccount that is not exactly 32 bytes', () => {

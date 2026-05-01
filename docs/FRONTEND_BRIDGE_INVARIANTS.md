@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-UX1 — Transfer form: CTA, receive quote, and amount field (GL-119)
 
@@ -46,3 +46,16 @@ Before a user can submit a transfer, the **recipient** string for the active rou
 **Note (EVM):** All-lowercase or all-uppercase 40-hex strings remain accepted per EIP-55 optional checksum; mixed-case strings must match EIP-55 exactly.
 
 **Note (Solana):** There is no separate bech32-style checksum; [ed25519 on-curve](https://en.wikipedia.org/wiki/EdDSA) checks (via `PublicKey.isOnCurve` / `@noble/curves` under the hood) are what reject typos that still decode to 32 bytes. Example: a last-character `y`→`o` swap in the Brouie repro keeps valid base58 but yields an off-curve byte string (see **INV-RCP1** Solana row, GL-117 follow-up).
+
+## INV-FE-SOLANA-BH1 — Fresh blockhash per wallet signing path (GL-128)
+
+| Rule | Behavior |
+|------|----------|
+| **No stale `recentBlockhash` across fallbacks** | `sendSolanaTransaction` copies the caller’s instructions once, then each attempt that uses `signAndSendTransaction` or `signTransaction` + `sendRawTransaction` builds a **new** legacy `Transaction` and calls **`getLatestBlockhash`** immediately before that path runs. Switching paths after wallet or RPC delay must not reuse the prior blockhash / last-valid height pair. |
+| **Operator-facing** | Classification helper: `looksLikeSolanaExpiredBlockhashError` in `packages/frontend/src/services/solana/transaction.ts`. |
+
+| Evidence | Location |
+|----------|----------|
+| Implementation | `sendSolanaTransaction`, same file |
+| Agent skill | [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) |
+| Issue context | GitLab **128** — expired blockhash on Solana → EVM retries; avoid balance surprises from confused retry/fallback behavior |

@@ -302,6 +302,28 @@ export function formatSolanaUserFacingError(err: unknown): string {
   return formatSolanaWalletError(err);
 }
 
+/**
+ * True when `err` indicates the transaction used a stale `recentBlockhash` / max block height.
+ * Used to classify RPC and wallet failures (see **INV-FE-SOLANA-BH1**, GL-128).
+ */
+export function looksLikeSolanaExpiredBlockhashError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : (() => {
+            try {
+              return JSON.stringify(err);
+            } catch {
+              return String(err);
+            }
+          })();
+  return /block\s*height\s+exceeded|blockheightexceeded|transactionexpired|signature\s+has\s+expired|transaction\s+expired|expired\s+blockhash|blockhash\s+not\s+found/i.test(
+    msg,
+  );
+}
+
 function rethrowSolanaUserFacing(err: unknown): never {
   throw new Error(formatSolanaUserFacingError(err));
 }
@@ -604,6 +626,12 @@ export async function buildSolanaSplDepositInstructions(
  * first (wallet-controlled broadcast). If sign+raw fails with a known
  * cross-library serialization error, we retry once with `signAndSendTransaction`
  * when available.
+ *
+ * **INV-FE-SOLANA-BH1:** Each signing path (`signAndSendTransaction` vs
+ * `signTransaction` + `sendRawTransaction`) builds a **new** `Transaction` with a
+ * **fresh** `getLatestBlockhash` snapshot. Reusing one serialized tx across
+ * fallback attempts after wallet/RPC delays caused "Signature has expired: block
+ * height exceeded" on user retries (GL-128).
  */
 export async function sendSolanaTransaction(
   connection: Connection,
@@ -621,28 +649,43 @@ export async function sendSolanaTransaction(
     );
   }
 
-  const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash();
-  transaction.recentBlockhash = blockhash;
-  transaction.feePayer = new PublicKey(provider.publicKey.toString());
+  const feePayer = new PublicKey(provider.publicKey.toString());
+  const instructions = transaction.instructions.slice();
 
-  try {
-    transaction.compileMessage();
-  } catch (compileErr) {
-    throw new Error(
-      `Transaction failed to compile: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`,
-    );
-  }
+  const prepareFreshTransaction = async (): Promise<{
+    tx: Transaction;
+    blockhash: string;
+    lastValidBlockHeight: number;
+  }> => {
+    const tx = new Transaction();
+    for (const ix of instructions) {
+      tx.add(ix);
+    }
+    const { blockhash, lastValidBlockHeight } =
+      await connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = feePayer;
+    try {
+      tx.compileMessage();
+    } catch (compileErr) {
+      throw new Error(
+        `Transaction failed to compile: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`,
+      );
+    }
+    return { tx, blockhash, lastValidBlockHeight };
+  };
 
   const preferSignAndSendFirst =
     import.meta.env.VITE_SOLANA_PREFER_SIGN_AND_SEND_FIRST === "true";
 
   const runSignAndSend = async (): Promise<string> => {
+    const { tx, blockhash, lastValidBlockHeight } =
+      await prepareFreshTransaction();
     if (typeof provider.signAndSendTransaction !== "function") {
       throw new Error("Wallet does not support signAndSendTransaction.");
     }
     const result = await withTimeout(
-      provider.signAndSendTransaction(transaction, {
+      provider.signAndSendTransaction(tx, {
         preflightCommitment: "confirmed",
       }),
       SOLANA_WALLET_SIGN_TIMEOUT_MS,
@@ -676,12 +719,14 @@ export async function sendSolanaTransaction(
   };
 
   const runSignRaw = async (): Promise<string> => {
+    const { tx, blockhash, lastValidBlockHeight } =
+      await prepareFreshTransaction();
     if (typeof provider.signTransaction !== "function") {
       throw new Error("Wallet does not support signTransaction.");
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const signResult: any = await withTimeout(
-      provider.signTransaction(transaction),
+      provider.signTransaction(tx),
       SOLANA_WALLET_SIGN_TIMEOUT_MS,
       () =>
         new Error(
