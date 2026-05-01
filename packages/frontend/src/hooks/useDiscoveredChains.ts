@@ -13,13 +13,24 @@ import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../utils/
 import { DEFAULT_NETWORK } from '../utils/constants'
 import { discoverRegisteredChains } from '../services/chainDiscovery'
 
+/** Never block the transfer UI indefinitely if RPC/registry reads hang. */
+const DISCOVER_REGISTERED_CHAINS_MS = 25_000
+
 async function fetchDiscoveredChains(): Promise<ChainInfo[]> {
   const staticChains = getChainsForTransfer()
   const tier = DEFAULT_NETWORK as NetworkTier
   const configs = BRIDGE_CHAINS[tier]
 
   const allConfigs = Object.values(configs)
-  const registered = await discoverRegisteredChains(allConfigs)
+  let registered: Set<string> | null
+  try {
+    registered = await Promise.race([
+      discoverRegisteredChains(allConfigs),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), DISCOVER_REGISTERED_CHAINS_MS)),
+    ])
+  } catch {
+    registered = null
+  }
 
   if (!registered) {
     return staticChains
@@ -42,6 +53,7 @@ export function useDiscoveredChains() {
     queryFn: fetchDiscoveredChains,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    retry: 1,
   })
 
   return {

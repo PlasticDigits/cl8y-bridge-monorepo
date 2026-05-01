@@ -6,6 +6,8 @@ import { WagmiProvider } from 'wagmi'
 import { config } from './lib/wagmi'
 import { Layout } from './components/Layout'
 import { UnderConstructionPage } from './pages/UnderConstructionPage'
+import TransferPage from './pages/TransferPage'
+import HistoryPage from './pages/HistoryPage'
 import { validateEnv } from './utils/validateEnv'
 import { loadChainlist } from './utils/chainlist'
 import './index.css'
@@ -16,9 +18,7 @@ validateEnv()
 
 const queryClient = new QueryClient()
 
-const TransferPage = lazy(() => import('./pages/TransferPage'))
 const TransferStatusPage = lazy(() => import('./pages/TransferStatusPage'))
-const HistoryPage = lazy(() => import('./pages/HistoryPage'))
 const HashVerificationPage = lazy(() => import('./pages/HashVerificationPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
@@ -37,14 +37,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route
-            path="/"
-            element={
-              <Suspense fallback={<PageFallback />}>
-                <TransferPage />
-              </Suspense>
-            }
-          />
+          <Route path="/" element={<TransferPage />} />
           <Route
             path="/transfer/:xchainHashId"
             element={
@@ -53,14 +46,7 @@ function App() {
               </Suspense>
             }
           />
-          <Route
-            path="/history"
-            element={
-              <Suspense fallback={<PageFallback />}>
-                <HistoryPage />
-              </Suspense>
-            }
-          />
+          <Route path="/history" element={<HistoryPage />} />
           <Route
             path="/verify"
             element={

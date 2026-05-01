@@ -839,9 +839,10 @@ export function TransferForm() {
   const isAboveMax = useMemo(() => {
     if (!amount || !isValidAmount(amount)) return false
     if (effectiveMaxInSrc <= 0n) {
-      // Distinguish "balance not loaded" (don't block) from "balance is 0" (block)
+      // Distinguish "balance not loaded" (don't block) from "balance is 0" (block).
+      // Terra without a wallet: balance is treated as 0 but cap is misleading — connect wallet first.
       return (
-        isSourceTerra ||
+        (isSourceTerra && isWalletConnected) ||
         (isSourceSolana && effectiveTokenBalance !== undefined) ||
         (tokenBalance !== undefined && !!tokenConfig)
       )
@@ -854,6 +855,7 @@ export function TransferForm() {
     effectiveMaxInSrc,
     isSourceTerra,
     isSourceSolana,
+    isWalletConnected,
     effectiveTokenBalance,
     tokenBalance,
     tokenConfig,
