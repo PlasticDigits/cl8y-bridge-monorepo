@@ -12,6 +12,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 | Display metadata overlay | [`packages/frontend/public/chains/chainlist.json`](../packages/frontend/public/chains/chainlist.json) |
 | Wallet chain list | [`packages/frontend/src/lib/wagmi.ts`](../packages/frontend/src/lib/wagmi.ts) |
 | Transfer route EVM preflight + client cache | [`useTransferRouteValidation`](../packages/frontend/src/hooks/useTransferRouteValidation.ts), [`evmTransferTokenPresence`](../packages/frontend/src/services/evm/evmTransferTokenPresence.ts), [`evmClient`](../packages/frontend/src/services/evmClient.ts) |
+| Transfer Status: EVM/Terra destination rate-limit banners + countdown | [`TransferStatusPage`](../packages/frontend/src/pages/TransferStatusPage.tsx), [`useEvmExecutionRateLimitStatus`](../packages/frontend/src/hooks/useEvmExecutionRateLimitStatus.ts), [`FRONTEND_BRIDGE_INVARIANTS.md`](../docs/FRONTEND_BRIDGE_INVARIANTS.md) **INV-UX2** (GL-127) |
 
 ## Invariants
 
@@ -20,6 +21,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 - **INV-BRIDGE-UI-1 / INV-BRIDGE-UI-2** — **`getChainsForTransfer`** drops chains missing **`bridgeAddress`** or (**EVM** without **`bytes4ChainId`**). Documented in **`bridgeChains.ts`** header.
 - **`VITE_EVM_*`** is **legacy single-primary EVM fallback** for **BSC/opBNB** only; MegaETH bridge address reads **`VITE_MEGAETH_BRIDGE_ADDRESS`** only (**no** `VITE_EVM_BRIDGE_ADDRESS` fallback).
 - **INV-FE-TRANSFER-EVM-1:** Transfer preflight on EVM uses **`TokenRegistry.isTokenRegistered`** (same signal as Settings → Tokens → Verify) **before** `eth_getCode`; empty bytecode vs RPC failure yield different user-visible errors. **`getEvmClient`** cache keys include **`chainId`** and **`bridgeAddress`**, not RPC URL alone — see **[GL-125](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/125)**.
+- **INV-UX2 (GL-127):** On **Transfer Status**, when a withdraw is approved but not executed, **EVM** destinations surface **TokenRegistry** rate-limit blocks (same snapshot as the form) with a **1s countdown** to window reset; **Terra** unchanged. See **[FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md) § INV-UX2**.
 
 ## Implemented vs future work (same issue scope)
 

@@ -128,6 +128,7 @@ describe('evmBridgeQueries', () => {
       expect(result!.approved).toBe(false)
       expect(result!.cancelled).toBe(false)
       expect(result!.executed).toBe(false)
+      expect(result!.destDecimals).toBe(6)
       // srcChain from pendingWithdraw.srcChain
       expect(result!.srcChain).toMatch(/^0x00000001/)
       // destChain from getThisChainId (this bridge is BSC = 0x00000038)

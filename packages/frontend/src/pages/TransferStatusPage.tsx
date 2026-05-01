@@ -26,9 +26,12 @@ import { useWallet } from '../hooks/useWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
+import { useEvmExecutionRateLimitStatus } from '../hooks/useEvmExecutionRateLimitStatus'
+import { useWithdrawRateLimitCountdown } from '../hooks/useWithdrawRateLimitCountdown'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { useStepProgress } from '../hooks/useStepProgress'
 import { formatCountdownMmSs, formatCancelWindowRange, formatAmount, formatDuration } from '../utils/format'
+import type { TerraRateLimitStatus } from '../services/terraBridgeQueries'
 import { parseTerraLockReceipt } from '../services/terra/depositReceipt'
 import { computeXchainHashId, chainIdToBytes32, evmAddressToBytes32, terraAddressToBytes32 } from '../services/hashVerification'
 import { isValidXchainHashId, normalizeXchainHashId } from '../utils/validation'
@@ -1087,17 +1090,36 @@ export default function TransferStatusPage() {
     setTransfer((prev) => prev ? { ...prev, lifecycle: 'executed' } : null)
   }, [approvalPollDetectedExecuted, transfer, updateTransferRecord])
 
-  const showRateLimitInfo =
+  const execRateLimitQueriesEnabled =
     !isFailed &&
     transfer?.lifecycle === 'approved' &&
-    destChain?.type === 'cosmos' &&
-    dest &&
-    !dest.executed
-  const { data: rateLimitStatus } = useTerraRateLimitStatus(
+    !!dest &&
+    !dest.executed &&
+    (destChain?.type === 'cosmos' || destChain?.type === 'evm')
+
+  const terraRateLimitEnabled = execRateLimitQueriesEnabled && destChain?.type === 'cosmos'
+  const evmRateLimitEnabled = execRateLimitQueriesEnabled && destChain?.type === 'evm'
+
+  const { data: terraRateLimitData } = useTerraRateLimitStatus(
     dest ?? null,
     destChain ?? null,
-    !!showRateLimitInfo
+    terraRateLimitEnabled,
   )
+  const { data: evmRateLimitData } = useEvmExecutionRateLimitStatus(
+    dest ?? null,
+    destChain ?? null,
+    evmRateLimitEnabled,
+  )
+
+  const rateLimitStatus: TerraRateLimitStatus = useMemo(() => {
+    if (destChain?.type === 'evm') {
+      return evmRateLimitData ?? { kind: 'unknown' }
+    }
+    if (destChain?.type === 'cosmos') {
+      return terraRateLimitData ?? { kind: 'unknown' }
+    }
+    return { kind: 'unknown' }
+  }, [destChain?.type, evmRateLimitData, terraRateLimitData])
 
   // Client-side cancel window override: when approved long ago, treat as expired even if chain returns stale data
   const cancelWindowSeconds = destChainCancelWindow ?? 300
@@ -1117,15 +1139,17 @@ export default function TransferStatusPage() {
 
   // When rate limit blocks execution, don't show "Cancel Window Active" (it's false)
   const showRateLimitBlocked =
-    rateLimitStatus?.kind === 'permanently-blocked' ||
-    rateLimitStatus?.kind === 'temporarily-blocked' ||
-    (rateLimitStatus?.kind === 'unknown' &&
+    rateLimitStatus.kind === 'permanently-blocked' ||
+    rateLimitStatus.kind === 'temporarily-blocked' ||
+    (rateLimitStatus.kind === 'unknown' &&
       effectiveCancelWindowRemaining != null &&
       effectiveCancelWindowRemaining <= 0)
-  const rateLimitWindowSecondsRemaining =
-    rateLimitStatus?.kind === 'temporarily-blocked'
-      ? Math.max(0, rateLimitStatus.periodEndsAt - nowSec)
-      : null
+  const rateLimitTemporarilyBlocked = rateLimitStatus.kind === 'temporarily-blocked'
+  const rateLimitResetSeconds = useWithdrawRateLimitCountdown(
+    rateLimitTemporarilyBlocked ? rateLimitStatus.periodEndsAt : null,
+    rateLimitTemporarilyBlocked ? rateLimitStatus.fetchedAtWallMs ?? null : null,
+    showRateLimitBlocked && rateLimitTemporarilyBlocked,
+  )
 
   const currentStepIdx = useMemo(() => {
     const baseIdx = getStepIndex(
@@ -1512,13 +1536,14 @@ export default function TransferStatusPage() {
                 ) : rateLimitStatus?.kind === 'temporarily-blocked' ? (
                   <div className="mt-2 border-2 border-amber-700 bg-[#221c13] p-3 shadow-[3px_3px_0_#000]">
                     <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
-                      Rate limit window full — 24h countdown
+                      Blocked: destination rate limit
                     </p>
                     <p className="text-amber-400/80 text-xs mt-0.5">
-                      The operator will retry automatically after the window resets.
-                      {rateLimitWindowSecondsRemaining != null && (
+                      This transfer cannot complete until the withdraw limit window resets on the destination
+                      chain. The operator will retry automatically after that.
+                      {rateLimitResetSeconds != null && (
                         <span className="ml-1 font-mono text-base font-semibold tabular-nums text-amber-300">
-                          {formatDuration(rateLimitWindowSecondsRemaining)} remaining
+                          Resets in {formatDuration(rateLimitResetSeconds)}
                         </span>
                       )}
                     </p>

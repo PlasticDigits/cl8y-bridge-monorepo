@@ -6,8 +6,8 @@
  */
 
 import { queryContract } from './lcdClient'
-import { pow10BigInt } from '../utils/pow10'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
+import { normalizeBridgeAmountToDestDecimals } from '../utils/bridgeAmountDecimals'
 import {
   base64ToHex,
   hexToBase64,
@@ -266,22 +266,15 @@ export async function queryTerraPendingWithdraw(
   }
 }
 
-/** Normalize amount from source to destination decimals (matches Terra contract logic). */
-function normalizeDecimals(
-  amount: bigint,
-  srcDecimals: number,
-  destDecimals: number
-): bigint {
-  if (srcDecimals === destDecimals) return amount
-  if (srcDecimals > destDecimals) {
-    return amount / pow10BigInt(srcDecimals - destDecimals)
-  }
-  return amount * pow10BigInt(destDecimals - srcDecimals)
-}
-
 export type TerraRateLimitStatus =
   | { kind: 'permanently-blocked'; maxPerPeriod: string }
-  | { kind: 'temporarily-blocked'; periodEndsAt: number; remainingAmount: string }
+  | {
+      kind: 'temporarily-blocked'
+      periodEndsAt: number
+      remainingAmount: string
+      /** Wall clock ms when status was computed — improves countdown alignment vs pure unix `now`. */
+      fetchedAtWallMs?: number
+    }
   | { kind: 'ok' }
   | { kind: 'unknown'; error?: string }
 
@@ -333,7 +326,7 @@ export async function queryTerraRateLimitStatus(
       return { kind: 'unknown', error: 'period_usage query failed' }
     }
 
-    const payoutAmount = normalizeDecimals(amount, srcDecimals, destDecimals)
+    const payoutAmount = normalizeBridgeAmountToDestDecimals(amount, srcDecimals, destDecimals)
     const remainingAmount = bigintFromBaseUnitsString(usage.remaining_amount)
 
     // Uint128::MAX (~3.4e38) indicates no explicit rate limit configured
@@ -355,6 +348,7 @@ export async function queryTerraRateLimitStatus(
           kind: 'temporarily-blocked',
           periodEndsAt: parsePeriodEndsAt(usage.period_ends_at),
           remainingAmount: usage.remaining_amount,
+          fetchedAtWallMs: Date.now(),
         }
       }
       return { kind: 'ok' }
@@ -369,6 +363,7 @@ export async function queryTerraRateLimitStatus(
         kind: 'temporarily-blocked',
         periodEndsAt: parsePeriodEndsAt(usage.period_ends_at),
         remainingAmount: usage.remaining_amount,
+        fetchedAtWallMs: Date.now(),
       }
     }
 
