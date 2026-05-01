@@ -220,6 +220,7 @@ export async function queryEvmPendingWithdraw(
       cancelled,
       executed: pendingWithdraw.executed,
       srcDecimals: Number(pendingWithdraw.srcDecimals),
+      destDecimals: Number(pendingWithdraw.destDecimals),
       cancelWindowRemaining,
     }
   } catch {

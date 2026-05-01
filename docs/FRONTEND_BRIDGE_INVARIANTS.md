@@ -1,6 +1,26 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+
+## INV-UX2 — Transfer status: destination rate limit visibility (GL-127)
+
+When a transfer is **approved** on the destination chain but **not executed**, and execution is delayed or blocked by **destination withdraw rate limits** (EVM `TokenRegistry` / `TokenRateLimit`, Terra `period_usage`), the Transfer Status stepper must **not** sit silently on the final step.
+
+| Rule | Behavior |
+|------|----------|
+| **EVM destinations** | The UI resolves the pending withdraw’s local token, reads the same `getWithdrawRateLimitWindow` snapshot as Settings / the transfer form (via `useTokenDetails`), and compares the **decimal-normalized** payout amount to **remaining** and **max per period** (`computeEvmExecutionRateLimitStatus`). |
+| **Terra destinations** | Unchanged: LCD `rate_limit` + `period_usage` via `queryTerraRateLimitStatus` (`useTerraRateLimitStatus`). |
+| **Temporary block** | Show an amber banner: destination rate limit, operator retry after reset, and a **`Resets in …`** timer that **updates every second** (`useWithdrawRateLimitCountdown`, wall-clock aligned when `fetchedAtWallMs` is present — same idea as `SourceChainSelector`). |
+| **Permanent block** | Payout exceeds the configured period cap; red banner — user cannot wait out the window. |
+| **Unknown + stuck** | If the cancel window has expired (client-side effective timer) but status is still unknown, keep the soft “may be delayed / check Verify” hint. |
+
+| Evidence | Location |
+|----------|----------|
+| Status page | `packages/frontend/src/pages/TransferStatusPage.tsx` |
+| EVM classification | `packages/frontend/src/services/evmExecutionRateLimit.ts`, `packages/frontend/src/hooks/useEvmExecutionRateLimitStatus.ts` |
+| Decimal normalization (matches `Bridge._normalizeDecimals`) | `packages/frontend/src/utils/bridgeAmountDecimals.ts` |
+| Countdown hook | `packages/frontend/src/hooks/useWithdrawRateLimitCountdown.ts` |
+| Pending withdraw `destDecimals` (EVM) | `packages/frontend/src/services/evmBridgeQueries.ts` |
 
 ## INV-UX1 — Transfer form: CTA, receive quote, and amount field (GL-119)
 
