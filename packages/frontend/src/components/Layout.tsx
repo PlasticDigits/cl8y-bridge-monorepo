@@ -6,7 +6,6 @@ import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
 import { SolanaWalletBalanceSync } from './SolanaWalletBalanceSync'
-import { LAYOUT_HERO_GLOW_CLASS, LAYOUT_MAIN_CLASS } from './layout/layoutShellClasses'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -56,8 +55,11 @@ export function Layout() {
         <NavBar />
       </header>
 
-      <main className={LAYOUT_MAIN_CLASS}>
-        <div aria-hidden="true" className={LAYOUT_HERO_GLOW_CLASS} />
+      <main className="relative max-w-5xl mx-auto px-4 pt-3 pb-6 md:pt-4 md:pb-8">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-2 mx-auto h-[520px] max-w-3xl rounded-[40px] theme-hero-glow blur-3xl"
+        />
         <div className="relative z-10">
           <Outlet />
         </div>
