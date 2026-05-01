@@ -18,7 +18,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Canceler Network](./docs/canceler-network.md) | Running canceler nodes for security |
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
-| [Frontend bridge UI invariants](./docs/FRONTEND_BRIDGE_INVARIANTS.md) | Recipient field (INV-RCP1; GL-117); mobile shell below sticky nav (INV-MOB1; [GL-103](https://gitlab.com/PlasticDigits/yieldomega/-/issues/103)) |
+| [Frontend bridge UI invariants](./docs/FRONTEND_BRIDGE_INVARIANTS.md) | Recipient field (INV-RCP1; GL-117); mobile shell below sticky nav (INV-MOB1; GL-126) |
 | [MetaMask / Blockaid (EVM)](./docs/METAMASK_BLOCKAID_EVM.md) | BSC/opBNB: wallet alerts vs. canonical LockUnlock + Bridge proxies; false-positive reporting (INV-BLK1; GL-118) |
 | [Solana bridge deposits](./docs/SOLANA_BRIDGE_DEPOSITS.md) | Solana source: `deposit_native` (lamports) vs `deposit_spl` (SPL) |
 | [Solana mainnet deployment](./docs/deployment-solana-mainnet.md) | Mainnet-beta rollout; bridge program `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`, BridgeConfig PDA `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (seeds `["bridge"]`) |

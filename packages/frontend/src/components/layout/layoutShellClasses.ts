@@ -1,7 +1,7 @@
 /**
  * Shared class strings for the app shell (`Layout`).
  *
- * yieldomega GL-103: On viewports below the `md` breakpoint, the sticky header + NavBar stack is tall
+ * GL-126: On viewports below the `md` breakpoint, the sticky header + NavBar stack is tall
  * and decor (hero glow blur) can read as overlapping top chrome. Extra main padding and a
  * lower glow anchor on small screens keep primary content clearly separated from the nav card.
  *

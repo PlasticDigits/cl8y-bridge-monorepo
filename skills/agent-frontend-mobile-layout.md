@@ -1,4 +1,4 @@
-# Agent skill: Mobile layout shell spacing (GL-103)
+# Agent skill: Mobile layout shell spacing (GL-126)
 
 Use when debugging **overlap between the sticky NavBar / “menu card” and top-of-page content** on phones, or when changing **`Layout`** vertical spacing.
 
@@ -12,8 +12,8 @@ Use when debugging **overlap between the sticky NavBar / “menu card” and top
 
 ## Invariants
 
-- **INV-MOB1** — Documented in [`docs/FRONTEND_BRIDGE_INVARIANTS.md`](../docs/FRONTEND_BRIDGE_INVARIANTS.md) § **INV-MOB1** ([GL-103](https://gitlab.com/PlasticDigits/yieldomega/-/issues/103)).
-- Adjust spacing in **`layoutShellClasses.ts`** so `Layout.tsx` stays a thin composition layer; keep **`md:`** overrides for tablet/desktop identical to the pre–GL-103 rhythm unless the issue explicitly changes them.
+- **INV-MOB1** — Documented in [`docs/FRONTEND_BRIDGE_INVARIANTS.md`](../docs/FRONTEND_BRIDGE_INVARIANTS.md) § **INV-MOB1** ([GL-126](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/126)).
+- Adjust spacing in **`layoutShellClasses.ts`** so `Layout.tsx` stays a thin composition layer; keep **`md:`** overrides for tablet/desktop identical to the pre–GL-126 rhythm unless the issue explicitly changes them.
 
 ## Related
 

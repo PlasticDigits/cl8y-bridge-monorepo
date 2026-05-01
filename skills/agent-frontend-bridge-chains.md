@@ -35,4 +35,4 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 
 ## See also
 
-- Shell spacing / sticky header overlap on phones — [`agent-frontend-mobile-layout.md`](./agent-frontend-mobile-layout.md) (**INV-MOB1**, [GL-103](https://gitlab.com/PlasticDigits/yieldomega/-/issues/103)).
+- Shell spacing / sticky header overlap on phones — [`agent-frontend-mobile-layout.md`](./agent-frontend-mobile-layout.md) (**INV-MOB1**, [GL-126](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/126)).
