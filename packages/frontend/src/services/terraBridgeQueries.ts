@@ -292,8 +292,10 @@ function parsePeriodEndsAt(pe: string | { seconds: string } | number): number {
 
 /**
  * Query Terra rate limit status for a pending withdraw.
- * Determines if the transfer is permanently blocked (amount > period limit)
- * or temporarily blocked (amount > remaining in window, will retry after reset).
+ * Permanent vs temporary classification uses **`payoutAmount` only**: same destination-base-unit
+ * scale as Terra `max_per_period` / `remaining_amount`. Never compare raw source `amount` to those
+ * contract fields (`srcDecimals` ≠ `destDecimals` would falsely trip permanent block — GL-130).
+ * Temporary block when normalized payout exceeds remaining in-window amount.
  *
  * The contract's RateLimit query returns Option<RateLimitResponse> — null when no
  * explicit rate limit is configured. In that case, we fall back to PeriodUsage data
@@ -336,8 +338,7 @@ export async function queryTerraRateLimitStatus(
       const maxPerPeriod = bigintFromBaseUnitsString(rateCfg.max_per_period ?? '0')
       if (maxPerPeriod === 0n) return { kind: 'ok' }
 
-      const permanentlyBlocked =
-        payoutAmount > maxPerPeriod || amount > maxPerPeriod
+      const permanentlyBlocked = payoutAmount > maxPerPeriod
 
       if (permanentlyBlocked) {
         return { kind: 'permanently-blocked', maxPerPeriod: maxPerPeriod.toString() }

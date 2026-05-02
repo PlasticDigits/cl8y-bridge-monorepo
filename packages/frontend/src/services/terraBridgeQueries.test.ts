@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { queryTerraDeposit, queryTerraPendingWithdraw } from './terraBridgeQueries'
+import {
+  queryTerraDeposit,
+  queryTerraPendingWithdraw,
+  queryTerraRateLimitStatus,
+} from './terraBridgeQueries'
 import * as lcdClient from './lcdClient'
 import type { BridgeChainConfig } from '../types/chain'
 import type { Hex } from 'viem'
@@ -203,6 +207,100 @@ describe('terraBridgeQueries', () => {
       // Native denom hashed with keccak256
       expect(result!.token).toMatch(/^0x[a-f0-9]{64}$/i)
       expect(lcdClient.queryContract).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('queryTerraRateLimitStatus', () => {
+    const bridgeAddr = 'terra1bridge'
+    /** Route parallel LCD queries (`rate_limit` + `period_usage`) by payload shape */
+    function mockRateLimitQueries(opts: {
+      maxPerPeriod: string
+      remainingAmount: string
+      usedAmount?: string
+    }) {
+      vi.mocked(lcdClient.queryContract).mockImplementation(
+        async (_lcd, _contract, query: object) => {
+          const q = query as Record<string, unknown>
+          if ('rate_limit' in q) {
+            return { max_per_transaction: opts.maxPerPeriod, max_per_period: opts.maxPerPeriod }
+          }
+          if ('period_usage' in q) {
+            return {
+              used_amount: opts.usedAmount ?? '0',
+              remaining_amount: opts.remainingAmount,
+              period_ends_at: '0',
+            }
+          }
+          return null
+        }
+      )
+    }
+
+    /**
+     * GL-130 regression: MegaETH-scale source amount (18d) vs Terra-native cap (6d)
+     * must classify using normalized payout only (parity with `computeEvmExecutionRateLimitStatus`).
+     */
+    it('normalizes decimals for permanent-block check (tiny 18d amount vs generous 6d cap → ok)', async () => {
+      mockRateLimitQueries({
+        maxPerPeriod: '1000000000',
+        remainingAmount: '999999999999999999999999999999',
+      })
+
+      const amount18dTiny = 1_000_000_000_000_000n // 0.001 token when srcDecimals === 18
+      const status = await queryTerraRateLimitStatus(
+        lcdUrls,
+        bridgeAddr,
+        'uusd',
+        amount18dTiny,
+        18,
+        6
+      )
+
+      expect(status.kind).toBe('ok')
+    })
+
+    it('returns permanently-blocked only when normalized payout exceeds max_per_period', async () => {
+      const scale12 = 10n ** 12n
+      mockRateLimitQueries({
+        maxPerPeriod: '6000000',
+        remainingAmount: '6000000',
+      })
+
+      const amount18dOverCap = 6_000_001n * scale12 // 6.000001 units in dest 6 decimals
+      const status = await queryTerraRateLimitStatus(
+        lcdUrls,
+        bridgeAddr,
+        'token',
+        amount18dOverCap,
+        18,
+        6
+      )
+
+      expect(status.kind).toBe('permanently-blocked')
+      if (status.kind === 'permanently-blocked') {
+        expect(status.maxPerPeriod).toBe('6000000')
+      }
+    })
+
+    it('returns temporarily-blocked when payout fits period max but exceeds remaining window', async () => {
+      const scale12 = 10n ** 12n
+      mockRateLimitQueries({
+        maxPerPeriod: '5000000000',
+        remainingAmount: '999',
+      })
+
+      const amount18dMatchesEvmNormalizationTest =
+        600_000n * scale12 /* → 600000 payout in dest 6d; evmExecutionRateLimit.test parity */
+      const status = await queryTerraRateLimitStatus(
+        lcdUrls,
+        bridgeAddr,
+        'token',
+        amount18dMatchesEvmNormalizationTest,
+        18,
+        6
+      )
+
+      expect(status.kind).toBe('temporarily-blocked')
     })
   })
 })
