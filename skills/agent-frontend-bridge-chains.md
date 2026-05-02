@@ -1,6 +1,6 @@
 # Agent skill: Frontend bridge chains and env exposure (GL-124, GL-125)
 
-Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debugging **Registered Chains** or **`getChainsForTransfer`**, or explaining why **operator-only `MEGAETH_*`** (no `VITE_`) never reaches **`import.meta.env`**. For **Solana wallet txs / blockhash / GL-128**, see [`agent-solana-tx-blockhash.md`](./agent-solana-tx-blockhash.md).
+Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debugging **Registered Chains** or **`getChainsForTransfer`**, or explaining why **operator-only `MEGAETH_*`** (no `VITE_`) never reaches **`import.meta.env`**. For **Solana wallet txs / blockhash / GL-128**, see [`agent-solana-tx-blockhash.md`](./agent-solana-tx-blockhash.md). For **Terra LCD rate-limit vs EVM parity (decimal-normalized payout only; GL-130)**, see [`FRONTEND_BRIDGE_INVARIANTS.md`](../docs/FRONTEND_BRIDGE_INVARIANTS.md) **INV-UX2-TERRA1** — `queryTerraRateLimitStatus`.
 
 ## Code map
 
@@ -21,7 +21,7 @@ Use when wiring **new EVM / Cosmos / Solana bridge peers into the SPA**, debuggi
 - **INV-BRIDGE-UI-1 / INV-BRIDGE-UI-2** — **`getChainsForTransfer`** drops chains missing **`bridgeAddress`** or (**EVM** without **`bytes4ChainId`**). Documented in **`bridgeChains.ts`** header.
 - **`VITE_EVM_*`** is **legacy single-primary EVM fallback** for **BSC/opBNB** only; MegaETH bridge address reads **`VITE_MEGAETH_BRIDGE_ADDRESS`** only (**no** `VITE_EVM_BRIDGE_ADDRESS` fallback).
 - **INV-FE-TRANSFER-EVM-1:** Transfer preflight on EVM uses **`TokenRegistry.isTokenRegistered`** (same signal as Settings → Tokens → Verify) **before** `eth_getCode`; empty bytecode vs RPC failure yield different user-visible errors. **`getEvmClient`** cache keys include **`chainId`** and **`bridgeAddress`**, not RPC URL alone — see **[GL-125](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/125)**.
-- **INV-UX2 (GL-127):** On **Transfer Status**, when a withdraw is approved but not executed, **EVM** destinations surface **TokenRegistry** rate-limit blocks (same snapshot as the form) with a **1s countdown** to window reset; **Terra** unchanged. See **[FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md) § INV-UX2**.
+- **INV-UX2-TERRA1 (GL-130):** `queryTerraRateLimitStatus` permanent-block classification compares **`normalizeBridgeAmountToDestDecimals`** payout to Terra `max_per_period` **only**. Raw source `amount` vs destination-unit caps falsely blocks EVM→Terra when `srcDecimals > destDecimals` (see **[GL-130](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/130)** / same shape as **`computeEvmExecutionRateLimitStatus`**).
 
 ## Implemented vs future work (same issue scope)
 

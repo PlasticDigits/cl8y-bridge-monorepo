@@ -576,6 +576,7 @@ function MyComponent() {
 
 ## Related Documentation
 
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127) and Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130)
 - [System Architecture](./architecture.md) - Overall system design
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation
