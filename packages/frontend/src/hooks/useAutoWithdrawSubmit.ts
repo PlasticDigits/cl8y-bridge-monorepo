@@ -60,10 +60,14 @@ import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
 import { useTokenList } from './useTokenList'
 import { DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants'
 import { BRIDGE_CHAINS } from '../utils/bridgeChains'
+import { waitForWalletChainId } from '../utils/waitForWalletChainId'
 import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
 
 const LOG = '[autoWithdraw]'
+
+/** Wallet pop-ups can be dismissed or stall; bounded wait avoids an infinite hang (GL-131). */
+const SWITCH_CHAIN_PROMPT_TIMEOUT_MS = 60_000
 
 /** Avoid false "submission lost" when React state lags localStorage after a successful submit (#87). */
 function hasPersistedSuccessfulHashSubmit(transferId: string, xchainHashId: string | undefined): boolean {
@@ -312,7 +316,20 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
         if (evmChain?.id !== destChainId) {
           setPhase('switching-chain')
           try {
-            await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
+            await Promise.race([
+              switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] }),
+              new Promise<never>((_, rej) => {
+                setTimeout(
+                  () =>
+                    rej(
+                      new Error(
+                        'Chain switch timed out or was dismissed. Use “Switch to …” on this page or retry.',
+                      ),
+                    ),
+                  SWITCH_CHAIN_PROMPT_TIMEOUT_MS,
+                )
+              }),
+            ])
           } catch (err) {
             const msg = `Failed to switch to destination chain: ${err instanceof Error ? err.message : String(err)}`
             console.warn(`${LOG} Chain switch failed:`, msg)
@@ -321,6 +338,16 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
             submittedRef.current = false
             return
           }
+        }
+
+        const aligned = await waitForWalletChainId(destChainId)
+        if (!aligned) {
+          const msg = `Wallet is not on the destination chain yet (chain id ${destChainId}). Approve switching in your wallet or use “Switch to …”, then Retry Submit.`
+          console.warn(`${LOG} ${msg}`)
+          setPhase('error')
+          setError(msg)
+          submittedRef.current = false
+          return
         }
 
         setPhase('submitting-hash')

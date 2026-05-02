@@ -1,6 +1,22 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+
+## INV-UX3 — Transfer Status: stepper vs lookup polling; EVM chain switch affordance; MegaETH header glyph (GL-131)
+
+| Rule | Behavior |
+|------|----------|
+| **Submit Hash step highlight** | While `lifecycle === 'deposited'` and the UI has **confirmed deposit on source** (`source != null`) but **no destination pending withdraw yet** (`dest == null`), the vertical stepper stays on **Submit Hash** (index **1**). **`lookupLoading`** ticks from `useMultiChainLookup` polling **must not** downgrade the active step to **Deposit** (index **0**). Pure helper: **`computeTransferStepIdx`** in `packages/frontend/src/utils/transferStatusStep.ts`. |
+| **Explicit switch control** | When automatic hash submission needs the wallet on the **configured EVM destination**, and the connected chain id differs, the yellow status banner offers a primary **“Switch to \<chain\>”** button calling wagmi **`switchChainAsync`** (fallback when the extension never surfaces a prompt). |
+| **Post-switch submit** | Auto-submit waits until **`getAccount(config).chainId`** matches the destination (**`waitForWalletChainId`**), and **`switchChainAsync`** is **raced with a timeout** so a dismissed/hung prompt becomes a **recoverable error** with **Retry**. |
+| **MegaETH chip** | When connected on chain id **`4326`**, `ConnectWallet` uses **`/chains/mega.png`** (aligned with `chainlist.json`), not the **ETH** text fallback from a missing logo. Native gas label remains **ETH** per **`megaethMainnet.ts`** `nativeCurrency.symbol`. |
+
+| Evidence | Location |
+|----------|----------|
+| Step index + tests | `packages/frontend/src/utils/transferStatusStep.ts`, `transferStatusStep.test.ts` |
+| Status page + button | `packages/frontend/src/pages/TransferStatusPage.tsx` |
+| Timeout + alignment | `packages/frontend/src/hooks/useAutoWithdrawSubmit.ts`, `packages/frontend/src/utils/waitForWalletChainId.ts` |
+| Wallet icon | `packages/frontend/src/components/ConnectWallet.tsx` |
 
 ## INV-UX2 — Transfer status: destination rate limit visibility (GL-127)
 

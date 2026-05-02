@@ -3,6 +3,7 @@ import { formatAddress } from '../utils/format'
 import { sounds } from '../lib/sounds'
 import { useAccount, useBalance, useDisconnect } from 'wagmi'
 import { useUIStore } from '../stores/ui'
+import { MEGAETH_MAINNET_CHAIN_ID } from '../lib/megaethMainnet'
 
 function getGasSymbol(chainId?: number): 'ETH' | 'BNB' {
   if (chainId === 56 || chainId === 97 || chainId === 204 || chainId === 5611) {
@@ -17,6 +18,8 @@ function getChainLogoPath(chainId?: number): string | undefined {
   if (chainId === 31337) return '/chains/anvil-icon.png'
   if (chainId === 31338) return '/chains/anvil2-icon.png'
   if (chainId === 1) return '/chains/ethereum-icon.png'
+  /** Same asset as `public/chains/chainlist.json` for MegaETH (GL-131). */
+  if (chainId === MEGAETH_MAINNET_CHAIN_ID) return '/chains/mega.png'
   return undefined
 }
 

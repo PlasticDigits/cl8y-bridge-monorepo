@@ -44,6 +44,7 @@ import {
 import type { BridgeChainConfig } from '../types/chain'
 import { DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL } from '../utils/constants'
 import { bigintFromBaseUnitsString } from '../utils/scientificDecimal'
+import { computeTransferStepIdx } from '../utils/transferStatusStep'
 import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
@@ -122,30 +123,6 @@ function buildTransferSteps(destIsSolana: boolean): TransferStepRow[] {
 }
 
 const LIFECYCLE_ORDER: TransferLifecycle[] = ['deposited', 'hash-submitted', 'approved', 'executed']
-
-/**
- * Active step index for the vertical stepper. Solana destinations insert an explicit
- * recipient execute step between approval and complete.
- */
-function getStepIndex(
-  lifecycle: TransferLifecycle | undefined,
-  destIsSolana: boolean,
-  cancelWindowRemaining: number | null | undefined,
-): number {
-  const n = destIsSolana ? 5 : 4
-  if (!lifecycle || lifecycle === 'failed') return 0
-  if (lifecycle === 'executed') return n
-  if (lifecycle === 'deposited') return 0
-  if (lifecycle === 'hash-submitted') return 2
-  if (lifecycle === 'approved') {
-    if (destIsSolana) {
-      if (cancelWindowRemaining != null && cancelWindowRemaining > 0) return 2
-      return 3
-    }
-    return 3
-  }
-  return 0
-}
 
 function StepIndicator({
   step,
@@ -913,6 +890,38 @@ export default function TransferStatusPage() {
   const { submitOnEvm, submitOnTerra } = useWithdrawSubmit()
   const { address: evmAddress, chain: evmChain } = useAccount()
   const { switchChainAsync } = useSwitchChain()
+  const destEvmSwitchTarget = useMemo(() => {
+    if (!transfer) return null
+    const tier = DEFAULT_NETWORK as NetworkTier
+    const cfg = BRIDGE_CHAINS[tier][transfer.destChain]
+    if (cfg?.type !== 'evm' || typeof cfg.chainId !== 'number') return null
+    return { chainId: cfg.chainId, name: cfg.name }
+  }, [transfer])
+  const needsEvmDestChainSwitch =
+    destEvmSwitchTarget != null && !!evmAddress && evmChain?.id !== destEvmSwitchTarget.chainId
+
+  const [switchingDestChain, setSwitchingDestChain] = useState(false)
+  const switchToDestinationEvm = useCallback(async () => {
+    if (!destEvmSwitchTarget || !needsEvmDestChainSwitch) return
+    sounds.playButtonPress()
+    setSwitchingDestChain(true)
+    try {
+      await switchChainAsync({
+        chainId: destEvmSwitchTarget.chainId as Parameters<typeof switchChainAsync>[0]['chainId'],
+      })
+    } catch {
+      // Wallet/extension shows rejection and add-network errors (GL-131).
+    } finally {
+      setSwitchingDestChain(false)
+    }
+  }, [destEvmSwitchTarget, needsEvmDestChainSwitch, switchChainAsync])
+
+  const showSwitchToDestInProgressBanner =
+    transfer?.lifecycle === 'deposited' &&
+    needsEvmDestChainSwitch &&
+    (autoPhase === 'switching-chain' ||
+      (autoPhase === 'manual-required' && canAutoSubmit))
+
   const { connected: isTerraConnected, luncBalance } = useWallet()
   const [fixSubmitting, setFixSubmitting] = useState(false)
   const [fixSubmitError, setFixSubmitError] = useState<string | null>(null)
@@ -1151,36 +1160,29 @@ export default function TransferStatusPage() {
     showRateLimitBlocked && rateLimitTemporarilyBlocked,
   )
 
-  const currentStepIdx = useMemo(() => {
-    const baseIdx = getStepIndex(
+  const currentStepIdx = useMemo(
+    () =>
+      computeTransferStepIdx({
+        transferLifecycle: transfer?.lifecycle,
+        destIsSolana,
+        effectiveCancelWindowRemaining,
+        autoPhase,
+        retryingHash,
+        source,
+        dest,
+        lookupLoading,
+      }),
+    [
       transfer?.lifecycle,
       destIsSolana,
       effectiveCancelWindowRemaining,
-    )
-    if (transfer?.lifecycle === 'deposited' && autoPhase === 'error') return 1
-    if (retryingHash) return 1
-    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'hash-submitted') return 1
-    if (transfer?.lifecycle === 'hash-submitted' && autoPhase === 'error') return 1
-    if (autoPhase === 'submitting-hash' && source != null && transfer?.lifecycle === 'deposited') return 1
-    if (
-      transfer?.lifecycle === 'deposited' &&
-      source != null &&
-      dest == null &&
-      !lookupLoading
-    ) {
-      return 1
-    }
-    return baseIdx
-  }, [
-    transfer?.lifecycle,
-    destIsSolana,
-    effectiveCancelWindowRemaining,
-    autoPhase,
-    retryingHash,
-    source,
-    dest,
-    lookupLoading,
-  ])
+      autoPhase,
+      retryingHash,
+      source,
+      dest,
+      lookupLoading,
+    ],
+  )
 
   const solanaExecuteParams = useMemo(() => {
     if (!transfer?.xchainHashId || !destChain || destChain.type !== 'solana') return null
@@ -1322,6 +1324,16 @@ export default function TransferStatusPage() {
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
+                {needsEvmDestChainSwitch && destEvmSwitchTarget && (
+                  <button
+                    type="button"
+                    onClick={() => void switchToDestinationEvm()}
+                    disabled={switchingDestChain}
+                    className="btn-primary text-xs"
+                  >
+                    {switchingDestChain ? 'Switching…' : `Switch to ${destEvmSwitchTarget.name}`}
+                  </button>
+                )}
                 {canAutoSubmit && (
                   <button
                     type="button"
@@ -1384,7 +1396,9 @@ export default function TransferStatusPage() {
                       : nonceStatus === 'resolving'
                       ? 'Querying the Terra LCD for deposit nonce and amount. This may take a few seconds...'
                       : autoPhase === 'switching-chain'
-                      ? 'Please approve the chain switch in your wallet.'
+                      ? needsEvmDestChainSwitch && destEvmSwitchTarget
+                        ? `Approve switching to ${destEvmSwitchTarget.name} in your wallet, or tap “Switch to ${destEvmSwitchTarget.name}” below.`
+                        : 'Please approve the chain switch in your wallet.'
                       : autoPhase === 'submitting-hash'
                       ? 'Sending withdrawSubmit transaction to the destination chain...'
                       : autoBlockReason === 'missing-nonce'
@@ -1393,10 +1407,22 @@ export default function TransferStatusPage() {
                       ? (transfer.direction === 'evm-to-evm' || transfer.direction === 'terra-to-evm')
                         ? 'Connect your EVM wallet to auto-submit the withdrawal hash.'
                         : 'Connect your Terra wallet to auto-submit the withdrawal hash.'
+                      : showSwitchToDestInProgressBanner && destEvmSwitchTarget
+                      ? `Your wallet must be on ${destEvmSwitchTarget.name} before submitting. Approve any network prompt, or tap “Switch to ${destEvmSwitchTarget.name}” below.`
                       : canAutoSubmit
                       ? 'Auto-submitting via your connected wallet...'
                       : 'Connect your destination wallet to auto-submit, or use the manual flow below.'}
                   </p>
+                  {showSwitchToDestInProgressBanner && destEvmSwitchTarget && (
+                    <button
+                      type="button"
+                      onClick={() => void switchToDestinationEvm()}
+                      disabled={switchingDestChain}
+                      className="btn-primary mt-2 text-xs"
+                    >
+                      {switchingDestChain ? 'Switching…' : `Switch to ${destEvmSwitchTarget.name}`}
+                    </button>
+                  )}
                   {/* Manual retry button when wallet connected but auto-submit didn't fire */}
                   {autoPhase === 'manual-required' && canAutoSubmit && (
                     <button

@@ -10,6 +10,9 @@ import { defineChain } from 'viem'
  *
  * @see docs/deployment-megaeth.md — Frontend (`VITE_MEGAETH_*`).
  * @see https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/124
+ *
+ * Transfer Status / wallet UI: **`ConnectWallet`** uses **`/chains/mega.png`** for chain id **`4326`**
+ * (INV-UX3, GL-131). Native token display stays **`ETH`** per wagmi **`nativeCurrency.symbol`** below.
  */
 export const MEGAETH_MAINNET_CHAIN_ID = 4326
 export const MEGAETH_V2_BYTES4 = '0x000010e6'
