@@ -3,17 +3,23 @@
 #
 # EVM (MegaETH + BSC):
 #   - TokenRegistry.setRateLimit(token, minPerTx, maxPerTx, maxPerPeriod)
-#       Defaults: min=1 wei, maxPerTx=1000 CL8Y, maxPerPeriod=1000 CL8Y (18 decimals).
-#   - TokenRateLimit.setLimitsBatch — same 1000e18 for 24h deposit + withdraw each.
+#       Defaults: min=1 wei, maxPerTx=10k CL8Y, maxPerPeriod=40k CL8Y (18 decimals).
+#   - TokenRateLimit.setLimitsBatch — 40ke18 for 24h deposit + withdraw each (guard caps).
 #
 # Terra Classic:
 #   - set_rate_limit (max_per_transaction + max_per_period only; no separate “min” in CosmWasm).
-#       Defaults: both 1000e18 string (1000 CL8Y).
+#       Defaults: max_per_transaction=10ke18, max_per_period=40ke18 strings.
 #
 # Signers:
 #   - TokenRegistry.setRateLimit: registry owner.
-#   - TokenRateLimit: guard AccessManager authority.
-#   - Terra: bridge admin key (--from TERRA_WALLET).
+#   - TokenRateLimit: guard AccessManager authority (may be the same EOA as above).
+#   - Terra: bridge admin key (--from TERRA_WALLET; keyring, not necessarily the same as EVM).
+#
+# EVM signing (cast):
+#   - Default: prompts once on /dev/tty for the raw hex private key (hidden, same as ssh password —
+#       input not echoed); that key signs every MegaETH/BSC tx in this script.
+#   - Or set CAST_PRIVATE_KEY or PRIVATE_KEY in the environment (non-interactive; avoid shell history).
+#   - Ledger / keystores only: CAST_INTERACTIVE=1 uses legacy cast --interactive per send (stdin from /dev/tty).
 #
 # Usage (repo root):
 #   ./scripts/megaeth/set-cl8y-economic-rate-limits.sh
@@ -22,11 +28,6 @@
 set -euo pipefail
 
 export FOUNDRY_DISABLE_NIGHTLY_WARNING="${FOUNDRY_DISABLE_NIGHTLY_WARNING:-1}"
-
-if [[ ! -c /dev/tty ]] || ! [[ -r /dev/tty && -w /dev/tty ]]; then
-  echo "Interactive signing requires a TTY (/dev/tty); run from a real terminal." >&2
-  exit 1
-fi
 
 MEGAETH_RPC="${MEGAETH_RPC:-https://mainnet.megaeth.com/rpc}"
 BSC_RPC="${BSC_RPC:-https://bsc-dataseed1.binance.org}"
@@ -41,20 +42,61 @@ TERRA_TOKEN_CL8Y="${TERRA_TOKEN_CL8Y:-terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3n
 MEGAETH_TOKEN_RATE_LIMIT="${MEGAETH_TOKEN_RATE_LIMIT:-0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c}"
 BSC_TOKEN_RATE_LIMIT="${BSC_TOKEN_RATE_LIMIT:-0xD72b2fe3012a2896aef7E3cA561aD11B1542a88c}"
 
-# 18-decimal CL8Y: min 1 wei, max 1000 tokens per tx and per 24h on TokenRegistry withdraw logic.
+# 18-decimal CL8Y: min 1 wei; max 10k per tx and 40k per 24h on TokenRegistry withdraw logic.
 CL8Y_MIN_PER_TX_WEI="${CL8Y_MIN_PER_TX_WEI:-1}"
-CL8Y_MAX_PER_TX_WEI="${CL8Y_MAX_PER_TX_WEI:-1000000000000000000000}"
-CL8Y_MAX_PER_PERIOD_WEI="${CL8Y_MAX_PER_PERIOD_WEI:-1000000000000000000000}"
+CL8Y_MAX_PER_TX_WEI="${CL8Y_MAX_PER_TX_WEI:-10000000000000000000000}"
+CL8Y_MAX_PER_PERIOD_WEI="${CL8Y_MAX_PER_PERIOD_WEI:-40000000000000000000000}"
 CL8Y_GUARD_LIMIT_WEI="${CL8Y_GUARD_LIMIT_WEI:-$CL8Y_MAX_PER_PERIOD_WEI}"
 
-TERRA_CL8Y_MAX_PER_TX_STR="${TERRA_CL8Y_MAX_PER_TX_STR:-1000000000000000000000}"
-TERRA_CL8Y_MAX_PER_PERIOD_STR="${TERRA_CL8Y_MAX_PER_PERIOD_STR:-1000000000000000000000}"
+TERRA_CL8Y_MAX_PER_TX_STR="${TERRA_CL8Y_MAX_PER_TX_STR:-10000000000000000000000}"
+TERRA_CL8Y_MAX_PER_PERIOD_STR="${TERRA_CL8Y_MAX_PER_PERIOD_STR:-40000000000000000000000}"
 
 INCLUDE_MEGAETH="${INCLUDE_MEGAETH:-1}"
 INCLUDE_BSC="${INCLUDE_BSC:-1}"
 INCLUDE_TERRA="${INCLUDE_TERRA:-1}"
+CAST_INTERACTIVE="${CAST_INTERACTIVE:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 VERIFY_ONCHAIN="${VERIFY_ONCHAIN:-1}"
+
+_cast_pk="${CAST_PRIVATE_KEY:-${PRIVATE_KEY:-}}"
+_cast_need_evm_send=0
+if [[ "$DRY_RUN" != "1" ]] && [[ "$INCLUDE_MEGAETH" == "1" || "$INCLUDE_BSC" == "1" ]]; then
+  _cast_need_evm_send=1
+fi
+
+_require_tty_reason=""
+if [[ "$DRY_RUN" != "1" ]]; then
+  if [[ "$INCLUDE_TERRA" == "1" ]]; then
+    _require_tty_reason="Terrad / keyring (Terra Classic)"
+  fi
+  if [[ "$_cast_need_evm_send" == "1" ]]; then
+    if [[ "${CAST_INTERACTIVE}" == "1" ]]; then
+      _require_tty_reason="${_require_tty_reason:+${_require_tty_reason}; }cast --interactive (EVM)"
+    elif [[ -z "${_cast_pk}" ]]; then
+      _require_tty_reason="${_require_tty_reason:+${_require_tty_reason}; }EVM private-key prompt (hidden)"
+    fi
+  fi
+fi
+
+if [[ -n "${_require_tty_reason}" ]]; then
+  if [[ ! -c /dev/tty ]] || ! [[ -r /dev/tty && -w /dev/tty ]]; then
+    echo "This run needs a TTY (/dev/tty): ${_require_tty_reason}. Hint: INCLUDE_TERRA=0 skips Terra; CAST_PRIVATE_KEY or PRIVATE_KEY can skip the EVM prompt when not using CAST_INTERACTIVE=1." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$_cast_need_evm_send" == "1" && "$DRY_RUN" != "1" && -z "${_cast_pk}" && "${CAST_INTERACTIVE}" != "1" ]]; then
+  printf 'EVM signer private key (hex, input hidden): ' >/dev/tty
+  IFS= read -rs _cast_pk </dev/tty || true
+  echo >/dev/tty
+  if [[ -z "${_cast_pk}" ]]; then
+    echo "ERROR: empty private key." >&2
+    exit 1
+  fi
+fi
+
+unset CAST_PRIVATE_KEY PRIVATE_KEY 2>/dev/null || true
+trap 'unset -v _cast_pk _cast_need_evm_send _require_tty_reason CAST_PRIVATE_KEY PRIVATE_KEY 2>/dev/null || true' EXIT
 
 TERRA_NODE_URL="${TERRA_NODE_URL:-https://terra-classic-rpc.publicnode.com:443}"
 TERRA_BRIDGE_CONTRACT="${TERRA_BRIDGE_CONTRACT:-terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la}"
@@ -68,12 +110,20 @@ send() {
   local rpc="$1"
   shift
   if [[ "$DRY_RUN" == "1" ]]; then
-    printf 'DRY_RUN cast send --interactive --rpc-url %q' "$rpc"
+    if [[ "${CAST_INTERACTIVE}" == "1" ]]; then
+      printf 'DRY_RUN cast send --interactive --rpc-url %q' "$rpc"
+    else
+      printf 'DRY_RUN cast send --private-key "<hidden>" --rpc-url %q' "$rpc"
+    fi
     printf ' %q' "$@"
     printf '\n'
     return 0
   fi
-  cast send --interactive --rpc-url "$rpc" "$@" </dev/tty
+  if [[ "${CAST_INTERACTIVE}" == "1" ]]; then
+    cast send --interactive --rpc-url "$rpc" "$@" </dev/tty
+  else
+    cast send --private-key "$_cast_pk" --rpc-url "$rpc" "$@"
+  fi
 }
 
 token_registered() {

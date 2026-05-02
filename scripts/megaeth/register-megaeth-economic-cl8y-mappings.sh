@@ -7,10 +7,10 @@
 # Skips opBNB and Solana (no CL8Y in the production matrix there).
 #
 # Rate limits (when INCLUDE_RATE_LIMITS=1, default):
-#   - TokenRegistry (MegaETH + BSC): setRateLimit — default min=0, maxPerTx=0, maxPerPeriod=1000e18 (withdraw / 24h).
-#   - TokenRateLimit guard (MegaETH + BSC): setLimitsBatch — same 1000e18 cap for deposit + withdraw / 24h each
+#   - TokenRegistry (MegaETH + BSC): setRateLimit — default min=0, maxPerTx=10ke18, maxPerPeriod=40ke18 (withdraw / 24h).
+#   - TokenRateLimit guard (MegaETH + BSC): setLimitsBatch — 40ke18 cap for deposit + withdraw / 24h each
 #       (separate module from TokenRegistry; see deployment-solana-mainnet.md). Requires guard-stack admin on AccessManager.
-#   - Terra bridge: set_rate_limit — max_per_tx=0, max_per_period=1000e18.
+#   - Terra bridge: set_rate_limit — max_per_tx=10ke18, max_per_period=40ke18.
 #   Does **not** set Bridge.guardBridge, TokenRegistry.rateLimitBridge, or register GuardBridge modules — chain-wide wiring is
 #   `scripts/evm/megaeth-manager-followup.sh`. With VERIFY_CL8Y_ONCHAIN=1 (default), prints read-only cast summaries at the end.
 #
@@ -56,16 +56,16 @@ INCLUDE_MEGAETH_CL8Y_REGISTRY="${INCLUDE_MEGAETH_CL8Y_REGISTRY:-1}"
 VERIFY_CL8Y_ONCHAIN="${VERIFY_CL8Y_ONCHAIN:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 
-# TokenRegistry.withdraw caps (18 decimals): unlimited per-tx, 1000 CL8Y per 24h window.
+# TokenRegistry.withdraw caps (18 decimals): 10k CL8Y per tx, 40k per 24h window.
 CL8Y_MIN_PER_TX_WEI="${CL8Y_MIN_PER_TX_WEI:-0}"
-CL8Y_MAX_PER_TX_WEI="${CL8Y_MAX_PER_TX_WEI:-0}"
-CL8Y_MAX_PER_PERIOD_WEI="${CL8Y_MAX_PER_PERIOD_WEI:-1000000000000000000000}"
+CL8Y_MAX_PER_TX_WEI="${CL8Y_MAX_PER_TX_WEI:-10000000000000000000000}"
+CL8Y_MAX_PER_PERIOD_WEI="${CL8Y_MAX_PER_PERIOD_WEI:-40000000000000000000000}"
 # TokenRateLimit guard: 24h deposit + withdraw caps (base units). Defaults to same as TokenRegistry maxPerPeriod.
 CL8Y_GUARD_LIMIT_WEI="${CL8Y_GUARD_LIMIT_WEI:-$CL8Y_MAX_PER_PERIOD_WEI}"
 
 # Terra SetRateLimit (string uint128 in JSON)
-TERRA_CL8Y_MAX_PER_TX_STR="${TERRA_CL8Y_MAX_PER_TX_STR:-0}"
-TERRA_CL8Y_MAX_PER_PERIOD_STR="${TERRA_CL8Y_MAX_PER_PERIOD_STR:-1000000000000000000000}"
+TERRA_CL8Y_MAX_PER_TX_STR="${TERRA_CL8Y_MAX_PER_TX_STR:-10000000000000000000000}"
+TERRA_CL8Y_MAX_PER_PERIOD_STR="${TERRA_CL8Y_MAX_PER_PERIOD_STR:-40000000000000000000000}"
 
 TERRA_NODE_URL="${TERRA_NODE_URL:-https://terra-classic-rpc.publicnode.com:443}"
 TERRA_BRIDGE_CONTRACT="${TERRA_BRIDGE_CONTRACT:-terra18m02l2f43c2dagqnz3kfccpgz9pzzz5hk9l5mh5wvr6dcvv47zfqdfs7la}"
@@ -358,7 +358,7 @@ if [[ "$INCLUDE_TERRA" == "1" ]]; then
   terra_tx "Terra CL8Y <- MegaETH CL8Y-cb" "$(printf '{"set_incoming_token_mapping":{"src_chain":"%s","src_token":"%s","local_token":"%s","src_decimals":18}}' "$MEGAETH_CHAIN_B64" "$TERRA_CL8Y_SRC_B64" "$TERRA_TOKEN_CL8Y")"
 
   if [[ "$INCLUDE_RATE_LIMITS" == "1" ]]; then
-    terra_tx "Terra CL8Y set_rate_limit (1000 CL8Y / 24h)" "$(printf '{"set_rate_limit":{"token":"%s","max_per_transaction":"%s","max_per_period":"%s"}}' "$TERRA_TOKEN_CL8Y" "$TERRA_CL8Y_MAX_PER_TX_STR" "$TERRA_CL8Y_MAX_PER_PERIOD_STR")"
+    terra_tx "Terra CL8Y set_rate_limit" "$(printf '{"set_rate_limit":{"token":"%s","max_per_transaction":"%s","max_per_period":"%s"}}' "$TERRA_TOKEN_CL8Y" "$TERRA_CL8Y_MAX_PER_TX_STR" "$TERRA_CL8Y_MAX_PER_PERIOD_STR")"
   fi
 fi
 
