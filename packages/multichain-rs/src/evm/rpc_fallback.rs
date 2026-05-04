@@ -10,7 +10,41 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::transports::http::{Client, Http};
 use eyre::{eyre, Result, WrapErr};
 use std::env;
+use std::error::Error;
 use std::future::Future;
+
+/// Maximum `eth_chainId` attempts per RPC URL during startup verification (includes first try).
+const VERIFY_CHAIN_ID_MAX_ATTEMPTS: u32 = 8;
+/// Initial backoff after a transient RPC failure when verifying chain IDs at startup.
+const VERIFY_CHAIN_ID_INITIAL_BACKOFF_MS: u64 = 300;
+
+/// Whether an error chain looks like an HTTP / infra failure that may succeed after backoff.
+fn evm_jsonrpc_error_is_transient(err: &(dyn Error + 'static)) -> bool {
+    let mut collected = String::new();
+    let mut current: Option<&(dyn Error + 'static)> = Some(err);
+    while let Some(e) = current {
+        if !collected.is_empty() {
+            collected.push(' ');
+        }
+        collected.push_str(&e.to_string());
+        current = e.source();
+    }
+    let m = collected.to_ascii_lowercase();
+    m.contains("429")
+        || m.contains("rate limit")
+        || m.contains("too many request")
+        || m.contains("\"code\":15")
+        || m.contains("503")
+        || m.contains("502")
+        || m.contains("504")
+        || m.contains("408")
+        || m.contains("timed out")
+        || m.contains("timeout")
+        || m.contains("connection reset")
+        || m.contains("temporarily unavailable")
+        || m.contains("try again")
+        || m.contains("service unavailable")
+}
 
 /// Split a comma-separated RPC URL string into trimmed, non-empty URLs.
 pub fn parse_comma_separated_rpc_urls(raw: &str) -> Vec<String> {
@@ -285,6 +319,10 @@ pub async fn evm_consensus_latest_block(
 }
 
 /// Verify `eth_chainId` matches `expected_chain_id` for every URL in `urls`.
+///
+/// Each endpoint is queried with retries when failures look transient (HTTP 429, 5xx, timeouts),
+/// so a rate-limited fallback URL does not prevent process startup if it recovers within the
+/// backoff window.
 pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -> Result<()> {
     if urls.is_empty() {
         return Err(eyre!("no RPC URLs to verify"));
@@ -293,19 +331,51 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
         let parsed: url::Url = url
             .parse()
             .wrap_err_with(|| format!("Invalid RPC URL: {}", url))?;
-        let provider = ProviderBuilder::new().on_http(parsed);
-        let id = provider
-            .get_chain_id()
-            .await
-            .wrap_err_with(|| format!("eth_chainId failed for RPC URL index {}", i))?;
-        if id != expected_chain_id {
-            return Err(eyre!(
-                "RPC URL index {} ({}) reports chain id {} but expected {}",
-                i,
-                url,
-                id,
-                expected_chain_id
-            ));
+
+        let mut attempt = 0u32;
+        loop {
+            let provider = ProviderBuilder::new().on_http(parsed.clone());
+            match provider.get_chain_id().await {
+                Ok(id) => {
+                    if id != expected_chain_id {
+                        return Err(eyre!(
+                            "RPC URL index {} ({}) reports chain id {} but expected {}",
+                            i,
+                            url,
+                            id,
+                            expected_chain_id
+                        ));
+                    }
+                    break;
+                }
+                Err(e) => {
+                    let retryable = evm_jsonrpc_error_is_transient(&e);
+                    if retryable && attempt + 1 < VERIFY_CHAIN_ID_MAX_ATTEMPTS {
+                        let backoff_ms = VERIFY_CHAIN_ID_INITIAL_BACKOFF_MS
+                            .saturating_mul(2u64.saturating_pow(attempt));
+                        let backoff_ms = backoff_ms.min(10_000);
+                        tracing::warn!(
+                            rpc_url_index = i,
+                            rpc_url = %url,
+                            attempt = attempt + 1,
+                            max_attempts = VERIFY_CHAIN_ID_MAX_ATTEMPTS,
+                            backoff_ms,
+                            error = %e,
+                            "eth_chainId failed with transient error; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(
+                        std::result::Result::<(), _>::Err(e)
+                            .wrap_err_with(|| {
+                                format!("eth_chainId failed for RPC URL index {}", i)
+                            })
+                            .unwrap_err(),
+                    );
+                }
+            }
         }
     }
     Ok(())
@@ -461,5 +531,26 @@ mod tests {
             single_endpoint_reads: true,
         };
         assert_eq!(p1.sample_indices(5), vec![0]);
+    }
+
+    #[test]
+    fn jsonrpc_transient_detects_429_body() {
+        let e = std::io::Error::new(
+            std::io::ErrorKind::Other,
+            r#"HTTP error 429 with body: {"code":15,"message":"Too many request"}"#,
+        );
+        assert!(super::evm_jsonrpc_error_is_transient(&e));
+    }
+
+    #[test]
+    fn jsonrpc_transient_detects_503() {
+        let e = std::io::Error::new(std::io::ErrorKind::Other, "HTTP status 503 Service Unavailable");
+        assert!(super::evm_jsonrpc_error_is_transient(&e));
+    }
+
+    #[test]
+    fn jsonrpc_transient_rejects_unrelated_message() {
+        let e = std::io::Error::new(std::io::ErrorKind::Other, "invalid JSON-RPC params");
+        assert!(!super::evm_jsonrpc_error_is_transient(&e));
     }
 }
