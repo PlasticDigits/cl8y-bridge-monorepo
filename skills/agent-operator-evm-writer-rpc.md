@@ -20,7 +20,7 @@ Use when changing the operator EVM writer poll loop, `eth_getLogs` fallback, pen
 - **INV-OP-W8:** Reject invalid interval/lookback/chunk/cache env values at startup.
 - **INV-OP-W9:** Never log RPC query tokens, userinfo, **path API keys** (Alchemy `/v2/<key>`, Infura `/v3/<id>`), or DB URLs. Use `sanitize_rpc_endpoint` (`scheme://host[:port]` only) and `sanitize_rpc_error` on error `Display` strings.
 - **INV-OP-W10:** Default `RUST_LOG` is `info`; do not re-enable process-wide `cl8y_operator=debug` as the production default.
-- **INV-OP-W11:** Approved-not-executed destination hashes must be re-queued for `withdrawExecute*` from enumeration after restart or `pending_executions` TTL eviction. Do not skip them as “already approved.” Do not reset an in-flight execute timer each poll. Do not spend `WRITER_MAX_VERIFY_PER_CYCLE` on this path.
+- **INV-OP-W11:** Approved-not-executed destination hashes must be re-queued for `withdrawExecute*` from enumeration after restart or `pending_executions` TTL eviction. Do not skip them as “already approved.” Do not reset an in-flight execute timer each poll. Do not spend `WRITER_MAX_VERIFY_PER_CYCLE` on this path. Drop executed / cancelled / missing / below-min execute errors from the queue and do not re-queue them (`terminal_executions`).
 
 ## Where it lives
 

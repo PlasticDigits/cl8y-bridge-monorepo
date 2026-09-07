@@ -47,6 +47,31 @@ pub(crate) fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
+/// Solidity `BelowMinPerTransaction(uint256,uint256)` selector (INV-OP-W11).
+pub(crate) const BELOW_MIN_PER_TX_SELECTOR: &str = "0x1913498b";
+/// `WithdrawAlreadyExecuted(bytes32)` — execute tx race after a concurrent execute.
+pub(crate) const WITHDRAW_ALREADY_EXECUTED_SELECTOR: &str = "0xe744b3ba";
+/// `WithdrawCancelled(bytes32)` — execute tx race after a user cancel.
+pub(crate) const WITHDRAW_CANCELLED_SELECTOR: &str = "0xa4d52f4c";
+
+/// True when execute should not be retried or re-queued.
+///
+/// Covers on-chain terminal states (executed / cancelled / missing) and
+/// `BelowMinPerTransaction` / Terra `BelowMinimumAmount` (amount can never clear).
+pub(crate) fn is_terminal_execute_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("already executed")
+        || lower.contains("withdrawalreadyexecuted")
+        || lower.contains("was cancelled")
+        || lower.contains("withdrawcancelled")
+        || lower.contains("submittedat is zero")
+        || lower.contains(BELOW_MIN_PER_TX_SELECTOR)
+        || lower.contains(WITHDRAW_ALREADY_EXECUTED_SELECTOR)
+        || lower.contains(WITHDRAW_CANCELLED_SELECTOR)
+        || lower.contains("belowminpertransaction")
+        || lower.contains("belowminimumamount")
+}
+
 /// Solana source chain configuration for deposit verification.
 /// Used by EVM and Terra writers to verify deposits originating from Solana.
 #[derive(Debug, Clone)]
@@ -721,5 +746,44 @@ mod schedule_tests {
     #[test]
     fn remaining_cancel_window_still_active() {
         assert_eq!(remaining_cancel_window_secs(1_000, 300, 1_100), 200);
+    }
+
+    #[test]
+    fn terminal_execute_already_executed() {
+        assert!(is_terminal_execute_error(
+            "Withdrawal 0xabc already executed"
+        ));
+        assert!(is_terminal_execute_error(
+            "Failed to execute withdraw (lock_unlock): WithdrawAlreadyExecuted"
+        ));
+        assert!(is_terminal_execute_error("Withdrawal 0xabc was cancelled"));
+        assert!(is_terminal_execute_error(
+            "Withdrawal 0xabc not found (submittedAt is zero)"
+        ));
+    }
+
+    #[test]
+    fn terminal_execute_below_min_selector() {
+        assert!(is_terminal_execute_error(
+            "Failed to send withdraw tx: server returned an error response: error code 3: execution reverted, data: \"0x1913498b000000000000000000000000000000000000000000000000016345785d8a0000\""
+        ));
+        assert!(is_terminal_execute_error(
+            "execution reverted, data: \"0xe744b3ba0000000000000000000000000000000000000000000000000000000000000000\""
+        ));
+        assert!(is_terminal_execute_error(
+            "ContractError::BelowMinimumAmount { min_amount: \"100000\" }"
+        ));
+    }
+
+    #[test]
+    fn retryable_execute_rpc_and_cancel_window_are_not_terminal() {
+        assert!(!is_terminal_execute_error(
+            "Failed to send withdraw tx: HTTP error 429"
+        ));
+        assert!(!is_terminal_execute_error("CancelWindowActive"));
+        assert!(!is_terminal_execute_error(
+            "Failed to get pending withdraw: timeout"
+        ));
+        assert!(!is_terminal_execute_error("Terra deposit not found"));
     }
 }

@@ -86,6 +86,8 @@ pub struct EvmWriter {
     cursor: EventPollCursor,
     /// Hashes already approved by this operator (bounded to prevent unbounded growth)
     approved_hashes: BoundedHashCache,
+    /// Execute outcomes that must not be re-queued (INV-OP-W11 terminal)
+    terminal_executions: BoundedHashCache,
     /// Bounded negative source-verification retry schedule (INV-OP-W4)
     negative_retry: NegativeVerifySchedule,
     /// Shared enumeration + event-poll verify budget for the current cycle.
@@ -312,6 +314,7 @@ impl EvmWriter {
             pending_executions: BoundedPendingCache::new(cc.pending_execution_size, cc.ttl_secs),
             cursor: EventPollCursor::new(),
             approved_hashes: BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs),
+            terminal_executions: BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs),
             negative_retry: NegativeVerifySchedule::new(schedule),
             verify_budget: CycleVerifyBudget::new(schedule.max_verify_per_cycle),
             poll,
@@ -405,6 +408,9 @@ impl EvmWriter {
     /// Does not reset an existing timer (would livelock execute). TTL-expired entries
     /// look absent via `get` and are re-inserted.
     fn enqueue_execution_if_absent(&mut self, xchain_hash_id: [u8; 32], delay_seconds: u64) {
+        if self.terminal_executions.contains_key(&xchain_hash_id) {
+            return;
+        }
         if self.pending_executions.get(&xchain_hash_id).is_some() {
             return;
         }
@@ -1294,19 +1300,29 @@ impl EvmWriter {
                         to_remove.push(*hash);
                     }
                     Err(e) => {
-                        warn!(
-                            xchain_hash_id = %bytes32_to_hex(hash),
-                            error = %e,
-                            attempt = pending.attempts + 1,
-                            "Failed to execute EVM withdrawal, will retry"
-                        );
+                        let err = e.to_string();
+                        if super::is_terminal_execute_error(&err) {
+                            info!(
+                                xchain_hash_id = %bytes32_to_hex(hash),
+                                error = %e,
+                                "Dropping terminal EVM execute failure"
+                            );
+                            to_remove.push(*hash);
+                        } else {
+                            warn!(
+                                xchain_hash_id = %bytes32_to_hex(hash),
+                                error = %e,
+                                attempt = pending.attempts + 1,
+                                "Failed to execute EVM withdrawal, will retry"
+                            );
+                        }
                     }
                 }
             }
         }
 
-        // Remove successfully executed
         for hash in to_remove {
+            self.terminal_executions.insert(hash);
             self.pending_executions.remove(&hash);
         }
 
