@@ -98,6 +98,8 @@ pub struct TerraWriter {
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
     /// Set of hashes we've already approved (bounded to prevent unbounded growth)
     approved_hashes: BoundedHashCache,
+    /// Execute outcomes that must not be re-queued (INV-OP-W11 terminal)
+    terminal_executions: BoundedHashCache,
     /// Optional Solana source config for verifying Solana-origin deposits
     solana_source_config: Option<super::SolanaSourceConfig>,
 }
@@ -198,6 +200,10 @@ impl TerraWriter {
                 let cc = crate::bounded_cache::CacheConfig::from_env()?;
                 BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
             },
+            terminal_executions: {
+                let cc = crate::bounded_cache::CacheConfig::from_env()?;
+                BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
+            },
             solana_source_config,
         })
     }
@@ -231,6 +237,9 @@ impl TerraWriter {
         delay_seconds: u64,
         token: &str,
     ) {
+        if self.terminal_executions.contains_key(&xchain_hash_id) {
+            return;
+        }
         if self.pending_executions.get(&xchain_hash_id).is_some() {
             return;
         }
@@ -995,18 +1004,29 @@ impl TerraWriter {
                         to_remove.push(*hash);
                     }
                     Err(e) => {
-                        warn!(
-                            xchain_hash_id = %bytes32_to_hex(hash),
-                            error = %e,
-                            attempt = pending.attempts + 1,
-                            "Failed to execute withdrawal, will retry"
-                        );
+                        let err = e.to_string();
+                        if super::is_terminal_execute_error(&err) {
+                            info!(
+                                xchain_hash_id = %bytes32_to_hex(hash),
+                                error = %e,
+                                "Dropping terminal Terra execute failure"
+                            );
+                            to_remove.push(*hash);
+                        } else {
+                            warn!(
+                                xchain_hash_id = %bytes32_to_hex(hash),
+                                error = %e,
+                                attempt = pending.attempts + 1,
+                                "Failed to execute withdrawal, will retry"
+                            );
+                        }
                     }
                 }
             }
         }
 
         for hash in to_remove {
+            self.terminal_executions.insert(hash);
             self.pending_executions.remove(&hash);
         }
 

@@ -71,6 +71,8 @@ Hashes that are **approved, not cancelled, not executed** must be queued for `wi
 
 `pending_executions` is process-local and TTL-bounded. After restart or cache eviction the writer must re-queue from on-chain state. Do not reset an existing execute timer on each poll (that livelocks execute). Source verification is **not** required on this path (approval already verified). Do not consume `WRITER_MAX_VERIFY_PER_CYCLE` for execute re-queue.
 
+Executed, cancelled, missing (`submittedAt == 0`), and `BelowMinPerTransaction` / Terra `BelowMinimumAmount` are **terminal**. Drop them from `pending_executions` and record them in `terminal_executions` so enumeration does not re-queue. RPC / `CancelWindowActive` failures stay retryable.
+
 ## Code map
 
 | Concern | Location |
