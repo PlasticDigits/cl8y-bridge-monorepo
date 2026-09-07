@@ -65,6 +65,12 @@ Metrics and logs must not include RPC credentials, URL query tokens, path API ke
 
 When `RUST_LOG` is unset, the operator defaults to `info` (not `cl8y_operator=debug`). Repeated no-progress verification is `debug`. Approvals and first-poll / fallback **state changes** stay at `info`.
 
+## INV-OP-W11 — Execute approved pending withdrawals
+
+Hashes that are **approved, not cancelled, not executed** must be queued for `withdrawExecuteUnlock` / `withdrawExecuteMint` (Terra: unlock/mint) after the cancel window. Enumeration (`getPendingWithdrawHashes`, Terra `active_withdrawals`) is the durable recovery path: do **not** skip these hashes solely because they are already approved or present in `approved_hashes`.
+
+`pending_executions` is process-local and TTL-bounded. After restart or cache eviction the writer must re-queue from on-chain state. Do not reset an existing execute timer on each poll (that livelocks execute). Source verification is **not** required on this path (approval already verified). Do not consume `WRITER_MAX_VERIFY_PER_CYCLE` for execute re-queue.
+
 ## Code map
 
 | Concern | Location |
@@ -76,5 +82,5 @@ When `RUST_LOG` is unset, the operator defaults to `info` (not `cl8y_operator=de
 | Negative retry | `packages/operator/src/writers/negative_retry.rs` |
 | Config bounds | `packages/operator/src/poll_config.rs` |
 | Isolated loops | `packages/operator/src/writers/mod.rs` |
-| EVM poll + enumerate | `packages/operator/src/writers/evm.rs` |
+| EVM poll + enumerate + execute re-queue | `packages/operator/src/writers/evm.rs` |
 | Watcher `eth_getLogs` | `packages/operator/src/watchers/evm.rs` |

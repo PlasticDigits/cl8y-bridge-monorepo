@@ -209,9 +209,10 @@ impl TerraWriter {
     /// Process pending withdrawals using hash-matching
     ///
     /// 1. Check if any pending executions are ready (cancel window elapsed)
-    /// 2. Poll Terra ActiveWithdrawals (legacy PendingWithdrawals fallback) for unapproved entries
-    /// 3. For each unapproved entry, verify the deposit exists on EVM
-    /// 4. If verified, call WithdrawApprove(hash) on Terra
+    /// 2. Poll Terra ActiveWithdrawals (legacy PendingWithdrawals fallback)
+    /// 3. Re-queue approved-not-executed hashes for execute (INV-OP-W11)
+    /// 4. For each unapproved entry, verify the deposit exists on EVM
+    /// 5. If verified, call WithdrawApprove(hash) on Terra
     pub async fn process_pending(&mut self) -> Result<()> {
         // First, check if any pending executions are ready
         self.process_pending_executions().await?;
@@ -219,7 +220,35 @@ impl TerraWriter {
         // Then poll Terra for unapproved withdrawals and verify against EVM
         self.poll_and_approve().await?;
 
+        self.process_pending_executions().await?;
+
         Ok(())
+    }
+
+    fn enqueue_execution_if_absent(
+        &mut self,
+        xchain_hash_id: [u8; 32],
+        delay_seconds: u64,
+        token: &str,
+    ) {
+        if self.pending_executions.get(&xchain_hash_id).is_some() {
+            return;
+        }
+        info!(
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+            delay_seconds,
+            "Queueing approved Terra withdrawal for execute"
+        );
+        self.pending_executions.insert(
+            xchain_hash_id,
+            PendingExecution {
+                xchain_hash_id,
+                approved_at: Instant::now(),
+                delay_seconds,
+                attempts: 0,
+                token: token.to_string(),
+            },
+        );
     }
 
     /// Poll Terra active (or legacy all-status) withdrawals and approve verified entries.
@@ -397,12 +426,53 @@ impl TerraWriter {
                 let executed = entry["executed"].as_bool().unwrap_or(false);
                 let nonce = entry["nonce"].as_u64().unwrap_or(0);
 
+                if let Some(h) = entry["xchain_hash_id"].as_str() {
+                    last_hash = Some(h.to_string());
+                }
+
+                if cancelled || executed {
+                    total_skipped_terminal += 1;
+                    continue;
+                }
+
+                if super::terra_list::is_operator_execution_candidate(approved, cancelled, executed)
+                {
+                    let Some(hash_b64) = entry["xchain_hash_id"].as_str() else {
+                        total_skipped_terminal += 1;
+                        continue;
+                    };
+                    let hash_bytes = match base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        hash_b64,
+                    ) {
+                        Ok(b) if b.len() == 32 => {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&b);
+                            arr
+                        }
+                        _ => {
+                            total_skipped_terminal += 1;
+                            continue;
+                        }
+                    };
+                    let token = entry["token"].as_str().unwrap_or("");
+                    let delay = entry["cancel_window_remaining"]
+                        .as_u64()
+                        .unwrap_or_else(|| {
+                            super::remaining_cancel_window_secs(
+                                entry["approved_at"].as_u64().unwrap_or(0),
+                                self.cancel_window,
+                                super::unix_now_secs(),
+                            )
+                        });
+                    self.approved_hashes.insert(hash_bytes);
+                    self.enqueue_execution_if_absent(hash_bytes, delay, token);
+                    continue;
+                }
+
                 // Only process unapproved, non-cancelled, non-executed entries
                 if !super::terra_list::is_operator_approval_candidate(approved, cancelled, executed)
                 {
-                    if let Some(h) = entry["xchain_hash_id"].as_str() {
-                        last_hash = Some(h.to_string());
-                    }
                     total_skipped_terminal += 1;
                     continue;
                 }
@@ -452,7 +522,7 @@ impl TerraWriter {
                     }
                 };
 
-                // Skip if we've already approved this hash
+                // Skip if we've already approved this hash (still unapproved on-chain would be a race)
                 if self.approved_hashes.contains_key(&hash_bytes) {
                     total_skipped_already_approved += 1;
                     debug!(

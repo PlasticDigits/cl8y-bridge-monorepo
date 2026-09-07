@@ -3,7 +3,7 @@ use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 use crate::poll_config::{jittered_exponential_backoff, WriterScheduleConfig};
@@ -21,6 +21,31 @@ pub use evm::EvmWriter;
 pub use retry::{classify_error, RetryConfig};
 pub use solana::SolanaWriter;
 pub use terra::TerraWriter;
+
+/// Seconds remaining until `withdrawExecute*` is allowed after an on-chain approval.
+///
+/// `0` means the cancel window has elapsed (or `approved_at_unix` is unset). The
+/// EVM contract uses an exclusive boundary (`timestamp > approvedAt + window`);
+/// a zero delay may still revert `CancelWindowActive` for one poll, then retry.
+pub(crate) fn remaining_cancel_window_secs(
+    approved_at_unix: u64,
+    cancel_window: u64,
+    now_unix: u64,
+) -> u64 {
+    if approved_at_unix == 0 {
+        return 0;
+    }
+    approved_at_unix
+        .saturating_add(cancel_window)
+        .saturating_sub(now_unix)
+}
+
+pub(crate) fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// Solana source chain configuration for deposit verification.
 /// Used by EVM and Terra writers to verify deposits originating from Solana.
@@ -684,5 +709,17 @@ mod schedule_tests {
         assert_eq!(next_writer_delay(false, 1, &s, 1), Duration::from_secs(2));
         assert_eq!(next_writer_delay(false, 2, &s, 1), Duration::from_secs(4));
         assert_eq!(next_writer_delay(false, 10, &s, 1), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn remaining_cancel_window_elapsed_is_zero() {
+        assert_eq!(remaining_cancel_window_secs(1_000, 300, 1_300), 0);
+        assert_eq!(remaining_cancel_window_secs(1_000, 300, 1_400), 0);
+        assert_eq!(remaining_cancel_window_secs(0, 300, 5_000), 0);
+    }
+
+    #[test]
+    fn remaining_cancel_window_still_active() {
+        assert_eq!(remaining_cancel_window_secs(1_000, 300, 1_100), 200);
     }
 }
