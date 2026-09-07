@@ -53,6 +53,11 @@ pub fn is_operator_approval_candidate(approved: bool, cancelled: bool, executed:
     !approved && !cancelled && !executed
 }
 
+/// Approved, still in-flight: operator must `withdrawExecute*` after the cancel window (INV-OP-W11).
+pub fn is_operator_execution_candidate(approved: bool, cancelled: bool, executed: bool) -> bool {
+    approved && !cancelled && !executed
+}
+
 /// Walk synthetic pages the way the Terra writer does and count candidates.
 #[cfg(test)]
 pub fn soak_operator_pages(
@@ -133,6 +138,14 @@ mod tests {
             rows.push((true, false, false, hash(i)));
         }
         rows.chunks(30).map(|c| c.to_vec()).collect()
+    }
+
+    #[test]
+    fn execution_candidate_is_approved_not_terminal() {
+        assert!(is_operator_execution_candidate(true, false, false));
+        assert!(!is_operator_execution_candidate(false, false, false));
+        assert!(!is_operator_execution_candidate(true, true, false));
+        assert!(!is_operator_execution_candidate(true, false, true));
     }
 
     #[test]

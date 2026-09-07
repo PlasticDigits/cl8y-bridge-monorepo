@@ -377,6 +377,7 @@ impl EvmWriter {
     /// 3. Polls WithdrawSubmit events for faster new-event detection (secondary)
     /// 4. For each unapproved withdrawal, verifies the deposit on the source chain
     /// 5. If verified, calls withdrawApprove(hash) on this chain
+    /// 6. Re-queues already-approved hashes for execute after restart/TTL (INV-OP-W11)
     ///
     /// This handles BOTH Terra→EVM and EVM→EVM transfers uniformly —
     /// any pending withdrawal on this chain gets verified and approved.
@@ -392,7 +393,44 @@ impl EvmWriter {
         // Secondary: event-based polling for faster detection
         self.poll_and_approve().await?;
 
+        // Run execute again so hashes re-queued this cycle (restart recovery) can land
+        // without waiting for the next poll interval (INV-OP-W11).
+        self.process_pending_executions().await?;
+
         Ok(())
+    }
+
+    /// Queue `withdrawExecute*` if this hash is not already in the in-memory execute cache.
+    ///
+    /// Does not reset an existing timer (would livelock execute). TTL-expired entries
+    /// look absent via `get` and are re-inserted.
+    fn enqueue_execution_if_absent(&mut self, xchain_hash_id: [u8; 32], delay_seconds: u64) {
+        if self.pending_executions.get(&xchain_hash_id).is_some() {
+            return;
+        }
+        info!(
+            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+            delay_seconds,
+            "Queueing approved withdrawal for execute"
+        );
+        self.pending_executions.insert(
+            xchain_hash_id,
+            PendingExecution {
+                xchain_hash_id,
+                approved_at: Instant::now(),
+                delay_seconds,
+                attempts: 0,
+            },
+        );
+    }
+
+    fn delay_from_onchain_approved_at(&self, approved_at: U256) -> u64 {
+        let approved_at_unix = u64::try_from(approved_at).unwrap_or(0);
+        super::remaining_cancel_window_secs(
+            approved_at_unix,
+            self.cancel_window,
+            super::unix_now_secs(),
+        )
     }
 
     /// Primary: Enumerate all pending withdrawals from the contract's EnumerableSet
@@ -460,6 +498,35 @@ impl EvmWriter {
 
             if self.approved_hashes.contains_key(&xchain_hash_id) {
                 self.negative_retry.record_terminal(&xchain_hash_id);
+                // Still on the pending set ⇒ not executed; re-queue if the RAM cache dropped it.
+                self.enqueue_execution_if_absent(xchain_hash_id, 0);
+                continue;
+            }
+
+            let pending = match contract.getPendingWithdraw(*hash_fb).call().await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        hash = %bytes32_to_hex(&xchain_hash_id),
+                        "Enumeration: failed to query getPendingWithdraw"
+                    );
+                    continue;
+                }
+            };
+
+            if pending.cancelled || pending.executed {
+                self.negative_retry.record_terminal(&xchain_hash_id);
+                continue;
+            }
+
+            if pending.approved {
+                self.approved_hashes.insert(xchain_hash_id);
+                self.negative_retry.record_terminal(&xchain_hash_id);
+                self.enqueue_execution_if_absent(
+                    xchain_hash_id,
+                    self.delay_from_onchain_approved_at(pending.approvedAt),
+                );
                 continue;
             }
 
@@ -479,28 +546,6 @@ impl EvmWriter {
                     "Enumeration: hit per-cycle verify cap; remaining hashes deferred"
                 );
                 break;
-            }
-
-            let pending = match contract.getPendingWithdraw(*hash_fb).call().await {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        hash = %bytes32_to_hex(&xchain_hash_id),
-                        "Enumeration: failed to query getPendingWithdraw"
-                    );
-                    continue;
-                }
-            };
-
-            if pending.approved {
-                self.approved_hashes.insert(xchain_hash_id);
-                self.negative_retry.record_terminal(&xchain_hash_id);
-                continue;
-            }
-            if pending.cancelled || pending.executed {
-                self.negative_retry.record_terminal(&xchain_hash_id);
-                continue;
             }
 
             attempted_unapproved += 1;
@@ -731,17 +776,20 @@ impl EvmWriter {
 
         self.publish_cursor_metrics();
 
-        let provider = self
-            .providers
+        let rpc_url = self
+            .rpc_urls
             .get(head.provider_index)
-            .unwrap_or(&self.providers[0]);
-        let contract = Bridge::new(self.bridge_address, provider);
+            .unwrap_or(&self.rpc_urls[0])
+            .clone();
+        let provider = ProviderBuilder::new().on_http(rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        let contract = Bridge::new(self.bridge_address, &provider);
 
         for (event, _log) in &all_logs {
             let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
 
             if self.approved_hashes.contains_key(&xchain_hash_id) {
                 self.negative_retry.record_terminal(&xchain_hash_id);
+                self.enqueue_execution_if_absent(xchain_hash_id, 0);
                 continue;
             }
 
@@ -764,6 +812,10 @@ impl EvmWriter {
             if pending.approved {
                 self.approved_hashes.insert(xchain_hash_id);
                 self.negative_retry.record_terminal(&xchain_hash_id);
+                self.enqueue_execution_if_absent(
+                    xchain_hash_id,
+                    self.delay_from_onchain_approved_at(pending.approvedAt),
+                );
                 continue;
             }
             if pending.cancelled || pending.executed {
