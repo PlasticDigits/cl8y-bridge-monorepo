@@ -22,7 +22,7 @@ Do **not** use this skill to hide test tokens, change on-chain registry schema, 
 
 - **INV-FE-TOKEN-RANK-1:** The Transfer amount combobox (`data-testid="token-select"`) lists **economic** tokens first and **known noneconomic faucet tokens** last. Classification is a **closed denylist of canonical ids** (Terra denom/CW20, EVM address, SPL mint) — **never** display `symbol`. Unknown registered tokens default to **economic** (top). Sort is **display/default-selection only**; it must not change `id` / `tokenId` / `evmTokenAddress`, dest mappings, or which tokens are offered for the route. Test tokens stay selectable. Local `uluna` / tLUNC remain economic; local TKNA/B/C/KDEC are noneconomic. Settings lists are not reordered by this rule.
 
-Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/136
+Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/136
 
 ## Checklist (add a faucet / noneconomic test token)
 

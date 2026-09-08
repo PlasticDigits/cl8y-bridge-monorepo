@@ -15,7 +15,7 @@ Use when debugging **Solana → EVM / Terra deposits**, **Solana `withdraw_submi
 
 - **INV-FE-SOLANA-BH1:** `sendSolanaTransaction` copies the input transaction’s **instructions** once. Each wallet path (`signAndSendTransaction` vs `signTransaction` → simulate → `sendRawTransaction`) constructs a **new** `Transaction`, sets **fee payer**, and calls **`getLatestBlockhash`** immediately before that path. Confirm uses the **same** blockhash / `lastValidBlockHeight` snapshot as that send attempt.
 
-Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/128
+Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/128
 
 ## Pitfalls for third-party implementers
 

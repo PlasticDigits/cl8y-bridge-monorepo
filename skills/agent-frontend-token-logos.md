@@ -16,7 +16,7 @@ Use when **adding or changing bridge UI token logos**, debugging a **missing/fal
 
 - **INV-FE-TOKEN-LOGO-1:** Logo resolution is **symbol-only** (case-insensitive). Filename must be `{SYMBOL_UPPER}.png`. `tokenlist.json` / contract addresses are **not** consulted for logos. `LOGO_SYMBOLS` must list every symbol that has a PNG.
 
-Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/133
+Documented in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/133
 
 ## Checklist (add a logo)
 

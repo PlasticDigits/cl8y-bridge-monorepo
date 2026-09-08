@@ -1,6 +1,6 @@
 # Agent skill: Terra wallet connect on mobile Chrome (GL-137)
 
-Use when changing the **header Terra Connect CTA**, **TerraWalletModal**, **WalletConnect pairing** (Lunc Dash / Galaxy Station / Keplr WC), **cosmes `QRCodeModal`**, or a report that **Android Chrome cannot tap Connect**. Companion invariant: [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-WC-MOBILE-1**. Issue: https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/137
+Use when changing the **header Terra Connect CTA**, **TerraWalletModal**, **WalletConnect pairing** (Lunc Dash / Galaxy Station / Keplr WC), **cosmes `QRCodeModal`**, or a report that **Android Chrome cannot tap Connect**. Companion invariant: [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-WC-MOBILE-1**. Issue: https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/137
 
 Working control on the same phone: **ustr-cmm** (`https://ust1cmm.com`) — `PlasticDigits2/ustr-cmm` `frontend/`. DEX pairing (Open / Copy, no auto-redirect): cl8y-dex-terraclassic **#519 / #554**. Legal `Keplr extension not found` on T&C is **not** this CTA.
 

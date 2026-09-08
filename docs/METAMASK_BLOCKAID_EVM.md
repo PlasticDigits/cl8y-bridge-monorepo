@@ -1,6 +1,6 @@
 # MetaMask / Blockaid alerts on BSC & opBNB bridge transactions
 
-Cross-links: [README § BSC + opBNB addresses](../README.md#bsc--opbnb-mainnet-matching-addresses), [Security model](./security-model.md), [`skills/agent-metamask-blockaid-evm.md`](../skills/agent-metamask-blockaid-evm.md). Tracking: GitLab **118**.
+Cross-links: [README § BSC + opBNB addresses](../README.md#bsc--opbnb-mainnet-matching-addresses), [Security model](./security-model.md), [`skills/agent-metamask-blockaid-evm.md`](../skills/agent-metamask-blockaid-evm.md). Tracking: issue **118**.
 
 ## INV-BLK1 — Wallet alerts vs. on-chain correctness
 

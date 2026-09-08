@@ -3,7 +3,7 @@
 This guide covers everything you need to do manual QA on the CL8Y Bridge frontend.
 
 Your role: test the bridge UI across real devices, real wallets, and real user flows.
-File bugs via GitLab issues, fix frontend issues via MRs, and escalate anything
+File bugs via Forgejo issues on git.cl8y.com, fix frontend issues via PRs, and escalate anything
 backend/contract-related privately.
 
 ---
@@ -18,23 +18,23 @@ Before cloning, make sure you have the following installed:
 | **Node.js 18+**         | [nodejs.org](https://nodejs.org/) or `nvm install 18`                                 | `node -v`        |
 | **npm**                 | Ships with Node.js                                                                    | `npm -v`         |
 | **Git**                 | `sudo apt install git` (Linux) / `brew install git` (macOS)                           | `git -v`         |
-| **GitLab CLI (`glab`)** | [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli) or `brew install glab` | `glab --version` |
+| **Forgejo CLI (`fj`)**  | `cargo install forgejo-cli`                                                           | `fj version`     |
 
 
-### Authenticate `glab`
+### Authenticate `fj`
 
 ```bash
-glab auth login
-# Choose: gitlab.com → HTTPS → Login with a web browser
+fj auth login -H git.cl8y.com
 # Verify:
-glab auth status
+fj whoami
+fj auth list
 ```
 
-You should see your GitLab username and the `PlasticDigits/cl8y-bridge-monorepo`
-project should be accessible:
+You should see your Forgejo username and `code/cl8y-bridge-monorepo`
+should be accessible:
 
 ```bash
-glab repo view PlasticDigits/cl8y-bridge-monorepo
+fj repo view code/cl8y-bridge-monorepo -H git.cl8y.com
 ```
 
 ---
@@ -43,7 +43,7 @@ glab repo view PlasticDigits/cl8y-bridge-monorepo
 
 ```bash
 # Clone and install
-git clone https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo.git && cd cl8y-bridge-monorepo
+git clone https://git.cl8y.com/code/cl8y-bridge-monorepo.git && cd cl8y-bridge-monorepo
 cd packages/frontend
 npm ci
 
@@ -239,7 +239,7 @@ status, and verify transaction hashes.
 
 ## CLI Workflow (headless + Cursor)
 
-All your work can be done from the terminal using `glab` (GitLab CLI).
+All your work can be done from the terminal using `fj` (Forgejo CLI). GitLab is a downstream mirror of git.cl8y.com — do not use `glab`.
 
 ### Recommended helper scripts
 
@@ -273,14 +273,14 @@ Use these wrappers to avoid repetitive commands:
 ```
 
 `new-bug.sh` is headless-friendly: it opens a temporary markdown draft in
-`$EDITOR` (fallback `vi`) and then submits via `glab issue create` with labels
+`$EDITOR` (fallback `vi`) and then submits via `fj issue create` with labels
 `bug`, `frontend`, `needs-triage`.
 
 `new-bug-cursor.sh` is the Cursor-specific variant: it opens the draft in
 Cursor and then asks for terminal confirmation before submit.
 
 `new-test-pass.sh` opens a temporary markdown draft in your configured editor
-(`$EDITOR`, fallback `vi`), then submits via `glab issue create`.
+(`$EDITOR`, fallback `vi`), then submits via `fj issue create`.
 
 `new-test-pass-cursors.sh` is the Cursor-specific variant: it opens the draft in
 Cursor and then asks for terminal confirmation before submit.
@@ -297,15 +297,15 @@ Set `QA_EVIDENCE_REPO="group/project"` if you need a non-default evidence repo.
 You do not need to copy the completed report anywhere after editing.
 
 - The temporary markdown file is only a draft while editing.
-- After submit, the GitLab issue itself is the source of truth.
-- If you need to add more details later, use `glab issue note <issue-number> --message "..."` .
+- After submit, the Forgejo issue itself is the source of truth.
+- If you need to add more details later, use `fj issue comment <issue-number> "..."` .
 
 ### Viewing your assigned issues
 
 ```bash
-glab issue list --assignee @me
-glab issue list --label "frontend,bug"
-glab issue list --label "qa"
+fj issue search -a PlasticDigits
+fj issue search -l frontend
+fj issue search -l qa
 ```
 
 ### Filing a bug (headless default)
@@ -367,7 +367,7 @@ Expected flow:
 4. Return to terminal and press Enter at the prompt
 5. Script prints the created issue URL
 
-After the issue is created, the report is stored in GitLab. Keeping local copies is optional.
+After the issue is created, the report is stored on Forgejo. Keeping local copies is optional.
 
 ### Adding screenshots and videos in terminal-only flow
 
@@ -396,7 +396,7 @@ In terminal-only flow, attach evidence as links. The easiest way is using
 1. If needed after issue creation, append more evidence:
 
 ```bash
-glab issue note <issue-number> --message "More evidence: https://example.com/video.mp4"
+fj issue comment <issue-number> "More evidence: https://example.com/video.mp4"
 ```
 
 ### Working on a fix
@@ -420,12 +420,12 @@ git add -A
 git commit -m "fix: transfer button unresponsive on MetaMask mobile (#42)"
 git push -u origin HEAD
 
-# Create an MR
-glab mr create --title "fix: transfer button unresponsive on MetaMask mobile" \
-  --description "Fixes #42"
+# Create a PR
+fj pr create "fix: transfer button unresponsive on MetaMask mobile" \
+  --body "Fixes #42"
 ```
 
-**After creating the MR:** wait for the maintainer to review. Do not merge it
+**After creating the PR:** wait for the maintainer to review. Do not merge it
 yourself. If review comments come in, push fixes and the PR updates
 automatically:
 
@@ -437,11 +437,11 @@ git commit -m "fix: address review feedback"
 git push
 ```
 
-### Checking CI status on your MR
+### Checking CI status on your PR
 
 ```bash
-glab ci status
-glab mr view
+fj pr status
+fj pr view
 ```
 
 ### Reviewing what's deployed
@@ -452,7 +452,7 @@ The frontend auto-deploys to Render from `main`. Check the live site after merge
 
 ## Security Escalation Protocol
 
-**CRITICAL: Never post the following in public GitLab issues:**
+**CRITICAL: Never post the following in public Forgejo issues:**
 
 - Smart contract vulnerabilities or exploit details
 - Operator/canceler bugs that could affect fund safety
@@ -480,14 +480,14 @@ to file as public issues.
 
 ## Branch Protection & Merge Rules
 
-> **Important:** Our default branch is `main`, **not** `master`. When creating merge requests, always target `main`. QA devs occasionally target `master` by mistake — double-check the target branch before submitting.
+> **Important:** Our default branch is `main`, **not** `master`. When creating pull requests, always target `main`. QA devs occasionally target `master` by mistake — double-check the target branch before submitting.
 
 `main` is protected. You **cannot** push directly to it or merge without approval.
 
 
 | Rule                        | Effect                                                      |
 | --------------------------- | ----------------------------------------------------------- |
-| **MRs required**            | All changes to `main` must go through a merge request       |
+| **PRs required**            | All changes to `main` must go through a pull request        |
 | **1 approving review**      | The maintainer (`@PlasticDigits`) must approve before merge |
 | **CODEOWNERS enforced**     | `@PlasticDigits` is auto-requested as reviewer on every MR  |
 | **Stale reviews dismissed** | If you push new commits after approval, the review resets   |
@@ -515,15 +515,14 @@ merges them.
 
 ### MR Template
 
-When you run `glab mr create`, GitLab auto-fills the description from the
-project's MR template. Here's what you need to fill in:
+When you run `fj pr create`, Forgejo can use the project's PR template. Here's what you need to fill in:
 
 ```markdown
 ## What
 <!-- Brief description of the change -->
 
 ## Why
-<!-- Link to the GitLab issue this fixes: Fixes #123 -->
+<!-- Link to the Forgejo issue this fixes: Fixes #123 -->
 
 ## Testing
 - [ ] Tested on desktop (browser: ___)
@@ -604,19 +603,19 @@ npm run lint             # ESLint
 npm run test:unit        # Unit tests (vitest)
 npm run test:e2e         # Playwright E2E (limited — see below)
 
-# GitLab CLI
-glab issue list           # List issues
-glab issue view 42        # View issue details
-glab issue create         # Create new issue
+# Forgejo CLI
+fj issue search           # List/search issues
+fj issue view 42          # View issue details
+fj issue create "title"   # Create new issue
 ./scripts/qa/new-bug.sh   # Bug issue helper (headless-safe; opens in $EDITOR or vi)
 ./scripts/qa/new-bug-cursor.sh # Bug issue helper (Cursor-specific flow)
 ./scripts/qa/new-test-pass.sh # Test-pass helper (headless-safe; opens in $EDITOR or vi)
 ./scripts/qa/new-test-pass-cursors.sh # Test-pass helper (Cursor-specific flow)
 ./scripts/qa/upload-evidence.sh /path/to/file # Upload local evidence file
-glab mr create            # Create MR
-glab mr list              # List MRs
-glab ci status            # Check CI status
-glab mr view              # View your MR details (maintainer merges after approval)
+fj pr create "title"      # Create PR
+fj pr search              # List PRs
+fj pr status              # Check CI / mergeability
+fj pr view                # View your PR details (maintainer merges after approval)
 ```
 
 ### A note on Playwright
@@ -772,7 +771,7 @@ SOLANA_POLL_INTERVAL_MS=5000
 SOLANA_COMMITMENT=finalized
 ```
 
-For full details, see [issue #60](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/60)
+For full details, see [issue #60](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/60)
 and `docs/SOLANA_INTEGRATION_PLAN.md`.
 
 ---

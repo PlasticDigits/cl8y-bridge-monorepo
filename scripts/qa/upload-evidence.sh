@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Upload local QA evidence file to a dedicated public GitLab repo.
+# Upload a local QA evidence file to a public Forgejo repo on git.cl8y.com.
 # Prints a direct download URL on success.
 
 set -euo pipefail
 
-if ! command -v glab >/dev/null 2>&1; then
-  echo "Error: glab CLI is required (https://gitlab.com/gitlab-org/cli)." >&2
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-fj.sh
+source "${SCRIPT_DIR}/lib-fj.sh"
+require_fj
 
-if ! command -v base64 >/dev/null 2>&1; then
-  echo "Error: base64 command is required." >&2
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Error: python3 is required." >&2
   exit 1
 fi
 
@@ -20,7 +20,8 @@ Usage:
   ./scripts/qa/upload-evidence.sh /absolute/or/relative/path/to/file
 
 Environment variables:
-  QA_EVIDENCE_REPO  Override repo (default: PlasticDigits/cl8y-qa-evidence)
+  QA_EVIDENCE_REPO  Override repo (default: code/cl8y-qa-evidence)
+  FJ_HOST           Forgejo host (default: git.cl8y.com)
 EOF
   exit 1
 fi
@@ -31,34 +32,78 @@ if [[ ! -f "${LOCAL_FILE}" ]]; then
   exit 1
 fi
 
-TARGET_REPO="${QA_EVIDENCE_REPO:-PlasticDigits/cl8y-qa-evidence}"
-
+TARGET_REPO="${QA_EVIDENCE_REPO:-code/cl8y-qa-evidence}"
 timestamp="$(date +%s)"
 today="$(date +%F)"
 basename_file="$(basename "${LOCAL_FILE}")"
 remote_path="${today}/${timestamp}-${basename_file}"
 
-if base64 --help 2>&1 | rg -q -- "-w"; then
-  encoded_content="$(base64 -w 0 "${LOCAL_FILE}")"
-else
-  encoded_content="$(base64 "${LOCAL_FILE}" | tr -d '\n')"
-fi
+python3 - "${LOCAL_FILE}" "${remote_path}" "${basename_file}" "${TARGET_REPO}" "${FJ_HOST}" <<'PY'
+import json, pathlib, sys, urllib.error, urllib.parse, urllib.request, base64, os
 
-payload_file="$(mktemp -t cl8y-evidence-payload-XXXXXX.json)"
-trap 'rm -f "${payload_file}"' EXIT
+local_file, remote_path, basename_file, target_repo, host = sys.argv[1:]
+keys_path = pathlib.Path.home() / ".local/share/forgejo-cli/keys.json"
+if not keys_path.is_file():
+    sys.stderr.write(
+        "Error: fj login not found. Run: fj auth login -H %s\n" % host
+    )
+    sys.exit(1)
 
-encoded_repo="$(printf '%s' "${TARGET_REPO}" | sed 's|/|%2F|g')"
-encoded_path="$(printf '%s' "${remote_path}" | sed 's|/|%2F|g')"
+data = json.loads(keys_path.read_text())
+info = (data.get("hosts") or {}).get(host)
+if not info or not info.get("token"):
+    sys.stderr.write(
+        "Error: no fj token for %s. Run: fj auth login -H %s\n" % (host, host)
+    )
+    sys.exit(1)
+token = info["token"]
 
-escaped_basename="$(printf '%s' "${basename_file}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-printf '{"branch":"main","commit_message":"qa: add evidence %s","content":"%s","encoding":"base64"}' \
-  "${escaped_basename}" \
-  "${encoded_content}" > "${payload_file}"
+content = base64.b64encode(pathlib.Path(local_file).read_bytes()).decode("ascii")
+owner, _, repo = target_repo.partition("/")
+if not owner or not repo:
+    sys.stderr.write("Error: QA_EVIDENCE_REPO must be owner/repo, got %r\n" % target_repo)
+    sys.exit(1)
 
-glab api \
-  --method POST \
-  "projects/${encoded_repo}/repository/files/${encoded_path}" \
-  --input "${payload_file}" \
-  --silent
+encoded_path = urllib.parse.quote(remote_path, safe="")
+url = "https://%s/api/v1/repos/%s/%s/contents/%s" % (
+    host,
+    urllib.parse.quote(owner, safe=""),
+    urllib.parse.quote(repo, safe=""),
+    encoded_path,
+)
+payload = json.dumps({
+    "branch": "main",
+    "message": "qa: add evidence %s" % basename_file,
+    "content": content,
+}).encode("utf-8")
+req = urllib.request.Request(
+    url,
+    data=payload,
+    method="POST",
+    headers={
+        "Authorization": "token %s" % token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    },
+)
+try:
+    with urllib.request.urlopen(req) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+except urllib.error.HTTPError as e:
+    detail = e.read().decode("utf-8", errors="replace")
+    sys.stderr.write(
+        "Error: Forgejo upload failed (%s) for %s.\n%s\n"
+        % (e.code, target_repo, detail)
+    )
+    if e.code == 404:
+        sys.stderr.write(
+            "Create the evidence repo on %s or set QA_EVIDENCE_REPO.\n" % host
+        )
+    sys.exit(1)
 
-echo "https://gitlab.com/${TARGET_REPO}/-/raw/main/${remote_path}"
+content_obj = body.get("content") or {}
+download = content_obj.get("download_url")
+if not download:
+    download = "https://%s/%s/raw/branch/main/%s" % (host, target_repo, remote_path)
+print(download)
+PY

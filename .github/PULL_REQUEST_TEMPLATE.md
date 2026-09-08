@@ -4,7 +4,7 @@
 
 ## Why
 
-<!-- Link to the GitHub issue this fixes: Fixes #123 -->
+<!-- Link to the Forgejo issue this fixes: Fixes #123 -->
 
 ## Testing
 

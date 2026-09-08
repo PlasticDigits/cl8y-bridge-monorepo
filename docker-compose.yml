@@ -67,7 +67,7 @@ services:
   #
   # Use solana-test-validator directly: the image entrypoint (solana-run.sh) ignores
   # CMD and always ran solana-validator before, so `solana-test-validator` in command
-  # never executed. Clone wSOL mint into genesis (GitLab #84) — same mint as
+  # never executed. Clone wSOL mint into genesis (issue #84) — same mint as
   # scripts/solana/run-test-validator.sh and packages/contracts-solana/Anchor.toml.
   # Token-2022 program clone: QA T2022 mint + `qa:full-token-setup` / register-qa-tokens.
   solana:

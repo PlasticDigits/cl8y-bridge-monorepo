@@ -1,6 +1,6 @@
 # Terra Classic bridge invariants
 
-Cross-links: [contracts-terraclassic.md](./contracts-terraclassic.md), [deployment-terraclassic-upgrade.md](./deployment-terraclassic-upgrade.md), [`packages/contracts-terraclassic/docs/OPERATIONAL_NOTES.md`](../packages/contracts-terraclassic/docs/OPERATIONAL_NOTES.md), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md), GitLab issue **139**.
+Cross-links: [contracts-terraclassic.md](./contracts-terraclassic.md), [deployment-terraclassic-upgrade.md](./deployment-terraclassic-upgrade.md), [`packages/contracts-terraclassic/docs/OPERATIONAL_NOTES.md`](../packages/contracts-terraclassic/docs/OPERATIONAL_NOTES.md), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md), issue **139**.
 
 These invariants apply to `packages/contracts-terraclassic/bridge/` and to operator/canceler Terra polling. They do **not** change EVM or Solana pending-hash sets.
 
@@ -74,7 +74,7 @@ v2.0.0 → v2.1.0 reconstructs `ACTIVE_WITHDRAW_HASHES` from `PENDING_WITHDRAWS`
 | **Logs** | Cycle summaries and metrics; no per-entry debug for terminal history. |
 | **Metrics** | `relayer_terra_withdraw_query_mode`, `relayer_terra_active_withdrawals_polled`, `relayer_terra_inconsistent_skipped_total`; canceler `canceler_terra_withdraw_query_mode`, `canceler_terra_inconsistent_skipped`. No RPC credentials or addresses in metric labels. |
 
-Unapproved spam can still grow the **active** set; that is bounded operator-retry work tracked separately in GitLab **138**, not by deleting canonical rows.
+Unapproved spam can still grow the **active** set; that is bounded operator-retry work tracked separately in issue **138**, not by deleting canonical rows.
 
 ## INV-TC-AW5 — List page cap and cursors
 

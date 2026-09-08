@@ -19,7 +19,7 @@ Use when wiring **deposit / withdraw-submit / withdraw-execute** CTAs, debugging
 
 ## Invariants
 
-- **INV-FE-CLICKWRAP-1:** Mutative actions require Legal `signed_latest` for **`bridge.cl8y.com`** on the **current** account + network. Status errors fail closed. `allowsMutative` stays false while loading. Connect UX stays outside the gate. See [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/134
+- **INV-FE-CLICKWRAP-1:** Mutative actions require Legal `signed_latest` for **`bridge.cl8y.com`** on the **current** account + network. Status errors fail closed. `allowsMutative` stays false while loading. Connect UX stays outside the gate. See [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Issue: https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/134
 
 ## Pitfalls for third-party implementers
 

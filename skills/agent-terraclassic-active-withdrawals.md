@@ -1,6 +1,6 @@
 # Skill: Terra Classic active withdrawals (agents / automation)
 
-When changing Terra Classic withdrawal storage, list queries, migrate, operator Terra polling, or canceler Terra polling, preserve **INV-TC-AW1–AW5** in [`docs/TERRACLASSIC_BRIDGE_INVARIANTS.md`](../docs/TERRACLASSIC_BRIDGE_INVARIANTS.md) (GitLab **139**).
+When changing Terra Classic withdrawal storage, list queries, migrate, operator Terra polling, or canceler Terra polling, preserve **INV-TC-AW1–AW5** in [`docs/TERRACLASSIC_BRIDGE_INVARIANTS.md`](../docs/TERRACLASSIC_BRIDGE_INVARIANTS.md) (issue **139**).
 
 ## Do not regress
 
@@ -32,8 +32,8 @@ When changing Terra Classic withdrawal storage, list queries, migrate, operator 
 - [`docs/contracts-terraclassic.md`](../docs/contracts-terraclassic.md)
 - [`docs/deployment-terraclassic-upgrade.md`](../docs/deployment-terraclassic-upgrade.md) (v2.1 migrate loop, rollback+re-upgrade, emergency rebuild)
 - [`docs/FRONTEND_BRIDGE_INVARIANTS.md`](../docs/FRONTEND_BRIDGE_INVARIANTS.md) (**INV-FE-TC-AW1**)
-- Companion operator RPC livelock: GitLab **138** (not this skill)
+- Companion operator RPC livelock: issue **138** (not this skill)
 
 ## Tracking issues
 
-- GitLab **139** — stop pending-withdrawal polling from scaling with terminal history. LCD-sized migrate batch counts and client pagination are evidenced; keep **open** until the first on-chain v2.1 `wasm migrate` records `gas_used` and a post-deploy operator/canceler soak. Do not `Closes #139` from client/docs-only changes.
+- issue **139** — stop pending-withdrawal polling from scaling with terminal history. LCD-sized migrate batch counts and client pagination are evidenced; keep **open** until the first on-chain v2.1 `wasm migrate` records `gas_used` and a post-deploy operator/canceler soak. Do not `Closes #139` from client/docs-only changes.

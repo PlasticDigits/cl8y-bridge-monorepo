@@ -1,0 +1,16 @@
+---
+description: Use fj against git.cl8y.com; GitLab is downstream
+alwaysApply: true
+---
+
+# Forgejo (`fj`) — git.cl8y.com
+
+`origin` is `https://git.cl8y.com/code/cl8y-bridge-monorepo.git`. GitLab is a downstream mirror. Do **not** use `glab`, gitlab.com, or `gh` for this repo.
+
+Use `fj` (forgejo-cli). Auth: `fj whoami` (not `fj auth status`). Host: `git.cl8y.com`. Repo: `code/cl8y-bridge-monorepo`.
+
+- Issues: `fj issue search|view|create|comment|assign`
+- Create issue: `fj issue create --body-file FILE --no-template "title"` then `fj issue edit N labels -a LABEL`
+- PRs (not GitLab MRs): `fj pr search|view|create|status|comment|merge`
+- Create PR: `fj pr create "title" --body "..." --base main`
+- URLs: `https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/<id>` and `.../pulls/<id>`

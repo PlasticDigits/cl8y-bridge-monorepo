@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1**, GL-139), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) (**INV-FE-WC-MOBILE-1**, GL-137 — Android Chrome Terra connect), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) (Terra list vs status queries, GL-139), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **136** (Transfer token picker ranking), GitLab issue **134** (Legal clickwrap), GitLab issue **137** (Android Chrome Connect Terra Wallet), GitLab issue **139** (Terra active-withdrawal index). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1**, GL-139), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) (**INV-FE-WC-MOBILE-1**, GL-137 — Android Chrome Terra connect), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) (Terra list vs status queries, GL-139), issue **117** (recipient validation), issue **119** (form CTA / receive quote UX), issue **127** (transfer status / destination rate-limit UX), issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), issue **133** (vFDUSD token logo + EVM allowance source RPC), issue **136** (Transfer token picker ranking), issue **134** (Legal clickwrap), issue **137** (Android Chrome Connect Terra Wallet), issue **139** (Terra active-withdrawal index). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-FE-TOKEN-RANK-1 — Transfer picker ranks economic tokens above test tokens (GL-136)
 
@@ -15,7 +15,7 @@ The Transfer **Amount** combobox (`data-testid="token-select"`) is a display/def
 | **Default selection** | `TransferForm` auto-selects via `defaultTransferTokenId`: first ranked token when current id is empty/invalid (economic if any exist; test-only routes default to the first test token). An explicit still-valid test-token choice is **kept**. |
 | **Do not hide test tokens** | testa / testb / tdec and local TKNA/B/C / KDEC remain selectable when the route is configured. Local `uluna` / tLUNC remain economic; local synthetic SOL is faucet-only unless it appears in the picker. |
 | **Scope** | Transfer picker only. Settings → Tokens / Faucet keep their own order (catalog extraction does not reorder those panels). `TokenSelect` must not apply a second sort. |
-| **Mapping-load gating** | Empty `[]` while EVM mappings load (glab #89) is unchanged — ranking runs only on the filtered non-empty set. |
+| **Mapping-load gating** | Empty `[]` while EVM mappings load (issue #89) is unchanged — ranking runs only on the filtered non-empty set. |
 
 | Evidence | Location |
 |----------|----------|
@@ -27,7 +27,7 @@ The Transfer **Amount** combobox (`data-testid="token-select"`) is a display/def
 | Unit tests | `tokenEconomicRank.test.ts`, `buildTransferTokens.test.ts`, `SubComponents.test.tsx` |
 | Playwright | `packages/frontend/e2e/token-selection.spec.ts` |
 | Agent skill | [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) |
-| Issue | GitLab **136** |
+| Issue | **136** |
 
 ## INV-FE-CLICKWRAP-1 — Legal terms gate on mutative bridge actions (GL-134)
 
@@ -57,7 +57,7 @@ Wallet-connected users must have `signed_latest` for property **`bridge.cl8y.com
 | Fix dest kind | `packages/frontend/src/pages/TransferStatusPage.tsx`, `packages/frontend/src/services/brokenTransferFix.ts` |
 | Solana execute error | `packages/frontend/src/components/transfer/SolanaRecipientExecutePanel.tsx` |
 | Agent skill | [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) |
-| Issue | GitLab **134** — https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/134 |
+| Issue | **134** — https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/134 |
 
 **Legal ops (not this repo):** register property `bridge.cl8y.com`; add `https://bridge.cl8y.com` (and local Vite origin if needed) to API `CORS_ORIGINS` and portal `VITE_REDIRECT_URI_ALLOWLIST`. SDK is on GitLab npm project `82547916` (`@plasticdigits:registry` in `packages/frontend/.npmrc`).
 
@@ -113,7 +113,7 @@ Bridge UI token icons resolve by **display symbol only**. Contract addresses, de
 | Unit tests | `packages/frontend/src/utils/tokenLogos.test.ts` |
 | Component | `packages/frontend/src/components/ui/TokenLogo.tsx` |
 | Agent skill | [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) |
-| Issue / example asset | GitLab **133** — Venus **vFDUSD** → `VFDUSD.png` (Venus Protocol branding) |
+| Issue / example asset | **133** — Venus **vFDUSD** → `VFDUSD.png` (Venus Protocol branding) |
 
 ## INV-UX3 — Transfer Status: stepper vs lookup polling; EVM chain switch affordance; MegaETH header glyph (GL-131)
 
@@ -138,7 +138,7 @@ When a transfer is **approved** on the destination chain but **not executed**, a
 | Rule | Behavior |
 |------|----------|
 | **EVM destinations** | The UI resolves the pending withdraw’s local token, reads the same `getWithdrawRateLimitWindow` snapshot as Settings / the transfer form (via `useTokenDetails`), and compares the **decimal-normalized** payout amount to **remaining** and **max per period** (`computeEvmExecutionRateLimitStatus`). |
-| **Terra destinations** | LCD `rate_limit` + `period_usage` via `queryTerraRateLimitStatus` (`useTerraRateLimitStatus`). **INV-UX2-TERRA1:** `permanently-blocked` compares **decimal-normalized** `payoutAmount` to `max_per_period` only (parity with `computeEvmExecutionRateLimitStatus`; never compare raw source `amount` to destination-sized caps — [GL-130](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/130)). |
+| **Terra destinations** | LCD `rate_limit` + `period_usage` via `queryTerraRateLimitStatus` (`useTerraRateLimitStatus`). **INV-UX2-TERRA1:** `permanently-blocked` compares **decimal-normalized** `payoutAmount` to `max_per_period` only (parity with `computeEvmExecutionRateLimitStatus`; never compare raw source `amount` to destination-sized caps — [GL-130](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/130)). |
 | **Temporary block** | Show an amber banner: destination rate limit, operator retry after reset, and a **`Resets in …`** timer that **updates every second** (`useWithdrawRateLimitCountdown`, wall-clock aligned when `fetchedAtWallMs` is present — same idea as `SourceChainSelector`). |
 | **Permanent block** | Payout exceeds the configured period cap; red banner — user cannot wait out the window. |
 | **Unknown + stuck** | If the cancel window has expired (client-side effective timer) but status is still unknown, keep the soft “may be delayed / check Verify” hint. |
@@ -208,7 +208,7 @@ Before a user can submit a transfer, the **recipient** string for the active rou
 |----------|----------|
 | Implementation | `sendSolanaTransaction`, same file |
 | Agent skill | [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) |
-| Issue context | GitLab **128** — expired blockhash on Solana → EVM retries; avoid balance surprises from confused retry/fallback behavior |
+| Issue context | **128** — expired blockhash on Solana → EVM retries; avoid balance surprises from confused retry/fallback behavior |
 
 ## INV-FE-WC-MOBILE-1 — Android Chrome Terra connect (GL-137)
 
@@ -243,4 +243,4 @@ Known-good reference: **ustr-cmm** (`ust1cmm.com`) connect on the same device/OS
 | Cosmes patch | `packages/frontend/patches/@goblinhunt+cosmes+0.0.71-ghunt.21.patch` (`QRCodeModal.js`) |
 | Keplr-compatible inject | `utils/keplrCompatible.ts`, `services/terra/detect.ts` |
 | Agent skill | [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) |
-| Issue | GitLab **[#137](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/137)** |
+| Issue | **[#137](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/137)** |
