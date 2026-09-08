@@ -408,7 +408,7 @@ QueryMsg::ActiveWithdrawIndex {}                       // active_count + migrate
 ExecuteMsg::ContinueActiveIndexMigrate { limit, rebuild } // Admin continue / emergency rebuild
 ```
 
-See [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) **INV-TC-AW3** for rollback+re-upgrade reset, the emergency rebuild (`rebuild: true` once), LCD-sized migrate batch counts, and columbus-5 same-`code_id` migrate (wasmd v0.61.8). GitLab **139** stays open until the first on-chain v2.1 migrate records `gas_used`.
+See [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) **INV-TC-AW3** for rollback+re-upgrade reset, the emergency rebuild (`rebuild: true` once), LCD-sized migrate batch counts, and columbus-5 same-`code_id` migrate (wasmd v0.61.8). issue **139** stays open until the first on-chain v2.1 migrate records `gas_used`.
 
 ## State
 

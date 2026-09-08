@@ -51,7 +51,7 @@ Mainnet Solana: set `VITE_SOLANA_PROGRAM_ID`, `VITE_SOLANA_RPC_URL`, and nonecon
 
 ### Dependency patches (`patch-package`)
 
-The app ships a [patch for `rpc-websockets`](./patches/rpc-websockets+9.3.3.patch) (a dependency of `@solana/web3.js`). Without it, some Solana JSON-RPC WebSocket responses that include both `error: null` and `result` are misclassified as malformed, which breaks `confirmTransaction` / `signatureSubscribe` in the browser (see GitLab #106). Regression coverage lives in `src/services/solana/jsonRpcWebsocketResponse.test.ts`.
+The app ships a [patch for `rpc-websockets`](./patches/rpc-websockets+9.3.3.patch) (a dependency of `@solana/web3.js`). Without it, some Solana JSON-RPC WebSocket responses that include both `error: null` and `result` are misclassified as malformed, which breaks `confirmTransaction` / `signatureSubscribe` in the browser (see issue #106). Regression coverage lives in `src/services/solana/jsonRpcWebsocketResponse.test.ts`.
 
 ### Solana as source chain
 

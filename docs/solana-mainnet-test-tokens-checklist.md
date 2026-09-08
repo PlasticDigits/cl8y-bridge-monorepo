@@ -2,7 +2,7 @@
 
 This document is a **focused operator checklist** to get the three noneconomic test tokens working end-to-end in the **frontend** (no amber “route misconfigured” / unresolved SPL mint). It complements the full runbook [`deployment-solana-mainnet.md`](./deployment-solana-mainnet.md).
 
-**Transfer picker (INV-FE-TOKEN-RANK-1, [GL-136](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/136)):** testa / testb / tdec stay **selectable** on routed pairs but sort to the **bottom** of the Amount combobox; LUNC / CL8Y / other non-denylisted assets sort to the **top**. Classification is by canonical mint / CW20 / EVM id in [`faucetTokens.ts`](../packages/frontend/src/utils/faucetTokens.ts), not display symbol. Adding a new noneconomic mint requires updating that catalog (skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)). Settings → Faucet order is independent.
+**Transfer picker (INV-FE-TOKEN-RANK-1, [GL-136](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/136)):** testa / testb / tdec stay **selectable** on routed pairs but sort to the **bottom** of the Amount combobox; LUNC / CL8Y / other non-denylisted assets sort to the **top**. Classification is by canonical mint / CW20 / EVM id in [`faucetTokens.ts`](../packages/frontend/src/utils/faucetTokens.ts), not display symbol. Adding a new noneconomic mint requires updating that catalog (skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)). Settings → Faucet order is independent.
 
 ---
 

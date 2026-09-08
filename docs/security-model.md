@@ -433,7 +433,7 @@ Solana enforces the same conceptual model on **withdraw execute** only: a per–
 
 ## Third-party wallet classifications (MetaMask / Blockaid)
 
-On-chain bridge guarantees in this document are **independent** of how wallet UIs label transactions. **MetaMask Security Alerts** (e.g. powered by Blockaid) may show **Warning** or **Malicious** for **legitimate** bridge contracts when heuristics or reputation data misfire; users can still see a successful flow on-chain while the wallet discourages signing. **INV-BLK1** and operator steps to report false classifications: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (GitLab **118**).
+On-chain bridge guarantees in this document are **independent** of how wallet UIs label transactions. **MetaMask Security Alerts** (e.g. powered by Blockaid) may show **Warning** or **Malicious** for **legitimate** bridge contracts when heuristics or reputation data misfire; users can still see a successful flow on-chain while the wallet discourages signing. **INV-BLK1** and operator steps to report false classifications: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (issue **118**).
 
 ---
 

@@ -51,7 +51,7 @@ fi
 
 mkdir -p "$SOLANA_LEDGER_DIR"
 
-# Canonical wrapped SOL mint — must exist for Anchor register_token + register-qa-tokens (GitLab #84).
+# Canonical wrapped SOL mint — must exist for Anchor register_token + register-qa-tokens (issue #84).
 WSOL_MINT="So11111111111111111111111111111111111111112"
 # Token-2022 program — matches docker-compose solana service + packages/contracts-solana/Anchor.toml (QA / anchor test).
 TOKEN_2022_PROG="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"

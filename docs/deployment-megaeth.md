@@ -397,8 +397,8 @@ Registering the **new** EVM chain on **other** networks is **not** folded into `
 - [deployment-guide.md §4.2](./deployment-guide.md#42-deploy-to-bsc-mainnet-chain-id-56) — standard single-shot `Deploy.s.sol`
 - [deployment-guide.md §4.2a](./deployment-guide.md#42a-full-45-tx-bsc-parity-replay-megaeth--new-chains) — parity checklist + GL-122 orchestrator
 - [skills/agent-evm-bsc-parity-replay.md](../skills/agent-evm-bsc-parity-replay.md) — third-party agent checklist (GL-121 + GL-122)
-- GitLab issue **GL-121** — parity replay deliverable (golden JSON, dry-check, `EvmParityReplay` including `runBroadcastFull`)
-- GitLab issue **GL-122** — orchestrated deploy (`deploy-bsc-parity-orchestrate.sh`), peers (`register-parity-peers-on-registry.sh`), preflight
+- issue **GL-121** — parity replay deliverable (golden JSON, dry-check, `EvmParityReplay` including `runBroadcastFull`)
+- issue **GL-122** — orchestrated deploy (`deploy-bsc-parity-orchestrate.sh`), peers (`register-parity-peers-on-registry.sh`), preflight
 
 ---
 
@@ -451,9 +451,9 @@ If the canceler watches several EVM chains, also add the same `EVM_CHAIN_N_NAME=
 
 ### Frontend
 
-**Status — [GL-124](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/124) option A (minimal MegaETH):** `megaeth` is in `BRIDGE_CHAINS.mainnet` with chain id **4326** and V2 bytes4 **`0x000010e6`**, reads **`VITE_MEGAETH_RPC_URL`** / **`VITE_MEGAETH_BRIDGE_ADDRESS`**, appears in **`public/chains/chainlist.json`**, **`supportedChains`** / Settings merge, and wagmi (wallet network switch). **Option B** (comma-separated `VITE_BRIDGE_CHAINS` + per-key manifest) is **not** implemented; it remains future work on the **same issue** — see [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
+**Status — [GL-124](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/124) option A (minimal MegaETH):** `megaeth` is in `BRIDGE_CHAINS.mainnet` with chain id **4326** and V2 bytes4 **`0x000010e6`**, reads **`VITE_MEGAETH_RPC_URL`** / **`VITE_MEGAETH_BRIDGE_ADDRESS`**, appears in **`public/chains/chainlist.json`**, **`supportedChains`** / Settings merge, and wagmi (wallet network switch). **Option B** (comma-separated `VITE_BRIDGE_CHAINS` + per-key manifest) is **not** implemented; it remains future work on the **same issue** — see [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
 
-**Transfer vs Settings (see [GL-125](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/125)):** The Transfer screen’s EVM route check now aligns with Settings token verification by consulting **`isTokenRegistered`** on the chain bridge before **`eth_getCode`**, and the viem client cache keys chain identity so shared RPC URLs cannot mix chain metadata. Third-party agents: **`INV-FE-TRANSFER-EVM-1`** in [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
+**Transfer vs Settings (see [GL-125](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/125)):** The Transfer screen’s EVM route check now aligns with Settings token verification by consulting **`isTokenRegistered`** on the chain bridge before **`eth_getCode`**, and the viem client cache keys chain identity so shared RPC URLs cannot mix chain metadata. Third-party agents: **`INV-FE-TRANSFER-EVM-1`** in [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md).
 
 **Invariants (do not drift without registry verification):**
 
