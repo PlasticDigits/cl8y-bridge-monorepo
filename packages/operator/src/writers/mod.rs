@@ -10,6 +10,7 @@ use crate::poll_config::{jittered_exponential_backoff, WriterScheduleConfig};
 use crate::types::ChainId;
 
 pub mod evm;
+pub mod execute_queue;
 pub mod negative_retry;
 pub mod poll_cursor;
 pub mod retry;
@@ -785,5 +786,9 @@ mod schedule_tests {
             "Failed to get pending withdraw: timeout"
         ));
         assert!(!is_terminal_execute_error("Terra deposit not found"));
+        assert!(!is_terminal_execute_error("RateLimitExceededPerPeriod"));
+        assert!(!is_terminal_execute_error(
+            "Failed to send withdraw tx: RateLimitExceededPerTx"
+        ));
     }
 }

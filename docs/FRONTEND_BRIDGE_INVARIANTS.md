@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1**, GL-139), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) (**INV-FE-WC-MOBILE-1**, GL-137 — Android Chrome Terra connect), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) (Terra list vs status queries, GL-139), issue **117** (recipient validation), issue **119** (form CTA / receive quote UX), issue **127** (transfer status / destination rate-limit UX), issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), issue **133** (vFDUSD token logo + EVM allowance source RPC), issue **136** (Transfer token picker ranking), issue **134** (Legal clickwrap), issue **137** (Android Chrome Connect Terra Wallet), issue **139** (Terra active-withdrawal index). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1**, GL-139), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) (**INV-FE-WC-MOBILE-1**, GL-137 — Android Chrome Terra connect), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) (Terra list vs status queries, GL-139), issue **117** (recipient validation), issue **119** (form CTA / receive quote UX), issue **127** (transfer status / destination rate-limit UX), issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), issue **133** (vFDUSD token logo + EVM allowance source RPC), issue **136** (Transfer token picker ranking), issue **134** (Legal clickwrap), issue **137** (Android Chrome Connect Terra Wallet), issue **139** (Terra active-withdrawal index), issue **170** (Hash Verification EVM dest execute blockers). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-FE-TOKEN-RANK-1 — Transfer picker ranks economic tokens above test tokens (GL-136)
 
@@ -146,11 +146,32 @@ When a transfer is **approved** on the destination chain but **not executed**, a
 | Evidence | Location |
 |----------|----------|
 | Status page | `packages/frontend/src/pages/TransferStatusPage.tsx` |
+| Hash Verification (same classifier + banners) | `packages/frontend/src/pages/HashVerificationPage.tsx`, `HashComparisonPanel.tsx` (**INV-FE-VERIFY-1**) |
 | EVM classification | `packages/frontend/src/services/evmExecutionRateLimit.ts`, `packages/frontend/src/hooks/useEvmExecutionRateLimitStatus.ts` |
 | Decimal normalization (matches `Bridge._normalizeDecimals`) | `packages/frontend/src/utils/bridgeAmountDecimals.ts` |
 | Countdown hook | `packages/frontend/src/hooks/useWithdrawRateLimitCountdown.ts` |
 | Pending withdraw `destDecimals` (EVM) | `packages/frontend/src/services/evmBridgeQueries.ts` |
 | Terra rate-limit classification | `packages/frontend/src/services/terraBridgeQueries.ts` (`queryTerraRateLimitStatus`) |
+
+## INV-FE-VERIFY-1 — Hash Verification names EVM dest execute blockers (GL-170)
+
+`/verify?hash=` must not show dest-**Approved** as overall **verified**. Verified = dest **executed**. While dest is approved and not executed, overall status stays **Pending** and the page names *why* execution has not landed.
+
+| Rule | Behavior |
+|------|----------|
+| **HashStatus** | `dest.approved && !dest.executed` → **pending**. Only `dest.executed` → **verified**. Do not treat Approved as complete (A8). |
+| **EVM dest** | When dest is approved-not-executed and `destChain.type === 'evm'`, call `useEvmExecutionRateLimitStatus` (same GL-127 classifier as Transfer Status) and pass it into `HashComparisonPanel` banners. Show cancel remaining from on-chain `approvedAt` + dest `cancelWindow` (`useApprovalCountdown` / `useBridgeConfig.cancelWindowSeconds`). **Do not hardcode 24h** (#44). |
+| **Terra dest** | Existing `useTerraRateLimitStatus` banners stay on this page. |
+| **Solana dest** | Existing `SolanaRecipientExecutePanel` + cancel hint stay unchanged. |
+| **No second Transfer Status** | Reuse `computeEvmExecutionRateLimitStatus` / panel banners. Prefer operator-complete execute; no new EVM recipient-execute product on this ticket. |
+
+| Evidence | Location |
+|----------|----------|
+| Status mapping | `packages/frontend/src/utils/hashVerifyExecuteBlocker.ts`, `useHashVerification.ts` |
+| Page wiring | `packages/frontend/src/pages/HashVerificationPage.tsx` |
+| Banners | `packages/frontend/src/components/verify/HashComparisonPanel.tsx` |
+| Agent skill | [`skills/agent-frontend-hash-verify.md`](../skills/agent-frontend-hash-verify.md) |
+| Issue | **[#170](https://git.cl8y.com/code/cl8y-bridge-monorepo/issues/170)** |
 
 ## INV-UX1 — Transfer form: CTA, receive quote, and amount field (GL-119)
 

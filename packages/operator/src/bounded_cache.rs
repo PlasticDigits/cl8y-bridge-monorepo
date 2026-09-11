@@ -140,6 +140,13 @@ impl<T> BoundedPendingCache<T> {
             .map(|(v, _)| v)
     }
 
+    pub fn get_mut(&mut self, hash: &[u8; 32]) -> Option<&mut T> {
+        self.map
+            .get_mut(hash)
+            .filter(|(_, t)| t.elapsed() < self.ttl)
+            .map(|(v, _)| v)
+    }
+
     pub fn insert(&mut self, hash: [u8; 32], value: T) {
         let now = Instant::now();
         self.map
@@ -215,6 +222,17 @@ mod tests {
         assert!(cache.get(&[1u8; 32]).is_none());
         assert_eq!(cache.get(&[3u8; 32]), Some(&"c"));
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn test_pending_cache_get_mut_updates_without_resetting_ttl_key() {
+        let mut cache = BoundedPendingCache::new(10, 3600);
+        let hash = [1u8; 32];
+        cache.insert(hash, 1u32);
+        if let Some(v) = cache.get_mut(&hash) {
+            *v = 7;
+        }
+        assert_eq!(cache.get(&hash), Some(&7u32));
     }
 
     #[test]

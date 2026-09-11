@@ -1,6 +1,6 @@
 # Operator EVM writer invariants (GL-138)
 
-Cross-links: [operator.md](./operator.md), [architecture.md](./architecture.md), [testing.md](./testing.md), [deployment-guide.md](./deployment-guide.md), [`skills/agent-operator-evm-writer-rpc.md`](../skills/agent-operator-evm-writer-rpc.md), GitLab issue **138**.
+Cross-links: [operator.md](./operator.md), [architecture.md](./architecture.md), [testing.md](./testing.md), [deployment-guide.md](./deployment-guide.md), [`skills/agent-operator-evm-writer-rpc.md`](../skills/agent-operator-evm-writer-rpc.md), Forgejo issues **138** and **170**.
 
 These rules apply to the operator **EVM writer** event poll, RPC fallback, and pending-withdrawal enumeration. They do **not** relax source-chain verification. Companion Terra history work is GitLab **139**.
 
@@ -71,13 +71,21 @@ Hashes that are **approved, not cancelled, not executed** must be queued for `wi
 
 `pending_executions` is process-local and TTL-bounded. After restart or cache eviction the writer must re-queue from on-chain state. Do not reset an existing execute timer on each poll (that livelocks execute). Source verification is **not** required on this path (approval already verified). Do not consume `WRITER_MAX_VERIFY_PER_CYCLE` for execute re-queue.
 
-Executed, cancelled, missing (`submittedAt == 0`), and `BelowMinPerTransaction` / Terra `BelowMinimumAmount` are **terminal**. Drop them from `pending_executions` and record them in `terminal_executions` so enumeration does not re-queue. RPC / `CancelWindowActive` failures stay retryable.
+Executed, cancelled, missing (`submittedAt == 0`), and `BelowMinPerTransaction` / Terra `BelowMinimumAmount` are **terminal**. Drop them from `pending_executions` and record them in `terminal_executions` so enumeration does not re-queue. RPC / `CancelWindowActive` / period `RateLimitExceededPerPeriod` failures stay retryable — **do not** add period-full to the terminal list (GL-170). Retryable failures increment `attempts` and apply backoff from *now* (`execute_queue`); do **not** reset an in-flight timer on enumeration re-queue.
+
+## INV-OP-W12 — Execute send/receipt method-level RPC fallback (GL-170)
+
+`submit_execute_withdraw` must not bind send or receipt to the single `rpc_url` that answered `eth_chainId`. Reads (`getPendingWithdraw`) use [`with_endpoint_fallback`]. Send uses [`with_retryable_rpc_fallback`] so **contract reverts** (`CancelWindowActive`, period-limit, BelowMin) are not re-broadcast on every URL. After a successful send, receipt is fetched **by hash** on remaining URLs; do not wrap send+receipt in one fallback (that would re-send). Mined `status=false` receipts are re-simulated (`eth_call`) so BelowMin selectors stay terminal.
+
+On-chain `TokenRateLimit` / min-per-tx stay unchanged. No operator execute bypass.
 
 ## Code map
 
 | Concern | Location |
 |---------|----------|
 | Shared log fallback + chain-id confirm | `packages/operator/src/rpc_fallback.rs` |
+| Execute send/receipt fallback | `packages/operator/src/rpc_fallback.rs` (`with_retryable_rpc_fallback`) |
+| Execute queue (enqueue, retry backoff) | `packages/operator/src/writers/execute_queue.rs` |
 | URL / error sanitization | `packages/multichain-rs/src/evm/rpc_fallback.rs` (`sanitize_rpc_endpoint`, `sanitize_rpc_error`) |
 | Retryable RPC classification | `packages/multichain-rs/src/evm/rpc_fallback.rs` |
 | Cursor | `packages/operator/src/writers/poll_cursor.rs` |

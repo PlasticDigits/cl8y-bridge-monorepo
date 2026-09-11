@@ -237,27 +237,24 @@ impl TerraWriter {
         delay_seconds: u64,
         token: &str,
     ) {
-        if self.terminal_executions.contains_key(&xchain_hash_id) {
-            return;
-        }
-        if self.pending_executions.get(&xchain_hash_id).is_some() {
-            return;
-        }
-        info!(
-            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-            delay_seconds,
-            "Queueing approved Terra withdrawal for execute"
-        );
-        self.pending_executions.insert(
+        if super::execute_queue::enqueue_execution_if_absent(
+            &self.terminal_executions,
+            &mut self.pending_executions,
             xchain_hash_id,
-            PendingExecution {
+            || PendingExecution {
                 xchain_hash_id,
                 approved_at: Instant::now(),
                 delay_seconds,
                 attempts: 0,
                 token: token.to_string(),
             },
-        );
+        ) {
+            info!(
+                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                delay_seconds,
+                "Queueing approved Terra withdrawal for execute"
+            );
+        }
     }
 
     /// Poll Terra active (or legacy all-status) withdrawals and approve verified entries.
@@ -988,38 +985,44 @@ impl TerraWriter {
     /// Process pending executions (after cancel window has elapsed)
     async fn process_pending_executions(&mut self) -> Result<()> {
         let now = Instant::now();
+        let ready: Vec<([u8; 32], String)> = self
+            .pending_executions
+            .iter()
+            .filter(|(_, pending)| {
+                now.duration_since(pending.approved_at).as_secs() >= pending.delay_seconds
+            })
+            .map(|(hash, pending)| (*hash, pending.token.clone()))
+            .collect();
+
         let mut to_remove = Vec::new();
+        let mut to_backoff: Vec<([u8; 32], String)> = Vec::new();
 
-        for (hash, pending) in self.pending_executions.iter() {
-            let elapsed = now.duration_since(pending.approved_at);
-
-            if elapsed.as_secs() >= pending.delay_seconds {
-                match self.submit_execute_withdraw(*hash, &pending.token).await {
-                    Ok(tx_hash) => {
+        for (hash, token) in ready {
+            match self.submit_execute_withdraw(hash, &token).await {
+                Ok(tx_hash) => {
+                    info!(
+                        xchain_hash_id = %bytes32_to_hex(&hash),
+                        tx_hash = %tx_hash,
+                        "Successfully executed withdrawal"
+                    );
+                    to_remove.push(hash);
+                }
+                Err(e) => {
+                    let err = e.to_string();
+                    if super::is_terminal_execute_error(&err) {
                         info!(
-                            xchain_hash_id = %bytes32_to_hex(hash),
-                            tx_hash = %tx_hash,
-                            "Successfully executed withdrawal"
+                            xchain_hash_id = %bytes32_to_hex(&hash),
+                            error = %e,
+                            "Dropping terminal Terra execute failure"
                         );
-                        to_remove.push(*hash);
-                    }
-                    Err(e) => {
-                        let err = e.to_string();
-                        if super::is_terminal_execute_error(&err) {
-                            info!(
-                                xchain_hash_id = %bytes32_to_hex(hash),
-                                error = %e,
-                                "Dropping terminal Terra execute failure"
-                            );
-                            to_remove.push(*hash);
-                        } else {
-                            warn!(
-                                xchain_hash_id = %bytes32_to_hex(hash),
-                                error = %e,
-                                attempt = pending.attempts + 1,
-                                "Failed to execute withdrawal, will retry"
-                            );
-                        }
+                        to_remove.push(hash);
+                    } else {
+                        warn!(
+                            xchain_hash_id = %bytes32_to_hex(&hash),
+                            error = %e,
+                            "Failed to execute withdrawal, will retry"
+                        );
+                        to_backoff.push((hash, err));
                     }
                 }
             }
@@ -1028,6 +1031,23 @@ impl TerraWriter {
         for hash in to_remove {
             self.terminal_executions.insert(hash);
             self.pending_executions.remove(&hash);
+        }
+
+        for (hash, err) in to_backoff {
+            if let Some(pending) = self.pending_executions.get_mut(&hash) {
+                super::execute_queue::apply_execute_retry_backoff(
+                    &mut pending.attempts,
+                    &mut pending.approved_at,
+                    &mut pending.delay_seconds,
+                    &err,
+                    super::execute_queue::ExecuteRetryBackoff {
+                        initial: Duration::from_secs(2),
+                        max: Duration::from_secs(60),
+                        jitter_bps: crate::poll_config::DEFAULT_BACKOFF_JITTER_BPS,
+                    },
+                    u64::from_le_bytes(hash[..8].try_into().unwrap_or([0; 8])),
+                );
+            }
         }
 
         Ok(())

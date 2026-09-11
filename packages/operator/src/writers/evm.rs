@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bounded_cache::{BoundedHashCache, BoundedPendingCache};
 use crate::poll_config::{jittered_exponential_backoff, EvmPollConfig, WriterScheduleConfig};
@@ -23,8 +23,8 @@ use crate::writers::negative_retry::{CycleVerifyBudget, NegativeVerifySchedule, 
 use crate::writers::poll_cursor::{chunk_bounds, EventPollCursor};
 
 use alloy::network::EthereumWallet;
-use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::{ProviderBuilder, RootProvider};
+use alloy::primitives::{Address, B256, FixedBytes, U256};
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::{Client, Http};
 use base64::Engine;
@@ -408,26 +408,23 @@ impl EvmWriter {
     /// Does not reset an existing timer (would livelock execute). TTL-expired entries
     /// look absent via `get` and are re-inserted.
     fn enqueue_execution_if_absent(&mut self, xchain_hash_id: [u8; 32], delay_seconds: u64) {
-        if self.terminal_executions.contains_key(&xchain_hash_id) {
-            return;
-        }
-        if self.pending_executions.get(&xchain_hash_id).is_some() {
-            return;
-        }
-        info!(
-            xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-            delay_seconds,
-            "Queueing approved withdrawal for execute"
-        );
-        self.pending_executions.insert(
+        if super::execute_queue::enqueue_execution_if_absent(
+            &self.terminal_executions,
+            &mut self.pending_executions,
             xchain_hash_id,
-            PendingExecution {
+            || PendingExecution {
                 xchain_hash_id,
                 approved_at: Instant::now(),
                 delay_seconds,
                 attempts: 0,
             },
-        );
+        ) {
+            info!(
+                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
+                delay_seconds,
+                "Queueing approved withdrawal for execute"
+            );
+        }
     }
 
     fn delay_from_onchain_approved_at(&self, approved_at: U256) -> u64 {
@@ -1283,39 +1280,44 @@ impl EvmWriter {
     /// Process pending executions (after cancel window has elapsed)
     async fn process_pending_executions(&mut self) -> Result<()> {
         let now = Instant::now();
+        let ready: Vec<[u8; 32]> = self
+            .pending_executions
+            .iter()
+            .filter(|(_, pending)| {
+                now.duration_since(pending.approved_at).as_secs() >= pending.delay_seconds
+            })
+            .map(|(hash, _)| *hash)
+            .collect();
+
         let mut to_remove = Vec::new();
+        let mut to_backoff: Vec<([u8; 32], String)> = Vec::new();
 
-        for (hash, pending) in self.pending_executions.iter() {
-            let elapsed = now.duration_since(pending.approved_at);
-
-            if elapsed.as_secs() >= pending.delay_seconds {
-                // Delay has elapsed, try to execute
-                match self.submit_execute_withdraw(*hash).await {
-                    Ok(tx_hash) => {
+        for hash in ready {
+            match self.submit_execute_withdraw(hash).await {
+                Ok(tx_hash) => {
+                    info!(
+                        xchain_hash_id = %bytes32_to_hex(&hash),
+                        tx_hash = %tx_hash,
+                        "Successfully executed EVM withdrawal"
+                    );
+                    to_remove.push(hash);
+                }
+                Err(e) => {
+                    let err = e.to_string();
+                    if super::is_terminal_execute_error(&err) {
                         info!(
-                            xchain_hash_id = %bytes32_to_hex(hash),
-                            tx_hash = %tx_hash,
-                            "Successfully executed EVM withdrawal"
+                            xchain_hash_id = %bytes32_to_hex(&hash),
+                            error = %e,
+                            "Dropping terminal EVM execute failure"
                         );
-                        to_remove.push(*hash);
-                    }
-                    Err(e) => {
-                        let err = e.to_string();
-                        if super::is_terminal_execute_error(&err) {
-                            info!(
-                                xchain_hash_id = %bytes32_to_hex(hash),
-                                error = %e,
-                                "Dropping terminal EVM execute failure"
-                            );
-                            to_remove.push(*hash);
-                        } else {
-                            warn!(
-                                xchain_hash_id = %bytes32_to_hex(hash),
-                                error = %e,
-                                attempt = pending.attempts + 1,
-                                "Failed to execute EVM withdrawal, will retry"
-                            );
-                        }
+                        to_remove.push(hash);
+                    } else {
+                        warn!(
+                            xchain_hash_id = %bytes32_to_hex(&hash),
+                            error = %e,
+                            "Failed to execute EVM withdrawal, will retry"
+                        );
+                        to_backoff.push((hash, err));
                     }
                 }
             }
@@ -1324,6 +1326,27 @@ impl EvmWriter {
         for hash in to_remove {
             self.terminal_executions.insert(hash);
             self.pending_executions.remove(&hash);
+        }
+
+        let initial = self.schedule.rpc_backoff_initial;
+        let max = self.schedule.rpc_backoff_max;
+        let jitter = self.schedule.jitter_bps;
+        let chain_seed = self.chain_id;
+        for (hash, err) in to_backoff {
+            if let Some(pending) = self.pending_executions.get_mut(&hash) {
+                super::execute_queue::apply_execute_retry_backoff(
+                    &mut pending.attempts,
+                    &mut pending.approved_at,
+                    &mut pending.delay_seconds,
+                    &err,
+                    super::execute_queue::ExecuteRetryBackoff {
+                        initial,
+                        max,
+                        jitter_bps: jitter,
+                    },
+                    Self::hash_seed(&hash) ^ chain_seed,
+                );
+            }
         }
 
         Ok(())
@@ -1578,24 +1601,94 @@ impl EvmWriter {
     ///
     /// In V2, we call withdrawExecuteUnlock for lock/unlock tokens
     /// or withdrawExecuteMint for mintable tokens.
+    ///
+    /// Reads, send, and receipt each use method-level RPC fallback (INV-OP-W12).
+    /// A successful send is never re-broadcast when only the receipt wait fails.
     async fn submit_execute_withdraw(&self, xchain_hash_id: [u8; 32]) -> Result<String> {
-        // Build provider with signer and recommended fillers (gas, nonce, fees)
-        let wallet = EthereumWallet::from(self.signer.clone());
-        let provider = ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_http(self.rpc_url.parse().wrap_err("Invalid RPC URL")?);
+        let urls = if self.rpc_urls.is_empty() {
+            vec![self.rpc_url.clone()]
+        } else {
+            self.rpc_urls.clone()
+        };
+        let use_mint = self.load_execute_plan(&urls, xchain_hash_id).await?;
 
-        let contract = Bridge::new(self.bridge_address, &provider);
+        let label = self.chain_label();
+        let signer = self.signer.clone();
+        let bridge = self.bridge_address;
+        let (tx_hash, send_idx) = crate::rpc_fallback::with_retryable_rpc_fallback(
+            &urls,
+            None,
+            &label,
+            "withdrawExecute",
+            |idx| {
+                let url = urls[idx].clone();
+                let signer = signer.clone();
+                async move {
+                    let tx = Self::send_execute_on_url(
+                        &url,
+                        signer,
+                        bridge,
+                        xchain_hash_id,
+                        use_mint,
+                    )
+                    .await?;
+                    Ok((tx, idx))
+                }
+            },
+        )
+        .await?;
 
-        // Query pending withdrawal — validate it exists and is ready for execution
+        info!(tx_hash = %tx_hash, "Withdraw transaction sent (V2)");
+
+        let status_ok = self
+            .wait_execute_receipt_status(&urls, Some(send_idx), tx_hash)
+            .await?;
+        if !status_ok {
+            let detail = Self::simulate_execute_revert(
+                &urls[send_idx.min(urls.len().saturating_sub(1))],
+                self.bridge_address,
+                xchain_hash_id,
+                use_mint,
+            )
+            .await;
+            return Err(eyre!("Withdraw transaction reverted: {detail}"));
+        }
+
+        Ok(format!("0x{:x}", tx_hash))
+    }
+
+    async fn load_execute_plan(&self, urls: &[String], xchain_hash_id: [u8; 32]) -> Result<bool> {
+        let bridge_address = self.bridge_address;
+        let label = self.chain_label();
+        crate::rpc_fallback::with_endpoint_fallback(
+            urls,
+            None,
+            &label,
+            "getPendingWithdraw",
+            |idx| {
+                let url = urls[idx].clone();
+                async move {
+                    Self::load_execute_plan_on_url(&url, bridge_address, xchain_hash_id).await
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_execute_plan_on_url(
+        url: &str,
+        bridge_address: Address,
+        xchain_hash_id: [u8; 32],
+    ) -> Result<bool> {
+        let provider = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
+        let contract = Bridge::new(bridge_address, &provider);
+
         let pending = contract
             .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
             .call()
             .await
             .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;
 
-        // getPendingWithdraw returns a zero struct if the hash doesn't exist
         if pending.submittedAt.is_zero() {
             return Err(eyre!(
                 "Withdrawal {} not found (submittedAt is zero)",
@@ -1616,7 +1709,6 @@ impl EvmWriter {
         }
 
         let token_addr = pending.token;
-
         let registry_addr = contract
             .tokenRegistry()
             .call()
@@ -1632,9 +1724,7 @@ impl EvmWriter {
             .map_err(|e| eyre!("Failed to get token type: {}", e))?
             .tokenType;
 
-        // LockUnlock = 0, MintBurn = 1
         let use_mint = token_type == 1;
-
         debug!(
             xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
             token = %token_addr,
@@ -1642,7 +1732,22 @@ impl EvmWriter {
             mode = if use_mint { "mint" } else { "unlock" },
             "Submitting withdraw execution (V2)"
         );
+        Ok(use_mint)
+    }
 
+    async fn send_execute_on_url(
+        url: &str,
+        signer: PrivateKeySigner,
+        bridge_address: Address,
+        xchain_hash_id: [u8; 32],
+        use_mint: bool,
+    ) -> Result<B256> {
+        let wallet = EthereumWallet::from(signer);
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(url.parse().wrap_err("Invalid RPC URL")?);
+        let contract = Bridge::new(bridge_address, &provider);
         let pending_tx = if use_mint {
             contract
                 .withdrawExecuteMint(FixedBytes::from(xchain_hash_id))
@@ -1655,21 +1760,80 @@ impl EvmWriter {
                 .await
         }
         .map_err(|e| eyre!("Failed to send withdraw tx: {}", e))?;
+        Ok(*pending_tx.tx_hash())
+    }
 
-        let tx_hash = *pending_tx.tx_hash();
-        info!(tx_hash = %tx_hash, "Withdraw transaction sent (V2)");
-
-        // Wait for confirmation
-        let receipt = pending_tx
-            .get_receipt()
-            .await
-            .map_err(|e| eyre!("Failed to get receipt: {}", e))?;
-
-        if !receipt.status() {
-            return Err(eyre!("Withdraw transaction reverted"));
+    async fn wait_execute_receipt_status(
+        &self,
+        urls: &[String],
+        prefer_index: Option<usize>,
+        tx_hash: B256,
+    ) -> Result<bool> {
+        let order = crate::rpc_fallback::endpoint_try_order(urls.len(), prefer_index);
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let mut last_err = eyre!("Failed to get receipt: not yet available");
+        let mut logged_fallback = false;
+        while Instant::now() < deadline {
+            for idx in &order {
+                let url = &urls[*idx];
+                let provider =
+                    ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
+                match provider.get_transaction_receipt(tx_hash).await {
+                    Ok(Some(receipt)) => return Ok(receipt.status()),
+                    Ok(None) => {
+                        last_err = eyre!("Failed to get receipt: not yet available");
+                    }
+                    Err(e) => {
+                        if prefer_index != Some(*idx) && !logged_fallback {
+                            warn!(
+                                chain = %self.chain_label(),
+                                rpc = %crate::rpc_fallback::log_rpc(url),
+                                error = %crate::rpc_fallback::log_rpc_error(&e),
+                                "withdrawExecute receipt wait failed; trying remaining RPCs"
+                            );
+                            logged_fallback = true;
+                        }
+                        last_err = eyre!(
+                            "Failed to get receipt: {}",
+                            crate::rpc_fallback::log_rpc_error(&e)
+                        );
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(750)).await;
         }
+        Err(last_err)
+    }
 
-        Ok(format!("0x{:x}", tx_hash))
+    async fn simulate_execute_revert(
+        url: &str,
+        bridge_address: Address,
+        xchain_hash_id: [u8; 32],
+        use_mint: bool,
+    ) -> String {
+        let parsed = match url.parse() {
+            Ok(u) => u,
+            Err(_) => return "Withdraw transaction reverted".into(),
+        };
+        let provider = ProviderBuilder::new().on_http(parsed);
+        let contract = Bridge::new(bridge_address, &provider);
+        let err = if use_mint {
+            contract
+                .withdrawExecuteMint(FixedBytes::from(xchain_hash_id))
+                .call()
+                .await
+                .err()
+        } else {
+            contract
+                .withdrawExecuteUnlock(FixedBytes::from(xchain_hash_id))
+                .call()
+                .await
+                .err()
+        };
+        match err {
+            Some(e) => e.to_string(),
+            None => "Withdraw transaction reverted".into(),
+        }
     }
 
     /// Process pending EVM deposits destined for this EVM chain (EVM→EVM path).

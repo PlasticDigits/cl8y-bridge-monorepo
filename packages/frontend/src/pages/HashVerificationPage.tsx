@@ -3,6 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useAccount, useSwitchChain } from 'wagmi'
 import { useHashVerification } from '../hooks/useHashVerification'
 import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
+import { useEvmExecutionRateLimitStatus } from '../hooks/useEvmExecutionRateLimitStatus'
 import { useTransferStore } from '../stores/transfer'
 import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
@@ -288,28 +289,62 @@ export default function HashVerificationPage() {
   // dest is null means no PendingWithdraw found on dest chain => not submitted
   const notSubmittedOnChain = inputHash && !loading && source && !dest
 
-  const showRateLimitInfo =
-    dest &&
-    destChain?.type === 'cosmos' &&
-    dest.approved &&
-    !dest.executed
+  const destApprovedNotExecuted = !!(dest && dest.approved && !dest.executed)
+  const showTerraRateLimit = destApprovedNotExecuted && destChain?.type === 'cosmos'
+  const showEvmRateLimit = destApprovedNotExecuted && destChain?.type === 'evm'
   const { data: terraRateLimitStatus } = useTerraRateLimitStatus(
     dest ?? null,
     destChain ?? null,
-    !!showRateLimitInfo
+    showTerraRateLimit,
   )
+  const { data: evmRateLimitStatus } = useEvmExecutionRateLimitStatus(
+    dest ?? null,
+    destChain ?? null,
+    showEvmRateLimit,
+  )
+  const destRateLimitStatus = destChain?.type === 'evm' ? evmRateLimitStatus : terraRateLimitStatus
 
   const destChainKey = destChain ? getChainKeyByConfig(destChain) : undefined
   const { data: verifyBridgeConfigs } = useBridgeConfig()
-  const verifySolanaCancelWindow = destChainKey
+  const destCancelWindowSeconds = destChainKey
     ? verifyBridgeConfigs?.find((c) => c.chainId === destChainKey)?.cancelWindowSeconds ?? null
     : null
-  const { cancelWindowRemaining: verifySolanaCancelRem } = useApprovalCountdown(
+  const pollCancelCountdown = !!(
+    inputHash &&
+    destApprovedNotExecuted &&
+    (destChain?.type === 'solana' || destChain?.type === 'evm')
+  )
+  const { cancelWindowRemaining: polledCancelRem } = useApprovalCountdown(
     inputHash as Hex | undefined,
     destChainKey,
-    !!(inputHash && dest?.approved && !dest.executed && destChain?.type === 'solana'),
-    verifySolanaCancelWindow,
+    pollCancelCountdown,
+    destCancelWindowSeconds,
   )
+
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    if (!destApprovedNotExecuted || destChain?.type !== 'evm') return
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [destApprovedNotExecuted, destChain?.type])
+
+  const approvedAtSec = dest?.approvedAt != null ? Number(dest.approvedAt) : 0
+  const clientEvmRemaining =
+    destChain?.type === 'evm' &&
+    destApprovedNotExecuted &&
+    destCancelWindowSeconds != null &&
+    destCancelWindowSeconds > 0 &&
+    approvedAtSec > 0
+      ? Math.max(0, approvedAtSec + destCancelWindowSeconds - nowSec)
+      : null
+  const verifyDestCancelRem =
+    destChain?.type === 'evm'
+      ? (clientEvmRemaining != null && polledCancelRem != null
+          ? Math.min(polledCancelRem, clientEvmRemaining)
+          : (polledCancelRem ?? clientEvmRemaining ?? dest?.cancelWindowRemaining))
+      : destChain?.type === 'solana'
+        ? polledCancelRem
+        : dest?.cancelWindowRemaining
 
   const verifySolanaExecuteParams = useMemo(() => {
     if (!inputHash || !source || !dest || !destChain || destChain.type !== 'solana') return null
@@ -387,7 +422,10 @@ export default function HashVerificationPage() {
           matches={matches}
           loading={loading}
           error={error}
-          terraRateLimitStatus={terraRateLimitStatus}
+          terraRateLimitStatus={destRateLimitStatus}
+          cancelWindowRemaining={
+            destApprovedNotExecuted ? (verifyDestCancelRem ?? null) : null
+          }
         />
 
         {inputHash &&
@@ -405,11 +443,11 @@ export default function HashVerificationPage() {
                 mappingSrcTokenKey={verifySolanaExecuteParams.mappingSrcTokenKey}
                 pendingWithdraw={dest}
                 canExecute={
-                  verifySolanaCancelRem != null && verifySolanaCancelRem <= 0
+                  polledCancelRem != null && polledCancelRem <= 0
                 }
                 cancelWindowHint={
-                  verifySolanaCancelRem != null && verifySolanaCancelRem > 0
-                    ? `~${verifySolanaCancelRem}s left in cancel window`
+                  polledCancelRem != null && polledCancelRem > 0
+                    ? `~${polledCancelRem}s left in cancel window`
                     : null
                 }
               />

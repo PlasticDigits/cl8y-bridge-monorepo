@@ -4,9 +4,10 @@ Use when changing the operator EVM writer poll loop, `eth_getLogs` fallback, pen
 
 ## Sources of truth
 
-1. [`docs/OPERATOR_WRITER_INVARIANTS.md`](../docs/OPERATOR_WRITER_INVARIANTS.md) — **INV-OP-W1** through **INV-OP-W11**
+1. [`docs/OPERATOR_WRITER_INVARIANTS.md`](../docs/OPERATOR_WRITER_INVARIANTS.md) — **INV-OP-W1** through **INV-OP-W12**
 2. [`docs/operator.md`](../docs/operator.md) — operator architecture and env vars
-3. GitLab issue **138** — RPC/cursor livelock and stale-withdrawal retry amplification
+3. Forgejo issues **138** (RPC/cursor livelock) and **170** (dest-approved execute + Verify UX)
+4. [`skills/agent-frontend-hash-verify.md`](./agent-frontend-hash-verify.md) — Hash Verification dest-execute blockers
 
 ## Invariants (do not violate)
 
@@ -20,11 +21,13 @@ Use when changing the operator EVM writer poll loop, `eth_getLogs` fallback, pen
 - **INV-OP-W8:** Reject invalid interval/lookback/chunk/cache env values at startup.
 - **INV-OP-W9:** Never log RPC query tokens, userinfo, **path API keys** (Alchemy `/v2/<key>`, Infura `/v3/<id>`), or DB URLs. Use `sanitize_rpc_endpoint` (`scheme://host[:port]` only) and `sanitize_rpc_error` on error `Display` strings.
 - **INV-OP-W10:** Default `RUST_LOG` is `info`; do not re-enable process-wide `cl8y_operator=debug` as the production default.
-- **INV-OP-W11:** Approved-not-executed destination hashes must be re-queued for `withdrawExecute*` from enumeration after restart or `pending_executions` TTL eviction. Do not skip them as “already approved.” Do not reset an in-flight execute timer each poll. Do not spend `WRITER_MAX_VERIFY_PER_CYCLE` on this path. Drop executed / cancelled / missing / below-min execute errors from the queue and do not re-queue them (`terminal_executions`).
+- **INV-OP-W11:** Approved-not-executed destination hashes must be re-queued for `withdrawExecute*` from enumeration after restart or `pending_executions` TTL eviction. Do not skip them as “already approved.” Do not reset an in-flight execute timer each poll. Do not spend `WRITER_MAX_VERIFY_PER_CYCLE` on this path. Drop executed / cancelled / missing / below-min execute errors from the queue and do not re-queue them (`terminal_executions`). Period rate-limit and `CancelWindowActive` stay retryable with backoff (`execute_queue`).
+- **INV-OP-W12:** `submit_execute_withdraw` uses method-level RPC fallback for reads, send, and receipt-by-hash. Do not re-send after a successful broadcast. Contract reverts are not transport fallbacks.
 
 ## Where it lives
 
-- Shared fallback: `packages/operator/src/rpc_fallback.rs` (`log_rpc`, `log_rpc_error`, `confirm_rpc_chain_id`)
+- Shared fallback: `packages/operator/src/rpc_fallback.rs` (`log_rpc`, `log_rpc_error`, `confirm_rpc_chain_id`, `with_retryable_rpc_fallback`)
+- Execute queue: `packages/operator/src/writers/execute_queue.rs`
 - Writer cursor: `packages/operator/src/writers/poll_cursor.rs`
 - Negative retry + per-cycle verify budget: `packages/operator/src/writers/negative_retry.rs`
 - Writer poll/enumerate: `packages/operator/src/writers/evm.rs`
@@ -47,9 +50,11 @@ Writer-level livelock coverage: `writer_livelock_primary_blocknumber_ok_logs_429
 
 - [agent-evm-bsc-parity-replay.md](./agent-evm-bsc-parity-replay.md) — unrelated deploy parity; listed for discoverability
 - [agent-metamask-blockaid-evm.md](./agent-metamask-blockaid-evm.md) — wallet alerts vs on-chain correctness
+- [agent-frontend-hash-verify.md](./agent-frontend-hash-verify.md) — Hash Verification dest-execute blockers (GL-170)
 
 ## Tracking issues
 
-- GitLab **138** — EVM writer RPC/cursor livelock and stale-withdrawal retry amplification
-- GitLab **115** — earlier operator RPC hardening (consensus head); this skill covers residual method-level fallback
-- GitLab **139** — Terra withdrawal history (companion; not this skill)
+- Forgejo **138** — EVM writer RPC/cursor livelock and stale-withdrawal retry amplification
+- Forgejo **170** — dest-approved Terra→EVM execute + Hash Verification EVM blockers
+- Forgejo **115** — earlier operator RPC hardening (consensus head); this skill covers residual method-level fallback
+- Forgejo **139** — Terra withdrawal history (companion; not this skill)

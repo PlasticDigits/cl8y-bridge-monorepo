@@ -172,4 +172,64 @@ describe('HashComparisonPanel', () => {
     ))
     expect(screen.getByText('Hash mismatch')).toBeInTheDocument()
   })
+
+  it('shows cancel remaining for dest-approved not-executed', () => {
+    render(wrap(
+      <HashComparisonPanel
+        source={mkDeposit()}
+        sourceChainName="Terra Classic"
+        dest={mkWithdraw({ approved: true, approvedAt: 1700000010n })}
+        destChainName="BNB Chain"
+        status="pending"
+        matches={true}
+        loading={false}
+        error={null}
+        cancelWindowRemaining={90}
+      />
+    ))
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+    expect(screen.getByText('Cancel Window Active')).toBeInTheDocument()
+    expect(screen.getByText('Approved')).toBeInTheDocument()
+    expect(screen.getByText('Hash matches')).toBeInTheDocument()
+  })
+
+  it('shows EVM period-full banner for dest-approved not-executed', () => {
+    render(wrap(
+      <HashComparisonPanel
+        source={mkDeposit()}
+        sourceChainName="Terra Classic"
+        dest={mkWithdraw({ approved: true, approvedAt: 1700000010n })}
+        destChainName="BNB Chain"
+        status="pending"
+        matches={true}
+        loading={false}
+        error={null}
+        cancelWindowRemaining={0}
+        terraRateLimitStatus={{ kind: 'temporarily-blocked', periodEndsAt: 1_800_000_000, remainingAmount: '0' }}
+      />
+    ))
+    expect(screen.getByText('Rate limit window full')).toBeInTheDocument()
+    expect(screen.queryByText('Cancel Window Active')).not.toBeInTheDocument()
+  })
+
+  it('shows verified and Executed without execute blockers', () => {
+    render(wrap(
+      <HashComparisonPanel
+        source={mkDeposit()}
+        sourceChainName="Terra Classic"
+        dest={mkWithdraw({ approved: true, executed: true, approvedAt: 1700000010n })}
+        destChainName="BNB Chain"
+        status="verified"
+        matches={true}
+        loading={false}
+        error={null}
+        cancelWindowRemaining={0}
+        terraRateLimitStatus={{ kind: 'ok' }}
+      />
+    ))
+    expect(screen.getByText('Verified')).toBeInTheDocument()
+    expect(screen.getByText('Executed')).toBeInTheDocument()
+    expect(screen.queryByText('Cancel Window Active')).not.toBeInTheDocument()
+    expect(screen.queryByText('Awaiting operator execute')).not.toBeInTheDocument()
+  })
 })

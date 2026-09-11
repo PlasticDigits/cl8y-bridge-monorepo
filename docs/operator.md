@@ -70,7 +70,8 @@ flowchart TB
 | Models | `src/db/models.rs` | Database models |
 | Metrics | `src/metrics.rs` | Prometheus metrics |
 | Writer poll config | `src/poll_config.rs` | Validated lookback/chunk/backoff (GL-138) |
-| EVM RPC fallback | `src/rpc_fallback.rs` | Method-level `eth_getLogs` fallback (INV-OP-W3) |
+| EVM RPC fallback | `src/rpc_fallback.rs` | Method-level `eth_getLogs` + execute send/receipt fallback (INV-OP-W3 / INV-OP-W12) |
+| Execute queue | `src/writers/execute_queue.rs` | Enqueue-if-absent + retryable execute backoff (INV-OP-W11) |
 
 ### Technology Stack
 
@@ -109,7 +110,7 @@ POLL_INTERVAL_MS=1000
 # WRITER_MAX_VERIFY_PER_CYCLE=64 # shared by enumeration + event-poll (INV-OP-W4)
 # EVM_POLL_LOOKBACK_BLOCKS=5000
 # EVM_POLL_CHUNK_SIZE=5000
-# See docs/OPERATOR_WRITER_INVARIANTS.md (INV-OP-W1–W10) and skills/agent-operator-evm-writer-rpc.md
+# See docs/OPERATOR_WRITER_INVARIANTS.md (INV-OP-W1–W12) and skills/agent-operator-evm-writer-rpc.md
 ```
 
 ### Configuration File
@@ -408,7 +409,7 @@ See [Local Development](./local-development.md) for setting up local testnets.
 
 - [Security Model](./security-model.md) - Watchtower pattern and canceler network
 - [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec
-- [Operator EVM writer invariants](./OPERATOR_WRITER_INVARIANTS.md) - INV-OP-W1–W10 (GL-138 RPC/cursor)
+- [Operator EVM writer invariants](./OPERATOR_WRITER_INVARIANTS.md) - INV-OP-W1–W12 (GL-138 RPC/cursor; GL-170 execute fallback)
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Local Development](./local-development.md) - Local testing setup
