@@ -23,7 +23,7 @@ use crate::writers::negative_retry::{CycleVerifyBudget, NegativeVerifySchedule, 
 use crate::writers::poll_cursor::{chunk_bounds, EventPollCursor};
 
 use alloy::network::EthereumWallet;
-use alloy::primitives::{Address, B256, FixedBytes, U256};
+use alloy::primitives::{Address, FixedBytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::{Client, Http};
@@ -1624,14 +1624,9 @@ impl EvmWriter {
                 let url = urls[idx].clone();
                 let signer = signer.clone();
                 async move {
-                    let tx = Self::send_execute_on_url(
-                        &url,
-                        signer,
-                        bridge,
-                        xchain_hash_id,
-                        use_mint,
-                    )
-                    .await?;
+                    let tx =
+                        Self::send_execute_on_url(&url, signer, bridge, xchain_hash_id, use_mint)
+                            .await?;
                     Ok((tx, idx))
                 }
             },
