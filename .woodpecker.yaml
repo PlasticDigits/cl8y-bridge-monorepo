@@ -23,8 +23,10 @@ steps:
     commands:
       - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libudev-dev
       - cd packages/operator
-      - cargo test --bins writers::
-      - cargo test --bins rpc_fallback
+      - |
+        cargo test --bins writers::
+      - |
+        cargo test --bins rpc_fallback
 
   - name: frontend-hash-verify
     image: node:24-bookworm@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0
