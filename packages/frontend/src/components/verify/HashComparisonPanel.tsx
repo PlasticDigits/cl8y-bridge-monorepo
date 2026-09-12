@@ -9,6 +9,8 @@ import { StatusBadge } from './StatusBadge'
 import { CancelInfo } from './CancelInfo'
 import { ComparisonIndicator } from './ComparisonIndicator'
 import { Spinner } from '../ui'
+import { destExecuteBlockerKind } from '../../utils/hashVerifyExecuteBlocker'
+import { formatCountdownMmSs } from '../../utils/format'
 
 export interface HashComparisonPanelProps {
   source: DepositData | null
@@ -21,8 +23,10 @@ export interface HashComparisonPanelProps {
   matches: boolean | null
   loading: boolean
   error: string | null
-  /** Terra rate limit status when dest is approved but not executed (for EVM→Terra). */
+  /** Dest rate-limit status when approved but not executed (Terra LCD or EVM TokenRegistry). */
   terraRateLimitStatus?: TerraRateLimitStatus | null
+  /** Seconds remaining in dest cancel window (on-chain approvedAt + cancelWindow). */
+  cancelWindowRemaining?: number | null
 }
 
 export function HashComparisonPanel({
@@ -37,6 +41,7 @@ export function HashComparisonPanel({
   loading,
   error,
   terraRateLimitStatus,
+  cancelWindowRemaining,
 }: HashComparisonPanelProps) {
 
   if (loading) {
@@ -72,6 +77,13 @@ export function HashComparisonPanel({
   }
 
   const comparisonResult = matches === true ? 'match' : matches === false ? 'mismatch' : 'pending'
+  const blocker = destExecuteBlockerKind({
+    approved: !!dest?.approved,
+    executed: !!dest?.executed,
+    cancelled: !!dest?.cancelled,
+    cancelWindowRemaining,
+    rateLimitKind: terraRateLimitStatus?.kind ?? null,
+  })
 
   return (
     <div className="space-y-6">
@@ -90,7 +102,7 @@ export function HashComparisonPanel({
         />
       )}
 
-      {terraRateLimitStatus?.kind === 'permanently-blocked' && (
+      {blocker === 'permanently-blocked' && (
         <div className="border-2 border-red-700 bg-[#221313] p-4 shadow-[3px_3px_0_#000]">
           <p className="text-red-400 text-xs font-semibold uppercase tracking-wide">
             Execution blocked
@@ -101,7 +113,7 @@ export function HashComparisonPanel({
           </p>
         </div>
       )}
-      {terraRateLimitStatus?.kind === 'temporarily-blocked' && (
+      {blocker === 'temporarily-blocked' && terraRateLimitStatus?.kind === 'temporarily-blocked' && (
         <div className="border-2 border-amber-700 bg-[#221c13] p-4 shadow-[3px_3px_0_#000]">
           <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
             Rate limit window full
@@ -116,7 +128,22 @@ export function HashComparisonPanel({
           </p>
         </div>
       )}
-      {terraRateLimitStatus?.kind === 'unknown' && dest?.approved && !dest?.executed && (
+      {blocker === 'cancel-window' && (
+        <div className="border-2 border-cyan-700 bg-[#121c22] p-4 shadow-[3px_3px_0_#000]">
+          <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+            Cancel Window Active
+          </p>
+          <p className="text-blue-400/70 text-xs mt-1">
+            Approved. Waiting for the cancel window to expire before tokens are released.
+            {cancelWindowRemaining != null && cancelWindowRemaining > 0 && (
+              <span className="ml-1 font-mono text-base font-semibold tabular-nums text-cyan-300">
+                {formatCountdownMmSs(cancelWindowRemaining)} remaining
+              </span>
+            )}
+          </p>
+        </div>
+      )}
+      {blocker === 'unknown-rate-limit' && (
         <div className="border-2 border-amber-700 bg-[#221c13] p-4 shadow-[3px_3px_0_#000]">
           <p className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
             Execution may be delayed
@@ -124,6 +151,17 @@ export function HashComparisonPanel({
           <p className="text-amber-400/80 text-xs mt-0.5">
             Rate limit status could not be determined. The transfer is approved but not yet executed
             — it may be waiting for the rate limit window to reset.
+          </p>
+        </div>
+      )}
+      {blocker === 'awaiting-execute' && (
+        <div className="border-2 border-cyan-700 bg-[#121c22] p-4 shadow-[3px_3px_0_#000]">
+          <p className="text-blue-300 text-xs font-semibold uppercase tracking-wide">
+            Awaiting operator execute
+          </p>
+          <p className="text-blue-400/70 text-xs mt-1">
+            The cancel window has elapsed. The operator will call withdraw execute on the destination
+            chain. This page stays Pending until dest state is Executed.
           </p>
         </div>
       )}

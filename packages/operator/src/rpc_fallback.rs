@@ -1,8 +1,11 @@
-//! Method-level EVM JSON-RPC fallback shared by the watcher and writer (GL-138).
+//! Method-level EVM JSON-RPC fallback shared by the watcher and writer (GL-138 / GL-170).
 //!
 //! Selecting an endpoint with `eth_blockNumber` is not proof that `eth_getLogs`
-//! will succeed. Each log query is retried against the remaining validated URLs
-//! on retryable transport / HTTP / rate-limit / provider-limit errors.
+//! or `eth_sendRawTransaction` will succeed. Each method is retried against the
+//! remaining validated URLs on retryable transport / HTTP / rate-limit errors.
+//! Execute send uses [`with_retryable_rpc_fallback`] so contract reverts are not
+//! re-broadcast on every URL. Receipt waits after a successful send must look up
+//! the hash on fallbacks — they must not send again (INV-OP-W12).
 //!
 //! Logs use [`log_rpc`] / [`log_rpc_error`] so credentials, query tokens, and
 //! path API keys (Alchemy `/v2/<key>`, Infura `/v3/<id>`) never appear (INV-OP-W9).
@@ -49,13 +52,50 @@ pub async fn confirm_rpc_chain_id(
 /// Run `op(provider_index)` against endpoints in try-order until one returns `Ok`.
 ///
 /// Used for method-level fallback (`eth_getLogs`, typed event queries). Cursor
-/// advancement is the caller's responsibility (INV-OP-W2).
+/// advancement is the caller's responsibility (INV-OP-W2). Non-retryable errors
+/// still try remaining URLs (a wrong-chain or auth failure on one host must
+/// not hide a working fallback for reads).
 pub async fn with_endpoint_fallback<T, F, Fut>(
     urls: &[String],
     prefer_index: Option<usize>,
     chain_label: &str,
     method: &str,
+    op: F,
+) -> Result<T>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    with_endpoint_fallback_inner(urls, prefer_index, chain_label, method, op, false).await
+}
+
+/// Like [`with_endpoint_fallback`], but stops on the first non-retryable error.
+///
+/// Use for `withdrawExecute*` **send** so `CancelWindowActive` / `BelowMin` /
+/// period-limit reverts are not submitted on every URL. After a successful
+/// send, wait for the receipt by hash — do not wrap send+receipt together
+/// (that would re-broadcast; INV-OP-W12).
+pub async fn with_retryable_rpc_fallback<T, F, Fut>(
+    urls: &[String],
+    prefer_index: Option<usize>,
+    chain_label: &str,
+    method: &str,
+    op: F,
+) -> Result<T>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    with_endpoint_fallback_inner(urls, prefer_index, chain_label, method, op, true).await
+}
+
+async fn with_endpoint_fallback_inner<T, F, Fut>(
+    urls: &[String],
+    prefer_index: Option<usize>,
+    chain_label: &str,
+    method: &str,
     mut op: F,
+    stop_on_non_retryable: bool,
 ) -> Result<T>
 where
     F: FnMut(usize) -> Fut,
@@ -94,6 +134,9 @@ where
                     error = %log_rpc_error(&e),
                     "{method} failed on endpoint"
                 );
+                if stop_on_non_retryable && !retryable {
+                    return Err(e);
+                }
                 last_err = Some(e);
                 if !retryable && attempt + 1 < order.len() {
                     debug!(
@@ -410,5 +453,57 @@ mod tests {
         );
         assert!(fcfg.log_calls.load(Ordering::SeqCst) >= 1);
         assert!(fcfg.chain_calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn retryable_rpc_fallback_skips_second_url_on_contract_revert() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let calls2 = calls.clone();
+        let urls = vec!["http://127.0.0.1:1".into(), "http://127.0.0.1:2".into()];
+        let err = with_retryable_rpc_fallback(
+            &urls,
+            None,
+            "evm-test",
+            "withdrawExecute",
+            |_idx| {
+                let calls2 = calls2.clone();
+                async move {
+                    calls2.fetch_add(1, Ordering::SeqCst);
+                    Err::<String, _>(eyre!("execution reverted: CancelWindowActive"))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("CancelWindowActive"), "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn retryable_rpc_fallback_uses_second_url_after_429() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let calls2 = calls.clone();
+        let urls = vec!["http://127.0.0.1:1".into(), "http://127.0.0.1:2".into()];
+        let got = with_retryable_rpc_fallback(
+            &urls,
+            None,
+            "evm-test",
+            "withdrawExecute",
+            |idx| {
+                let calls2 = calls2.clone();
+                async move {
+                    calls2.fetch_add(1, Ordering::SeqCst);
+                    if idx == 0 {
+                        Err(eyre!("HTTP error 429"))
+                    } else {
+                        Ok("0xabc".to_string())
+                    }
+                }
+            },
+        )
+        .await
+        .expect("fallback send");
+        assert_eq!(got, "0xabc");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

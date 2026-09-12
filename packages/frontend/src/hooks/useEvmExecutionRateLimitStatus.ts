@@ -1,6 +1,7 @@
 /**
- * EVM destination: rate-limit execution block detection for Transfer Status (GL-127).
- * Uses the same TokenRegistry withdraw window as Settings / Transfer form.
+ * EVM destination: rate-limit execution block detection for Transfer Status (GL-127)
+ * and Hash Verification (GL-170). Uses the same TokenRegistry withdraw window as
+ * Settings / Transfer form.
  */
 
 import { useMemo } from 'react'

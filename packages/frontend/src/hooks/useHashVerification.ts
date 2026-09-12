@@ -15,6 +15,7 @@ import { useMultiChainLookup } from './useMultiChainLookup'
 import type { DepositData, PendingWithdrawData } from './useTransferLookup'
 import type { HashStatus } from '../types/transfer'
 import type { BridgeChainConfig } from '../types/chain'
+import { computeHashVerificationStatus } from '../utils/hashVerifyExecuteBlocker'
 
 export interface HashVerificationState {
   inputHash: string | null
@@ -102,17 +103,14 @@ export function useHashVerification() {
     return srcChainOk && destChainOk && srcAccountMatch && destAccountMatch && tokenMatch && amountMatch && nonceMatch
   })()
 
-  const status: HashStatus = (() => {
-    if (error) return 'unknown'
-    if (loading) return 'pending'
-    if (dest?.cancelled) return 'canceled'
-    if (dest?.executed) return 'verified'
-    if (dest?.approved) return 'pending' // approved, awaiting execution
-    if (dest && !dest.approved && !dest.cancelled) return 'pending'
-    if (source && !dest) return 'pending' // deposit found, no withdraw yet
-    if (!source && !dest) return 'unknown'
-    return 'pending'
-  })()
+  const status: HashStatus = computeHashVerificationStatus(
+    error,
+    loading,
+    dest
+      ? { cancelled: dest.cancelled, executed: dest.executed, approved: dest.approved }
+      : null,
+    !!source,
+  )
 
   return {
     inputHash,
