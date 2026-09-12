@@ -460,19 +460,13 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let calls2 = calls.clone();
         let urls = vec!["http://127.0.0.1:1".into(), "http://127.0.0.1:2".into()];
-        let err = with_retryable_rpc_fallback(
-            &urls,
-            None,
-            "evm-test",
-            "withdrawExecute",
-            |_idx| {
-                let calls2 = calls2.clone();
-                async move {
-                    calls2.fetch_add(1, Ordering::SeqCst);
-                    Err::<String, _>(eyre!("execution reverted: CancelWindowActive"))
-                }
-            },
-        )
+        let err = with_retryable_rpc_fallback(&urls, None, "evm-test", "withdrawExecute", |_idx| {
+            let calls2 = calls2.clone();
+            async move {
+                calls2.fetch_add(1, Ordering::SeqCst);
+                Err::<String, _>(eyre!("execution reverted: CancelWindowActive"))
+            }
+        })
         .await
         .unwrap_err();
         assert!(err.to_string().contains("CancelWindowActive"), "{err}");
@@ -484,23 +478,17 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let calls2 = calls.clone();
         let urls = vec!["http://127.0.0.1:1".into(), "http://127.0.0.1:2".into()];
-        let got = with_retryable_rpc_fallback(
-            &urls,
-            None,
-            "evm-test",
-            "withdrawExecute",
-            |idx| {
-                let calls2 = calls2.clone();
-                async move {
-                    calls2.fetch_add(1, Ordering::SeqCst);
-                    if idx == 0 {
-                        Err(eyre!("HTTP error 429"))
-                    } else {
-                        Ok("0xabc".to_string())
-                    }
+        let got = with_retryable_rpc_fallback(&urls, None, "evm-test", "withdrawExecute", |idx| {
+            let calls2 = calls2.clone();
+            async move {
+                calls2.fetch_add(1, Ordering::SeqCst);
+                if idx == 0 {
+                    Err(eyre!("HTTP error 429"))
+                } else {
+                    Ok("0xabc".to_string())
                 }
-            },
-        )
+            }
+        })
         .await
         .expect("fallback send");
         assert_eq!(got, "0xabc");

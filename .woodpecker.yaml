@@ -1,0 +1,34 @@
+# Trusted Woodpecker pipeline for code/cl8y-bridge-monorepo (issue 172).
+# Enable this repo on ci.cl8y.com so `ci/woodpecker/pr/woodpecker` can post.
+#
+# Scope for this ticket: gitleaks + operator `writers::` / `rpc_fallback` +
+# frontend hash-verify unit tests. Full operator/canceler/postgres/forge/anchor
+# suites stay in `.github/workflows/test.yml`. cargo-audit stays there until a
+# digest-pinned audit step is added (recorded skip: sibling Woodpecker files
+# do not pin cargo-audit; GitHub Actions still runs it).
+
+when:
+  - event: [push, manual, pull_request]
+
+steps:
+  - name: gitleaks
+    image: zricethezav/gitleaks:v8.18.4@sha256:75bdb2b2f4db213cde0b8295f13a88d6b333091bbfbf3012a4e083d00d31caba
+    commands:
+      - gitleaks detect --source . --config .gitleaks.toml --verbose --redact --exit-code 1
+
+  - name: operator-writers
+    image: rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libudev-dev
+      - cd packages/operator
+      - cargo test --bins writers::
+      - cargo test --bins rpc_fallback
+
+  - name: frontend-hash-verify
+    image: node:24-bookworm@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0
+    commands:
+      - cd packages/frontend
+      - npm ci
+      - npm run test:unit -- src/utils/hashVerifyExecuteBlocker.test.ts src/components/verify/HashComparisonPanel.test.tsx src/components/verify/DestHashCard.test.tsx
