@@ -425,9 +425,9 @@ fj pr create "fix: transfer button unresponsive on MetaMask mobile" \
   --body "Fixes #42"
 ```
 
-**After creating the PR:** wait for the maintainer to review. Do not merge it
-yourself. If review comments come in, push fixes and the PR updates
-automatically:
+**After creating the PR:** wait for `ci/woodpecker/pr/woodpecker`.
+Do not merge it yourself (practice, not `required_approvals`). If
+review comments come in, push fixes and the PR updates automatically:
 
 ```bash
 # Address review feedback
@@ -482,22 +482,24 @@ to file as public issues.
 
 > **Important:** Our default branch is `main`, **not** `master`. When creating pull requests, always target `main`. QA devs occasionally target `master` by mistake — double-check the target branch before submitting.
 
-`main` is protected. You **cannot** push directly to it or merge without approval.
+`main` is protected. You **cannot** push directly to it.
 
+| Rule | Effect |
+| --- | --- |
+| **PRs required** | All changes to `main` must go through a pull request |
+| **Woodpecker PR check** | Merge requires green `ci/woodpecker/pr/woodpecker` |
+| **No force pushes** | Force-pushing to `main` is blocked |
+| **No branch deletion** | `main` cannot be deleted |
 
-| Rule                        | Effect                                                      |
-| --------------------------- | ----------------------------------------------------------- |
-| **PRs required**            | All changes to `main` must go through a pull request        |
-| **1 approving review**      | The maintainer (`@PlasticDigits`) must approve before merge |
-| **CODEOWNERS enforced**     | `@PlasticDigits` is auto-requested as reviewer on every MR  |
-| **Stale reviews dismissed** | If you push new commits after approval, the review resets   |
-| **No force pushes**         | Force-pushing to `main` is blocked                          |
-| **No branch deletion**      | `main` cannot be deleted                                    |
+> Maintainer review of QA/frontend PRs is **practice**, not Forgejo
+> `required_approvals`. Official CODEOWNERS review is not a merge gate.
+> Merge-gate copy: [ADR 0001](adr/0001-remove-catchall-codeowners.md);
+> forge contract: [docs/INVARIANTS.md](https://git.cl8y.com/PlasticDigits/cl8y-forgejo/src/branch/main/docs/INVARIANTS.md).
 
-
-**What this means for you:** create a branch, push it, open an MR, and wait for
-review. You should **never** merge your own MRs — the maintainer reviews and
-merges them.
+**What this means for you:** create a branch, push it, open a PR
+targeting `main`, and wait for `ci/woodpecker/pr/woodpecker`. You
+should **never** merge your own MRs — the maintainer reviews and
+merges them as operational practice.
 
 ---
 
@@ -510,7 +512,7 @@ merges them.
 | Commit messages | `fix: description (#NUMBER)` or `test: description`                                                                                                                  |
 | MR scope        | One issue per MR, frontend only — but if two issues touch the same file(s) and are closely related, combine them into one MR and list both with `Fixes #A, Fixes #B` |
 | MR checklist    | Fill out the MR template (see below)                                                                                                                                 |
-| Reviews         | Maintainer (`@PlasticDigits`) reviews and merges all MRs                                                                                                             |
+| Reviews         | Maintainer (`@PlasticDigits`) reviews and merges MRs as **practice**, not a Forgejo approval gate |
 
 
 ### MR Template
@@ -615,7 +617,7 @@ fj issue create "title"   # Create new issue
 fj pr create "title"      # Create PR
 fj pr search              # List PRs
 fj pr status              # Check CI / mergeability
-fj pr view                # View your PR details (maintainer merges after approval)
+fj pr view                # View your PR details (maintainer merges as practice)
 ```
 
 ### A note on Playwright
