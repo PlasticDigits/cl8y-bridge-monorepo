@@ -232,8 +232,16 @@ Chains are identified by canonical keys:
 | EVM | `keccak256("EVM", chainId)` | BSC = `keccak256("EVM", 56)` |
 | Cosmos | `keccak256("COSMOS", chainId, prefix)` | Terra = `keccak256("COSMOS", "columbus-5", "terra")` |
 
+## Repository merge gate
+
+Protected `main` is a pull request plus Woodpecker
+`ci/woodpecker/pr/woodpecker`. Direct push is off; `force_merge` is
+never the bypass. Official CODEOWNERS review is not a merge gate.
+See [ADR 0001](adr/0001-remove-catchall-codeowners.md).
+
 ## Related Documentation
 
+- [ADR 0001: Remove catch-all CODEOWNERS](./adr/0001-remove-catchall-codeowners.md) — forge merge gate for this repo
 - [Security Model](./security-model.md) - Watchtower pattern and roles
 - [Crosschain Transfer Flows](./crosschain-flows.md) - Detailed step-by-step flows
 - [EVM Contracts](./contracts-evm.md) - EVM contract details

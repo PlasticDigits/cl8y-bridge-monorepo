@@ -9,6 +9,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [System Architecture](./architecture.md)
 - [Crosschain Transfer Flows](./crosschain-flows.md)
 - [Cross-Chain Hash Parity](./crosschain-parity.md)
+- [ADR 0001: Remove catch-all CODEOWNERS](./adr/0001-remove-catchall-codeowners.md) — repository merge gate (not a product runtime change)
 
 ### Contracts
 
