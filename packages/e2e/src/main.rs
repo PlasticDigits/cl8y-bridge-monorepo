@@ -1,9 +1,9 @@
 //! CL8Y Bridge E2E Test CLI
 //!
-//! Replaces bash scripts:
-//! - scripts/e2e-setup.sh   -> cl8y-e2e setup
-//! - scripts/e2e-test.sh    -> cl8y-e2e run
-//! - scripts/e2e-teardown.sh -> cl8y-e2e teardown
+//! Live runner for the suite. The old bash entrypoints are not invoked by CI.
+//! - setup    -> `cl8y-e2e setup`
+//! - run      -> `cl8y-e2e run`
+//! - teardown -> `cl8y-e2e teardown`
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
@@ -12,8 +12,8 @@ use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
 use cl8y_e2e::{
-    run_all_tests, run_quick_tests, E2eConfig, E2eSetup, E2eTeardown, TeardownOptions, TestResult,
-    TestSuite,
+    run_all_tests, run_quick_tests, E2eConfig, E2eSetup, E2eTeardown, SuiteMode, TeardownOptions,
+    TestResult, TestSuite,
 };
 
 #[derive(Parser)]
@@ -183,11 +183,13 @@ async fn main() -> Result<()> {
                 suite.add_result(result);
             }
 
-            suite.print_summary();
-
-            if suite.failed() > 0 {
-                std::process::exit(1);
-            }
+            let mode = if quick {
+                SuiteMode::Quick
+            } else {
+                SuiteMode::Required
+            };
+            suite.print_summary(mode);
+            exit_on_suite(&suite, mode);
         }
 
         Commands::Teardown {
@@ -382,9 +384,18 @@ async fn main() -> Result<()> {
                     suite.add_result(result);
                 }
 
-                suite.print_summary();
+                let mode = if quick {
+                    SuiteMode::Quick
+                } else {
+                    SuiteMode::Required
+                };
+                suite.print_summary(mode);
 
-                if suite.failed() > 0 {
+                if suite.should_fail(mode) {
+                    let security = suite.security_skips(mode);
+                    if security > 0 {
+                        tracing::error!("{security} security-critical skip(s) — fail closed");
+                    }
                     test_failed = true;
                 }
             } else {
@@ -435,6 +446,16 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn exit_on_suite(suite: &TestSuite, mode: SuiteMode) {
+    if suite.should_fail(mode) {
+        let security = suite.security_skips(mode);
+        if security > 0 {
+            tracing::error!("{security} security-critical skip(s) — fail closed");
+        }
+        std::process::exit(1);
+    }
 }
 
 /// Run a single test by name

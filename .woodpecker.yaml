@@ -1,11 +1,15 @@
 # Trusted Woodpecker pipeline for code/cl8y-bridge-monorepo (issue 172).
 # Enable this repo on ci.cl8y.com so `ci/woodpecker/pr/woodpecker` can post.
 #
-# Scope for this ticket: gitleaks + operator `writers::` / `rpc_fallback` +
-# frontend hash-verify unit tests. Full operator/canceler/postgres/forge/anchor
-# suites stay in `.github/workflows/test.yml`. cargo-audit stays there until a
+# Scope: gitleaks + operator `writers::` / `rpc_fallback` + full frontend
+# `npm run test:unit` (no test-file argv) + one Playwright smoke.
+# Full operator/canceler/postgres/forge/anchor suites stay in
+# `.github/workflows/test.yml`. cargo-audit stays there until a
 # digest-pinned audit step is added (recorded skip: sibling Woodpecker files
 # do not pin cargo-audit; GitHub Actions still runs it).
+# Playwright smoke is UI-only (`E2E_UI_ONLY=1`, project `chromium`,
+# `e2e/wallet-connect.spec.ts`). Do not drop that env: without it the
+# Playwright config starts Docker compose and contract deploy.
 
 when:
   - event: [push, manual, pull_request]
@@ -33,4 +37,15 @@ steps:
     commands:
       - cd packages/frontend
       - npm ci
-      - npm run test:unit -- src/utils/hashVerifyExecuteBlocker.test.ts src/components/verify/HashComparisonPanel.test.tsx src/components/verify/DestHashCard.test.tsx
+      - npm run test:unit
+
+  - name: frontend-playwright-smoke
+    image: node:24-bookworm@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0
+    environment:
+      E2E_UI_ONLY: "1"
+      CI: "true"
+    commands:
+      - cd packages/frontend
+      - npm ci
+      - npx playwright install --with-deps chromium
+      - E2E_UI_ONLY=1 npx playwright test e2e/wallet-connect.spec.ts --project=chromium --workers=1

@@ -24,6 +24,15 @@ fn should_run_integration() -> bool {
     env::var("INTEGRATION_TEST").is_ok() || env::var("CI").is_ok()
 }
 
+/// Bridge address required by the Anvil/LocalTerra job. Missing or empty is a
+/// hard failure — these tests must not return early and look skipped.
+fn require_bridge_env(var: &str, value: Option<String>) -> String {
+    match value {
+        Some(addr) if !addr.trim().is_empty() => addr,
+        _ => panic!("{var} is required; refusing to skip canceler integration"),
+    }
+}
+
 /// Test EVM RPC URL
 fn evm_rpc_url() -> String {
     env::var("EVM_RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string())
@@ -224,13 +233,8 @@ mod evm_client {
     #[tokio::test]
     #[ignore = "requires Anvil + deployed bridge"]
     async fn test_evm_bridge_withdraw_delay() {
-        let bridge_address = match env::var("EVM_BRIDGE_ADDRESS") {
-            Ok(addr) => addr,
-            Err(_) => {
-                println!("Skipping: EVM_BRIDGE_ADDRESS not set");
-                return;
-            }
-        };
+        let bridge_address =
+            require_bridge_env("EVM_BRIDGE_ADDRESS", env::var("EVM_BRIDGE_ADDRESS").ok());
 
         let client = reqwest::Client::new();
         let url = evm_rpc_url();
@@ -313,13 +317,10 @@ mod terra_client {
     #[tokio::test]
     #[ignore = "requires LocalTerra + deployed bridge"]
     async fn test_terra_bridge_config() {
-        let bridge_address = match env::var("TERRA_BRIDGE_ADDRESS") {
-            Ok(addr) => addr,
-            Err(_) => {
-                println!("Skipping: TERRA_BRIDGE_ADDRESS not set");
-                return;
-            }
-        };
+        let bridge_address = require_bridge_env(
+            "TERRA_BRIDGE_ADDRESS",
+            env::var("TERRA_BRIDGE_ADDRESS").ok(),
+        );
 
         let client = reqwest::Client::new();
 
@@ -357,13 +358,10 @@ mod terra_client {
     #[tokio::test]
     #[ignore = "requires LocalTerra + deployed bridge"]
     async fn test_terra_pending_approvals() {
-        let bridge_address = match env::var("TERRA_BRIDGE_ADDRESS") {
-            Ok(addr) => addr,
-            Err(_) => {
-                println!("Skipping: TERRA_BRIDGE_ADDRESS not set");
-                return;
-            }
-        };
+        let bridge_address = require_bridge_env(
+            "TERRA_BRIDGE_ADDRESS",
+            env::var("TERRA_BRIDGE_ADDRESS").ok(),
+        );
 
         let client = reqwest::Client::new();
 
@@ -403,6 +401,32 @@ mod terra_client {
 // ============================================================================
 // Hash Computation Tests (unit tests, no infrastructure needed)
 // ============================================================================
+
+mod bridge_env_policy {
+    use super::require_bridge_env;
+
+    #[test]
+    #[should_panic(
+        expected = "EVM_BRIDGE_ADDRESS is required; refusing to skip canceler integration"
+    )]
+    fn missing_evm_bridge_address_is_a_hard_failure() {
+        let _ = require_bridge_env("EVM_BRIDGE_ADDRESS", None);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "TERRA_BRIDGE_ADDRESS is required; refusing to skip canceler integration"
+    )]
+    fn empty_terra_bridge_address_is_a_hard_failure() {
+        let _ = require_bridge_env("TERRA_BRIDGE_ADDRESS", Some("   ".to_string()));
+    }
+
+    #[test]
+    fn present_bridge_address_is_returned() {
+        let addr = require_bridge_env("EVM_BRIDGE_ADDRESS", Some("0xabc".to_string()));
+        assert_eq!(addr, "0xabc");
+    }
+}
 
 mod hash {
     /// Test withdraw hash computation format

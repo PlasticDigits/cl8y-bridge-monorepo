@@ -282,45 +282,6 @@ jobs:
           echo "  Rust E2E tests completed successfully"
           echo "============================================================"
 
-      - name: Run Full E2E Test Suite (Bash)
-        env:
-          # EVM
-          EVM_RPC_URL: http://localhost:8545
-          EVM_CHAIN_ID: "31337"
-          EVM_BRIDGE_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_BRIDGE_ADDRESS }}
-          EVM_ROUTER_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_ROUTER_ADDRESS }}
-          ACCESS_MANAGER_ADDRESS: ${{ steps.evm_contracts.outputs.ACCESS_MANAGER_ADDRESS }}
-          LOCK_UNLOCK_ADDRESS: ${{ steps.evm_contracts.outputs.LOCK_UNLOCK_ADDRESS }}
-          EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-          # Terra
-          TERRA_RPC_URL: http://localhost:26657
-          TERRA_LCD_URL: http://localhost:1317
-          TERRA_CHAIN_ID: localterra
-          TERRA_BRIDGE_ADDRESS: ${{ steps.terra_contracts.outputs.TERRA_BRIDGE_ADDRESS }}
-          # Database
-          DATABASE_URL: postgres://operator:operator@localhost:5433/operator
-          # Logging
-          RUST_LOG: info
-        run: |
-          echo "============================================================"
-          echo "  CL8Y Bridge Full E2E Test Suite (Bash)"
-          echo "  Security-critical: ALL tests enabled, NO skipping"
-          echo "============================================================"
-          
-          chmod +x ./scripts/e2e-test.sh
-          chmod +x ./scripts/operator-ctl.sh
-          chmod +x ./scripts/canceler-ctl.sh
-          
-          # Run ALL E2E tests
-          # --no-setup: Infrastructure already started above
-          # --no-teardown: Keep running for log collection on failure
-          # NO --no-terra, NO --no-operator, NO --no-canceler
-          ./scripts/e2e-test.sh --no-setup --no-teardown
-          
-          echo "============================================================"
-          echo "  ALL E2E tests completed successfully"
-          echo "============================================================"
-
       # ========================================================================
       # Unit Tests
       # ========================================================================
@@ -333,6 +294,25 @@ jobs:
       - name: Run Canceler Unit Tests
         working-directory: packages/canceler
         run: cargo test --release -- --nocapture
+
+      # Anvil + LocalTerra are already up. #[ignore] stays on the tests so a
+      # laptop `cargo test` does not require them. Missing bridge addresses
+      # fail this step (no silent skip).
+      - name: Run Canceler Integration Tests
+        working-directory: packages/canceler
+        env:
+          INTEGRATION_TEST: "1"
+          EVM_RPC_URL: http://localhost:8545
+          TERRA_LCD_URL: http://localhost:1317
+          EVM_BRIDGE_ADDRESS: ${{ steps.evm_contracts.outputs.EVM_BRIDGE_ADDRESS }}
+          TERRA_BRIDGE_ADDRESS: ${{ steps.terra_contracts.outputs.TERRA_BRIDGE_ADDRESS }}
+          EVM_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        run: |
+          if [ -z "${EVM_BRIDGE_ADDRESS}" ] || [ -z "${TERRA_BRIDGE_ADDRESS}" ]; then
+            echo "ERROR: EVM_BRIDGE_ADDRESS and TERRA_BRIDGE_ADDRESS are required; refusing to skip"
+            exit 1
+          fi
+          cargo test --test integration_test --release -- --ignored --nocapture
 
       # ========================================================================
       # Cleanup

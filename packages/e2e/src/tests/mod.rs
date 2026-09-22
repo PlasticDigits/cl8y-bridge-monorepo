@@ -66,7 +66,7 @@ pub use transfer::*;
 pub use watchtower::*;
 pub use withdraw_flow::*;
 
-use crate::{E2eConfig, TestResult};
+use crate::{default_required_includes_test, solana_live_enabled_from_env, E2eConfig, TestResult};
 use alloy::primitives::Address;
 
 /// Run quick connectivity tests only
@@ -177,7 +177,7 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     // Live Operator/Canceler Execution Tests
     // ========================================
     // These tests verify on-chain results with actual transaction execution.
-    // They will skip gracefully if the required services are not running.
+    // A security-critical skip fails `cl8y-e2e run` (see `exit_policy`).
 
     // Live Canceler Execution Tests (8) - IMPLEMENTED in canceler_execution.rs
     // Canceler is started by E2E setup, so these should run
@@ -193,8 +193,7 @@ pub async fn run_all_tests(config: &E2eConfig, skip_terra: bool) -> Vec<TestResu
     results.push(
         canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
     );
-    results
-        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    push_solana_destination_fraud(config, &mut results).await;
     results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     // Live Operator Execution Tests - IMPLEMENTED in operator_execution.rs
@@ -342,11 +341,25 @@ pub async fn run_live_execution_tests(
     results.push(
         canceler_execution::test_operator_does_not_approve_unverified_solana_source(config).await,
     );
-    results
-        .push(canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await);
+    push_solana_destination_fraud(config, &mut results).await;
     results.push(canceler_execution::test_xchain_hash_id_validity_solana_source(config).await);
 
     results
+}
+
+/// Live Solana destination fraud needs `SOLANA_ENABLED`. When that is unset
+/// the case is omitted from the default required set (not a skip, not coverage).
+async fn push_solana_destination_fraud(config: &E2eConfig, results: &mut Vec<TestResult>) {
+    const NAME: &str = "canceler_detects_fraud_on_solana_destination";
+    if default_required_includes_test(NAME, solana_live_enabled_from_env()) {
+        results.push(
+            canceler_execution::test_canceler_detects_fraud_on_solana_destination(config).await,
+        );
+    } else {
+        tracing::info!(
+            "{NAME} omitted from the default required set because SOLANA_ENABLED is unset; not counted as coverage"
+        );
+    }
 }
 
 /// Run all tests including live execution tests

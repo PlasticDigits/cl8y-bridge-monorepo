@@ -14,7 +14,7 @@ cargo run -p cl8y-e2e -- teardown # Clean up
 ## Solana coverage notes
 
 - **Offline goldens (no RPC):** `cd packages/e2e && cargo test --test test_solana_flows` — V2 hash / PDA checks; runs in CI (`test.yml` job `e2e-offline-solana`).
-- **Live Solana (canceler / operator):** Some tests need `SOLANA_ENABLED=true` and a real RPC. The default GitHub `e2e.yml` workflow does not enable this. For production releases, run the suite locally or in internal CI with Solana env configured (see `docs/testing.md`).
+- **Live Solana (canceler / operator):** Some tests need `SOLANA_ENABLED=true` and a real RPC. The default GitHub `e2e.yml` workflow does not enable this. `canceler_detects_fraud_on_solana_destination` is omitted from the default required set unless `SOLANA_ENABLED` is set, so it is not coverage. A skip of that name, or of other `canceler_*` / `fraud_detection*` / `xchain_hash_*` cases, fails `cl8y-e2e run`. See `docs/CI_TEST_INVARIANTS.md`.
 
 ## Commands
 
@@ -31,6 +31,10 @@ cargo run -p cl8y-e2e -- teardown # Clean up
 | `full` | **Atomic cycle: setup → run → teardown** (for CI/pre-commit) |
 | `full --quick` | Quick connectivity tests in full cycle |
 | `full --keep-volumes` | Keep volumes after teardown |
+
+### Exit policy
+
+`run` and `full` exit `1` when any test fails or any security-critical test is `Skip` (`fraud_detection*`, `canceler_*`, `operator_rejects_unverified*`, `operator_no_approve_solana`, `xchain_hash_*`, watchtower / cancel-window). Explicit `--quick` allowlists skips. See `src/exit_policy.rs`.
 
 ### Full Command (Recommended for CI)
 
@@ -268,10 +272,10 @@ This Rust E2E package replaces the following bash scripts:
 | Bash Script | Rust Equivalent |
 |-------------|-----------------|
 | `scripts/e2e-setup.sh` | `cargo run -p cl8y-e2e -- setup` |
-| `scripts/e2e-test.sh` | `cargo run -p cl8y-e2e -- run` |
+| `scripts/e2e-test.sh` (removed; not a CI step) | `cargo run -p cl8y-e2e -- run` |
 | `scripts/e2e-teardown.sh` | `cargo run -p cl8y-e2e -- teardown` |
 
-The legacy scripts are archived in `scripts/legacy/`.
+Those bash entrypoints are not workflow steps. Run `cl8y-e2e` instead.
 
 ## License
 

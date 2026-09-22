@@ -315,8 +315,8 @@ make test-integration
 # Run full E2E tests (ALL security tests run by default)
 make e2e-test
 
-# Direct script execution (same as make e2e-test)
-./scripts/e2e-test.sh
+# Same suite. Security-critical skips fail the process.
+cargo run -p cl8y-e2e -- run
 ```
 
 ### Test Types
@@ -344,7 +344,7 @@ make canceler-stop
 make canceler-status
 
 # E2E tests automatically manage operator/canceler
-./scripts/e2e-test.sh
+cargo run -p cl8y-e2e -- full
 ```
 
 ### E2E Testing
@@ -391,7 +391,7 @@ See [Testing Guide](./docs/testing.md) for environment setup and troubleshooting
 | [`scripts/setup-bridge.sh`](./scripts/setup-bridge.sh) | Configure cross-chain connections (loads `.deploy/local.env`; Solana id from deploy keypair if unset) |
 | [`scripts/deploy-evm-local.sh`](./scripts/deploy-evm-local.sh) | Deploy EVM to Anvil and record addresses in `.deploy/local.env` |
 | [`scripts/test-transfer.sh`](./scripts/test-transfer.sh) | Interactive transfer testing |
-| [`scripts/e2e-test.sh`](./scripts/e2e-test.sh) | Automated E2E test suite (watchtower pattern) |
+| `cargo run -p cl8y-e2e -- run` | Automated E2E test suite (security-critical skips fail) |
 
 ## Building
 
@@ -439,15 +439,15 @@ cl8y-bridge-monorepo/
 │   ├── contracts-solana/       # Anchor program for Solana bridge
 │   ├── operator/               # Rust bridge operator service
 │   ├── canceler/               # Rust canceler node for watchtower security
-│   └── frontend/               # Web application (Vite + React)
+│   ├── frontend/               # Web application (Vite + React)
+│   └── e2e/                    # E2E runner: cargo run -p cl8y-e2e -- run
 ├── scripts/                    # Deployment and test scripts
 │   ├── deploy-terra-local.sh   # LocalTerra deployment
 │   ├── deploy-terra-testnet.sh # Terra testnet deployment
 │   ├── deploy-terra-mainnet.sh # Terra mainnet deployment
 │   ├── status.sh               # Service status checker
 │   ├── setup-bridge.sh         # Cross-chain configuration
-│   ├── test-transfer.sh        # Interactive transfers
-│   └── e2e-test.sh             # Automated E2E tests
+│   └── test-transfer.sh        # Interactive transfers
 ├── docker-compose.yml          # Local development infrastructure
 ├── Makefile                    # Common commands
 ├── SPRINT*.md                  # Sprint planning documents

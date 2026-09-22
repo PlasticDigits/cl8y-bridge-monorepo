@@ -8,6 +8,7 @@ pub mod cw20_deploy;
 pub mod deploy;
 pub mod docker;
 pub mod evm;
+pub mod exit_policy;
 pub mod services;
 pub mod setup;
 pub mod teardown;
@@ -30,6 +31,10 @@ pub use deploy::{
 };
 pub use docker::DockerCompose;
 pub use evm::AnvilTimeClient;
+pub use exit_policy::{
+    default_required_includes_test, is_security_critical_skip, solana_live_enabled_from_env,
+    SuiteMode,
+};
 pub use services::ServiceManager;
 pub use setup::{DeployedContracts, E2eSetup, SetupResult, SetupStep};
 pub use teardown::{E2eTeardown, TeardownOptions, TeardownResult};
@@ -201,17 +206,31 @@ impl TestSuite {
         self.results.iter().all(|r| r.is_pass())
     }
 
+    /// Security-critical skips for this mode. Allowlisted skips are excluded.
+    pub fn security_skips(&self, mode: SuiteMode) -> usize {
+        self.results
+            .iter()
+            .filter(|result| is_security_critical_skip(result, mode))
+            .count()
+    }
+
+    /// Fail closed when any test failed or any security-critical test was skipped.
+    pub fn should_fail(&self, mode: SuiteMode) -> bool {
+        self.failed() > 0 || self.security_skips(mode) > 0
+    }
+
     /// Get the elapsed time for the test suite
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
 
     /// Print a summary of the test results
-    pub fn print_summary(&self) {
+    pub fn print_summary(&self, mode: SuiteMode) {
         let elapsed = self.elapsed();
         let passed = self.passed();
         let failed = self.failed();
         let skipped = self.skipped();
+        let security = self.security_skips(mode);
         let total = self.total();
 
         println!();
@@ -221,6 +240,7 @@ impl TestSuite {
         println!("Passed:  \x1b[32m{}\x1b[0m", passed);
         println!("Failed:  \x1b[31m{}\x1b[0m", failed);
         println!("Skipped: \x1b[33m{}\x1b[0m", skipped);
+        println!("Security-critical skips: \x1b[31m{}\x1b[0m", security);
         println!("Elapsed: {:.2}ms", elapsed.as_millis());
         println!("----------------------------------------");
 
@@ -228,6 +248,15 @@ impl TestSuite {
             println!("\nFailed tests:");
             for result in &self.results {
                 if result.is_fail() {
+                    println!("  {}", result);
+                }
+            }
+        }
+
+        if security > 0 {
+            println!("\nSecurity-critical skips (fail closed):");
+            for result in &self.results {
+                if is_security_critical_skip(result, mode) {
                     println!("  {}", result);
                 }
             }

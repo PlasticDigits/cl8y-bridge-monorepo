@@ -41,11 +41,12 @@ When infrastructure isn't available:
 # Frontend: skip integration tests
 SKIP_INTEGRATION=true npm run test:run
 
-# Canceler: only unit tests run by default
-cargo test  # Integration tests are #[ignore]
+# Canceler: only unit tests run by default (`#[ignore]` integration stays skipped)
+cargo test
 
-# To run integration tests
-INTEGRATION_TEST=1 cargo test -- --ignored
+# Integration tests need Anvil + LocalTerra. Missing bridge addresses fail; they do not return.
+INTEGRATION_TEST=1 EVM_BRIDGE_ADDRESS=0x... TERRA_BRIDGE_ADDRESS=terra1... \
+  cargo test --test integration_test -- --ignored
 ```
 
 ## Current Test Status
@@ -63,9 +64,11 @@ INTEGRATION_TEST=1 cargo test -- --ignored
 
 > **Note:** E2E tests can now automatically manage operator and canceler lifecycle.
 
-### E2E Test Suite (Sprint 12)
+### E2E Test Suite
 
-The E2E test suite (`./scripts/e2e-test.sh`) runs ALL security tests by default:
+The live runner is `cargo run -p cl8y-e2e -- run` (or `make e2e-test`, which runs `cl8y-e2e full`). A security-critical skip fails the process. See [CI test gating invariants](./CI_TEST_INVARIANTS.md). The removed bash entrypoint is not a CI step.
+
+The suite covers:
 
 | Test | Description |
 |------|-------------|
@@ -94,6 +97,7 @@ Sprint 12 enhanced E2E tests with real token transfers and proper balance verifi
 **Master E2E Test (runs everything):**
 ```bash
 make e2e-test
+# equivalent: cargo run -p cl8y-e2e -- full
 ```
 
 This single command runs ALL E2E tests including:
@@ -174,7 +178,7 @@ Helper functions are available in `scripts/e2e-helpers/common.sh`:
 | Unit Tests | `packages/*/tests/` | Test individual functions | No |
 | Contract Tests | `packages/contracts-evm/test/` | Test Solidity contracts | No (uses Foundry) |
 | Integration Tests | `packages/operator/tests/` | Test component interactions | Partial |
-| E2E Tests | `scripts/e2e-test.sh` | Full transfer flows | Yes |
+| E2E Tests | `cargo run -p cl8y-e2e -- run` | Full transfer flows | Yes |
 
 ## Quick Start
 
@@ -187,8 +191,9 @@ make start
 make deploy
 make e2e-test
 
-# E2E runs ALL security tests by default (operator/canceler/transfers)
-./scripts/e2e-test.sh
+# E2E runs ALL security tests by default (operator/canceler/transfers).
+# Security-critical skips fail the process.
+cargo run -p cl8y-e2e -- run
 ```
 
 ### Frontend Tests
@@ -223,8 +228,9 @@ cd packages/canceler
 # Run unit tests only
 cargo test
 
-# Run integration tests (requires infrastructure)
-INTEGRATION_TEST=1 cargo test --test integration_test -- --ignored
+# Run integration tests (requires Anvil + LocalTerra). Missing bridge env fails the test.
+INTEGRATION_TEST=1 EVM_BRIDGE_ADDRESS=0x... TERRA_BRIDGE_ADDRESS=terra1... \
+  cargo test --test integration_test -- --ignored
 ```
 
 ---
@@ -404,16 +410,14 @@ export EVM_BRIDGE_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
 export TERRA_BRIDGE_ADDRESS="terra1..."
 export DATABASE_URL="postgres://operator:operator@localhost:5433/operator"
 
-# Run automated E2E test
-./scripts/e2e-test.sh
+# Run the Rust E2E runner. Security-critical skips are failures.
+cargo run -p cl8y-e2e -- run
 ```
 
-The script will:
-1. Verify all prerequisites
-2. Check database connectivity
-3. Test Terra→EVM transfer (lock on Terra, approve on EVM)
-4. Test EVM→Terra transfer (deposit on EVM, release on Terra)
-5. Report pass/fail summary
+The runner will:
+1. Execute the default required suite (connectivity, transfers, fraud, watchtower, canceler)
+2. Exit non-zero if any test fails or any security-critical test is skipped
+3. Allow skips only for explicit `--quick`, or for named optional Solana live flows that are not security-critical when `SOLANA_ENABLED` is unset
 
 #### Interactive Transfer Test
 
@@ -432,7 +436,7 @@ Options:
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `scripts/e2e-test.sh` | Automated full E2E suite | `./scripts/e2e-test.sh` |
+| `cl8y-e2e` | Automated full E2E suite | `cargo run -p cl8y-e2e -- run` |
 | `scripts/test-transfer.sh` | Interactive transfer tests | `./scripts/test-transfer.sh` |
 | `scripts/deploy-terra-local.sh` | Deploy Terra contracts | `./scripts/deploy-terra-local.sh` |
 | `scripts/setup-bridge.sh` | Configure cross-chain | `./scripts/setup-bridge.sh` |
@@ -453,7 +457,7 @@ make solana-test-e2e
 
 ### Solana — live canceler / operator E2E (`SOLANA_ENABLED`)
 
-Rust scenarios that exercise the canceler or operator against a **real** Solana JSON-RPC (e.g. `packages/e2e/src/tests/canceler_solana_destination.rs`) require `SOLANA_ENABLED=true` and related env (`SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, keypair paths, etc.). The default **`.github/workflows/e2e.yml`** full suite does **not** set `SOLANA_ENABLED`; those flows are not covered by routine GitHub E2E alone.
+Rust scenarios that exercise the canceler or operator against a **real** Solana JSON-RPC (e.g. `packages/e2e/src/tests/canceler_solana_destination.rs`) require `SOLANA_ENABLED=true` and related env (`SOLANA_RPC_URL`, `SOLANA_PROGRAM_ID`, keypair paths, etc.). The default **`.github/workflows/e2e.yml`** full suite does **not** set `SOLANA_ENABLED`. `canceler_detects_fraud_on_solana_destination` is omitted from the default required set in that case and is not coverage. A `Skip` of that name, or of `canceler_solana_source_fraud_detection`, still fails `cl8y-e2e run`.
 
 **Pre-release:** Before production cuts that include Solana, run `cl8y-e2e` with a reachable Solana RPC and `SOLANA_ENABLED=true` (and documented env) so canceler/operator Solana paths are exercised — for example from `packages/e2e` after `cargo run -p cl8y-e2e -- setup` and configuring Solana in `.env`, then running the relevant tests or the full `run` with Solana enabled.
 
@@ -533,7 +537,7 @@ forge coverage
 
 ## Continuous Integration
 
-Tests run automatically on pull requests via GitHub Actions.
+GitHub Actions (`.github/workflows/test.yml`, `.github/workflows/e2e.yml`) and Woodpecker (`.woodpecker.yaml`, required check) run on pull requests. See [CI test gating invariants](./CI_TEST_INVARIANTS.md).
 
 ### CI Workflow
 
@@ -543,6 +547,14 @@ Tests run automatically on pull requests via GitHub Actions.
 - Contract tests (Foundry)
 - Linting (clippy, forge lint)
 - Build verification
+
+# .github/workflows/e2e.yml
+- cargo run -p cl8y-e2e -- run
+- canceler integration_test with --ignored when Anvil and LocalTerra are up
+
+# .woodpecker.yaml
+- packages/frontend: npm run test:unit   # no test-file filter
+- Playwright smoke: E2E_UI_ONLY=1, project chromium, e2e/wallet-connect.spec.ts
 ```
 
 ### Running CI Locally
@@ -601,6 +613,7 @@ curl -s http://localhost:1317/cosmos/bank/v1beta1/balances/terra1x46rqay4d3cssq8
 
 ## Related Documentation
 
+- [CI test gating invariants](./CI_TEST_INVARIANTS.md) - Fail-closed skips, Woodpecker frontend, canceler `--ignored`
 - [Local Development](./local-development.md) - Setting up the development environment
 - [Architecture](./architecture.md) - System design and components
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams

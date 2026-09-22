@@ -33,7 +33,12 @@ if (ciTruthy) {
   process.env.E2E_SKIP_TEARDOWN = '1'
 }
 
-/** Wallet-connect / modal UI specs that do not need Docker chains (GL-137). */
+/**
+ * Wallet-connect / modal UI specs that do not need Docker chains (GL-137).
+ * Woodpecker smoke (issue 187) runs project `chromium` only:
+ * `E2E_UI_ONLY=1 npx playwright test e2e/wallet-connect.spec.ts --project=chromium --workers=1`.
+ * That project ignores `**/*.verify.spec.ts`. With this flag, global setup does not start compose.
+ */
 const uiOnly = process.env.E2E_UI_ONLY === '1'
 
 export default defineConfig({
