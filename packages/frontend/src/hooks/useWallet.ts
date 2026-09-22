@@ -15,6 +15,7 @@ import {
 } from '../stores/wallet';
 import { resumeWalletConnectAfterForeground } from '../services/terra/walletConnectForeground';
 import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG } from '../utils/constants';
+import { allowsWalletConnectInfra } from '../lib/storageConsent';
 
 /** Auto-cancel WalletConnect attempts that haven't resolved in this many ms */
 const WC_CONNECTION_TIMEOUT_MS = 60_000;
@@ -90,6 +91,11 @@ export function useWallet() {
     if (reconnectAttempted.current) return;
     if (connected) return; // already connected
     if (!walletType || !address) return; // no persisted session
+    const { connectionType } = useWalletStore.getState();
+    if (connectionType === WalletType.WALLETCONNECT && !allowsWalletConnectInfra()) {
+      reconnectAttempted.current = true;
+      return;
+    }
     reconnectAttempted.current = true;
     attemptReconnect();
   }, [connected, walletType, address, attemptReconnect]);

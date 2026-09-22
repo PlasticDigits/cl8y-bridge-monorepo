@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet'
 import { Modal } from '../ui'
 import { TerraWalletOption, getTerraWalletIcon } from './TerraWalletOption'
@@ -7,6 +7,9 @@ import { detectInAppBrowser } from '../../utils/detectInAppBrowser'
 import { isWalletConnectMobileClient } from '../../utils/walletConnectPairing'
 import { resolveConnectWalletOptions } from '../../utils/terraConnectWalletOptions'
 import { useWalletConnectPairingStore } from '../../stores/walletConnectPairing'
+import { StorageJitPrompt } from '../legal/StorageJitPrompt'
+import { useStorageConsentActions } from '../../hooks/useStorageConsent'
+import { allowsWalletConnectInfra } from '../../lib/storageConsent'
 
 export interface TerraWalletModalProps {
   isOpen: boolean
@@ -27,6 +30,12 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     cancelConnection,
     clearConnectionError,
   } = useWallet()
+
+  const { jitWalletConnect } = useStorageConsentActions()
+  const [pendingWcJit, setPendingWcJit] = useState<{
+    walletName: WalletName
+    walletType: WalletType
+  } | null>(null)
 
   const pairingOpen = useWalletConnectPairingStore((s) => s.isOpen)
   const isMobileClient = isWalletConnectMobileClient()
@@ -52,7 +61,7 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     if (connecting) cancelConnection()
   }, [connecting, cancelConnection, onClose])
 
-  const handleConnect = async (walletName: WalletName, walletType: WalletType = WalletType.EXTENSION) => {
+  const runConnect = async (walletName: WalletName, walletType: WalletType) => {
     clearConnectionError()
     try {
       await connect(walletName, walletType)
@@ -60,6 +69,14 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     } catch {
       // connectionError is set by the store; displayed below
     }
+  }
+
+  const handleConnect = async (walletName: WalletName, walletType: WalletType = WalletType.EXTENSION) => {
+    if (walletType === WalletType.WALLETCONNECT && !allowsWalletConnectInfra()) {
+      setPendingWcJit({ walletName, walletType })
+      return
+    }
+    await runConnect(walletName, walletType)
   }
 
   const handleRetry = (walletName: WalletName, walletType: WalletType) => {
@@ -113,6 +130,18 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
   if (pairingOpen) return null
 
   return (
+    <>
+    <StorageJitPrompt
+      kind={pendingWcJit ? 'walletConnect' : null}
+      onCancel={() => setPendingWcJit(null)}
+      onConfirm={() => {
+        if (!pendingWcJit) return
+        jitWalletConnect()
+        const { walletName, walletType } = pendingWcJit
+        setPendingWcJit(null)
+        void runConnect(walletName, walletType)
+      }}
+    />
     <Modal isOpen={isOpen} onClose={closeModal} title="Connect Wallet" rootTestId="terra-wallet-modal-portal">
       <div className="p-6 space-y-3">
         {connectionError && (
@@ -216,5 +245,6 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
         })}
       </div>
     </Modal>
+    </>
   )
 }

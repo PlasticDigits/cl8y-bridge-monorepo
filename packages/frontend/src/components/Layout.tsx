@@ -6,6 +6,8 @@ import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
 import { SolanaWalletBalanceSync } from './SolanaWalletBalanceSync'
+import { StorageConsentBanner } from './legal/StorageConsentBanner'
+import { StoragePreferencesControl } from './legal/StoragePreferencesControl'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -74,6 +76,8 @@ export function Layout() {
       <footer className="border-t-2 border-white/25 py-6 text-slate-300 text-xs md:text-sm uppercase tracking-wider">
         <div className="mx-auto max-w-5xl px-4 flex flex-col gap-3 items-center justify-center md:flex-row md:justify-between">
           <p>CL8Y Bridge · Cross-chain transfers between any supported chains · <span className="text-slate-500 normal-case">{__APP_VERSION__} · {__GIT_SHA__}</span></p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <StoragePreferencesControl />
           <div className="flex items-center gap-2" role="group" aria-label="Theme">
             <div className="inline-flex border border-white/50 bg-black/60 p-0.5 rounded-sm">
               <button
@@ -100,6 +104,7 @@ export function Layout() {
               </button>
             </div>
           </div>
+          </div>
         </div>
       </footer>
 
@@ -107,6 +112,7 @@ export function Layout() {
       <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
       <SolanaWalletModal isOpen={showSolanaModal} onClose={() => setShowSolanaModal(false)} />
       <WalletConnectPairingModal />
+      <StorageConsentBanner />
     </div>
   )
 }

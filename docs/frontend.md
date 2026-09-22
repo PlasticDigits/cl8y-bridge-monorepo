@@ -331,6 +331,10 @@ VITE_OPBNB_TESTNET_RPC_URL=https://opbnb-testnet-rpc.bnbchain.org
 VITE_WC_PROJECT_ID=your_project_id
 ```
 
+### Storage consent (issue #165)
+
+First-party notice (`data-testid="storage-consent-banner"`) gates idle WalletConnect / Coinbase SDK load. Record: `localStorage['cl8y-storage-consent']`. See **INV-FE-STORAGE-CONSENT-1** in [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) and [`skills/agent-frontend-storage-consent.md`](../skills/agent-frontend-storage-consent.md). Separate from Legal clickwrap.
+
 ### Legal clickwrap (GL-134)
 
 Production property is always **`bridge.cl8y.com`**. The SPA uses `@plasticdigits/cl8y-clickwrap@0.1.1` (`TermsGate`) on mutative CTAs only — not the app shell. See [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-CLICKWRAP-1** and [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md).

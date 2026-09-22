@@ -1,5 +1,5 @@
 import { getAccount } from 'wagmi/actions'
-import { config } from '../lib/wagmi'
+import { getWagmiConfig } from '../lib/wagmi'
 
 /**
  * Poll wagmi account until the active EVM chain matches `destChainId`, or timeout.
@@ -13,7 +13,7 @@ export async function waitForWalletChainId(
   const pollMs = opts?.pollMs ?? 150
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const { chainId } = getAccount(config)
+    const { chainId } = getAccount(getWagmiConfig())
     if (chainId === destChainId) return true
     await new Promise((r) => setTimeout(r, pollMs))
   }

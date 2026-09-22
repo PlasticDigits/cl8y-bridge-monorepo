@@ -16,6 +16,7 @@ import {
   hasCachedWalletConnectSession,
   resumeWalletConnectAfterForeground,
 } from './walletConnectForeground'
+import { STORAGE_CONSENT_KEY } from '../../lib/storageConsent'
 
 const mockTryReconnect = vi.mocked(tryReconnect)
 
@@ -32,6 +33,10 @@ describe('resumeWalletConnectAfterForeground (GL-137)', () => {
   beforeEach(() => {
     mockTryReconnect.mockReset()
     localStorage.clear()
+    localStorage.setItem(
+      STORAGE_CONSENT_KEY,
+      JSON.stringify({ v: 1, decided: true, optionalThirdParty: true }),
+    )
     useWalletStore.setState({
       connected: false,
       connecting: false,

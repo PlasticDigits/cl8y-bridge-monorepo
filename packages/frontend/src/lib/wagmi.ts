@@ -1,102 +1,75 @@
-import { http, createConfig } from 'wagmi'
+import { http, createConfig, type Config } from 'wagmi'
 import { mainnet, bsc, opBNB } from 'wagmi/chains'
-import { walletConnect, coinbaseWallet, mock } from 'wagmi/connectors'
+import { mock } from 'wagmi/connectors'
 import { megaeth as megaEthChain } from './megaethMainnet'
-import { WC_PROJECT_ID, DEV_MODE } from '../utils/constants'
+import { DEV_MODE } from '../utils/constants'
+import {
+  anvil,
+  anvil1,
+  bridgeWagmiChains,
+  SIMULATED_EVM_ACCOUNTS,
+} from './wagmiChains'
+import type { CreateConnectorFn } from 'wagmi'
 
-// Custom Anvil chains for local development
-const anvil = {
-  id: 31337,
-  name: 'Anvil',
-  nativeCurrency: {
-    decimals: 18,
-    name: 'Ether',
-    symbol: 'ETH',
-  },
-  rpcUrls: {
-    default: {
-      http: ['http://localhost:8545'],
-    },
-  },
-  testnet: true,
-} as const
+export type BridgeWagmiConnectorOptions = {
+  walletConnect?: CreateConnectorFn | null
+  coinbase?: CreateConnectorFn | null
+}
 
-const anvil1 = {
-  id: 31338,
-  name: 'Anvil1',
-  nativeCurrency: {
-    decimals: 18,
-    name: 'Ether',
-    symbol: 'ETH',
-  },
-  rpcUrls: {
-    default: {
-      http: ['http://localhost:8546'],
-    },
-  },
-  testnet: true,
-} as const
+let activeConfig: Config | null = null
 
-// Standard Anvil/Hardhat test accounts for simulated EVM wallet
-const SIMULATED_EVM_ACCOUNTS = [
-  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
-  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
-] as const
+export function getWagmiConfig(): Config {
+  if (!activeConfig) {
+    activeConfig = buildBridgeWagmiConfig({})
+  }
+  return activeConfig
+}
 
-const connectors = [
-  ...(DEV_MODE
-    ? [
-        mock({
-          accounts: SIMULATED_EVM_ACCOUNTS,
-          features: { defaultConnected: false },
-          // In dev mode, the mock connector can sign real transactions on Anvil
-          // because Anvil keeps test accounts unlocked. eth_sendTransaction is
-          // forwarded to the Anvil RPC which signs on behalf of the test account.
-        }),
-      ]
-    : []),
-  // WalletConnect requires a valid projectId — omit if not configured
-  ...(WC_PROJECT_ID
-    ? [
-        walletConnect({
-          projectId: WC_PROJECT_ID,
-          metadata: {
-            name: 'CL8Y Bridge',
-            description: 'Cross-chain transfers between any supported chains',
-            url: window.location.origin,
-            icons: [`${window.location.origin}/logo-128.png`],
-          },
-          showQrModal: true,
-        }),
-      ]
-    : []),
-  coinbaseWallet(),
-]
+export function setActiveWagmiConfig(config: Config): void {
+  activeConfig = config
+}
 
-// In dev mode, Anvil chains are listed first so the mock connector defaults
-// to Anvil (the first chain) instead of mainnet. This ensures dev wallet
-// transactions target the local devnet rather than a production chain.
-const chains = DEV_MODE
-  ? ([anvil, anvil1, mainnet, bsc, opBNB, megaEthChain] as const)
-  : ([mainnet, bsc, opBNB, megaEthChain, anvil, anvil1] as const)
-
-export const config = createConfig({
-  chains,
-  connectors,
-  multiInjectedProviderDiscovery: true,
-  transports: {
-    [mainnet.id]: http(),
-    [bsc.id]: http(),
-    [opBNB.id]: http(),
-    [megaEthChain.id]: http(megaEthChain.rpcUrls.default.http[0]),
-    [anvil.id]: http('http://localhost:8545'),
-    [anvil1.id]: http('http://localhost:8546'),
+/** @deprecated Use getWagmiConfig() — kept for gradual migration in tests */
+export const config = new Proxy({} as Config, {
+  get(_target, prop) {
+    return Reflect.get(getWagmiConfig(), prop)
   },
 })
 
+export function buildBridgeWagmiConfig(optional: BridgeWagmiConnectorOptions): Config {
+  const connectors: CreateConnectorFn[] = []
+
+  if (DEV_MODE) {
+    connectors.push(
+      mock({
+        accounts: SIMULATED_EVM_ACCOUNTS,
+        features: { defaultConnected: false },
+      }),
+    )
+  }
+
+  if (optional.walletConnect) connectors.push(optional.walletConnect)
+  if (optional.coinbase) connectors.push(optional.coinbase)
+
+  const built = createConfig({
+    chains: bridgeWagmiChains,
+    connectors,
+    multiInjectedProviderDiscovery: true,
+    transports: {
+      [mainnet.id]: http(),
+      [bsc.id]: http(),
+      [opBNB.id]: http(),
+      [megaEthChain.id]: http(megaEthChain.rpcUrls.default.http[0]),
+      [anvil.id]: http('http://localhost:8545'),
+      [anvil1.id]: http('http://localhost:8546'),
+    },
+  })
+
+  return built
+}
+
 declare module 'wagmi' {
   interface Register {
-    config: typeof config
+    config: ReturnType<typeof buildBridgeWagmiConfig>
   }
 }

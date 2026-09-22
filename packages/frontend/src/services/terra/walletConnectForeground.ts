@@ -4,6 +4,7 @@ import { useWalletStore } from '../../stores/wallet'
 import { useWalletConnectPairingStore } from '../../stores/walletConnectPairing'
 import { tryReconnect } from './connect'
 import type { TerraWalletType } from './types'
+import { allowsWalletConnectInfra } from '../../lib/storageConsent'
 
 const WALLET_NAME_TO_TYPE: Partial<Record<WalletName, TerraWalletType>> = {
   [WalletName.STATION]: 'station',
@@ -47,6 +48,7 @@ export function hasCachedWalletConnectSession(
  * - Cached session present: `tryReconnect` restores it without `createSession`.
  */
 export async function resumeWalletConnectAfterForeground(): Promise<WalletConnectForegroundResult> {
+  if (!allowsWalletConnectInfra()) return 'ignored'
   const state = useWalletStore.getState()
   if (!state.connecting || !state.connectingWallet) return 'ignored'
 
