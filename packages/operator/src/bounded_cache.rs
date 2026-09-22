@@ -147,6 +147,26 @@ impl<T> BoundedPendingCache<T> {
             .map(|(v, _)| v)
     }
 
+    /// True when the hash is still in the map, including past TTL.
+    ///
+    /// `get` hides expired rows, but they remain until a later `insert` retain.
+    /// Execute re-queue must not treat those rows as absent (that resets the timer).
+    pub fn contains_stored(&self, hash: &[u8; 32]) -> bool {
+        self.map.contains_key(hash)
+    }
+
+    /// Mutate a stored entry and refresh its TTL, including rows `get_mut` hides.
+    ///
+    /// Returns false only when the hash is not in the map.
+    pub fn update(&mut self, hash: &[u8; 32], f: impl FnOnce(&mut T)) -> bool {
+        let Some((value, inserted_at)) = self.map.get_mut(hash) else {
+            return false;
+        };
+        f(value);
+        *inserted_at = Instant::now();
+        true
+    }
+
     pub fn insert(&mut self, hash: [u8; 32], value: T) {
         let now = Instant::now();
         self.map
@@ -211,6 +231,17 @@ mod tests {
         let hash = [1u8; 32];
         cache.insert(hash, "hello");
         assert_eq!(cache.get(&hash), Some(&"hello"));
+    }
+
+    #[test]
+    fn test_pending_cache_update_refreshes_stored_value() {
+        let mut cache = BoundedPendingCache::new(10, 3600);
+        let hash = [2u8; 32];
+        cache.insert(hash, 10u64);
+        assert!(cache.contains_stored(&hash));
+        assert!(cache.update(&hash, |v| *v = 25));
+        assert_eq!(cache.get(&hash), Some(&25));
+        assert!(!cache.update(&[3u8; 32], |v| *v = 1));
     }
 
     #[test]

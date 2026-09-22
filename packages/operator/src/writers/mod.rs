@@ -71,6 +71,8 @@ pub(crate) fn is_terminal_execute_error(err: &str) -> bool {
         || lower.contains(WITHDRAW_CANCELLED_SELECTOR)
         || lower.contains("belowminpertransaction")
         || lower.contains("belowminimumamount")
+        || lower.contains("permanentperiodcapexceeded")
+        || lower.contains("permanentpertxcapexceeded")
 }
 
 /// Solana source chain configuration for deposit verification.
@@ -790,5 +792,9 @@ mod schedule_tests {
         assert!(!is_terminal_execute_error(
             "Failed to send withdraw tx: RateLimitExceededPerTx"
         ));
+        assert!(is_terminal_execute_error(
+            "PermanentPeriodCapExceeded: payout above maxPerPeriod"
+        ));
+        assert!(is_terminal_execute_error("PermanentPerTxCapExceeded"));
     }
 }

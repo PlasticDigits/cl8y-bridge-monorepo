@@ -39,6 +39,18 @@ use crate::db::{self, EvmDeposit, NewApproval, TerraDeposit};
 use crate::hash::{address_to_bytes32, bytes32_to_hex, compute_xchain_hash_id};
 use crate::types::{ChainId, EvmAddress};
 
+/// Whether `withdrawExecute*` may be sent on this poll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecuteAdmission {
+    Send,
+    /// Do not send. Record in `terminal_executions`.
+    Terminal(String),
+    /// Do not send. Retry at `until_unix` (period end or a short not-approved delay).
+    Defer {
+        until_unix: u64,
+    },
+}
+
 /// Pending approval tracking for auto-execution
 #[derive(Debug, Clone)]
 struct PendingExecution {
@@ -405,8 +417,8 @@ impl EvmWriter {
 
     /// Queue `withdrawExecute*` if this hash is not already in the in-memory execute cache.
     ///
-    /// Does not reset an existing timer (would livelock execute). TTL-expired entries
-    /// look absent via `get` and are re-inserted.
+    /// Does not reset an existing timer (would livelock execute). A row that is
+    /// still stored after its TTL is left alone. Only an evicted row is re-inserted.
     fn enqueue_execution_if_absent(&mut self, xchain_hash_id: [u8; 32], delay_seconds: u64) {
         if super::execute_queue::enqueue_execution_if_absent(
             &self.terminal_executions,
@@ -1240,6 +1252,22 @@ impl EvmWriter {
         Ok(exists)
     }
 
+    fn normalize_withdraw_amount(amount: U256, src_decimals: u8, dest_decimals: u8) -> U256 {
+        if src_decimals == dest_decimals {
+            return amount;
+        }
+        let ten = U256::from(10u64);
+        if src_decimals > dest_decimals {
+            amount / ten.pow(U256::from(u64::from(src_decimals - dest_decimals)))
+        } else {
+            amount * ten.pow(U256::from(u64::from(dest_decimals - src_decimals)))
+        }
+    }
+
+    fn decimals_u8(value: impl TryInto<u8>) -> u8 {
+        value.try_into().unwrap_or(18)
+    }
+
     fn terra_deposit_exists_in_query(body: &serde_json::Value) -> bool {
         body.get("data").is_some_and(|data| !data.is_null())
     }
@@ -1290,9 +1318,39 @@ impl EvmWriter {
             .collect();
 
         let mut to_remove = Vec::new();
-        let mut to_backoff: Vec<([u8; 32], String)> = Vec::new();
+        let mut to_backoff: Vec<([u8; 32], Option<super::execute_queue::PeriodWait>)> = Vec::new();
+        let mut to_defer: Vec<([u8; 32], u64)> = Vec::new();
 
         for hash in ready {
+            match self.admit_execute(hash).await {
+                Ok(ExecuteAdmission::Terminal(reason)) => {
+                    info!(
+                        xchain_hash_id = %bytes32_to_hex(&hash),
+                        reason = %reason,
+                        "Skipping EVM execute; outcome is terminal"
+                    );
+                    to_remove.push(hash);
+                    continue;
+                }
+                Ok(ExecuteAdmission::Defer { until_unix }) => {
+                    info!(
+                        xchain_hash_id = %bytes32_to_hex(&hash),
+                        until_unix,
+                        "Deferring EVM execute until the withdraw rate-limit window ends"
+                    );
+                    to_defer.push((hash, until_unix));
+                    continue;
+                }
+                Ok(ExecuteAdmission::Send) => {}
+                Err(e) => {
+                    warn!(
+                        xchain_hash_id = %bytes32_to_hex(&hash),
+                        error = %e,
+                        "Rate-limit pre-check failed; attempting execute"
+                    );
+                }
+            }
+
             match self.submit_execute_withdraw(hash).await {
                 Ok(tx_hash) => {
                     info!(
@@ -1311,13 +1369,53 @@ impl EvmWriter {
                             "Dropping terminal EVM execute failure"
                         );
                         to_remove.push(hash);
+                    } else if super::execute_queue::is_period_rate_limit_error(&err) {
+                        match self.admit_execute(hash).await {
+                            Ok(ExecuteAdmission::Terminal(reason)) => {
+                                info!(
+                                    xchain_hash_id = %bytes32_to_hex(&hash),
+                                    reason = %reason,
+                                    "Period revert is a permanent cap; dropping execute"
+                                );
+                                to_remove.push(hash);
+                            }
+                            Ok(ExecuteAdmission::Defer { until_unix }) => {
+                                to_defer.push((hash, until_unix));
+                            }
+                            Ok(ExecuteAdmission::Send) => {
+                                warn!(
+                                    xchain_hash_id = %bytes32_to_hex(&hash),
+                                    error = %err,
+                                    "Period revert cleared on re-read; short retry"
+                                );
+                                to_backoff.push((hash, None));
+                            }
+                            Err(read_err) => {
+                                warn!(
+                                    xchain_hash_id = %bytes32_to_hex(&hash),
+                                    error = %read_err,
+                                    "Period revert and window read failed; waiting one full window"
+                                );
+                                to_backoff.push((
+                                    hash,
+                                    Some(super::execute_queue::PeriodWait::FullWindow),
+                                ));
+                            }
+                        }
+                    } else if super::execute_queue::is_guard_withdraw_rate_limit_error(&err) {
+                        warn!(
+                            xchain_hash_id = %bytes32_to_hex(&hash),
+                            error = %err,
+                            "Guard withdraw rate limit; waiting one full window"
+                        );
+                        to_backoff.push((hash, Some(super::execute_queue::PeriodWait::FullWindow)));
                     } else {
                         warn!(
                             xchain_hash_id = %bytes32_to_hex(&hash),
                             error = %e,
                             "Failed to execute EVM withdrawal, will retry"
                         );
-                        to_backoff.push((hash, err));
+                        to_backoff.push((hash, None));
                     }
                 }
             }
@@ -1332,24 +1430,55 @@ impl EvmWriter {
         let max = self.schedule.rpc_backoff_max;
         let jitter = self.schedule.jitter_bps;
         let chain_seed = self.chain_id;
-        for (hash, err) in to_backoff {
-            if let Some(pending) = self.pending_executions.get_mut(&hash) {
-                super::execute_queue::apply_execute_retry_backoff(
-                    &mut pending.attempts,
-                    &mut pending.approved_at,
-                    &mut pending.delay_seconds,
-                    &err,
-                    super::execute_queue::ExecuteRetryBackoff {
-                        initial,
-                        max,
-                        jitter_bps: jitter,
-                    },
-                    Self::hash_seed(&hash) ^ chain_seed,
-                );
-            }
+        for (hash, period) in to_backoff {
+            self.schedule_execute_retry(hash, period, initial, max, jitter, chain_seed);
+        }
+        for (hash, until_unix) in to_defer {
+            self.schedule_execute_retry(
+                hash,
+                Some(super::execute_queue::PeriodWait::Until(until_unix)),
+                initial,
+                max,
+                jitter,
+                chain_seed,
+            );
         }
 
         Ok(())
+    }
+
+    fn schedule_execute_retry(
+        &mut self,
+        hash: [u8; 32],
+        period: Option<super::execute_queue::PeriodWait>,
+        initial: Duration,
+        max: Duration,
+        jitter: u32,
+        chain_seed: u64,
+    ) {
+        let backoff = super::execute_queue::ExecuteRetryBackoff {
+            initial,
+            max,
+            jitter_bps: jitter,
+        };
+        let seed = Self::hash_seed(&hash) ^ chain_seed;
+        let now_unix = super::unix_now_secs();
+        let applied = self.pending_executions.update(&hash, |pending| {
+            super::execute_queue::apply_execute_retry_backoff(
+                &mut pending.attempts,
+                &mut pending.approved_at,
+                &mut pending.delay_seconds,
+                backoff,
+                seed,
+                now_unix,
+                period,
+            );
+        });
+        if !applied {
+            let delay =
+                super::execute_queue::execute_retry_delay_secs(1, backoff, seed, now_unix, period);
+            self.enqueue_execution_if_absent(hash, delay);
+        }
     }
 
     /// Process a single Terra deposit
@@ -1595,6 +1724,133 @@ impl EvmWriter {
         }
 
         Ok(format!("0x{:x}", tx_hash))
+    }
+
+    /// Read dest withdraw limits and decide whether execute may be sent.
+    ///
+    /// RPC failure is returned to the caller, which may still send (the contract
+    /// remains the source of truth). Permanent caps and below-min do not send.
+    async fn admit_execute(&self, xchain_hash_id: [u8; 32]) -> Result<ExecuteAdmission> {
+        let urls = if self.rpc_urls.is_empty() {
+            vec![self.rpc_url.clone()]
+        } else {
+            self.rpc_urls.clone()
+        };
+        let label = self.chain_label();
+        let bridge = self.bridge_address;
+        crate::rpc_fallback::with_endpoint_fallback(
+            &urls,
+            None,
+            &label,
+            "withdrawRateLimit",
+            |idx| {
+                let url = urls[idx].clone();
+                async move { Self::admit_execute_on_url(&url, bridge, xchain_hash_id).await }
+            },
+        )
+        .await
+    }
+
+    async fn admit_execute_on_url(
+        url: &str,
+        bridge_address: Address,
+        xchain_hash_id: [u8; 32],
+    ) -> Result<ExecuteAdmission> {
+        let provider = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
+        let contract = Bridge::new(bridge_address, &provider);
+        let pending = contract
+            .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get pending withdraw: {}", e))?;
+
+        if pending.submittedAt.is_zero() {
+            return Ok(ExecuteAdmission::Terminal(
+                "Withdrawal not found (submittedAt is zero)".into(),
+            ));
+        }
+        if pending.executed {
+            return Ok(ExecuteAdmission::Terminal(
+                "Withdrawal already executed".into(),
+            ));
+        }
+        if pending.cancelled {
+            return Ok(ExecuteAdmission::Terminal(
+                "Withdrawal was cancelled".into(),
+            ));
+        }
+        if !pending.approved {
+            return Ok(ExecuteAdmission::Defer {
+                until_unix: super::unix_now_secs().saturating_add(30),
+            });
+        }
+
+        let registry_addr = contract
+            .tokenRegistry()
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to get token registry: {}", e))?
+            ._0;
+        if registry_addr == Address::ZERO {
+            return Ok(ExecuteAdmission::Send);
+        }
+
+        let token_registry = TokenRegistry::new(registry_addr, &provider);
+        let cfg = token_registry
+            .getRateLimitConfig(pending.token)
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to read rate limit config: {}", e))?;
+        let window = token_registry
+            .getWithdrawRateLimitWindow(pending.token)
+            .call()
+            .await
+            .map_err(|e| eyre!("Failed to read withdraw rate limit window: {}", e))?;
+        let window_secs = match token_registry.RATE_LIMIT_WINDOW().call().await {
+            Ok(v) => u64::try_from(v._0)
+                .unwrap_or(super::execute_queue::TOKEN_REGISTRY_RATE_LIMIT_WINDOW_SECS),
+            Err(_) => super::execute_queue::TOKEN_REGISTRY_RATE_LIMIT_WINDOW_SECS,
+        };
+
+        let normalized = Self::normalize_withdraw_amount(
+            pending.amount,
+            Self::decimals_u8(pending.srcDecimals),
+            Self::decimals_u8(pending.destDecimals),
+        );
+        let Some(amount) = u128::try_from(normalized).ok() else {
+            return Ok(ExecuteAdmission::Terminal(
+                "PermanentPeriodCapExceeded".into(),
+            ));
+        };
+        let snap = super::execute_queue::WithdrawLimitSnapshot {
+            amount,
+            min_per_tx: u128::try_from(cfg._0).unwrap_or(u128::MAX),
+            max_per_tx: u128::try_from(cfg._1).unwrap_or(u128::MAX),
+            max_per_period: u128::try_from(cfg._2).unwrap_or(u128::MAX),
+            window_start: u64::try_from(window._0).unwrap_or(0),
+            used: u128::try_from(window._1).unwrap_or(u128::MAX),
+            now_unix: super::unix_now_secs(),
+            window_secs,
+        };
+        Ok(
+            match super::execute_queue::classify_withdraw_rate_limit(snap) {
+                super::execute_queue::WithdrawRateLimitGate::Clear => ExecuteAdmission::Send,
+                super::execute_queue::WithdrawRateLimitGate::Wait { retry_at_unix } => {
+                    ExecuteAdmission::Defer {
+                        until_unix: retry_at_unix,
+                    }
+                }
+                super::execute_queue::WithdrawRateLimitGate::BelowMin => {
+                    ExecuteAdmission::Terminal("BelowMinPerTransaction".into())
+                }
+                super::execute_queue::WithdrawRateLimitGate::OverMaxPerTx => {
+                    ExecuteAdmission::Terminal("PermanentPerTxCapExceeded".into())
+                }
+                super::execute_queue::WithdrawRateLimitGate::OverMaxPerPeriod => {
+                    ExecuteAdmission::Terminal("PermanentPeriodCapExceeded".into())
+                }
+            },
+        )
     }
 
     /// Submit an ExecuteWithdraw transaction (V2)
@@ -2154,10 +2410,25 @@ impl EvmWriter {
 #[cfg(test)]
 mod tests {
     use super::EvmWriter;
+    use alloy::primitives::U256;
 
     // ========================================================================
     // Terra Deposit Verification Tests
     // ========================================================================
+
+    #[test]
+    fn normalize_withdraw_amount_matches_bridge_decimal_scale() {
+        let same = U256::from(1_500_000u64);
+        assert_eq!(EvmWriter::normalize_withdraw_amount(same, 6, 6), same);
+        assert_eq!(
+            EvmWriter::normalize_withdraw_amount(U256::from(1_000_000u64), 6, 8),
+            U256::from(100_000_000u64)
+        );
+        assert_eq!(
+            EvmWriter::normalize_withdraw_amount(U256::from(1_500_000u64), 6, 4),
+            U256::from(15_000u64)
+        );
+    }
 
     #[test]
     fn test_terra_deposit_exists_in_query_when_data_present() {

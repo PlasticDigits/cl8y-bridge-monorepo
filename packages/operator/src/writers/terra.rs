@@ -1033,19 +1033,28 @@ impl TerraWriter {
             self.pending_executions.remove(&hash);
         }
 
-        for (hash, err) in to_backoff {
-            if let Some(pending) = self.pending_executions.get_mut(&hash) {
+        for (hash, _err) in to_backoff {
+            let seed = u64::from_le_bytes(hash[..8].try_into().unwrap_or([0; 8]));
+            let backoff = super::execute_queue::ExecuteRetryBackoff {
+                initial: Duration::from_secs(2),
+                max: Duration::from_secs(60),
+                jitter_bps: crate::poll_config::DEFAULT_BACKOFF_JITTER_BPS,
+            };
+            let applied = self.pending_executions.update(&hash, |pending| {
                 super::execute_queue::apply_execute_retry_backoff(
                     &mut pending.attempts,
                     &mut pending.approved_at,
                     &mut pending.delay_seconds,
-                    &err,
-                    super::execute_queue::ExecuteRetryBackoff {
-                        initial: Duration::from_secs(2),
-                        max: Duration::from_secs(60),
-                        jitter_bps: crate::poll_config::DEFAULT_BACKOFF_JITTER_BPS,
-                    },
-                    u64::from_le_bytes(hash[..8].try_into().unwrap_or([0; 8])),
+                    backoff,
+                    seed,
+                    super::unix_now_secs(),
+                    None,
+                );
+            });
+            if !applied {
+                warn!(
+                    xchain_hash_id = %bytes32_to_hex(&hash),
+                    "Terra execute backoff missed a stored pending row"
                 );
             }
         }

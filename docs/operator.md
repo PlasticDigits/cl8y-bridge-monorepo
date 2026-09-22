@@ -71,7 +71,7 @@ flowchart TB
 | Metrics | `src/metrics.rs` | Prometheus metrics |
 | Writer poll config | `src/poll_config.rs` | Validated lookback/chunk/backoff (GL-138) |
 | EVM RPC fallback | `src/rpc_fallback.rs` | Method-level `eth_getLogs` + execute send/receipt fallback (INV-OP-W3 / INV-OP-W12) |
-| Execute queue | `src/writers/execute_queue.rs` | Enqueue-if-absent + retryable execute backoff (INV-OP-W11) |
+| Execute queue | `src/writers/execute_queue.rs` | Enqueue-if-absent, cancel-window backoff, and period-full wait until `windowStart + RATE_LIMIT_WINDOW` (INV-OP-W11) |
 
 ### Technology Stack
 

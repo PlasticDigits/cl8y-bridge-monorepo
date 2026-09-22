@@ -427,6 +427,15 @@ sol! {
 
         /// Token destination set event
         event TokenDestinationSet(address indexed token, bytes4 indexed destChain, bytes32 destToken);
+
+        /// Withdraw limits. Order: minPerTransaction, maxPerTransaction, maxPerPeriod (0 = none).
+        function getRateLimitConfig(address token) external view returns (uint256, uint256, uint256);
+
+        /// Current withdraw window. Order: windowStart, used, maxPerPeriod.
+        function getWithdrawRateLimitWindow(address token) external view returns (uint256, uint256, uint256);
+
+        /// `TokenRegistry.RATE_LIMIT_WINDOW` (24 hours on current contracts).
+        function RATE_LIMIT_WINDOW() external view returns (uint256);
     }
 
     // ========================================================================
