@@ -5,6 +5,9 @@ This repo contains the EVM smart contracts for the CL8Y Bridge, licensed under A
 
 **For deployers and integrators:** See [OPERATIONAL_NOTES.md](OPERATIONAL_NOTES.md) for fee recipient requirements, guard semantics, cancel window behavior, unsupported token types, and operator/registry configuration.
 
+See [PAUSE_GUARDIAN.md](PAUSE_GUARDIAN.md) for the optional owner-managed
+pause-only guardian, existing paused exit behavior and live upgrade gates.
+
 ## Deployments Stable (v1.4)
 
 ### BSC

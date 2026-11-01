@@ -50,6 +50,15 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     /// @notice Maximum cancel window (24 hours, matching TerraClassic)
     uint256 public constant MAX_CANCEL_WINDOW = 24 hours;
 
+    /// @custom:storage-location erc7201:cl8y.storage.BridgePauseGuardian
+    struct PauseGuardianStorage {
+        address guardian;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("cl8y.storage.BridgePauseGuardian")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant PAUSE_GUARDIAN_STORAGE_LOCATION =
+        0x7072634659887828736972e924a7a7dc200fb40e47fd9b0c41b8fbcbbbbf7800;
+
     // ============================================================================
     // Storage - Registries
     // ============================================================================
@@ -213,14 +222,38 @@ contract Bridge is Initializable, UUPSUpgradeable, OwnableUpgradeable, PausableU
     // Admin Functions
     // ============================================================================
 
-    /// @notice Pause the bridge
-    function pause() external onlyOwner {
+    /// @notice Pause deposits and withdrawal submission/execution, by owner or pause-only guardian
+    /// @dev Approval, cancellation and owner recovery retain their existing behavior.
+    function pause() external {
+        address guardian = pauseGuardian();
+        if (guardian == address(0) || _msgSender() != guardian) _checkOwner();
         _pause();
     }
 
-    /// @notice Unpause the bridge
+    /// @notice Resume the bridge; only the owner may recover from a pause
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @notice Current pause-only guardian, or address(0) when disabled
+    function pauseGuardian() public view returns (address) {
+        return _pauseGuardianStorage().guardian;
+    }
+
+    /// @notice Replace or revoke the pause-only guardian without changing paused state
+    /// @param guardian New guardian; address(0) disables the delegated pause permission
+    function setPauseGuardian(address guardian) external onlyOwner {
+        PauseGuardianStorage storage state = _pauseGuardianStorage();
+        address previous = state.guardian;
+        state.guardian = guardian;
+        emit PauseGuardianUpdated(previous, guardian);
+    }
+
+    function _pauseGuardianStorage() private pure returns (PauseGuardianStorage storage state) {
+        bytes32 location = PAUSE_GUARDIAN_STORAGE_LOCATION;
+        assembly {
+            state.slot := location
+        }
     }
 
     /// @notice Set the cancel window duration

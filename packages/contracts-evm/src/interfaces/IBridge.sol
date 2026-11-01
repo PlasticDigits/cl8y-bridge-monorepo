@@ -101,6 +101,9 @@ interface IBridge {
     /// @notice Emitted when the guard bridge is updated
     event GuardBridgeUpdated(address indexed oldGuard, address indexed newGuard);
 
+    /// @notice Owner changed the pause-only guardian; zero disables delegation
+    event PauseGuardianUpdated(address indexed previousGuardian, address indexed newGuardian);
+
     // ============================================================================
     // Errors
     // ============================================================================
@@ -129,6 +132,14 @@ interface IBridge {
     error WrongTokenType(address token, string expected);
     error RecoveryTransferFailed();
     error WithdrawNonceAlreadyUsed(bytes4 srcChain, uint64 nonce);
+
+    // ============================================================================
+    // Pause Guardian Methods
+    // ============================================================================
+
+    function pauseGuardian() external view returns (address);
+
+    function setPauseGuardian(address guardian) external;
 
     // ============================================================================
     // Deposit Methods
